@@ -33,10 +33,12 @@
   --accent-projects: #14b8a6;
   --accent-settings: #8b5cf6;
   --accent-model: #f97316;
+  --accent-danger: #fb7185;
   --glow-create: rgba(59, 130, 246, 0.32);
   --glow-projects: rgba(20, 184, 166, 0.32);
   --glow-settings: rgba(139, 92, 246, 0.32);
   --glow-model: rgba(249, 115, 22, 0.32);
+  --glow-danger: rgba(251, 113, 133, 0.28);
 
   /* Elevation */
   --shadow-card:
@@ -167,17 +169,36 @@ input {
 }
 
 .node-card--projects {
-  width: 420px;
-  min-height: 472px;
+  width: 100%;
+  height: 100%;
+  min-height: 154px;
   box-shadow:
     var(--shadow-card),
     0 0 32px var(--glow-projects);
+}
+
+.node-card--project-item {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 14px;
+  box-shadow:
+    var(--shadow-card),
+    0 0 24px rgba(20, 184, 166, 0.22);
 }
 
 .node-card--summary {
   box-shadow:
     var(--shadow-card),
     0 0 28px var(--glow-settings);
+}
+
+.node-card--delete-confirm {
+  width: 300px;
+  min-height: 360px;
+  box-shadow:
+    var(--shadow-card),
+    0 0 30px var(--glow-danger);
 }
 
 .node-card:has(.node-header--model) {
@@ -198,10 +219,30 @@ input {
     0 0 44px var(--glow-projects);
 }
 
+.node-card--project-item:hover {
+  box-shadow:
+    var(--shadow-hover),
+    0 0 34px rgba(20, 184, 166, 0.28);
+}
+
+.node-card--pending-delete {
+  border-color: rgba(251, 113, 133, 0.55);
+  background: rgba(39, 12, 22, 0.82);
+  box-shadow:
+    var(--shadow-hover),
+    0 0 36px var(--glow-danger);
+}
+
 .node-card--summary:hover {
   box-shadow:
     var(--shadow-hover),
     0 0 36px var(--glow-settings);
+}
+
+.node-card--delete-confirm:hover {
+  box-shadow:
+    var(--shadow-hover),
+    0 0 38px var(--glow-danger);
 }
 
 .node-card:has(.node-header--model):hover {
@@ -265,6 +306,10 @@ input {
 
 .node-header--model .node-icon {
   color: var(--accent-model);
+}
+
+.node-header--danger .node-icon {
+  color: var(--accent-danger);
 }
 
 .node-header > div:last-child {
@@ -391,66 +436,44 @@ input {
   border-color: rgba(139, 92, 246, 0.45);
 }
 
-/* ---------- Project list (container) ---------- */
-.project-list {
+/* ---------- Project summary and item nodes ---------- */
+.project-summary {
   display: grid;
-  gap: 8px;
-  margin-top: 16px;
-  max-height: 382px;
-  overflow: auto;
-  padding-right: 3px;
-}
-
-.project-list::-webkit-scrollbar {
-  width: 5px;
-}
-
-.project-list::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.project-list::-webkit-scrollbar-thumb {
-  background: var(--card-border-strong);
-  border-radius: 999px;
-}
-
-.project-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
+  gap: 4px;
+  margin-top: 18px;
   border: 1px solid var(--card-border);
   border-radius: 10px;
   background: rgba(2, 6, 23, 0.35);
-  color: var(--text-strong);
-  padding: 8px;
-  text-align: left;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    transform 160ms ease;
+  padding: 12px;
+  pointer-events: none;
 }
 
-.project-item:hover {
-  border-color: rgba(20, 184, 166, 0.45);
-  background: rgba(20, 184, 166, 0.08);
-  transform: translateX(2px);
+.project-summary strong {
+  color: var(--accent-projects);
+  font-size: 24px;
+  line-height: 1;
 }
 
-.project-item__main {
+.project-item-node__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.project-item-node__main {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  gap: 6px;
   border: 0;
   background: transparent;
-  color: inherit;
+  color: var(--text-strong);
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 0;
   text-align: left;
 }
 
-.project-item__delete {
+.project-item-node__delete {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -468,18 +491,18 @@ input {
     color 160ms ease;
 }
 
-.project-item__delete:hover {
+.project-item-node__delete:hover {
   border-color: rgba(251, 113, 133, 0.55);
   background: rgba(127, 29, 29, 0.34);
   color: #fecdd3;
 }
 
-.project-item__delete:disabled {
+.project-item-node__delete:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
 
-.project-item span {
+.project-item-node__main span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -487,9 +510,12 @@ input {
   font-weight: 700;
 }
 
-.project-item small {
+.project-item-node__main small {
+  overflow: hidden;
   color: var(--text-soft);
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .empty-state {
@@ -497,15 +523,159 @@ input {
   border-radius: 10px;
   background: rgba(2, 6, 23, 0.3);
   color: var(--text-muted);
-  padding: 32px 14px;
+  margin-top: 18px;
+  padding: 20px 14px;
   font-size: 12px;
   text-align: center;
+}
+
+/* ---------- Delete confirmation ---------- */
+.delete-detail {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.delete-detail div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.35);
+  padding: 8px 10px;
+}
+
+.delete-detail span {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.delete-detail strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delete-warning {
+  margin: 12px 0 0;
+  color: #fecdd3;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.delete-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.delete-actions button {
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 9px 12px;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.delete-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.delete-actions__cancel {
+  border: 1px solid var(--card-border);
+  background: rgba(2, 6, 23, 0.4);
+  color: var(--text-soft);
+}
+
+.delete-actions__cancel:hover {
+  border-color: var(--card-border-strong);
+  color: var(--text-strong);
+}
+
+.delete-actions__confirm {
+  border: 1px solid rgba(251, 113, 133, 0.45);
+  background: rgba(190, 18, 60, 0.82);
+  color: #fff1f2;
+  box-shadow: 0 4px 16px rgba(190, 18, 60, 0.3);
+}
+
+.delete-actions__confirm:hover {
+  border-color: rgba(251, 113, 133, 0.75);
+  background: rgba(225, 29, 72, 0.9);
+  transform: translateY(-1px);
 }
 
 /* ---------- React Flow helpers ---------- */
 .hidden-handle {
   opacity: 0;
   pointer-events: none;
+}
+
+.node-link-handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(15, 23, 42, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 0 12px color-mix(in srgb, currentColor 55%, transparent);
+  opacity: 1;
+  pointer-events: none;
+}
+
+.node-link-handle--flow {
+  background: var(--accent-projects);
+  color: var(--accent-projects);
+}
+
+.node-link-handle--danger {
+  background: var(--accent-danger);
+  color: var(--accent-danger);
+}
+
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--card-border-strong);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.9);
+  box-shadow: var(--shadow-card);
+}
+
+.react-flow__controls-button {
+  width: 32px;
+  height: 32px;
+  border-bottom: 1px solid var(--card-border);
+  background: rgba(15, 23, 42, 0.92);
+  color: var(--text-soft);
+  fill: var(--text-soft);
+}
+
+.react-flow__controls-button:hover {
+  background: rgba(30, 41, 59, 0.96);
+  color: var(--text-strong);
+  fill: var(--text-strong);
+}
+
+.react-flow__controls-button svg {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.react-flow__controls-button path {
+  fill: currentColor;
 }
 
 .react-flow__attribution {
@@ -526,7 +696,8 @@ input {
   }
 
   .node-card,
-  .node-card--projects {
+  .node-card--projects,
+  .node-card--project-item {
     width: 280px;
   }
 }
