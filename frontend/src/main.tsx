@@ -8,9 +8,15 @@ import {
   NodeProps,
   Position,
   ReactFlow,
-  ReactFlowProvider
+  ReactFlowProvider,
 } from "@xyflow/react";
-import { FolderPlus, ListTree, Settings, SlidersHorizontal, Trash2 } from "lucide-react";
+import {
+  FolderPlus,
+  ListTree,
+  Settings,
+  SlidersHorizontal,
+  Trash2,
+} from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
 
@@ -58,18 +64,22 @@ const emptyStartData: StartData = {
   projects: [],
   settings_summary: {
     title: "设置",
-    description: "基础设置待配置"
+    description: "基础设置待配置",
   },
   model_summary: {
     title: "模型设置",
-    description: "默认模型待配置"
-  }
+    description: "默认模型待配置",
+  },
 };
 
 function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   return (
     <div className={`node-card node-card--${data.kind}`}>
-      <Handle type="target" position={Position.Left} className="hidden-handle" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="hidden-handle"
+      />
       {data.kind === "create" ? <CreateProjectNode data={data} /> : null}
       {data.kind === "projects" ? (
         <ProjectListNode
@@ -79,13 +89,17 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
         />
       ) : null}
       {data.kind === "summary" ? <SummaryCard data={data} /> : null}
-      <Handle type="source" position={Position.Right} className="hidden-handle" />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="hidden-handle"
+      />
     </div>
   );
 }
 
 function CreateProjectNode({
-  data
+  data,
 }: {
   data: Extract<StartNodeData, { kind: "create" }>;
 }) {
@@ -136,7 +150,7 @@ function CreateProjectNode({
 function ProjectListNode({
   projects,
   deletingId,
-  onDelete
+  onDelete,
 }: {
   projects: Project[];
   deletingId: string | null;
@@ -161,7 +175,9 @@ function ProjectListNode({
             <div className="project-item" key={project.id}>
               <button className="project-item__main" type="button">
                 <span>{project.name}</span>
-                <small title={project.git_url}>{shortenGitUrl(project.git_url)}</small>
+                <small title={project.git_url}>
+                  {shortenGitUrl(project.git_url)}
+                </small>
                 <small>更新于 {formatDate(project.updated_at)}</small>
               </button>
               <button
@@ -183,7 +199,7 @@ function ProjectListNode({
 }
 
 function SummaryCard({
-  data
+  data,
 }: {
   data: Extract<StartNodeData, { kind: "summary" }>;
 }) {
@@ -236,13 +252,15 @@ function App() {
         const response = await fetch("/api/projects", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
           },
-          body: JSON.stringify({ name, git_url: gitUrl })
+          body: JSON.stringify({ name, git_url: gitUrl }),
         });
 
         if (!response.ok) {
-          const body = (await response.json().catch(() => null)) as { message?: string } | null;
+          const body = (await response.json().catch(() => null)) as {
+            message?: string;
+          } | null;
           throw new Error(body?.message ?? "创建项目失败");
         }
 
@@ -253,13 +271,13 @@ function App() {
         setCreating(false);
       }
     },
-    [loadStart]
+    [loadStart],
   );
 
   const deleteProject = useCallback(
     async (project: Project) => {
       const confirmed = window.confirm(
-        `确定删除项目「${project.name}」吗？\n\n这会删除本地克隆目录和相关资源，操作不可撤销。`
+        `确定删除项目「${project.name}」吗？\n\n这会删除本地克隆目录和相关资源，操作不可撤销。`,
       );
       if (!confirmed) {
         return;
@@ -269,12 +287,17 @@ function App() {
       setError(null);
 
       try {
-        const response = await fetch(`/api/projects/${encodeURIComponent(project.id)}`, {
-          method: "DELETE"
-        });
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(project.id)}`,
+          {
+            method: "DELETE",
+          },
+        );
 
         if (!response.ok) {
-          const body = (await response.json().catch(() => null)) as { message?: string } | null;
+          const body = (await response.json().catch(() => null)) as {
+            message?: string;
+          } | null;
           throw new Error(body?.message ?? "删除项目失败");
         }
 
@@ -285,7 +308,7 @@ function App() {
         setDeletingId(null);
       }
     },
-    [loadStart]
+    [loadStart],
   );
 
   const nodes = useMemo<Node<StartNodeData>[]>(
@@ -298,8 +321,8 @@ function App() {
           kind: "summary",
           icon: "settings",
           title: startData.settings_summary.title,
-          description: startData.settings_summary.description
-        }
+          description: startData.settings_summary.description,
+        },
       },
       {
         id: "model-settings",
@@ -309,8 +332,8 @@ function App() {
           kind: "summary",
           icon: "model",
           title: startData.model_summary.title,
-          description: startData.model_summary.description
-        }
+          description: startData.model_summary.description,
+        },
       },
       {
         id: "create-project",
@@ -320,8 +343,8 @@ function App() {
           kind: "create",
           onCreate: createProject,
           busy: creating,
-          error
-        }
+          error,
+        },
       },
       {
         id: "project-list",
@@ -331,11 +354,11 @@ function App() {
           kind: "projects",
           projects: startData.projects,
           deletingId,
-          onDelete: deleteProject
-        }
-      }
+          onDelete: deleteProject,
+        },
+      },
     ],
-    [createProject, creating, deleteProject, deletingId, error, startData]
+    [createProject, creating, deleteProject, deletingId, error, startData],
   );
 
   return (
@@ -372,7 +395,7 @@ function formatDate(value: string) {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
   }).format(new Date(value));
 }
 
@@ -387,5 +410,5 @@ function shortenGitUrl(value: string) {
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
-  </React.StrictMode>
+  </React.StrictMode>,
 );

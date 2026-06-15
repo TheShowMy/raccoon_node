@@ -32,65 +32,53 @@ repos:
       - id: typos
         name: 检查拼写错误
 
-  # ---------- TypeScript / Frontend ----------
-  # TODO: 前端目录创建后启用以下 hooks
-  # - repo: local
-  #   hooks:
-  #     - id: prettier
-  #       name: 使用 Prettier 格式化 TS/TSX/CSS 文件
-  #       entry: bash -c 'cd frontend && npx prettier --check "src/**/*.{ts,tsx,css}"'
-  #       language: node
-  #       files: ^frontend/.*\.(ts|tsx|css)$
-  #       pass_filenames: false
-  #
-  #     - id: eslint
-  #       name: 使用 ESLint 检查 TS/TSX 文件
-  #       entry: bash -c 'cd frontend && npx eslint "src/**/*.{ts,tsx}"'
-  #       language: node
-  #       files: ^frontend/.*\.(ts|tsx)$
-  #       pass_filenames: false
-  #
-  #     - id: tsc
-  #       name: TypeScript 类型检查
-  #       entry: bash -c 'cd frontend && npx tsc -b --noEmit'
-  #       language: node
-  #       files: ^frontend/.*\.(ts|tsx)$
-  #       pass_filenames: false
-  #
-  #     - id: frontend-build
-  #       name: 前端生产构建检查
-  #       entry: bash -c 'cd frontend && npm run build'
-  #       language: node
-  #       files: ^frontend/.*\.(ts|tsx|css|html)$
-  #       pass_filenames: false
+  - repo: local
+    hooks:
+      - id: prettier
+        name: 使用 Prettier 检查 TS/TSX/CSS 文件
+        entry: bash -c 'cd frontend && npm run format:check'
+        language: system
+        files: ^frontend/.*\.(ts|tsx|css)$
+        pass_filenames: false
 
-  # ---------- Rust / Backend ----------
-  # TODO: Rust 项目骨架创建后启用以下 hooks
-  # - repo: local
-  #   hooks:
-  #     - id: cargo-fmt
-  #       name: 使用 rustfmt 格式化文件
-  #       entry: bash -c 'cargo fmt -- --check'
-  #       language: rust
-  #       files: \.rs$
-  #
-  #     - id: cargo-check
-  #       name: 检查包中的错误
-  #       entry: bash -c 'cargo check --all'
-  #       language: rust
-  #       files: \.rs$
-  #       pass_filenames: false
-  #
-  #     - id: cargo-clippy
-  #       name: 对 Rust 源代码进行静态分析
-  #       entry: bash -c 'cargo clippy --all-targets --all-features --tests --benches -- -D warnings'
-  #       language: rust
-  #       files: \.rs$
-  #       pass_filenames: false
-  #
-  #     - id: cargo-test
-  #       name: 运行项目的单元测试
-  #       entry: bash -c 'cargo nextest run --all-features --no-tests=pass'
-  #       language: rust
-  #       files: \.rs$
-  #       pass_filenames: false
+      - id: tsc
+        name: TypeScript 类型检查
+        entry: bash -c 'cd frontend && npm run check'
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+
+      - id: frontend-build
+        name: 前端生产构建检查
+        entry: bash -c 'cd frontend && npm run build'
+        language: system
+        files: ^frontend/.*\.(ts|tsx|css|html)$
+        pass_filenames: false
+
+      - id: cargo-fmt
+        name: 使用 rustfmt 格式化检查 Rust 文件
+        entry: bash -c 'cargo fmt -- --check'
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+      - id: cargo-check
+        name: Rust 编译检查
+        entry: bash -c 'cargo check --all'
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: Rust Clippy 静态检查
+        entry: bash -c 'cargo clippy --all-targets --all-features --tests --benches -- -D warnings'
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+      - id: cargo-test
+        name: 运行 Rust 单元测试
+        entry: bash -c 'cargo test'
+        language: system
+        files: \.rs$
+        pass_filenames: false
