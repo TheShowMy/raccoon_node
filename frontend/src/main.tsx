@@ -26,9 +26,9 @@ import "./styles.css";
 const nodeTypes = { startNode: StartNode };
 const PROJECT_LIST_WIDTH = 420;
 const PROJECT_ITEM_WIDTH = 348;
-const PROJECT_ITEM_HEIGHT = 112;
+const PROJECT_ITEM_HEIGHT = 86;
 const PROJECT_ITEM_TOP = 148;
-const PROJECT_ITEM_GAP = 18;
+const PROJECT_ITEM_GAP = 12;
 const PROJECT_LIST_Y = 320;
 const DELETE_CONFIRM_MIN_Y = 80;
 const DELETE_CONFIRM_MAX_Y = 320;
@@ -51,6 +51,31 @@ type StartData = {
   projects: Project[];
   settings_summary: SummaryNode;
   model_summary: SummaryNode;
+  model_settings: ModelSettings;
+};
+
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+type ModelTierKey = "low" | "medium" | "high";
+
+type ModelTierSetting = {
+  model_id: string | null;
+  thinking_level: ThinkingLevel;
+};
+
+type ModelSettings = Record<ModelTierKey, ModelTierSetting>;
+
+type PiModel = {
+  id: string;
+  name: string;
+  provider: string;
+  reasoning: boolean;
+};
+
+type ModelSettingsResponse = {
+  models: PiModel[];
+  settings: ModelSettings;
+  rpc_status: "ready" | "error";
+  rpc_error: string | null;
 };
 
 type StartNodeData =
@@ -80,10 +105,23 @@ type StartNodeData =
       onConfirm: (project: Project) => Promise<void>;
     }
   | {
+      kind: "model-config";
+      settings: ModelSettings;
+      models: PiModel[];
+      rpcStatus: "idle" | "loading" | "ready" | "error";
+      error: string | null;
+      saving: boolean;
+      onChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
+      onRefresh: () => Promise<void>;
+      onSave: () => Promise<void>;
+    }
+  | {
       kind: "summary";
       title: string;
       description: string;
       icon: "settings" | "model";
+      actionLabel?: string;
+      onAction?: () => void;
     };
 
 const emptyStartData: StartData = {
@@ -96,13 +134,31 @@ const emptyStartData: StartData = {
     title: "模型设置",
     description: "默认模型待配置",
   },
+  model_settings: defaultModelSettings(),
 };
+
+const tierLabels: Record<ModelTierKey, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
+};
+
+const thinkingLevels: Array<{ value: ThinkingLevel; label: string }> = [
+  { value: "off", label: "关闭" },
+  { value: "minimal", label: "最小" },
+  { value: "low", label: "低" },
+  { value: "medium", label: "中" },
+  { value: "high", label: "高" },
+  { value: "xhigh", label: "极高" },
+];
 
 function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const isPendingDelete =
     data.kind === "project-item" &&
     data.pendingDeleteProjectId === data.project.id;
   const hasFlowLeftHandle = data.kind === "create" || data.kind === "projects";
+  const hasModelSourceHandle = data.kind === "summary" && data.icon === "model";
+  const hasModelTargetHandle = data.kind === "model-config";
   const hasDeleteRightHandle = data.kind === "project-item";
   const hasDeleteLeftHandle = data.kind === "delete-confirm";
 
@@ -128,6 +184,14 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
           className="node-link-handle node-link-handle--danger"
         />
       ) : null}
+      {hasModelTargetHandle ? (
+        <Handle
+          id="model-left"
+          type="target"
+          position={Position.Left}
+          className="node-link-handle node-link-handle--model"
+        />
+      ) : null}
       {data.kind === "create" ? <CreateProjectNode data={data} /> : null}
       {data.kind === "projects" ? (
         <ProjectListNode projectCount={data.projectCount} />
@@ -136,6 +200,7 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
       {data.kind === "delete-confirm" ? (
         <DeleteConfirmNode data={data} />
       ) : null}
+      {data.kind === "model-config" ? <ModelConfigNode data={data} /> : null}
       {data.kind === "summary" ? <SummaryCard data={data} /> : null}
       {hasDeleteRightHandle ? (
         <Handle
@@ -143,6 +208,14 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
           type="source"
           position={Position.Right}
           className="node-link-handle node-link-handle--danger"
+        />
+      ) : null}
+      {hasModelSourceHandle ? (
+        <Handle
+          id="model-left-source"
+          type="source"
+          position={Position.Left}
+          className="node-link-handle node-link-handle--model"
         />
       ) : null}
     </div>
@@ -354,6 +427,107 @@ function DeleteConfirmNode({
   );
 }
 
+function ModelConfigNode({
+  data,
+}: {
+  data: Extract<StartNodeData, { kind: "model-config" }>;
+}) {
+  const noModels = data.rpcStatus === "ready" && data.models.length === 0;
+  const disabled = data.rpcStatus !== "ready" || data.models.length === 0;
+
+  return (
+    <>
+      <div className="node-header node-header--model">
+        <span className="node-icon">
+          <SlidersHorizontal size={20} />
+        </span>
+        <div>
+          <strong>模型配置</strong>
+          <span>{modelStatusText(data.rpcStatus)}</span>
+        </div>
+      </div>
+      {noModels ? (
+        <p className="model-notice">
+          Pi Agent 中还没有已配置模型，请先在 Pi Agent 中完成模型配置。
+        </p>
+      ) : null}
+      {data.error ? <p className="form-error">{data.error}</p> : null}
+      <div className="model-config-grid">
+        {(["low", "medium", "high"] as ModelTierKey[]).map((tier) => {
+          const setting = data.settings[tier];
+
+          return (
+            <section className="model-config-tier" key={tier}>
+              <strong>{tierLabels[tier]}档</strong>
+              <label>
+                <span>模型</span>
+                <select
+                  value={setting.model_id ?? ""}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    data.onChange(tier, {
+                      ...setting,
+                      model_id: event.target.value || null,
+                    })
+                  }
+                >
+                  <option value="">选择模型</option>
+                  {data.models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.provider}/{model.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>思考强度</span>
+                <select
+                  value={setting.thinking_level}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    data.onChange(tier, {
+                      ...setting,
+                      thinking_level: event.target.value as ThinkingLevel,
+                    })
+                  }
+                >
+                  {thinkingLevels.map((level) => (
+                    <option key={level.value} value={level.value}>
+                      {level.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </section>
+          );
+        })}
+      </div>
+      <div className="model-actions">
+        <button
+          className="delete-actions__cancel"
+          type="button"
+          disabled={data.saving || data.rpcStatus === "loading"}
+          onClick={() => void data.onRefresh()}
+        >
+          刷新
+        </button>
+        <button
+          className="delete-actions__confirm"
+          type="button"
+          disabled={
+            data.saving ||
+            data.rpcStatus !== "ready" ||
+            data.models.length === 0
+          }
+          onClick={() => void data.onSave()}
+        >
+          {data.saving ? "保存中" : "保存"}
+        </button>
+      </div>
+    </>
+  );
+}
+
 function SummaryCard({
   data,
 }: {
@@ -371,8 +545,8 @@ function SummaryCard({
           <span>{data.description}</span>
         </div>
       </div>
-      <button className="ghost-button" type="button">
-        查看摘要
+      <button className="ghost-button" type="button" onClick={data.onAction}>
+        {data.actionLabel ?? "查看摘要"}
       </button>
     </>
   );
@@ -387,6 +561,16 @@ function App() {
     useState<Project | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
+  const [models, setModels] = useState<PiModel[]>([]);
+  const [draftModelSettings, setDraftModelSettings] = useState<ModelSettings>(
+    defaultModelSettings(),
+  );
+  const [modelRpcStatus, setModelRpcStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [savingModels, setSavingModels] = useState(false);
 
   const loadStart = useCallback(async () => {
     const response = await fetch("/api/start");
@@ -401,6 +585,80 @@ function App() {
       .catch((reason: unknown) => setError(readError(reason)))
       .finally(() => setLoading(false));
   }, [loadStart]);
+
+  const loadModelSettings = useCallback(async () => {
+    setModelRpcStatus("loading");
+    setModelError(null);
+
+    try {
+      const response = await fetch("/api/settings/models");
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          message?: string;
+        } | null;
+        throw new Error(body?.message ?? "读取模型设置失败");
+      }
+
+      const data = (await response.json()) as ModelSettingsResponse;
+      setModels(data.models);
+      setDraftModelSettings(data.settings);
+      setModelRpcStatus(data.rpc_status);
+      setModelError(data.rpc_error);
+    } catch (reason) {
+      setModels([]);
+      setModelRpcStatus("error");
+      setModelError(readError(reason));
+    }
+  }, []);
+
+  const openModelSettings = useCallback(() => {
+    setModelSettingsOpen(true);
+    void loadModelSettings();
+  }, [loadModelSettings]);
+
+  const updateModelTier = useCallback(
+    (tier: ModelTierKey, setting: ModelTierSetting) => {
+      setDraftModelSettings((current) => ({
+        ...current,
+        [tier]: setting,
+      }));
+    },
+    [],
+  );
+
+  const saveModelSettings = useCallback(async () => {
+    setSavingModels(true);
+    setModelError(null);
+
+    try {
+      const response = await fetch("/api/settings/models", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(draftModelSettings),
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          message?: string;
+        } | null;
+        throw new Error(body?.message ?? "保存模型设置失败");
+      }
+
+      const data = (await response.json()) as ModelSettingsResponse;
+      setModels(data.models);
+      setDraftModelSettings(data.settings);
+      setModelRpcStatus(data.rpc_status);
+      setModelError(data.rpc_error);
+      await loadStart();
+      setModelSettingsOpen(false);
+    } catch (reason) {
+      setModelError(readError(reason));
+    } finally {
+      setSavingModels(false);
+    }
+  }, [draftModelSettings, loadStart]);
 
   const createProject = useCallback(
     async (name: string, gitUrl: string) => {
@@ -487,6 +745,8 @@ function App() {
           icon: "settings",
           title: startData.settings_summary.title,
           description: startData.settings_summary.description,
+          actionLabel: "打开设置",
+          onAction: openModelSettings,
         },
       },
       {
@@ -498,6 +758,8 @@ function App() {
           icon: "model",
           title: startData.model_summary.title,
           description: startData.model_summary.description,
+          actionLabel: "配置模型",
+          onAction: openModelSettings,
         },
       },
       {
@@ -581,6 +843,25 @@ function App() {
       });
     }
 
+    if (modelSettingsOpen) {
+      baseNodes.push({
+        id: "model-config",
+        type: "startNode",
+        position: { x: -320, y: 80 },
+        data: {
+          kind: "model-config",
+          settings: draftModelSettings,
+          models,
+          rpcStatus: modelRpcStatus,
+          error: modelError,
+          saving: savingModels,
+          onChange: updateModelTier,
+          onRefresh: loadModelSettings,
+          onSave: saveModelSettings,
+        },
+      });
+    }
+
     return baseNodes;
   }, [
     cancelDeleteProject,
@@ -589,10 +870,20 @@ function App() {
     creating,
     deleteError,
     deletingId,
+    draftModelSettings,
     error,
+    loadModelSettings,
+    modelError,
+    modelRpcStatus,
+    modelSettingsOpen,
+    models,
     pendingDeleteProject,
     requestDeleteProject,
+    saveModelSettings,
+    savingModels,
     startData,
+    openModelSettings,
+    updateModelTier,
   ]);
 
   const edges = useMemo<Edge[]>(() => {
@@ -629,8 +920,24 @@ function App() {
       });
     }
 
+    if (modelSettingsOpen) {
+      flowEdges.push({
+        id: "model-settings-to-model-config",
+        source: "model-settings",
+        sourceHandle: "model-left-source",
+        target: "model-config",
+        targetHandle: "model-left",
+        type: "smoothstep",
+        animated: true,
+        style: {
+          stroke: "rgba(249, 115, 22, 0.68)",
+          strokeWidth: 2,
+        },
+      });
+    }
+
     return flowEdges;
-  }, [pendingDeleteProject]);
+  }, [modelSettingsOpen, pendingDeleteProject]);
 
   return (
     <main className="app-shell">
@@ -681,6 +988,27 @@ function readError(reason: unknown) {
 
 function shortenGitUrl(value: string) {
   return value.replace(/^git@([^:]+):/, "$1/").replace(/^https?:\/\//, "");
+}
+
+function defaultModelSettings(): ModelSettings {
+  return {
+    low: { model_id: null, thinking_level: "low" },
+    medium: { model_id: null, thinking_level: "medium" },
+    high: { model_id: null, thinking_level: "high" },
+  };
+}
+
+function modelStatusText(status: "idle" | "loading" | "ready" | "error") {
+  if (status === "loading") {
+    return "正在读取 Pi Agent 模型";
+  }
+  if (status === "ready") {
+    return "Pi Agent RPC 已连接";
+  }
+  if (status === "error") {
+    return "Pi Agent RPC 异常";
+  }
+  return "等待加载";
 }
 
 createRoot(document.getElementById("root")!).render(

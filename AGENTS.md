@@ -5,6 +5,7 @@
 ## 项目
 
 raccoon_node：Rust + React Flow 的本地节点画布项目。当前包含 start 画布、Git 项目添加、克隆和删除。
+LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc` 子进程并使用 stdin/stdout JSONL 通信。
 
 ## 必读文档
 
@@ -16,6 +17,7 @@ raccoon_node：Rust + React Flow 的本地节点画布项目。当前包含 star
 - 引入、移除或升级依赖。
 - 修改 Rust/Axum/Tokio/API/JSON 存储。
 - 修改 React/Vite/React Flow/节点 UI。
+- 修改 LLM、模型设置、Pi Agent RPC 或 Agent 能力。
 - 修改 Git clone、项目删除、`data/` 资源规则。
 - 修改 pre-commit 或验证流程。
 
@@ -29,6 +31,9 @@ raccoon_node：Rust + React Flow 的本地节点画布项目。当前包含 star
 ## 硬约束
 
 - 项目资源只允许位于当前数据目录：`<data_root>/projects/<project_id>/repo`。
+- 所有 LLM 相关功能必须基于 Pi Agent RPC，禁止绕过 `pi --mode rpc`。
+- 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。
+- 禁止直接读写 Pi Agent 的 auth/settings 文件。
 - 删除项目只能删除当前数据目录内的项目资源。
 - 前端不处理 Git 密码、token、SSH key。
 - 不提交 `build/`、`target/`、`node_modules/`、`frontend/dist/`、`data/`、`*.tsbuildinfo`。
