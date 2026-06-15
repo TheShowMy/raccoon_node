@@ -120,7 +120,7 @@ type StartNodeData =
       error: string | null;
       saving: boolean;
       onChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
-      onRefresh: () => Promise<void>;
+      onClose: () => void;
       onSave: () => Promise<void>;
     }
   | {
@@ -673,12 +673,12 @@ function ModelConfigNode({
       </div>
       <div className="model-actions">
         <button
-          className="model-actions__refresh"
+          className="model-actions__close"
           type="button"
-          disabled={data.saving || data.rpcStatus === "loading"}
-          onClick={() => void data.onRefresh()}
+          disabled={data.saving}
+          onClick={data.onClose}
         >
-          刷新
+          关闭
         </button>
         <button
           className="model-actions__save"
@@ -1025,7 +1025,7 @@ function App() {
           error: modelError,
           saving: savingModels,
           onChange: updateModelTier,
-          onRefresh: loadModelSettings,
+          onClose: () => setModelSettingsOpen(false),
           onSave: saveModelSettings,
         },
       });
@@ -1041,7 +1041,6 @@ function App() {
     deletingId,
     draftModelSettings,
     error,
-    loadModelSettings,
     modelError,
     modelRpcStatus,
     modelSettingsOpen,
@@ -1050,6 +1049,7 @@ function App() {
     requestDeleteProject,
     saveModelSettings,
     savingModels,
+    setModelSettingsOpen,
     startData,
     openModelSettings,
     updateModelTier,

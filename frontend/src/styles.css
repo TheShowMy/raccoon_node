@@ -703,7 +703,7 @@ input {
   margin-top: 16px;
 }
 
-.model-actions__refresh,
+.model-actions__close,
 .model-actions__save {
   border-radius: 10px;
   cursor: pointer;
@@ -718,20 +718,20 @@ input {
     transform 160ms ease;
 }
 
-.model-actions__refresh:disabled,
+.model-actions__close:disabled,
 .model-actions__save:disabled {
   cursor: not-allowed;
   opacity: 0.55;
   transform: none;
 }
 
-.model-actions__refresh {
+.model-actions__close {
   border: 1px solid rgba(249, 115, 22, 0.35);
   background: rgba(2, 6, 23, 0.4);
   color: var(--text-soft);
 }
 
-.model-actions__refresh:hover:not(:disabled) {
+.model-actions__close:hover:not(:disabled) {
   border-color: rgba(249, 115, 22, 0.65);
   background: rgba(249, 115, 22, 0.12);
   color: #ffedd5;
