@@ -1,0 +1,14 @@
+{
+  "name": "raccoon-node",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n backend,frontend -c cyan,green \"cargo run\" \"npm --prefix frontend run dev\"",
+    "build": "node scripts/build.mjs",
+    "check": "npm --prefix frontend run check && cargo test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "fs-extra": "^11.3.2"
+  }
+}

@@ -1,1 +1,8 @@
 /.DS_Store
+/target/
+/node_modules/
+/frontend/node_modules/
+/frontend/dist/
+/build/
+*.tsbuildinfo
+/data/
