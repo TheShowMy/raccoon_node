@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import {
   Background,
@@ -13,6 +19,8 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import {
+  Check,
+  ChevronDown,
   FolderPlus,
   ListTree,
   Settings,
@@ -186,9 +194,9 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
       ) : null}
       {hasModelTargetHandle ? (
         <Handle
-          id="model-left"
+          id="model-right"
           type="target"
-          position={Position.Left}
+          position={Position.Right}
           className="node-link-handle node-link-handle--model"
         />
       ) : null}
@@ -427,6 +435,157 @@ function DeleteConfirmNode({
   );
 }
 
+type ModelSelectOption = {
+  value: string;
+  label: string;
+};
+
+type ModelSelectProps = {
+  value: string;
+  options: ModelSelectOption[];
+  disabled?: boolean;
+  placeholder?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  onChange: (value: string) => void;
+};
+
+function ModelSelect({
+  value,
+  options,
+  disabled,
+  placeholder,
+  open: openProp,
+  onOpenChange,
+  onChange,
+}: ModelSelectProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = openProp !== undefined;
+  const open = isControlled ? openProp : internalOpen;
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const selectedOption = options.find((option) => option.value === value);
+  const selectedLabel = selectedOption?.label ?? placeholder ?? "";
+
+  function setOpen(nextOpen: boolean) {
+    if (!isControlled) {
+      setInternalOpen(nextOpen);
+    }
+    onOpenChange?.(nextOpen);
+  }
+
+  useEffect(() => {
+    if (open) {
+      const index = options.findIndex((option) => option.value === value);
+      setHighlightedIndex(index >= 0 ? index : 0);
+    }
+  }, [open, options, value]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as globalThis.Node)
+      ) {
+        setOpen(false);
+      }
+    }
+
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () =>
+        document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [open]);
+
+  function toggle() {
+    if (!disabled) {
+      setOpen(!open);
+    }
+  }
+
+  function select(option: ModelSelectOption) {
+    onChange(option.value);
+    setOpen(false);
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (disabled) {
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (open && options[highlightedIndex]) {
+        select(options[highlightedIndex]);
+      } else {
+        setOpen(true);
+      }
+    } else if (event.key === "Escape") {
+      setOpen(false);
+    } else if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!open) {
+        setOpen(true);
+      } else {
+        setHighlightedIndex((previous) => (previous + 1) % options.length);
+      }
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) {
+        setOpen(true);
+      } else {
+        setHighlightedIndex(
+          (previous) => (previous - 1 + options.length) % options.length,
+        );
+      }
+    }
+  }
+
+  return (
+    <div className="model-select" ref={containerRef}>
+      <button
+        type="button"
+        className={`model-select__trigger ${
+          open ? "model-select__trigger--open" : ""
+        }`}
+        disabled={disabled}
+        onClick={toggle}
+        onKeyDown={handleKeyDown}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span>{selectedLabel}</span>
+        <ChevronDown size={14} />
+      </button>
+      {open ? (
+        <ul className="model-select__dropdown" role="listbox">
+          {options.map((option, index) => (
+            <li
+              key={option.value}
+              className={`model-select__option ${
+                option.value === value ? "model-select__option--selected" : ""
+              } ${
+                index === highlightedIndex
+                  ? "model-select__option--highlighted"
+                  : ""
+              }`}
+              role="option"
+              aria-selected={option.value === value}
+              onClick={() => select(option)}
+              onMouseEnter={() => setHighlightedIndex(index)}
+            >
+              {option.value === value ? <Check size={14} /> : null}
+              <span>{option.label}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function ModelConfigNode({
   data,
 }: {
@@ -434,6 +593,7 @@ function ModelConfigNode({
 }) {
   const noModels = data.rpcStatus === "ready" && data.models.length === 0;
   const disabled = data.rpcStatus !== "ready" || data.models.length === 0;
+  const [openSelectId, setOpenSelectId] = useState<string | null>(null);
 
   return (
     <>
@@ -455,48 +615,57 @@ function ModelConfigNode({
       <div className="model-config-grid">
         {(["low", "medium", "high"] as ModelTierKey[]).map((tier) => {
           const setting = data.settings[tier];
+          const modelSelectId = `${tier}-model`;
+          const thinkingSelectId = `${tier}-thinking`;
 
           return (
             <section className="model-config-tier" key={tier}>
               <strong>{tierLabels[tier]}档</strong>
               <label>
                 <span>模型</span>
-                <select
+                <ModelSelect
                   value={setting.model_id ?? ""}
                   disabled={disabled}
-                  onChange={(event) =>
+                  placeholder="选择模型"
+                  open={openSelectId === modelSelectId}
+                  onOpenChange={(isOpen) =>
+                    setOpenSelectId(isOpen ? modelSelectId : null)
+                  }
+                  options={[
+                    { value: "", label: "选择模型" },
+                    ...data.models.map((model) => ({
+                      value: model.id,
+                      label: `${model.provider}/${model.name}`,
+                    })),
+                  ]}
+                  onChange={(value) =>
                     data.onChange(tier, {
                       ...setting,
-                      model_id: event.target.value || null,
+                      model_id: value || null,
                     })
                   }
-                >
-                  <option value="">选择模型</option>
-                  {data.models.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.provider}/{model.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
               <label>
                 <span>思考强度</span>
-                <select
+                <ModelSelect
                   value={setting.thinking_level}
                   disabled={disabled}
-                  onChange={(event) =>
+                  open={openSelectId === thinkingSelectId}
+                  onOpenChange={(isOpen) =>
+                    setOpenSelectId(isOpen ? thinkingSelectId : null)
+                  }
+                  options={thinkingLevels.map((level) => ({
+                    value: level.value,
+                    label: level.label,
+                  }))}
+                  onChange={(value) =>
                     data.onChange(tier, {
                       ...setting,
-                      thinking_level: event.target.value as ThinkingLevel,
+                      thinking_level: value as ThinkingLevel,
                     })
                   }
-                >
-                  {thinkingLevels.map((level) => (
-                    <option key={level.value} value={level.value}>
-                      {level.label}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
             </section>
           );
@@ -504,7 +673,7 @@ function ModelConfigNode({
       </div>
       <div className="model-actions">
         <button
-          className="delete-actions__cancel"
+          className="model-actions__refresh"
           type="button"
           disabled={data.saving || data.rpcStatus === "loading"}
           onClick={() => void data.onRefresh()}
@@ -512,7 +681,7 @@ function ModelConfigNode({
           刷新
         </button>
         <button
-          className="delete-actions__confirm"
+          className="model-actions__save"
           type="button"
           disabled={
             data.saving ||
@@ -926,7 +1095,7 @@ function App() {
         source: "model-settings",
         sourceHandle: "model-left-source",
         target: "model-config",
-        targetHandle: "model-left",
+        targetHandle: "model-right",
         type: "smoothstep",
         animated: true,
         style: {
