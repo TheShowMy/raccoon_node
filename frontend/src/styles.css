@@ -1,940 +1,630 @@
-:root {
-  color: #f8fafc;
-  background: #0b1120;
-  font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+@import "tailwindcss";
+
+@theme {
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+@layer base {
+  :root {
+    color: var(--text-strong);
+    background: var(--canvas-bg);
+    font-family: var(--font-sans);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+
+    --canvas-bg: #0b1120;
+    --canvas-dot: rgba(148, 163, 184, 0.14);
+    --panel-bg: rgba(15, 23, 42, 0.55);
+    --card-bg: rgba(15, 23, 42, 0.72);
+    --card-bg-hover: rgba(23, 33, 56, 0.78);
+    --card-border: rgba(148, 163, 184, 0.12);
+    --card-border-strong: rgba(148, 163, 184, 0.24);
+    --text-strong: #f1f5f9;
+    --text-soft: #94a3b8;
+    --text-muted: #64748b;
+    --accent-create: #3b82f6;
+    --accent-projects: #14b8a6;
+    --accent-style: #65a30d;
+    --accent-model: #f97316;
+    --accent-danger: #fb7185;
+    --glow-create: rgba(59, 130, 246, 0.32);
+    --glow-projects: rgba(20, 184, 166, 0.32);
+    --glow-style: rgba(101, 163, 13, 0.28);
+    --glow-model: rgba(249, 115, 22, 0.32);
+    --glow-danger: rgba(251, 113, 133, 0.28);
+    --shadow-card:
+      0 0 0 1px rgba(255, 255, 255, 0.05), 0 12px 36px rgba(0, 0, 0, 0.35);
+    --shadow-hover:
+      0 0 0 1px rgba(255, 255, 255, 0.1), 0 20px 48px rgba(0, 0, 0, 0.45);
+  }
+
+  [data-theme="light"] {
+    color: var(--text-strong);
+    background: var(--canvas-bg);
+
+    --canvas-bg: #eef3e8;
+    --canvas-dot: rgba(91, 115, 81, 0.2);
+    --panel-bg: rgba(251, 252, 246, 0.76);
+    --card-bg: rgba(250, 252, 244, 0.86);
+    --card-bg-hover: rgba(244, 249, 236, 0.95);
+    --card-border: rgba(91, 115, 81, 0.18);
+    --card-border-strong: rgba(91, 115, 81, 0.3);
+    --text-strong: #243126;
+    --text-soft: #5c6d5d;
+    --text-muted: #7d8b7a;
+    --accent-create: #2563eb;
+    --accent-projects: #0f766e;
+    --accent-style: #4d7c0f;
+    --accent-model: #c2410c;
+    --accent-danger: #be123c;
+    --glow-create: rgba(37, 99, 235, 0.16);
+    --glow-projects: rgba(15, 118, 110, 0.16);
+    --glow-style: rgba(77, 124, 15, 0.18);
+    --glow-model: rgba(194, 65, 12, 0.16);
+    --glow-danger: rgba(190, 18, 60, 0.16);
+    --shadow-card:
+      0 0 0 1px rgba(80, 100, 72, 0.06), 0 12px 28px rgba(74, 91, 62, 0.14);
+    --shadow-hover:
+      0 0 0 1px rgba(80, 100, 72, 0.12), 0 18px 36px rgba(74, 91, 62, 0.18);
+  }
+
+  * {
+    @apply box-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply m-0 h-full w-full;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+}
+
+@layer components {
+  .app-shell {
+    @apply grid min-h-full grid-rows-[auto_1fr];
+    background:
+      radial-gradient(
+        circle at 18% 22%,
+        color-mix(in srgb, var(--accent-create) 8%, transparent) 0%,
+        transparent 28%
+      ),
+      radial-gradient(
+        circle at 82% 78%,
+        color-mix(in srgb, var(--accent-style) 8%, transparent) 0%,
+        transparent 30%
+      ),
+      var(--canvas-bg);
+  }
 
-  /* Canvas */
-  --canvas-bg: #0b1120;
-  --canvas-dot: rgba(148, 163, 184, 0.14);
-
-  /* Surface */
-  --panel-bg: rgba(15, 23, 42, 0.55);
-  --card-bg: rgba(15, 23, 42, 0.72);
-  --card-bg-hover: rgba(23, 33, 56, 0.78);
-  --card-border: rgba(148, 163, 184, 0.12);
-  --card-border-strong: rgba(148, 163, 184, 0.24);
-
-  /* Text */
-  --text-strong: #f1f5f9;
-  --text-soft: #94a3b8;
-  --text-muted: #64748b;
-
-  /* Accents */
-  --accent-create: #3b82f6;
-  --accent-projects: #14b8a6;
-  --accent-settings: #8b5cf6;
-  --accent-model: #f97316;
-  --accent-danger: #fb7185;
-  --glow-create: rgba(59, 130, 246, 0.32);
-  --glow-projects: rgba(20, 184, 166, 0.32);
-  --glow-settings: rgba(139, 92, 246, 0.32);
-  --glow-model: rgba(249, 115, 22, 0.32);
-  --glow-danger: rgba(251, 113, 133, 0.28);
-
-  /* Elevation */
-  --shadow-card:
-    0 0 0 1px rgba(255, 255, 255, 0.05), 0 12px 36px rgba(0, 0, 0, 0.35);
-  --shadow-hover:
-    0 0 0 1px rgba(255, 255, 255, 0.1), 0 20px 48px rgba(0, 0, 0, 0.45);
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#root {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-}
-
-button,
-input {
-  font: inherit;
-}
-
-.app-shell {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  min-height: 100%;
-  background:
-    radial-gradient(
-      circle at 18% 22%,
-      rgba(59, 130, 246, 0.08) 0%,
-      transparent 28%
-    ),
-    radial-gradient(
-      circle at 82% 78%,
-      rgba(139, 92, 246, 0.08) 0%,
-      transparent 30%
-    ),
-    var(--canvas-bg);
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 20px 28px 14px;
-}
-
-.toolbar h1 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: 22px;
-  font-weight: 750;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
-}
-
-.toolbar p {
-  margin: 4px 0 0;
-  color: var(--text-soft);
-  font-size: 13px;
-}
-
-.status-pill {
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 999px;
-  background: var(--panel-bg);
-  backdrop-filter: blur(8px);
-  color: var(--text-soft);
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.canvas-shell {
-  margin: 0 24px 24px;
-  min-height: 620px;
-  border: 1px solid var(--card-border);
-  border-radius: 20px;
-  overflow: hidden;
-  background:
-    radial-gradient(
-      circle at 24px 24px,
-      var(--canvas-dot) 1.5px,
-      transparent 1.5px
-    ),
-    var(--canvas-bg);
-  background-size: 28px 28px;
-  box-shadow:
-    inset 0 0 60px rgba(0, 0, 0, 0.25),
-    0 0 0 1px rgba(255, 255, 255, 0.04);
-}
-
-/* ---------- Node cards ---------- */
-.node-card {
-  position: relative;
-  width: 252px;
-  min-height: 134px;
-  overflow: hidden;
-  border: 1px solid var(--card-border);
-  border-radius: 18px;
-  background: var(--card-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  box-shadow: var(--shadow-card);
-  padding: 16px;
-  transition:
-    border-color 200ms ease,
-    background 200ms ease,
-    box-shadow 200ms ease,
-    transform 200ms ease;
-}
-
-.node-card:hover {
-  border-color: var(--card-border-strong);
-  background: var(--card-bg-hover);
-  box-shadow: var(--shadow-hover);
-  transform: translateY(-2px);
-}
-
-.node-card--create {
-  box-shadow:
-    var(--shadow-card),
-    0 0 28px var(--glow-create);
-}
-
-.node-card--projects {
-  width: 100%;
-  height: 100%;
-  min-height: 154px;
-  box-shadow:
-    var(--shadow-card),
-    0 0 32px var(--glow-projects);
-}
-
-.node-card--project-item {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  padding: 10px 12px;
-  box-shadow:
-    var(--shadow-card),
-    0 0 24px rgba(20, 184, 166, 0.22);
-}
-
-.node-card--summary {
-  box-shadow:
-    var(--shadow-card),
-    0 0 28px var(--glow-settings);
-}
-
-.node-card--delete-confirm {
-  width: 300px;
-  min-height: 360px;
-  box-shadow:
-    var(--shadow-card),
-    0 0 30px var(--glow-danger);
-}
-
-.node-card--model-config {
-  width: 360px;
-  min-height: 480px;
-  overflow: visible;
-  box-shadow:
-    var(--shadow-card),
-    0 0 28px var(--glow-model);
-}
-
-.node-card:has(.node-header--model) {
-  box-shadow:
-    var(--shadow-card),
-    0 0 28px var(--glow-model);
-}
-
-.node-card--create:hover {
-  box-shadow:
-    var(--shadow-hover),
-    0 0 36px var(--glow-create);
-}
-
-.node-card--projects:hover {
-  box-shadow:
-    var(--shadow-hover),
-    0 0 44px var(--glow-projects);
-}
-
-.node-card--project-item:hover {
-  box-shadow:
-    var(--shadow-hover),
-    0 0 34px rgba(20, 184, 166, 0.28);
-}
-
-.node-card--pending-delete {
-  border-color: rgba(251, 113, 133, 0.55);
-  background: rgba(39, 12, 22, 0.82);
-  box-shadow:
-    var(--shadow-hover),
-    0 0 36px var(--glow-danger);
-}
-
-.node-card--summary:hover {
-  box-shadow:
-    var(--shadow-hover),
-    0 0 36px var(--glow-settings);
-}
-
-.node-card--delete-confirm:hover {
-  box-shadow:
-    var(--shadow-hover),
-    0 0 38px var(--glow-danger);
-}
-
-.node-card--model-config:hover {
-  box-shadow:
-    var(--shadow-hover),
-    0 0 36px var(--glow-model);
-}
-
-.node-card:has(.node-header--model):hover {
-  box-shadow:
-    var(--shadow-hover),
-    0 0 36px var(--glow-model);
-}
-
-.react-flow__node-startNode {
-  visibility: visible !important;
-}
-
-/* ---------- Header ---------- */
-.node-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  min-width: 0;
-}
-
-.node-header svg {
-  display: block;
-  width: 18px;
-  height: 18px;
-  margin: 0;
-  color: currentColor;
-}
-
-.node-icon {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
-  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, currentColor 14%, transparent);
-  box-shadow: 0 0 12px color-mix(in srgb, currentColor 18%, transparent);
-}
-
-.node-icon svg {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-}
-
-.node-header--create .node-icon {
-  color: var(--accent-create);
-}
-
-.node-header--projects .node-icon {
-  color: var(--accent-projects);
-}
-
-.node-header--settings .node-icon {
-  color: var(--accent-settings);
-}
-
-.node-header--model .node-icon {
-  color: var(--accent-model);
-}
-
-.node-header--danger .node-icon {
-  color: var(--accent-danger);
-}
-
-.node-header > div:last-child {
-  min-width: 0;
-}
-
-.node-header strong {
-  display: block;
-  overflow: hidden;
-  color: var(--text-strong);
-  font-size: 13px;
-  font-weight: 750;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.node-header span {
-  display: block;
-  margin-top: 4px;
-  overflow: hidden;
-  color: var(--text-soft);
-  font-size: 11px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ---------- Create project ---------- */
-.create-form {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
-  margin-top: 18px;
-}
-
-.create-form input {
-  min-width: 0;
-  border: 1px solid var(--card-border);
-  border-radius: 10px;
-  background: rgba(2, 6, 23, 0.45);
-  color: var(--text-strong);
-  padding: 9px 11px;
-  outline: none;
-  font-size: 12px;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    box-shadow 160ms ease;
-}
-
-.create-form input::placeholder {
-  color: var(--text-muted);
-}
-
-.create-form input:focus {
-  border-color: var(--accent-create);
-  background: rgba(2, 6, 23, 0.55);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.22);
-}
-
-.create-form__git {
-  grid-column: 1 / -1;
-}
-
-.create-form button,
-.ghost-button {
-  border: 0;
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 9px 12px;
-  transition:
-    background 160ms ease,
-    opacity 160ms ease,
-    transform 160ms ease;
-}
-
-.create-form button {
-  grid-column: 1 / -1;
-  background: var(--accent-create);
-  color: #ffffff;
-  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
-}
-
-.create-form button:hover {
-  background: #2563eb;
-  transform: translateY(-1px);
-}
-
-.create-form button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-  transform: none;
-}
-
-.form-error {
-  margin: 10px 0 0;
-  color: #fb7185;
-  font-size: 12px;
-}
-
-/* ---------- Summary card ---------- */
-.ghost-button {
-  width: 100%;
-  margin-top: 22px;
-  border: 1px solid var(--card-border);
-  background: rgba(2, 6, 23, 0.4);
-  color: var(--text-soft);
-}
-
-.ghost-button:hover {
-  border-color: var(--card-border-strong);
-  background: rgba(2, 6, 23, 0.55);
-  color: var(--text-strong);
-}
-
-.node-header--model + .ghost-button:hover {
-  border-color: rgba(249, 115, 22, 0.45);
-}
-
-.node-header--settings + .ghost-button:hover {
-  border-color: rgba(139, 92, 246, 0.45);
-}
-
-/* ---------- Project summary and item nodes ---------- */
-.project-summary {
-  display: grid;
-  gap: 4px;
-  margin-top: 18px;
-  border: 1px solid var(--card-border);
-  border-radius: 10px;
-  background: rgba(2, 6, 23, 0.35);
-  padding: 12px;
-  pointer-events: none;
-}
-
-.project-summary strong {
-  color: var(--accent-projects);
-  font-size: 24px;
-  line-height: 1;
-}
-
-.project-item-node__header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  height: 100%;
-}
-
-.project-item-node__main {
-  display: grid;
-  align-content: center;
-  min-width: 0;
-  height: 100%;
-  gap: 4px;
-  border: 0;
-  background: transparent;
-  color: var(--text-strong);
-  cursor: pointer;
-  padding: 0;
-  text-align: left;
-}
-
-.project-item-node__delete {
-  align-self: center;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid rgba(251, 113, 133, 0.28);
-  border-radius: 9px;
-  background: rgba(127, 29, 29, 0.18);
-  color: #fb7185;
-  cursor: pointer;
-  padding: 0;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    color 160ms ease;
-}
-
-.project-item-node__delete:hover {
-  border-color: rgba(251, 113, 133, 0.55);
-  background: rgba(127, 29, 29, 0.34);
-  color: #fecdd3;
-}
-
-.project-item-node__delete:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.project-item-node__main span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.project-item-node__main small {
-  overflow: hidden;
-  color: var(--text-soft);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ---------- Model settings ---------- */
-.model-config-grid {
-  display: grid;
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.model-config-tier {
-  display: grid;
-  gap: 10px;
-  border: 1px solid rgba(249, 115, 22, 0.18);
-  border-radius: 12px;
-  background: rgba(2, 6, 23, 0.28);
-  padding: 12px;
-}
-
-.model-config-tier > strong {
-  color: var(--text-strong);
-  font-size: 13px;
-}
-
-.model-config-tier label {
-  display: grid;
-  gap: 6px;
-}
-
-.model-config-tier label > span {
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.model-config-tier .model-select__trigger {
-  min-width: 0;
-  width: 100%;
-}
-
-.model-select {
-  position: relative;
-}
-
-.model-select__trigger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  min-width: 0;
-  border: 1px solid var(--card-border);
-  border-radius: 10px;
-  background: rgba(2, 6, 23, 0.52);
-  color: var(--text-strong);
-  padding: 9px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  outline: none;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    box-shadow 160ms ease;
-}
-
-.model-select__trigger span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-select__trigger:hover:not(:disabled) {
-  border-color: var(--card-border-strong);
-  background: rgba(2, 6, 23, 0.62);
-}
-
-.model-select__trigger:focus,
-.model-select__trigger--open {
-  border-color: var(--accent-model);
-  background: rgba(2, 6, 23, 0.62);
-  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.18);
-}
-
-.model-select__trigger:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.model-select__trigger svg {
-  flex: 0 0 auto;
-  color: var(--text-soft);
-  transition: transform 160ms ease;
-}
-
-.model-select__trigger--open svg {
-  transform: rotate(180deg);
-}
-
-.model-select__dropdown {
-  position: absolute;
-  z-index: 100;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  margin: 0;
-  padding: 6px;
-  list-style: none;
-  border: 1px solid rgba(249, 115, 22, 0.25);
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.96);
-  backdrop-filter: blur(16px);
-  box-shadow:
-    var(--shadow-card),
-    0 0 24px rgba(249, 115, 22, 0.15);
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-.model-select__option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  color: var(--text-soft);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background 120ms ease,
-    color 120ms ease;
-}
-
-.model-select__option:hover,
-.model-select__option--highlighted {
-  background: rgba(249, 115, 22, 0.15);
-  color: var(--text-strong);
-}
-
-.model-select__option--selected {
-  color: #ffedd5;
-}
-
-.model-select__option svg {
-  flex: 0 0 auto;
-  color: var(--accent-model);
-}
-
-.model-select__option span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-notice {
-  margin: 14px 0 0;
-  color: #fed7aa;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.model-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.model-actions__close,
-.model-actions__save {
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 800;
-  padding: 9px 12px;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    color 160ms ease,
-    opacity 160ms ease,
-    transform 160ms ease;
-}
-
-.model-actions__close:disabled,
-.model-actions__save:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-  transform: none;
-}
-
-.model-actions__close {
-  border: 1px solid rgba(249, 115, 22, 0.35);
-  background: rgba(2, 6, 23, 0.4);
-  color: var(--text-soft);
-}
-
-.model-actions__close:hover:not(:disabled) {
-  border-color: rgba(249, 115, 22, 0.65);
-  background: rgba(249, 115, 22, 0.12);
-  color: #ffedd5;
-}
-
-.model-actions__save {
-  border: 1px solid rgba(249, 115, 22, 0.55);
-  background: rgba(249, 115, 22, 0.88);
-  color: #fff7ed;
-  box-shadow: 0 4px 16px rgba(249, 115, 22, 0.28);
-}
-
-.model-actions__save:hover:not(:disabled) {
-  border-color: rgba(249, 115, 22, 0.85);
-  background: #ea580c;
-  transform: translateY(-1px);
-}
-
-.empty-state {
-  border: 1px dashed var(--card-border-strong);
-  border-radius: 10px;
-  background: rgba(2, 6, 23, 0.3);
-  color: var(--text-muted);
-  margin-top: 18px;
-  padding: 20px 14px;
-  font-size: 12px;
-  text-align: center;
-}
-
-/* ---------- Delete confirmation ---------- */
-.delete-detail {
-  display: grid;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.delete-detail div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  border: 1px solid var(--card-border);
-  border-radius: 10px;
-  background: rgba(2, 6, 23, 0.35);
-  padding: 8px 10px;
-}
-
-.delete-detail span {
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.delete-detail strong {
-  overflow: hidden;
-  color: var(--text-strong);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.delete-warning {
-  margin: 12px 0 0;
-  color: #fecdd3;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.delete-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.delete-actions button {
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 800;
-  padding: 9px 12px;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    color 160ms ease,
-    opacity 160ms ease,
-    transform 160ms ease;
-}
-
-.delete-actions button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-  transform: none;
-}
-
-.delete-actions__cancel {
-  border: 1px solid var(--card-border);
-  background: rgba(2, 6, 23, 0.4);
-  color: var(--text-soft);
-}
-
-.delete-actions__cancel:hover {
-  border-color: var(--card-border-strong);
-  color: var(--text-strong);
-}
-
-.delete-actions__confirm {
-  border: 1px solid rgba(251, 113, 133, 0.45);
-  background: rgba(190, 18, 60, 0.82);
-  color: #fff1f2;
-  box-shadow: 0 4px 16px rgba(190, 18, 60, 0.3);
-}
-
-.delete-actions__confirm:hover {
-  border-color: rgba(251, 113, 133, 0.75);
-  background: rgba(225, 29, 72, 0.9);
-  transform: translateY(-1px);
-}
-
-/* ---------- React Flow helpers ---------- */
-.hidden-handle {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.node-link-handle {
-  width: 10px;
-  height: 10px;
-  border: 2px solid rgba(15, 23, 42, 0.95);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.18),
-    0 0 12px color-mix(in srgb, currentColor 55%, transparent);
-  opacity: 1;
-  pointer-events: none;
-}
-
-.node-link-handle--flow {
-  background: var(--accent-projects);
-  color: var(--accent-projects);
-}
-
-.node-link-handle--danger {
-  background: var(--accent-danger);
-  color: var(--accent-danger);
-}
-
-.node-link-handle--model {
-  background: var(--accent-model);
-  color: var(--accent-model);
-}
-
-.react-flow__controls {
-  overflow: hidden;
-  border: 1px solid var(--card-border-strong);
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.9);
-  box-shadow: var(--shadow-card);
-}
-
-.react-flow__controls-button {
-  width: 32px;
-  height: 32px;
-  border-bottom: 1px solid var(--card-border);
-  background: rgba(15, 23, 42, 0.92);
-  color: var(--text-soft);
-  fill: var(--text-soft);
-}
-
-.react-flow__controls-button:hover {
-  background: rgba(30, 41, 59, 0.96);
-  color: var(--text-strong);
-  fill: var(--text-strong);
-}
-
-.react-flow__controls-button svg {
-  fill: currentColor;
-  stroke: currentColor;
-}
-
-.react-flow__controls-button path {
-  fill: currentColor;
-}
-
-.react-flow__attribution {
-  display: none;
-}
-
-@media (max-width: 760px) {
   .toolbar {
-    align-items: flex-start;
-    flex-direction: column;
-    padding: 18px;
+    @apply flex items-center justify-between gap-4 px-7 pt-5 pb-3.5;
+  }
+
+  .toolbar h1 {
+    @apply m-0 text-[22px] leading-tight font-bold;
+    color: var(--text-strong);
+  }
+
+  .toolbar p {
+    @apply mt-1 mb-0 text-[13px];
+    color: var(--text-soft);
+  }
+
+  .status-pill {
+    @apply rounded-full border px-3 py-1.5 text-xs font-semibold backdrop-blur;
+    border-color: var(--card-border-strong);
+    background: var(--panel-bg);
+    color: var(--text-soft);
   }
 
   .canvas-shell {
-    margin: 0 12px 12px;
-    min-height: 660px;
-    border-radius: 14px;
+    @apply mx-6 mb-6 min-h-[620px] overflow-hidden rounded-[20px] border;
+    border-color: var(--card-border);
+    background:
+      radial-gradient(
+        circle at 24px 24px,
+        var(--canvas-dot) 1.5px,
+        transparent 1.5px
+      ),
+      var(--canvas-bg);
+    background-size: 28px 28px;
+    box-shadow:
+      inset 0 0 60px rgba(0, 0, 0, 0.12),
+      0 0 0 1px rgba(255, 255, 255, 0.04);
   }
 
-  .node-card,
-  .node-card--projects,
+  .node-card {
+    @apply relative min-h-[134px] w-[252px] overflow-hidden rounded-[18px] border p-4 backdrop-blur transition duration-200;
+    border-color: var(--card-border);
+    background: var(--card-bg);
+    box-shadow: var(--shadow-card);
+  }
+
+  .node-card:hover {
+    border-color: var(--card-border-strong);
+    background: var(--card-bg-hover);
+    box-shadow: var(--shadow-hover);
+    transform: translateY(-2px);
+  }
+
+  .node-card--create {
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px var(--glow-create);
+  }
+
+  .node-card--projects {
+    @apply h-full min-h-[154px] w-full;
+    box-shadow:
+      var(--shadow-card),
+      0 0 32px var(--glow-projects);
+  }
+
   .node-card--project-item {
-    width: 280px;
+    @apply h-full min-h-0 w-full px-3 py-2.5;
+    box-shadow:
+      var(--shadow-card),
+      0 0 24px color-mix(in srgb, var(--accent-projects) 22%, transparent);
+  }
+
+  .node-card--style-settings,
+  .node-card--summary {
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px var(--glow-style);
+  }
+
+  .node-card--delete-confirm {
+    @apply min-h-[360px] w-[300px];
+    box-shadow:
+      var(--shadow-card),
+      0 0 30px var(--glow-danger);
+  }
+
+  .node-card--model-config {
+    @apply min-h-[480px] w-[360px] overflow-visible;
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px var(--glow-model);
+  }
+
+  .node-card--project-back {
+    @apply min-h-[130px] w-[260px];
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px var(--glow-projects);
+  }
+
+  .node-card--requirement-list {
+    @apply min-h-[360px] w-[290px];
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px color-mix(in srgb, var(--accent-projects) 18%, transparent);
+  }
+
+  .node-card--requirement-chat {
+    @apply min-h-[560px] w-[560px];
+    box-shadow:
+      var(--shadow-card),
+      0 0 32px var(--glow-model);
+  }
+
+  .node-card--pending-delete {
+    border-color: color-mix(in srgb, var(--accent-danger) 55%, transparent);
+    background: color-mix(in srgb, var(--accent-danger) 18%, var(--card-bg));
+    box-shadow:
+      var(--shadow-hover),
+      0 0 36px var(--glow-danger);
+  }
+
+  .node-header {
+    @apply flex min-w-0 items-start gap-3;
+  }
+
+  .node-icon {
+    @apply relative flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px] border;
+    border-color: color-mix(in srgb, currentColor 30%, transparent);
+    background: color-mix(in srgb, currentColor 14%, transparent);
+    box-shadow: 0 0 12px color-mix(in srgb, currentColor 18%, transparent);
+  }
+
+  .node-icon svg {
+    @apply absolute top-1/2 left-1/2 h-[18px] w-[18px] -translate-x-1/2 -translate-y-1/2;
+  }
+
+  .node-header--create .node-icon {
+    color: var(--accent-create);
+  }
+
+  .node-header--projects .node-icon {
+    color: var(--accent-projects);
+  }
+
+  .node-header--style .node-icon {
+    color: var(--accent-style);
+  }
+
+  .node-header--model .node-icon {
+    color: var(--accent-model);
+  }
+
+  .node-header--danger .node-icon {
+    color: var(--accent-danger);
+  }
+
+  .node-header > div:last-child {
+    @apply min-w-0;
+  }
+
+  .node-header strong {
+    @apply block overflow-hidden text-ellipsis whitespace-nowrap text-[13px] leading-tight font-bold;
+    color: var(--text-strong);
+  }
+
+  .node-header span {
+    @apply mt-1 block overflow-hidden text-ellipsis whitespace-nowrap text-[11px] leading-snug;
+    color: var(--text-soft);
+  }
+
+  .create-form {
+    @apply mt-[18px] grid grid-cols-[1fr_auto] gap-2;
+  }
+
+  .create-form input,
+  .requirement-input textarea {
+    @apply min-w-0 rounded-[10px] border px-3 py-2.5 text-xs outline-none transition;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 56%, transparent);
+    color: var(--text-strong);
+  }
+
+  .create-form input::placeholder,
+  .requirement-input textarea::placeholder {
+    color: var(--text-muted);
+  }
+
+  .create-form input:focus,
+  .requirement-input textarea:focus {
+    border-color: var(--accent-create);
+    box-shadow: 0 0 0 3px
+      color-mix(in srgb, var(--accent-create) 20%, transparent);
+  }
+
+  .create-form__git {
+    @apply col-span-full;
+  }
+
+  .create-form button,
+  .ghost-button,
+  .theme-switcher button,
+  .delete-actions button,
+  .model-actions button,
+  .requirement-input button,
+  .requirement-draft button {
+    @apply cursor-pointer rounded-[10px] border-0 px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
+  }
+
+  .create-form button {
+    @apply col-span-full text-white;
+    background: var(--accent-create);
+    box-shadow: 0 4px 14px
+      color-mix(in srgb, var(--accent-create) 35%, transparent);
+  }
+
+  .form-error {
+    @apply mt-2.5 mb-0 text-xs;
+    color: var(--accent-danger);
+  }
+
+  .ghost-button {
+    @apply mt-[22px] w-full border;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 45%, transparent);
+    color: var(--text-soft);
+  }
+
+  .ghost-button:hover {
+    border-color: var(--card-border-strong);
+    color: var(--text-strong);
+  }
+
+  .theme-switcher {
+    @apply mt-[22px] grid grid-cols-2 gap-2 rounded-xl border p-1;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 36%, transparent);
+  }
+
+  .theme-switcher button {
+    @apply inline-flex items-center justify-center gap-1.5 border;
+    border-color: transparent;
+    color: var(--text-soft);
+  }
+
+  .theme-switcher__item--active {
+    border-color: color-mix(
+      in srgb,
+      var(--accent-style) 45%,
+      transparent
+    ) !important;
+    background: color-mix(
+      in srgb,
+      var(--accent-style) 18%,
+      transparent
+    ) !important;
+    color: var(--text-strong) !important;
+  }
+
+  .project-summary {
+    @apply pointer-events-none mt-[18px] grid gap-1 rounded-[10px] border p-3;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 35%, transparent);
+  }
+
+  .project-summary strong {
+    @apply text-2xl leading-none;
+    color: var(--accent-projects);
+  }
+
+  .project-item-node__header {
+    @apply grid h-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2;
+  }
+
+  .project-item-node__main {
+    @apply grid h-full min-w-0 content-center gap-1 border-0 bg-transparent p-0 text-left;
+    color: var(--text-strong);
+  }
+
+  .project-item-node__delete {
+    @apply flex h-[30px] w-[30px] items-center justify-center self-center rounded-[9px] border p-0;
+    border-color: color-mix(in srgb, var(--accent-danger) 28%, transparent);
+    background: color-mix(in srgb, var(--accent-danger) 16%, transparent);
+    color: var(--accent-danger);
+  }
+
+  .project-item-node__main span,
+  .project-item-node__main small {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  .project-item-node__main span {
+    @apply text-xs font-bold;
+  }
+
+  .project-item-node__main small {
+    @apply text-[11px];
+    color: var(--text-soft);
+  }
+
+  .model-config-grid,
+  .requirement-list,
+  .delete-detail {
+    @apply mt-4 grid gap-3;
+  }
+
+  .model-config-tier,
+  .requirement-list__item,
+  .delete-detail div,
+  .requirement-message,
+  .requirement-draft {
+    @apply grid min-w-0 gap-2 rounded-xl border p-3;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 32%, transparent);
+  }
+
+  .model-config-tier > strong,
+  .requirement-list__item strong,
+  .delete-detail strong,
+  .requirement-draft strong,
+  .requirement-empty strong {
+    @apply text-[13px] font-bold;
+    color: var(--text-strong);
+  }
+
+  .model-config-tier label {
+    @apply grid gap-1.5;
+  }
+
+  .model-config-tier label > span,
+  .delete-detail span,
+  .requirement-message strong {
+    @apply text-[10px] font-bold;
+    color: var(--text-muted);
+  }
+
+  .model-select {
+    @apply relative;
+  }
+
+  .model-select__trigger {
+    @apply flex w-full items-center justify-between gap-2 rounded-[10px] border px-2.5 py-2 text-left text-xs outline-none;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 52%, transparent);
+    color: var(--text-strong);
+  }
+
+  .model-select__dropdown {
+    @apply absolute top-[calc(100%+6px)] left-0 z-20 grid max-h-48 w-full gap-1 overflow-y-auto rounded-xl border p-1;
+    border-color: var(--card-border-strong);
+    background: var(--card-bg-hover);
+    box-shadow: var(--shadow-hover);
+  }
+
+  .model-select__option {
+    @apply flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs;
+    color: var(--text-soft);
+  }
+
+  .model-select__option--selected,
+  .model-select__option--highlighted {
+    background: color-mix(in srgb, var(--accent-model) 16%, transparent);
+    color: var(--text-strong);
+  }
+
+  .model-notice,
+  .delete-warning {
+    @apply mt-3.5 mb-0 text-xs leading-normal;
+    color: color-mix(in srgb, var(--accent-model) 72%, var(--text-strong));
+  }
+
+  .model-actions,
+  .delete-actions {
+    @apply mt-4 grid grid-cols-2 gap-2;
+  }
+
+  .model-actions__close,
+  .delete-actions__cancel {
+    @apply border;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 40%, transparent);
+    color: var(--text-soft);
+  }
+
+  .model-actions__save,
+  .delete-actions__confirm,
+  .requirement-input button,
+  .requirement-draft button {
+    @apply inline-flex items-center justify-center gap-1.5 text-white;
+    border-color: color-mix(in srgb, var(--accent-danger) 45%, transparent);
+    background: var(--accent-danger);
+  }
+
+  .model-actions__save {
+    background: var(--accent-model);
+  }
+
+  .requirement-chat {
+    @apply mt-4 grid gap-3.5;
+  }
+
+  .requirement-empty {
+    @apply grid justify-items-center gap-2 rounded-[14px] border border-dashed px-5 py-10 text-center;
+    border-color: var(--card-border-strong);
+    background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
+    color: var(--text-muted);
+  }
+
+  .requirement-messages {
+    @apply grid max-h-[260px] gap-2.5 overflow-y-auto pr-1;
+  }
+
+  .requirement-message--user {
+    border-color: color-mix(in srgb, var(--accent-create) 28%, transparent);
+  }
+
+  .requirement-message--assistant,
+  .requirement-draft {
+    border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
+  }
+
+  .requirement-message--system {
+    border-color: color-mix(in srgb, var(--accent-danger) 28%, transparent);
+  }
+
+  .requirement-message p,
+  .requirement-draft p {
+    @apply m-0 text-xs leading-relaxed whitespace-pre-wrap;
+    color: var(--text-soft);
+  }
+
+  .requirement-draft ul {
+    @apply m-0 grid gap-1.5 pl-5 text-xs leading-normal;
+    color: var(--text-soft);
+  }
+
+  .requirement-input {
+    @apply grid grid-cols-[minmax(0,1fr)_92px] gap-2.5;
+  }
+
+  .requirement-input textarea {
+    @apply min-h-[76px] resize-y rounded-xl;
+  }
+}
+
+@layer utilities {
+  .react-flow__node-startNode {
+    visibility: visible !important;
+  }
+
+  .node-link-handle {
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(15, 23, 42, 0.95);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.18),
+      0 0 12px color-mix(in srgb, currentColor 55%, transparent);
+    opacity: 1;
+    pointer-events: none;
+  }
+
+  .node-link-handle--flow {
+    background: var(--accent-projects);
+    color: var(--accent-projects);
+  }
+
+  .node-link-handle--danger {
+    background: var(--accent-danger);
+    color: var(--accent-danger);
+  }
+
+  .node-link-handle--model {
+    background: var(--accent-model);
+    color: var(--accent-model);
+  }
+
+  .react-flow__controls {
+    overflow: hidden;
+    border: 1px solid var(--card-border-strong);
+    border-radius: 12px;
+    background: var(--card-bg);
+    box-shadow: var(--shadow-card);
+  }
+
+  .react-flow__controls-button {
+    width: 32px;
+    height: 32px;
+    border-bottom: 1px solid var(--card-border);
+    background: var(--card-bg);
+    color: var(--text-soft);
+    fill: var(--text-soft);
+  }
+
+  .react-flow__controls-button:hover {
+    background: var(--card-bg-hover);
+    color: var(--text-strong);
+    fill: var(--text-strong);
+  }
+
+  .react-flow__controls-button svg,
+  .react-flow__controls-button path {
+    fill: currentColor;
+    stroke: currentColor;
+  }
+
+  .react-flow__attribution {
+    display: none;
+  }
+
+  @media (max-width: 760px) {
+    .toolbar {
+      @apply flex-col items-start px-[18px] pt-[18px];
+    }
+
+    .canvas-shell {
+      @apply mx-3 mb-3 min-h-[660px] rounded-[14px];
+    }
+
+    .node-card,
+    .node-card--projects,
+    .node-card--project-item {
+      width: 280px;
+    }
   }
 }

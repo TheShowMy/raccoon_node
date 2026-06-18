@@ -19,12 +19,18 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import {
+  ArrowLeft,
   Check,
+  CheckCircle2,
   ChevronDown,
+  Clock,
   FolderPlus,
   ListTree,
-  Settings,
+  MessageSquare,
+  Moon,
+  Send,
   SlidersHorizontal,
+  SunMedium,
   TriangleAlert,
   Trash2,
 } from "lucide-react";
@@ -40,6 +46,9 @@ const PROJECT_ITEM_GAP = 12;
 const PROJECT_LIST_Y = 320;
 const DELETE_CONFIRM_MIN_Y = 80;
 const DELETE_CONFIRM_MAX_Y = 320;
+const THEME_STORAGE_KEY = "raccoon-node-theme";
+
+type ThemeMode = "dark" | "light";
 
 type Project = {
   id: string;
@@ -60,6 +69,48 @@ type StartData = {
   settings_summary: SummaryNode;
   model_summary: SummaryNode;
   model_settings: ModelSettings;
+};
+
+type RequirementStatus =
+  | "analyzing"
+  | "clarifying"
+  | "draft_ready"
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed";
+
+type RequirementMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+  created_at: string;
+};
+
+type RequirementDraft = {
+  title: string;
+  summary: string;
+  acceptance_criteria: string[];
+};
+
+type Requirement = {
+  id: string;
+  project_id: string;
+  title: string;
+  original_message: string;
+  status: RequirementStatus;
+  messages: RequirementMessage[];
+  draft: RequirementDraft | null;
+  pi_session_file: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ProjectCanvasData = {
+  project: Project;
+  active_requirement: Requirement | null;
+  queued_requirements: Requirement[];
+  completed_requirements: Requirement[];
 };
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -102,6 +153,7 @@ type StartNodeData =
       project: Project;
       deletingId: string | null;
       pendingDeleteProjectId: string | null;
+      onOpenProject: (project: Project) => void;
       onDeleteRequest: (project: Project) => void;
     }
   | {
@@ -124,19 +176,48 @@ type StartNodeData =
       onSave: () => Promise<void>;
     }
   | {
+      kind: "style-settings";
+      theme: ThemeMode;
+      onThemeChange: (theme: ThemeMode) => void;
+    }
+  | {
       kind: "summary";
       title: string;
       description: string;
-      icon: "settings" | "model";
+      icon: "model";
       actionLabel?: string;
       onAction?: () => void;
+    }
+  | {
+      kind: "project-back";
+      project: Project;
+      onBack: () => void;
+    }
+  | {
+      kind: "requirement-list";
+      title: string;
+      description: string;
+      requirements: Requirement[];
+      emptyText: string;
+      tone: "done" | "pending";
+    }
+  | {
+      kind: "requirement-chat";
+      project: Project;
+      requirement: Requirement | null;
+      input: string;
+      busy: boolean;
+      error: string | null;
+      onInputChange: (value: string) => void;
+      onSend: () => Promise<void>;
+      onConfirm: (requirement: Requirement) => Promise<void>;
     };
 
 const emptyStartData: StartData = {
   projects: [],
   settings_summary: {
-    title: "设置",
-    description: "基础设置待配置",
+    title: "样式设置",
+    description: "暗色主题",
   },
   model_summary: {
     title: "模型设置",
@@ -194,9 +275,9 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
       ) : null}
       {hasModelTargetHandle ? (
         <Handle
-          id="model-right"
+          id="model-left"
           type="target"
-          position={Position.Right}
+          position={Position.Left}
           className="node-link-handle node-link-handle--model"
         />
       ) : null}
@@ -209,7 +290,17 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
         <DeleteConfirmNode data={data} />
       ) : null}
       {data.kind === "model-config" ? <ModelConfigNode data={data} /> : null}
+      {data.kind === "style-settings" ? (
+        <StyleSettingsNode data={data} />
+      ) : null}
       {data.kind === "summary" ? <SummaryCard data={data} /> : null}
+      {data.kind === "project-back" ? <ProjectBackNode data={data} /> : null}
+      {data.kind === "requirement-list" ? (
+        <RequirementListNode data={data} />
+      ) : null}
+      {data.kind === "requirement-chat" ? (
+        <RequirementChatNode data={data} />
+      ) : null}
       {hasDeleteRightHandle ? (
         <Handle
           id="delete-right"
@@ -329,7 +420,11 @@ function ProjectItemNode({
   return (
     <>
       <div className="project-item-node__header">
-        <button className="project-item-node__main" type="button">
+        <button
+          className="project-item-node__main"
+          type="button"
+          onClick={() => data.onOpenProject(data.project)}
+        >
           <span>{data.project.name}</span>
           <small title={data.project.git_url}>
             {shortenGitUrl(data.project.git_url)}
@@ -702,12 +797,11 @@ function SummaryCard({
 }: {
   data: Extract<StartNodeData, { kind: "summary" }>;
 }) {
-  const Icon = data.icon === "settings" ? Settings : SlidersHorizontal;
   return (
     <>
       <div className={`node-header node-header--${data.icon}`}>
         <span className="node-icon">
-          <Icon size={20} />
+          <SlidersHorizontal size={20} />
         </span>
         <div>
           <strong>{data.title}</strong>
@@ -721,8 +815,230 @@ function SummaryCard({
   );
 }
 
+function StyleSettingsNode({
+  data,
+}: {
+  data: Extract<StartNodeData, { kind: "style-settings" }>;
+}) {
+  return (
+    <>
+      <div className="node-header node-header--style">
+        <span className="node-icon">
+          {data.theme === "dark" ? <Moon size={20} /> : <SunMedium size={20} />}
+        </span>
+        <div>
+          <strong>样式设置</strong>
+          <span>{data.theme === "dark" ? "暗色主题" : "护眼亮色主题"}</span>
+        </div>
+      </div>
+      <div className="theme-switcher" aria-label="样式主题">
+        <button
+          className={
+            data.theme === "light" ? "theme-switcher__item--active" : ""
+          }
+          type="button"
+          onClick={() => data.onThemeChange("light")}
+        >
+          <SunMedium size={14} />
+          亮色
+        </button>
+        <button
+          className={
+            data.theme === "dark" ? "theme-switcher__item--active" : ""
+          }
+          type="button"
+          onClick={() => data.onThemeChange("dark")}
+        >
+          <Moon size={14} />
+          暗色
+        </button>
+      </div>
+    </>
+  );
+}
+
+function ProjectBackNode({
+  data,
+}: {
+  data: Extract<StartNodeData, { kind: "project-back" }>;
+}) {
+  return (
+    <>
+      <div className="node-header node-header--projects">
+        <span className="node-icon">
+          <ArrowLeft size={20} />
+        </span>
+        <div>
+          <strong>{data.project.name}</strong>
+          <span>项目画布</span>
+        </div>
+      </div>
+      <button className="ghost-button" type="button" onClick={data.onBack}>
+        返回 Start
+      </button>
+    </>
+  );
+}
+
+function RequirementListNode({
+  data,
+}: {
+  data: Extract<StartNodeData, { kind: "requirement-list" }>;
+}) {
+  const Icon = data.tone === "done" ? CheckCircle2 : Clock;
+  return (
+    <>
+      <div
+        className={`node-header ${
+          data.tone === "done" ? "node-header--projects" : "node-header--create"
+        }`}
+      >
+        <span className="node-icon">
+          <Icon size={20} />
+        </span>
+        <div>
+          <strong>{data.title}</strong>
+          <span>{data.description}</span>
+        </div>
+      </div>
+      {data.requirements.length === 0 ? (
+        <div className="empty-state">{data.emptyText}</div>
+      ) : (
+        <div className="requirement-list">
+          {data.requirements.map((requirement) => (
+            <div className="requirement-list__item" key={requirement.id}>
+              <strong>{requirement.title}</strong>
+              <span>{requirementStatusText(requirement.status)}</span>
+              <small>更新于 {formatDate(requirement.updated_at)}</small>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function RequirementChatNode({
+  data,
+}: {
+  data: Extract<StartNodeData, { kind: "requirement-chat" }>;
+}) {
+  const requirement = data.requirement;
+  const canConfirm = requirement?.status === "draft_ready" && requirement.draft;
+  const canSend =
+    !data.busy &&
+    data.input.trim().length > 0 &&
+    (!requirement ||
+      ["analyzing", "clarifying", "draft_ready", "failed"].includes(
+        requirement.status,
+      ));
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (canSend) {
+      await data.onSend();
+    }
+  }
+
+  return (
+    <>
+      <div className="node-header node-header--model">
+        <span className="node-icon">
+          <MessageSquare size={20} />
+        </span>
+        <div>
+          <strong>需求</strong>
+          <span>
+            {requirement
+              ? requirementStatusText(requirement.status)
+              : "新的需求会话"}
+          </span>
+        </div>
+      </div>
+      <div className="requirement-chat">
+        {requirement ? (
+          <div className="requirement-messages">
+            {requirement.messages.map((message) => (
+              <div
+                className={`requirement-message requirement-message--${message.role}`}
+                key={`${message.role}-${message.created_at}-${message.content}`}
+              >
+                <strong>{requirementMessageRoleText(message.role)}</strong>
+                <p>{message.content}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="requirement-empty">
+            <MessageSquare size={24} />
+            <strong>新的需求会话</strong>
+            <span>描述你的需求，Coordinator 会先澄清并生成确认卡片。</span>
+          </div>
+        )}
+
+        {requirement?.draft ? (
+          <div className="requirement-draft">
+            <div>
+              <strong>{requirement.draft.title}</strong>
+              <p>{requirement.draft.summary}</p>
+            </div>
+            <ul>
+              {requirement.draft.acceptance_criteria.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+            <button
+              className="model-actions__save"
+              type="button"
+              disabled={data.busy || !canConfirm}
+              onClick={() => requirement && void data.onConfirm(requirement)}
+            >
+              确认并加入执行队列
+            </button>
+          </div>
+        ) : null}
+
+        {requirement?.error ? (
+          <p className="form-error">{requirement.error}</p>
+        ) : null}
+        {data.error ? <p className="form-error">{data.error}</p> : null}
+
+        <form className="requirement-input" onSubmit={submit}>
+          <textarea
+            value={data.input}
+            disabled={data.busy}
+            onChange={(event) => data.onInputChange(event.target.value)}
+            placeholder={
+              requirement
+                ? "补充说明你的需求..."
+                : "描述你的需求，Coordinator 会用聊天形式澄清..."
+            }
+          />
+          <button type="submit" disabled={!canSend}>
+            <Send size={15} />
+            {data.busy ? "分析中" : "发送"}
+          </button>
+        </form>
+      </div>
+    </>
+  );
+}
+
 function App() {
+  const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme());
   const [startData, setStartData] = useState<StartData>(emptyStartData);
+  const [currentCanvas, setCurrentCanvas] = useState<"start" | "project">(
+    "start",
+  );
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    null,
+  );
+  const [projectCanvas, setProjectCanvas] = useState<ProjectCanvasData | null>(
+    null,
+  );
+  const [requirementInput, setRequirementInput] = useState("");
+  const [requirementBusy, setRequirementBusy] = useState(false);
+  const [requirementError, setRequirementError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -741,6 +1057,10 @@ function App() {
   const [modelError, setModelError] = useState<string | null>(null);
   const [savingModels, setSavingModels] = useState(false);
 
+  useEffect(() => {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
   const loadStart = useCallback(async () => {
     const response = await fetch("/api/start");
     if (!response.ok) {
@@ -753,6 +1073,44 @@ function App() {
     loadStart()
       .catch((reason: unknown) => setError(readError(reason)))
       .finally(() => setLoading(false));
+  }, [loadStart]);
+
+  const loadProjectCanvas = useCallback(async (projectId: string) => {
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/canvas`,
+    );
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as {
+        message?: string;
+      } | null;
+      throw new Error(body?.message ?? "读取项目画布失败");
+    }
+    const data = (await response.json()) as ProjectCanvasData;
+    setProjectCanvas(data);
+    return data;
+  }, []);
+
+  const openProjectCanvas = useCallback(
+    (project: Project) => {
+      setCurrentCanvas("project");
+      setSelectedProjectId(project.id);
+      setProjectCanvas(null);
+      setRequirementInput("");
+      setRequirementError(null);
+      void loadProjectCanvas(project.id).catch((reason) =>
+        setRequirementError(readError(reason)),
+      );
+    },
+    [loadProjectCanvas],
+  );
+
+  const backToStartCanvas = useCallback(() => {
+    setCurrentCanvas("start");
+    setSelectedProjectId(null);
+    setProjectCanvas(null);
+    setRequirementInput("");
+    setRequirementError(null);
+    void loadStart();
   }, [loadStart]);
 
   const loadModelSettings = useCallback(async () => {
@@ -901,21 +1259,142 @@ function App() {
     [loadStart],
   );
 
+  const sendRequirementMessage = useCallback(async () => {
+    const message = requirementInput.trim();
+    if (!message || !selectedProjectId) {
+      return;
+    }
+
+    setRequirementBusy(true);
+    setRequirementError(null);
+    try {
+      const active = projectCanvas?.active_requirement;
+      const url = active
+        ? `/api/requirements/${encodeURIComponent(active.id)}/messages`
+        : `/api/projects/${encodeURIComponent(selectedProjectId)}/requirements`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ message }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          message?: string;
+        } | null;
+        throw new Error(body?.message ?? "提交需求失败");
+      }
+      setProjectCanvas((await response.json()) as ProjectCanvasData);
+      setRequirementInput("");
+    } catch (reason) {
+      setRequirementError(readError(reason));
+    } finally {
+      setRequirementBusy(false);
+    }
+  }, [projectCanvas, requirementInput, selectedProjectId]);
+
+  const confirmRequirement = useCallback(async (requirement: Requirement) => {
+    setRequirementBusy(true);
+    setRequirementError(null);
+    try {
+      const response = await fetch(
+        `/api/requirements/${encodeURIComponent(requirement.id)}/confirm`,
+        {
+          method: "POST",
+        },
+      );
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          message?: string;
+        } | null;
+        throw new Error(body?.message ?? "确认需求失败");
+      }
+      setProjectCanvas((await response.json()) as ProjectCanvasData);
+    } catch (reason) {
+      setRequirementError(readError(reason));
+    } finally {
+      setRequirementBusy(false);
+    }
+  }, []);
+
   const nodes = useMemo<Node<StartNodeData>[]>(() => {
+    if (currentCanvas === "project") {
+      const fallbackProject = selectedProjectId
+        ? startData.projects.find((project) => project.id === selectedProjectId)
+        : null;
+      const project = projectCanvas?.project ?? fallbackProject;
+      if (!project) {
+        return [];
+      }
+
+      return [
+        {
+          id: "project-back",
+          type: "startNode",
+          position: { x: -260, y: 20 },
+          data: {
+            kind: "project-back",
+            project,
+            onBack: backToStartCanvas,
+          },
+        },
+        {
+          id: "completed-requirements",
+          type: "startNode",
+          position: { x: -260, y: 210 },
+          data: {
+            kind: "requirement-list",
+            title: "已完成需求",
+            description: `${projectCanvas?.completed_requirements.length ?? 0} 个`,
+            requirements: projectCanvas?.completed_requirements ?? [],
+            emptyText: "暂无已完成需求",
+            tone: "done",
+          },
+        },
+        {
+          id: "requirement-chat",
+          type: "startNode",
+          position: { x: 130, y: 70 },
+          data: {
+            kind: "requirement-chat",
+            project,
+            requirement: projectCanvas?.active_requirement ?? null,
+            input: requirementInput,
+            busy: requirementBusy,
+            error: requirementError,
+            onInputChange: setRequirementInput,
+            onSend: sendRequirementMessage,
+            onConfirm: confirmRequirement,
+          },
+        },
+        {
+          id: "queued-requirements",
+          type: "startNode",
+          position: { x: 760, y: 210 },
+          data: {
+            kind: "requirement-list",
+            title: "待执行 / 执行中",
+            description: `${projectCanvas?.queued_requirements.length ?? 0} 个`,
+            requirements: projectCanvas?.queued_requirements ?? [],
+            emptyText: "确认需求后会进入这里",
+            tone: "pending",
+          },
+        },
+      ];
+    }
+
     const projectListHeight = getProjectListHeight(startData.projects.length);
 
     const baseNodes: Node<StartNodeData>[] = [
       {
-        id: "settings",
+        id: "style-settings",
         type: "startNode",
         position: { x: 80, y: 80 },
         data: {
-          kind: "summary",
-          icon: "settings",
-          title: startData.settings_summary.title,
-          description: startData.settings_summary.description,
-          actionLabel: "打开设置",
-          onAction: openModelSettings,
+          kind: "style-settings",
+          theme,
+          onThemeChange: setTheme,
         },
       },
       {
@@ -977,6 +1456,7 @@ function App() {
           project,
           deletingId,
           pendingDeleteProjectId: pendingDeleteProject?.id ?? null,
+          onOpenProject: openProjectCanvas,
           onDeleteRequest: requestDeleteProject,
         },
       });
@@ -1033,10 +1513,13 @@ function App() {
 
     return baseNodes;
   }, [
+    backToStartCanvas,
     cancelDeleteProject,
     confirmDeleteProject,
+    confirmRequirement,
     createProject,
     creating,
+    currentCanvas,
     deleteError,
     deletingId,
     draftModelSettings,
@@ -1046,16 +1529,28 @@ function App() {
     modelSettingsOpen,
     models,
     pendingDeleteProject,
+    projectCanvas,
+    openProjectCanvas,
     requestDeleteProject,
+    requirementBusy,
+    requirementError,
+    requirementInput,
     saveModelSettings,
+    selectedProjectId,
+    sendRequirementMessage,
     savingModels,
     setModelSettingsOpen,
     startData,
+    theme,
     openModelSettings,
     updateModelTier,
   ]);
 
   const edges = useMemo<Edge[]>(() => {
+    if (currentCanvas === "project") {
+      return [];
+    }
+
     const flowEdges: Edge[] = [
       {
         id: "create-project-to-project-list",
@@ -1095,7 +1590,7 @@ function App() {
         source: "model-settings",
         sourceHandle: "model-left-source",
         target: "model-config",
-        targetHandle: "model-right",
+        targetHandle: "model-left",
         type: "smoothstep",
         animated: true,
         style: {
@@ -1106,14 +1601,18 @@ function App() {
     }
 
     return flowEdges;
-  }, [modelSettingsOpen, pendingDeleteProject]);
+  }, [currentCanvas, modelSettingsOpen, pendingDeleteProject]);
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-theme={theme}>
       <section className="toolbar">
         <div>
           <h1>Raccoon Node</h1>
-          <p>Start 画布</p>
+          <p>
+            {currentCanvas === "project" && projectCanvas
+              ? `${projectCanvas.project.name} / 项目画布`
+              : "Start 画布"}
+          </p>
         </div>
         <div className="status-pill">{loading ? "加载中" : "已连接"}</div>
       </section>
@@ -1178,6 +1677,38 @@ function modelStatusText(status: "idle" | "loading" | "ready" | "error") {
     return "Pi Agent RPC 异常";
   }
   return "等待加载";
+}
+
+function requirementStatusText(status: RequirementStatus) {
+  const labels: Record<RequirementStatus, string> = {
+    analyzing: "分析中",
+    clarifying: "澄清中",
+    draft_ready: "待确认",
+    queued: "等待执行",
+    running: "执行中",
+    completed: "已完成",
+    failed: "分析失败",
+  };
+  return labels[status];
+}
+
+function requirementMessageRoleText(role: RequirementMessage["role"]) {
+  if (role === "user") {
+    return "你";
+  }
+  if (role === "assistant") {
+    return "Coordinator";
+  }
+  return "系统";
+}
+
+function readStoredTheme(): ThemeMode {
+  if (typeof window === "undefined") {
+    return "dark";
+  }
+  return window.localStorage.getItem(THEME_STORAGE_KEY) === "light"
+    ? "light"
+    : "dark";
 }
 
 createRoot(document.getElementById("root")!).render(

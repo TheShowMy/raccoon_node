@@ -47,6 +47,8 @@ struct JsonStore {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct AppData {
     projects: Vec<Project>,
+    #[serde(default)]
+    requirements: Vec<Requirement>,
     settings_summary: SummaryNode,
     model_summary: SummaryNode,
     #[serde(default)]
@@ -61,6 +63,63 @@ struct Project {
     local_path: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct Requirement {
+    id: String,
+    project_id: String,
+    title: String,
+    original_message: String,
+    status: RequirementStatus,
+    messages: Vec<RequirementMessage>,
+    draft: Option<RequirementDraft>,
+    pi_session_file: Option<String>,
+    error: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum RequirementStatus {
+    Analyzing,
+    Clarifying,
+    DraftReady,
+    Queued,
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct RequirementMessage {
+    role: RequirementMessageRole,
+    content: String,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum RequirementMessageRole {
+    User,
+    Assistant,
+    System,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct RequirementDraft {
+    title: String,
+    summary: String,
+    acceptance_criteria: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProjectCanvasResponse {
+    project: Project,
+    active_requirement: Option<Requirement>,
+    queued_requirements: Vec<Requirement>,
+    completed_requirements: Vec<Requirement>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -119,9 +178,31 @@ enum RpcStatus {
 
 type ModelProviderFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<PiModel>, AppError>> + Send + 'a>>;
+type RequirementAnalysisFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<RequirementAnalysisOutput, AppError>> + Send + 'a>>;
 
 trait ModelProvider: Send + Sync {
     fn available_models(&self) -> ModelProviderFuture<'_>;
+    fn analyze_requirement(&self, input: RequirementAnalysisInput)
+        -> RequirementAnalysisFuture<'_>;
+}
+
+#[derive(Debug, Clone)]
+struct RequirementAnalysisInput {
+    project: Project,
+    messages: Vec<RequirementMessage>,
+    draft: Option<RequirementDraft>,
+    model_settings: ModelSettings,
+    pi_session_file: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RequirementAnalysisOutput {
+    status: RequirementStatus,
+    assistant_message: String,
+    draft: Option<RequirementDraft>,
+    pi_session_file: Option<String>,
+    error: Option<String>,
 }
 
 struct PiRpcModelProvider {
@@ -140,6 +221,11 @@ struct PiRpcClient {
 struct CreateProjectRequest {
     name: String,
     git_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RequirementMessageRequest {
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -191,6 +277,13 @@ fn build_app_with_model_provider(
         .route("/start", get(get_start))
         .route("/projects", post(create_project))
         .route("/projects/{id}", delete(delete_project))
+        .route("/projects/{id}/canvas", get(get_project_canvas))
+        .route("/projects/{id}/requirements", post(create_requirement))
+        .route(
+            "/requirements/{id}/messages",
+            post(append_requirement_message),
+        )
+        .route("/requirements/{id}/confirm", post(confirm_requirement))
         .route(
             "/settings/models",
             get(get_model_settings).put(put_model_settings),
@@ -232,6 +325,71 @@ async fn delete_project(
     let mut store = state.store.lock().await;
     store.delete_project(&id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_project_canvas(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    let store = state.store.lock().await;
+    Ok(Json(store.project_canvas(&id)?))
+}
+
+async fn create_requirement(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(payload): Json<RequirementMessageRequest>,
+) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    let message = payload.message.trim().to_owned();
+    if message.is_empty() {
+        return Err(AppError::bad_request("需求内容不能为空"));
+    }
+
+    let (requirement_id, input) = {
+        let mut store = state.store.lock().await;
+        store.create_requirement(&project_id, message).await?
+    };
+
+    let output = state.model_provider.analyze_requirement(input).await;
+    let mut store = state.store.lock().await;
+    store
+        .apply_requirement_analysis(&requirement_id, output)
+        .await?;
+    Ok(Json(store.project_canvas(&project_id)?))
+}
+
+async fn append_requirement_message(
+    State(state): State<AppState>,
+    AxumPath(requirement_id): AxumPath<String>,
+    Json(payload): Json<RequirementMessageRequest>,
+) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    let message = payload.message.trim().to_owned();
+    if message.is_empty() {
+        return Err(AppError::bad_request("补充说明不能为空"));
+    }
+
+    let (project_id, input) = {
+        let mut store = state.store.lock().await;
+        store
+            .append_requirement_message(&requirement_id, message)
+            .await?
+    };
+
+    let output = state.model_provider.analyze_requirement(input).await;
+    let mut store = state.store.lock().await;
+    store
+        .apply_requirement_analysis(&requirement_id, output)
+        .await?;
+    Ok(Json(store.project_canvas(&project_id)?))
+}
+
+async fn confirm_requirement(
+    State(state): State<AppState>,
+    AxumPath(requirement_id): AxumPath<String>,
+) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    let mut store = state.store.lock().await;
+    let project_id = store.confirm_requirement(&requirement_id).await?;
+    Ok(Json(store.project_canvas(&project_id)?))
 }
 
 async fn get_model_settings(
@@ -382,6 +540,9 @@ impl JsonStore {
         }
 
         self.data.projects.remove(index);
+        self.data
+            .requirements
+            .retain(|requirement| requirement.project_id != id);
         write_json(&self.path, &self.data).await?;
         Ok(())
     }
@@ -396,6 +557,223 @@ impl JsonStore {
         self.data.model_summary.description = model_summary_description(&self.data.model_settings);
         write_json(&self.path, &self.data).await?;
         Ok(())
+    }
+
+    fn project_canvas(&self, project_id: &str) -> Result<ProjectCanvasResponse, AppError> {
+        let project = self
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+
+        let mut active = self
+            .data
+            .requirements
+            .iter()
+            .filter(|requirement| {
+                requirement.project_id == project_id
+                    && matches!(
+                        requirement.status,
+                        RequirementStatus::Analyzing
+                            | RequirementStatus::Clarifying
+                            | RequirementStatus::DraftReady
+                            | RequirementStatus::Failed
+                    )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        sort_requirements_desc(&mut active);
+
+        let mut queued_requirements = self
+            .data
+            .requirements
+            .iter()
+            .filter(|requirement| {
+                requirement.project_id == project_id
+                    && matches!(
+                        requirement.status,
+                        RequirementStatus::Queued | RequirementStatus::Running
+                    )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        sort_requirements_desc(&mut queued_requirements);
+
+        let mut completed_requirements = self
+            .data
+            .requirements
+            .iter()
+            .filter(|requirement| {
+                requirement.project_id == project_id
+                    && requirement.status == RequirementStatus::Completed
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        sort_requirements_desc(&mut completed_requirements);
+
+        Ok(ProjectCanvasResponse {
+            project,
+            active_requirement: active.into_iter().next(),
+            queued_requirements,
+            completed_requirements,
+        })
+    }
+
+    async fn create_requirement(
+        &mut self,
+        project_id: &str,
+        message: String,
+    ) -> Result<(String, RequirementAnalysisInput), AppError> {
+        let project = self
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+
+        let now = Utc::now();
+        let id = format!("requirement-{}", now.timestamp_millis());
+        let requirement = Requirement {
+            id: id.clone(),
+            project_id: project_id.to_owned(),
+            title: derive_requirement_title(&message),
+            original_message: message.clone(),
+            status: RequirementStatus::Analyzing,
+            messages: vec![RequirementMessage {
+                role: RequirementMessageRole::User,
+                content: message,
+                created_at: now,
+            }],
+            draft: None,
+            pi_session_file: None,
+            error: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let input = RequirementAnalysisInput {
+            project,
+            messages: requirement.messages.clone(),
+            draft: None,
+            model_settings: self.data.model_settings.clone(),
+            pi_session_file: None,
+        };
+        self.data.requirements.push(requirement);
+        write_json(&self.path, &self.data).await?;
+        Ok((id, input))
+    }
+
+    async fn append_requirement_message(
+        &mut self,
+        requirement_id: &str,
+        message: String,
+    ) -> Result<(String, RequirementAnalysisInput), AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        if !matches!(
+            self.data.requirements[index].status,
+            RequirementStatus::Clarifying
+                | RequirementStatus::Analyzing
+                | RequirementStatus::Failed
+                | RequirementStatus::DraftReady
+        ) {
+            return Err(AppError::bad_request("当前需求状态不允许继续补充"));
+        }
+
+        let project_id = self.data.requirements[index].project_id.clone();
+        let project = self
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+        let now = Utc::now();
+        {
+            let requirement = &mut self.data.requirements[index];
+            requirement.status = RequirementStatus::Analyzing;
+            requirement.error = None;
+            requirement.updated_at = now;
+            requirement.messages.push(RequirementMessage {
+                role: RequirementMessageRole::User,
+                content: message,
+                created_at: now,
+            });
+        }
+
+        let requirement = self.data.requirements[index].clone();
+        write_json(&self.path, &self.data).await?;
+        Ok((
+            project_id,
+            RequirementAnalysisInput {
+                project,
+                messages: requirement.messages,
+                draft: requirement.draft,
+                model_settings: self.data.model_settings.clone(),
+                pi_session_file: requirement.pi_session_file,
+            },
+        ))
+    }
+
+    async fn apply_requirement_analysis(
+        &mut self,
+        requirement_id: &str,
+        output: Result<RequirementAnalysisOutput, AppError>,
+    ) -> Result<(), AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        let now = Utc::now();
+        let requirement = &mut self.data.requirements[index];
+        match output {
+            Ok(output) => {
+                requirement.status = output.status;
+                requirement.draft = output.draft;
+                requirement.pi_session_file = output.pi_session_file;
+                requirement.error = output.error;
+                requirement.updated_at = now;
+                if !output.assistant_message.trim().is_empty() {
+                    requirement.messages.push(RequirementMessage {
+                        role: RequirementMessageRole::Assistant,
+                        content: output.assistant_message,
+                        created_at: now,
+                    });
+                }
+            }
+            Err(error) => {
+                requirement.status = RequirementStatus::Failed;
+                requirement.error = Some(error.to_string());
+                requirement.updated_at = now;
+                requirement.messages.push(RequirementMessage {
+                    role: RequirementMessageRole::System,
+                    content: format!("需求分析失败：{error}"),
+                    created_at: now,
+                });
+            }
+        }
+        write_json(&self.path, &self.data).await?;
+        Ok(())
+    }
+
+    async fn confirm_requirement(&mut self, requirement_id: &str) -> Result<String, AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        if self.data.requirements[index].status != RequirementStatus::DraftReady {
+            return Err(AppError::bad_request("只有已生成确认卡片的需求才能确认"));
+        }
+        let now = Utc::now();
+        let project_id = self.data.requirements[index].project_id.clone();
+        self.data.requirements[index].status = RequirementStatus::Queued;
+        self.data.requirements[index].updated_at = now;
+        write_json(&self.path, &self.data).await?;
+        Ok(project_id)
+    }
+
+    fn requirement_index(&self, requirement_id: &str) -> Result<usize, AppError> {
+        self.data
+            .requirements
+            .iter()
+            .position(|requirement| requirement.id == requirement_id)
+            .ok_or_else(|| AppError::not_found("需求不存在"))
     }
 
     fn project_dir(&self, id: &str) -> Result<PathBuf, AppError> {
@@ -418,6 +796,7 @@ impl Default for AppData {
     fn default() -> Self {
         Self {
             projects: Vec::new(),
+            requirements: Vec::new(),
             settings_summary: SummaryNode {
                 title: "设置".to_owned(),
                 description: "基础设置待配置".to_owned(),
@@ -450,6 +829,168 @@ impl ModelTierSetting {
     }
 }
 
+impl ThinkingLevel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RequirementAnalysisStatus {
+    NeedsClarification,
+    Ready,
+}
+
+#[derive(Debug, Deserialize)]
+struct RequirementAnalysisJson {
+    status: RequirementAnalysisStatus,
+    message: String,
+    draft: Option<RequirementDraft>,
+}
+
+fn build_requirement_prompt(input: &RequirementAnalysisInput) -> String {
+    let mut history = String::new();
+    for message in &input.messages {
+        let role = match message.role {
+            RequirementMessageRole::User => "用户",
+            RequirementMessageRole::Assistant => "Coordinator",
+            RequirementMessageRole::System => "系统",
+        };
+        history.push_str(&format!("{role}: {}\n", message.content));
+    }
+
+    let existing_draft = input
+        .draft
+        .as_ref()
+        .map(|draft| {
+            format!(
+                "当前确认草案：{}\n{}\n验收标准：{}\n",
+                draft.title,
+                draft.summary,
+                draft.acceptance_criteria.join("；")
+            )
+        })
+        .unwrap_or_else(|| "当前还没有确认草案。\n".to_owned());
+
+    format!(
+        r#"你是 raccoon_node 的需求澄清 Coordinator。
+只处理需求澄清和确认，不要拆分任务，不要生成 DAG，不要执行代码。
+所有可展示内容必须使用简体中文。
+
+判断当前需求是否足够进入执行队列：
+- 如果还缺少会影响实现路径、验收标准、数据兼容或安全边界的信息，返回 needs_clarification。
+- 如果已经足够明确，返回 ready，并给出确认需求草案。
+
+你必须只输出一个 JSON 对象，不要 Markdown，不要代码块。
+JSON 格式：
+{{
+  "status": "needs_clarification",
+  "message": "需要向用户确认的问题或说明",
+  "draft": null
+}}
+或：
+{{
+  "status": "ready",
+  "message": "需求已经足够清晰，我已整理确认卡片。",
+  "draft": {{
+    "title": "确认需求标题",
+    "summary": "最终需求范围摘要",
+    "acceptance_criteria": ["验收标准 1", "验收标准 2"]
+  }}
+}}
+
+## 项目上下文
+项目名：{}
+Git：{}
+本地路径：{}
+
+## 已有草案
+{}
+## 对话历史
+{}"#,
+        input.project.name,
+        input.project.git_url,
+        input.project.local_path,
+        existing_draft,
+        history
+    )
+}
+
+fn parse_requirement_analysis(
+    assistant_text: &str,
+    pi_session_file: Option<String>,
+) -> RequirementAnalysisOutput {
+    let Some(json_text) = extract_json_object(assistant_text) else {
+        return RequirementAnalysisOutput {
+            status: RequirementStatus::Failed,
+            assistant_message: assistant_text.to_owned(),
+            draft: None,
+            pi_session_file,
+            error: Some("Pi Agent 未返回结构化 JSON".to_owned()),
+        };
+    };
+
+    match serde_json::from_str::<RequirementAnalysisJson>(&json_text) {
+        Ok(parsed) => match parsed.status {
+            RequirementAnalysisStatus::NeedsClarification => RequirementAnalysisOutput {
+                status: RequirementStatus::Clarifying,
+                assistant_message: parsed.message,
+                draft: None,
+                pi_session_file,
+                error: None,
+            },
+            RequirementAnalysisStatus::Ready => {
+                let Some(draft) = parsed.draft else {
+                    return RequirementAnalysisOutput {
+                        status: RequirementStatus::Failed,
+                        assistant_message: parsed.message,
+                        draft: None,
+                        pi_session_file,
+                        error: Some("ready 状态缺少确认需求草案".to_owned()),
+                    };
+                };
+                RequirementAnalysisOutput {
+                    status: RequirementStatus::DraftReady,
+                    assistant_message: parsed.message,
+                    draft: Some(draft),
+                    pi_session_file,
+                    error: None,
+                }
+            }
+        },
+        Err(error) => RequirementAnalysisOutput {
+            status: RequirementStatus::Failed,
+            assistant_message: assistant_text.to_owned(),
+            draft: None,
+            pi_session_file,
+            error: Some(format!("解析 Pi Agent JSON 失败：{error}")),
+        },
+    }
+}
+
+fn extract_json_object(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        return Some(trimmed.to_owned());
+    }
+
+    let start = trimmed.find('{')?;
+    let end = trimmed.rfind('}')?;
+    if start <= end {
+        Some(trimmed[start..=end].to_owned())
+    } else {
+        None
+    }
+}
+
 impl PiRpcModelProvider {
     async fn start(data_root: PathBuf) -> Self {
         let session_dir = data_root.join("pi-sessions");
@@ -471,6 +1012,22 @@ impl ModelProvider for PiRpcModelProvider {
         Box::pin(async move {
             match &self.client {
                 Some(client) => client.get_available_models().await,
+                None => Err(AppError::internal(
+                    self.startup_error
+                        .clone()
+                        .unwrap_or_else(|| "Pi Agent RPC 未启动".to_owned()),
+                )),
+            }
+        })
+    }
+
+    fn analyze_requirement(
+        &self,
+        input: RequirementAnalysisInput,
+    ) -> RequirementAnalysisFuture<'_> {
+        Box::pin(async move {
+            match &self.client {
+                Some(client) => client.analyze_requirement(input).await,
                 None => Err(AppError::internal(
                     self.startup_error
                         .clone()
@@ -544,6 +1101,140 @@ impl PiRpcClient {
             .cloned()
             .unwrap_or_else(|| json!([]));
         Ok(serde_json::from_value(models)?)
+    }
+
+    async fn analyze_requirement(
+        &self,
+        input: RequirementAnalysisInput,
+    ) -> Result<RequirementAnalysisOutput, AppError> {
+        let high = input.model_settings.high.clone();
+        let model_id = high
+            .model_id
+            .ok_or_else(|| AppError::bad_request("请先在模型设置中配置高档模型"))?;
+        let models = self.get_available_models().await?;
+        let model = models
+            .iter()
+            .find(|model| model.id == model_id)
+            .ok_or_else(|| AppError::bad_request("高档模型不存在于 Pi Agent 已配置模型列表"))?;
+
+        if let Some(session_file) = input.pi_session_file.as_deref() {
+            self.switch_session(session_file).await?;
+        } else {
+            self.new_session().await?;
+        }
+        self.set_model(&model.provider, &model.id).await?;
+        self.set_thinking_level(high.thinking_level.as_str())
+            .await?;
+        self.prompt(&build_requirement_prompt(&input)).await?;
+        self.wait_for_agent_end(std::time::Duration::from_secs(120))
+            .await?;
+
+        let assistant_text = self
+            .get_last_assistant_text()
+            .await?
+            .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
+        let session_file = self.get_session_file().await?;
+        Ok(parse_requirement_analysis(&assistant_text, session_file))
+    }
+
+    async fn set_model(&self, provider: &str, model_id: &str) -> Result<(), AppError> {
+        self.send_command_with_auto_id(json!({
+            "type": "set_model",
+            "provider": provider,
+            "modelId": model_id
+        }))
+        .await?;
+        Ok(())
+    }
+
+    async fn set_thinking_level(&self, level: &str) -> Result<(), AppError> {
+        self.send_command_with_auto_id(json!({
+            "type": "set_thinking_level",
+            "level": level
+        }))
+        .await?;
+        Ok(())
+    }
+
+    async fn new_session(&self) -> Result<(), AppError> {
+        self.send_command_with_auto_id(json!({ "type": "new_session" }))
+            .await?;
+        Ok(())
+    }
+
+    async fn switch_session(&self, session_path: &str) -> Result<(), AppError> {
+        self.send_command_with_auto_id(json!({
+            "type": "switch_session",
+            "sessionPath": session_path
+        }))
+        .await?;
+        Ok(())
+    }
+
+    async fn prompt(&self, message: &str) -> Result<(), AppError> {
+        self.send_command_with_auto_id(json!({
+            "type": "prompt",
+            "message": message
+        }))
+        .await?;
+        Ok(())
+    }
+
+    async fn get_last_assistant_text(&self) -> Result<Option<String>, AppError> {
+        let response = self
+            .send_command_with_auto_id(json!({ "type": "get_last_assistant_text" }))
+            .await?;
+        Ok(response
+            .get("data")
+            .and_then(|data| data.get("text"))
+            .and_then(Value::as_str)
+            .map(str::to_owned))
+    }
+
+    async fn get_session_file(&self) -> Result<Option<String>, AppError> {
+        let response = self
+            .send_command_with_auto_id(json!({ "type": "get_state" }))
+            .await?;
+        Ok(response
+            .get("data")
+            .and_then(|data| data.get("sessionFile"))
+            .and_then(Value::as_str)
+            .map(str::to_owned))
+    }
+
+    async fn wait_for_agent_end(&self, timeout: std::time::Duration) -> Result<(), AppError> {
+        let _guard = self.io_lock.lock().await;
+        let mut stdout = self.stdout.lock().await;
+        let mut line = String::new();
+        let wait = async {
+            loop {
+                line.clear();
+                let read = stdout.read_line(&mut line).await?;
+                if read == 0 {
+                    return Err(AppError::internal("Pi Agent RPC 已退出"));
+                }
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let value: Value = serde_json::from_str(trimmed)?;
+                if value.get("type") == Some(&json!("agent_end")) {
+                    return Ok(());
+                }
+            }
+        };
+        tokio::time::timeout(timeout, wait)
+            .await
+            .map_err(|_| AppError::internal("等待 Pi Agent 需求分析超时"))?
+    }
+
+    async fn send_command_with_auto_id(&self, mut command: Value) -> Result<Value, AppError> {
+        let request_id = format!(
+            "raccoon-node-{}",
+            PI_RPC_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+        );
+        command["id"] = json!(request_id);
+        self.send_command(command).await
     }
 
     async fn send_command(&self, command: Value) -> Result<Value, AppError> {
@@ -809,6 +1500,30 @@ fn slugify(value: &str) -> String {
     }
 }
 
+fn derive_requirement_title(message: &str) -> String {
+    let compact = message
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(24)
+        .collect::<String>();
+    if compact.is_empty() {
+        "未命名需求".to_owned()
+    } else {
+        compact
+    }
+}
+
+fn sort_requirements_desc(requirements: &mut [Requirement]) {
+    requirements.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| right.created_at.cmp(&left.created_at))
+    });
+}
+
 fn data_file_path() -> PathBuf {
     if let Ok(path) = env::var("RACCOON_DATA_FILE") {
         return PathBuf::from(path);
@@ -871,21 +1586,46 @@ mod tests {
     #[derive(Clone)]
     struct FakeModelProvider {
         result: Result<Vec<PiModel>, String>,
+        analysis: Result<RequirementAnalysisOutput, String>,
     }
 
     impl ModelProvider for FakeModelProvider {
         fn available_models(&self) -> ModelProviderFuture<'_> {
             Box::pin(async move { self.result.clone().map_err(AppError::internal) })
         }
+
+        fn analyze_requirement(
+            &self,
+            _input: RequirementAnalysisInput,
+        ) -> RequirementAnalysisFuture<'_> {
+            Box::pin(async move { self.analysis.clone().map_err(AppError::internal) })
+        }
     }
 
     fn fake_provider(models: Vec<PiModel>) -> Arc<dyn ModelProvider> {
-        Arc::new(FakeModelProvider { result: Ok(models) })
+        Arc::new(FakeModelProvider {
+            result: Ok(models),
+            analysis: Ok(RequirementAnalysisOutput {
+                status: RequirementStatus::Clarifying,
+                assistant_message: "请补充目标用户和验收标准。".to_owned(),
+                draft: None,
+                pi_session_file: Some("session.json".to_owned()),
+                error: None,
+            }),
+        })
+    }
+
+    fn fake_analysis_provider(analysis: RequirementAnalysisOutput) -> Arc<dyn ModelProvider> {
+        Arc::new(FakeModelProvider {
+            result: Ok(vec![test_model("test/model", "Test Model")]),
+            analysis: Ok(analysis),
+        })
     }
 
     fn fake_error_provider(message: &str) -> Arc<dyn ModelProvider> {
         Arc::new(FakeModelProvider {
             result: Err(message.to_owned()),
+            analysis: Err(message.to_owned()),
         })
     }
 
@@ -1168,6 +1908,135 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
+    #[tokio::test]
+    async fn project_canvas_groups_requirements() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_path = temp_dir.path().join("data/app.json");
+        let mut store = JsonStore::open(data_path).await.unwrap();
+        let project = test_project("alpha");
+        let now = Utc::now();
+        store.data.projects.push(project.clone());
+        store.data.requirements.push(test_requirement(
+            "done",
+            &project.id,
+            RequirementStatus::Completed,
+            now,
+        ));
+        store.data.requirements.push(test_requirement(
+            "queued",
+            &project.id,
+            RequirementStatus::Queued,
+            now,
+        ));
+        store.data.requirements.push(test_requirement(
+            "active",
+            &project.id,
+            RequirementStatus::Clarifying,
+            now,
+        ));
+
+        let canvas = store.project_canvas(&project.id).unwrap();
+        assert_eq!(canvas.project.id, project.id);
+        assert_eq!(canvas.active_requirement.unwrap().id, "active");
+        assert_eq!(canvas.queued_requirements[0].id, "queued");
+        assert_eq!(canvas.completed_requirements[0].id, "done");
+
+        let missing = store.project_canvas("missing").unwrap_err();
+        assert!(matches!(missing, AppError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn requirement_api_creates_clarifies_and_confirms_queue() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_path = temp_dir.path().join("data/app.json");
+        let mut store = JsonStore::open(data_path.clone()).await.unwrap();
+        let project = test_project("alpha");
+        store.data.projects.push(project.clone());
+        write_json(&store.path, &store.data).await.unwrap();
+
+        let app = build_app_with_model_provider(
+            store,
+            PathBuf::from("frontend/dist"),
+            fake_analysis_provider(RequirementAnalysisOutput {
+                status: RequirementStatus::DraftReady,
+                assistant_message: "需求已经足够清晰。".to_owned(),
+                draft: Some(RequirementDraft {
+                    title: "新增登录".to_owned(),
+                    summary: "实现登录入口。".to_owned(),
+                    acceptance_criteria: vec!["可以提交账号密码".to_owned()],
+                }),
+                pi_session_file: Some("session.json".to_owned()),
+                error: None,
+            }),
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/projects/{}/requirements", project.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"message":"新增登录"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let canvas: ProjectCanvasResponse = serde_json::from_slice(&body).unwrap();
+        let active = canvas.active_requirement.unwrap();
+        assert_eq!(active.status, RequirementStatus::DraftReady);
+        assert_eq!(active.draft.unwrap().title, "新增登录");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/requirements/{}/confirm", active.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let canvas: ProjectCanvasResponse = serde_json::from_slice(&body).unwrap();
+        assert!(canvas.active_requirement.is_none());
+        assert_eq!(
+            canvas.queued_requirements[0].status,
+            RequirementStatus::Queued
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/projects/{}/requirements", project.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"message":"   "}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn requirement_analysis_parse_failure_returns_failed_output() {
+        let output = parse_requirement_analysis("普通文本", Some("session.json".to_owned()));
+        assert_eq!(output.status, RequirementStatus::Failed);
+        assert!(output.error.unwrap().contains("结构化 JSON"));
+
+        let output = parse_requirement_analysis(
+            r#"{"status":"needs_clarification","message":"请确认范围","draft":null}"#,
+            None,
+        );
+        assert_eq!(output.status, RequirementStatus::Clarifying);
+        assert_eq!(output.assistant_message, "请确认范围");
+    }
+
     fn temp_git_repo(root: &Path) -> PathBuf {
         let bare = root.join(format!(
             "repo-{}.git",
@@ -1185,5 +2054,42 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         bare
+    }
+
+    fn test_project(id: &str) -> Project {
+        let now = Utc::now();
+        Project {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            git_url: format!("https://example.com/{id}.git"),
+            local_path: format!("/tmp/{id}/repo"),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn test_requirement(
+        id: &str,
+        project_id: &str,
+        status: RequirementStatus,
+        now: DateTime<Utc>,
+    ) -> Requirement {
+        Requirement {
+            id: id.to_owned(),
+            project_id: project_id.to_owned(),
+            title: id.to_owned(),
+            original_message: id.to_owned(),
+            status,
+            messages: vec![RequirementMessage {
+                role: RequirementMessageRole::User,
+                content: id.to_owned(),
+                created_at: now,
+            }],
+            draft: None,
+            pi_session_file: None,
+            error: None,
+            created_at: now,
+            updated_at: now,
+        }
     }
 }

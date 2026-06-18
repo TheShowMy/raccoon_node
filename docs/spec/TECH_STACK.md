@@ -3,7 +3,7 @@
 ## 栈
 
 - 后端：Rust 2021、Axum、Tokio、tower-http、serde/JSON、chrono、tracing。
-- 前端：React、TypeScript、Vite、React Flow（`@xyflow/react`）、lucide-react、普通 CSS。
+- 前端：React、TypeScript、Vite、React Flow（`@xyflow/react`）、lucide-react、Tailwind CSS。
 - 存储：本地 JSON，开发期 `data/app.json`，生产期 `build/data/app.json`。
 - Git：后端调用系统 `git clone`；认证依赖本机 Git 环境。
 - LLM：只通过 Pi Agent RPC，后端启动持久 `pi --mode rpc` 子进程，stdin/stdout JSONL 通信。
@@ -12,7 +12,7 @@
 
 - 后端入口：`src/main.rs`
 - 前端入口：`frontend/src/main.tsx`
-- 前端样式：`frontend/src/styles.css`
+- 前端样式：`frontend/src/styles.css`，使用 Tailwind CSS，保留少量 React Flow 全局覆盖。
 - 构建脚本：`scripts/build.mjs`
 - 项目仓库：`<data_root>/projects/<project_id>/repo`
 - Pi Agent RPC 会话目录：`<data_root>/pi-sessions`
