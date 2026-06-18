@@ -375,3 +375,48 @@ pub struct ClarificationAnswerRequest {
     pub selected_options: Vec<String>,
     pub custom_text: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_serializes_to_expected_fields() {
+        let now = Utc::now();
+        let project = Project {
+            id: "p1".to_owned(),
+            name: "Project".to_owned(),
+            git_url: "https://example.com/repo.git".to_owned(),
+            local_path: "/data/projects/p1/repo".to_owned(),
+            created_at: now,
+            updated_at: now,
+        };
+        let json = serde_json::to_value(&project).unwrap();
+        assert_eq!(json["id"], "p1");
+        assert_eq!(json["name"], "Project");
+        assert_eq!(json["git_url"], "https://example.com/repo.git");
+        assert_eq!(json["local_path"], "/data/projects/p1/repo");
+    }
+
+    #[test]
+    fn requirement_skips_pi_session_file_in_serialization() {
+        let now = Utc::now();
+        let requirement = Requirement {
+            id: "r1".to_owned(),
+            project_id: "p1".to_owned(),
+            title: "Title".to_owned(),
+            original_message: "message".to_owned(),
+            status: RequirementStatus::Clarifying,
+            messages: Vec::new(),
+            clarification_round: 0,
+            clarifications: Vec::new(),
+            draft: None,
+            pi_session_file: Some("/secret/session.json".to_owned()),
+            error: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let json = serde_json::to_value(&requirement).unwrap();
+        assert!(json.get("pi_session_file").is_none());
+    }
+}

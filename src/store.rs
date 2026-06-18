@@ -48,11 +48,11 @@ impl JsonStore {
         })
     }
 
-    pub async fn create_project(
-        &mut self,
-        raw_name: String,
-        raw_git_url: String,
-    ) -> Result<Project, AppError> {
+    pub fn prepare_project(
+        &self,
+        raw_name: &str,
+        raw_git_url: &str,
+    ) -> Result<(String, PathBuf), AppError> {
         let name = raw_name.trim();
         if name.is_empty() {
             return Err(AppError::bad_request("项目名称不能为空"));
@@ -85,16 +85,21 @@ impl JsonStore {
             return Err(AppError::bad_request("项目本地目录已存在"));
         }
 
-        tokio::fs::create_dir_all(&project_dir).await?;
-        if let Err(error) = clone_git_repo(git_url, &repo_dir).await {
-            remove_dir_if_exists(&project_dir).await?;
-            return Err(error);
-        }
+        Ok((id, repo_dir))
+    }
 
+    pub async fn commit_project(
+        &mut self,
+        id: String,
+        name: String,
+        git_url: String,
+        repo_dir: PathBuf,
+    ) -> Result<Project, AppError> {
+        let now = Utc::now();
         let project = Project {
-            id: id.clone(),
-            name: name.to_owned(),
-            git_url: git_url.to_owned(),
+            id,
+            name,
+            git_url,
             local_path: display_path(&repo_dir),
             created_at: now,
             updated_at: now,
@@ -103,6 +108,24 @@ impl JsonStore {
         self.data.projects.push(project.clone());
         write_json(&self.path, &self.data).await?;
         Ok(project)
+    }
+
+    pub async fn create_project(
+        &mut self,
+        raw_name: String,
+        raw_git_url: String,
+    ) -> Result<Project, AppError> {
+        let (id, repo_dir) = self.prepare_project(&raw_name, &raw_git_url)?;
+        let name = raw_name.trim().to_owned();
+        let git_url = raw_git_url.trim().to_owned();
+
+        tokio::fs::create_dir_all(repo_dir.parent().unwrap()).await?;
+        if let Err(error) = clone_git_repo(&git_url, &repo_dir).await {
+            remove_dir_if_exists(&repo_dir).await?;
+            return Err(error);
+        }
+
+        self.commit_project(id, name, git_url, repo_dir).await
     }
 
     pub async fn delete_project(&mut self, id: &str) -> Result<(), AppError> {

@@ -32,8 +32,22 @@ pub async fn create_project(
     State(state): State<AppState>,
     Json(payload): Json<crate::models::CreateProjectRequest>,
 ) -> Result<Json<Project>, AppError> {
+    let (id, repo_dir) = {
+        let store = state.store.lock().await;
+        store.prepare_project(&payload.name, &payload.git_url)?
+    };
+
+    let name = payload.name.trim().to_owned();
+    let git_url = payload.git_url.trim().to_owned();
+
+    tokio::fs::create_dir_all(repo_dir.parent().unwrap()).await?;
+    if let Err(error) = crate::utils::clone_git_repo(&git_url, &repo_dir).await {
+        crate::utils::remove_dir_if_exists(&repo_dir).await?;
+        return Err(error);
+    }
+
     let mut store = state.store.lock().await;
-    let project = store.create_project(payload.name, payload.git_url).await?;
+    let project = store.commit_project(id, name, git_url, repo_dir).await?;
     Ok(Json(project))
 }
 
@@ -118,17 +132,31 @@ pub async fn requirement_events(
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let stream =
-        BroadcastStream::new(state.requirement_events.tx.subscribe()).filter_map(move |event| {
+        BroadcastStream::new(state.requirement_events.tx.subscribe()).filter_map(move |result| {
             let requirement_id = requirement_id.clone();
-            match event {
+            match result {
                 Ok(event) if event.requirement_id == requirement_id => {
                     let event_name = event.event.clone();
-                    let data = serde_json::to_string(&event).unwrap_or_else(|_| {
-                        r#"{"event":"serialization_failed","message":"事件序列化失败"}"#.to_owned()
-                    });
+                    let data = match serde_json::to_string(&event) {
+                        Ok(json) => json,
+                        Err(error) => {
+                            tracing::error!(
+                                requirement_id = %requirement_id,
+                                event_name = %event_name,
+                                error = %error,
+                                "SSE event serialization failed"
+                            );
+                            r#"{"event":"serialization_failed","message":"事件序列化失败"}"#
+                                .to_owned()
+                        }
+                    };
                     Some(Ok(Event::default().event(event_name).data(data)))
                 }
-                _ => None,
+                Ok(_) => None,
+                Err(error) => {
+                    tracing::warn!("SSE broadcast lagged: {}", error);
+                    None
+                }
             }
         });
 

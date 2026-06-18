@@ -1,3 +1,6 @@
+// WARNING: These types must stay in sync with src/models.rs.
+// When modifying Rust types, update this file and run `cargo test`.
+
 export type ThemeMode = "dark" | "light";
 
 export type Project = {
