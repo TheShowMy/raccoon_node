@@ -1789,7 +1789,12 @@ impl ModelProvider for PiRpcModelProvider {
 impl PiRpcClient {
     async fn start(session_dir: &Path) -> Result<Self, AppError> {
         tokio::fs::create_dir_all(session_dir).await?;
-        let mut child = Command::new("pi")
+        let program = if cfg!(target_os = "windows") {
+            "pi.cmd"
+        } else {
+            "pi"
+        };
+        let mut child = Command::new(program)
             .arg("--mode")
             .arg("rpc")
             .arg("--session-dir")
@@ -2461,7 +2466,7 @@ mod tests {
             .unwrap();
         assert_eq!(project.name, "Demo Project");
         assert!(project.id.starts_with("demo-project-"));
-        assert!(project.local_path.ends_with("/repo"));
+        assert!(Path::new(&project.local_path).ends_with("repo"));
 
         let empty = store
             .create_project(
@@ -2557,10 +2562,13 @@ mod tests {
                     .method("POST")
                     .uri("/api/projects")
                     .header("content-type", "application/json")
-                    .body(Body::from(format!(
-                        r#"{{"name":"Alpha","git_url":"{}"}}"#,
-                        temp_git_repo(temp_dir.path()).to_string_lossy()
-                    )))
+                    .body(Body::from(
+                        json!({
+                            "name": "Alpha",
+                            "git_url": temp_git_repo(temp_dir.path()).to_string_lossy()
+                        })
+                        .to_string(),
+                    ))
                     .unwrap(),
             )
             .await

@@ -1,25 +1,33 @@
 import fs from "fs-extra";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const buildDir = path.join(root, "build");
 const binaryName = process.platform === "win32" ? "raccoon_node.exe" : "raccoon_node";
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 
 function run(command, args, options = {}) {
-  execFileSync(command, args, {
+  const result = spawnSync(command, args, {
     cwd: root,
     stdio: "inherit",
+    shell: process.platform === "win32",
     ...options
   });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
 }
 
 await fs.remove(buildDir);
 await fs.ensureDir(path.join(buildDir, "bin"));
 await fs.ensureDir(path.join(buildDir, "data"));
 
-run("npm", ["--prefix", "frontend", "run", "build"]);
+run(npmCommand, ["--prefix", "frontend", "run", "build"]);
 run("cargo", ["build", "--release"]);
 
 await fs.copy(path.join(root, "target", "release", binaryName), path.join(buildDir, "bin", binaryName));
