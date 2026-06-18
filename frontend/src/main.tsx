@@ -20,12 +20,17 @@ import {
 } from "@xyflow/react";
 import {
   ArrowLeft,
+  Brain,
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
+  FileQuestion,
   FolderPlus,
   ListTree,
+  Loader2,
   MessageSquare,
   Moon,
   Send,
@@ -33,6 +38,7 @@ import {
   SunMedium,
   TriangleAlert,
   Trash2,
+  Wrench,
 } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
@@ -81,8 +87,9 @@ type RequirementStatus =
   | "failed";
 
 type RequirementMessage = {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "trace";
   content: string;
+  metadata?: TraceMetadata | null;
   created_at: string;
 };
 
@@ -99,6 +106,8 @@ type Requirement = {
   original_message: string;
   status: RequirementStatus;
   messages: RequirementMessage[];
+  clarification_round: number;
+  clarifications: RequirementClarification[];
   draft: RequirementDraft | null;
   pi_session_file: string | null;
   error: string | null;
@@ -111,6 +120,71 @@ type ProjectCanvasData = {
   active_requirement: Requirement | null;
   queued_requirements: Requirement[];
   completed_requirements: Requirement[];
+};
+
+type ClarificationQuestionType = "single_choice" | "multi_choice" | "free_text";
+
+type ClarificationOption = {
+  value: string;
+  label: string;
+  description: string;
+  recommended: boolean;
+};
+
+type ClarificationAnswer = {
+  selected_options: string[];
+  custom_text: string | null;
+};
+
+type RequirementClarification = {
+  id: string;
+  question: string;
+  question_type: ClarificationQuestionType;
+  options: ClarificationOption[];
+  answer: ClarificationAnswer | null;
+};
+
+type DraftClarificationAnswer = {
+  selectedOptions: string[];
+  customText: string;
+};
+
+type StreamEvent = {
+  requirement_id: string;
+  event: string;
+  message: string;
+  pi_type?: string;
+  payload?: unknown;
+};
+
+type TraceTool = {
+  toolCallId: string;
+  toolName: string;
+  status: "running" | "done" | "error" | string;
+  output: string;
+  isError?: boolean;
+};
+
+type TraceData = {
+  thinking: string;
+  output: string;
+  tools: TraceTool[];
+  statuses: Array<{ type: string; message: string }>;
+};
+
+type TraceMetadata = {
+  type: "pi_trace";
+  version: number;
+  trace: TraceData;
+};
+
+type LiveBubble = {
+  id: string;
+  type: "thinking" | "tool" | "output" | "status";
+  label: string;
+  content: string;
+  toolName?: string;
+  status: "running" | "done" | "error";
 };
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -208,8 +282,15 @@ type StartNodeData =
       input: string;
       busy: boolean;
       error: string | null;
+      streamEvents: StreamEvent[];
+      answers: Record<string, DraftClarificationAnswer>;
       onInputChange: (value: string) => void;
       onSend: () => Promise<void>;
+      onAnswerChange: (
+        clarification: RequirementClarification,
+        answer: DraftClarificationAnswer,
+      ) => void;
+      onSubmitClarifications: (requirement: Requirement) => Promise<void>;
       onConfirm: (requirement: Requirement) => Promise<void>;
     };
 
@@ -245,6 +326,12 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const isPendingDelete =
     data.kind === "project-item" &&
     data.pendingDeleteProjectId === data.project.id;
+  const clickableAction =
+    data.kind === "summary"
+      ? data.onAction
+      : data.kind === "project-back"
+        ? data.onBack
+        : undefined;
   const hasFlowLeftHandle = data.kind === "create" || data.kind === "projects";
   const hasModelSourceHandle = data.kind === "summary" && data.icon === "model";
   const hasModelTargetHandle = data.kind === "model-config";
@@ -255,7 +342,17 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
     <div
       className={`node-card node-card--${data.kind} ${
         isPendingDelete ? "node-card--pending-delete" : ""
-      }`}
+      } ${clickableAction ? "node-card--clickable" : ""}`}
+      role={clickableAction ? "button" : undefined}
+      tabIndex={clickableAction ? 0 : undefined}
+      onClick={clickableAction}
+      onKeyDown={(event) => {
+        if (!clickableAction) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          clickableAction();
+        }
+      }}
     >
       {hasFlowLeftHandle ? (
         <Handle
@@ -349,12 +446,16 @@ function CreateProjectNode({
       </div>
       <form className="create-form" onSubmit={submit}>
         <input
+          id="project-name"
+          name="project-name"
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="项目名称"
           aria-label="项目名称"
         />
         <input
+          id="project-git-url"
+          name="project-git-url"
           className="create-form__git"
           value={gitUrl}
           onChange={(event) => setGitUrl(event.target.value)}
@@ -808,9 +909,6 @@ function SummaryCard({
           <span>{data.description}</span>
         </div>
       </div>
-      <button className="ghost-button" type="button" onClick={data.onAction}>
-        {data.actionLabel ?? "查看摘要"}
-      </button>
     </>
   );
 }
@@ -869,13 +967,10 @@ function ProjectBackNode({
           <ArrowLeft size={20} />
         </span>
         <div>
-          <strong>{data.project.name}</strong>
-          <span>项目画布</span>
+          <strong>返回 Start</strong>
+          <span>{data.project.name}</span>
         </div>
       </div>
-      <button className="ghost-button" type="button" onClick={data.onBack}>
-        返回 Start
-      </button>
     </>
   );
 }
@@ -925,13 +1020,19 @@ function RequirementChatNode({
 }) {
   const requirement = data.requirement;
   const canConfirm = requirement?.status === "draft_ready" && requirement.draft;
+  const isAnalyzing = requirement?.status === "analyzing";
   const canSend =
     !data.busy &&
+    !isAnalyzing &&
     data.input.trim().length > 0 &&
     (!requirement ||
       ["analyzing", "clarifying", "draft_ready", "failed"].includes(
         requirement.status,
       ));
+  const liveBubbles = buildBubbleStreamFromEvents(data.streamEvents);
+  const transientEvents = data.streamEvents.filter(
+    (event) => event.event !== "pi_event",
+  );
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -959,13 +1060,10 @@ function RequirementChatNode({
         {requirement ? (
           <div className="requirement-messages">
             {requirement.messages.map((message) => (
-              <div
-                className={`requirement-message requirement-message--${message.role}`}
+              <RequirementMessageBubble
                 key={`${message.role}-${message.created_at}-${message.content}`}
-              >
-                <strong>{requirementMessageRoleText(message.role)}</strong>
-                <p>{message.content}</p>
-              </div>
+                message={message}
+              />
             ))}
           </div>
         ) : (
@@ -975,6 +1073,34 @@ function RequirementChatNode({
             <span>描述你的需求，Coordinator 会先澄清并生成确认卡片。</span>
           </div>
         )}
+
+        {transientEvents.length > 0 ? (
+          <div className="requirement-events">
+            {transientEvents.map((event, index) => (
+              <span key={`${event.event}-${index}`}>{event.message}</span>
+            ))}
+          </div>
+        ) : null}
+
+        {liveBubbles.length > 0 ? (
+          <TraceBubble bubbles={liveBubbles} isLive={isAnalyzing} />
+        ) : isAnalyzing ? (
+          <div className="requirement-analyzing">
+            <Loader2 size={16} />
+            Coordinator 正在分析当前需求...
+          </div>
+        ) : null}
+
+        {requirement?.status === "clarifying" &&
+        requirement.clarifications.length > 0 ? (
+          <ClarificationPanel
+            requirement={requirement}
+            answers={data.answers}
+            busy={data.busy}
+            onAnswerChange={data.onAnswerChange}
+            onSubmit={() => void data.onSubmitClarifications(requirement)}
+          />
+        ) : null}
 
         {requirement?.draft ? (
           <div className="requirement-draft">
@@ -1005,12 +1131,16 @@ function RequirementChatNode({
 
         <form className="requirement-input" onSubmit={submit}>
           <textarea
+            id="requirement-input"
+            name="requirement-input"
             value={data.input}
             disabled={data.busy}
             onChange={(event) => data.onInputChange(event.target.value)}
             placeholder={
               requirement
-                ? "补充说明你的需求..."
+                ? isAnalyzing
+                  ? "Coordinator 正在分析，过程会实时显示..."
+                  : "补充说明你的需求..."
                 : "描述你的需求，Coordinator 会用聊天形式澄清..."
             }
           />
@@ -1021,6 +1151,316 @@ function RequirementChatNode({
         </form>
       </div>
     </>
+  );
+}
+
+function RequirementMessageBubble({
+  message,
+}: {
+  message: RequirementMessage;
+}) {
+  const trace = traceFromMessage(message);
+  if (trace) {
+    return (
+      <TraceBubble bubbles={buildBubbleStreamFromTrace(trace)} isLive={false} />
+    );
+  }
+
+  return (
+    <div className={`requirement-message requirement-message--${message.role}`}>
+      <strong>{requirementMessageRoleText(message.role)}</strong>
+      <p>{message.content}</p>
+    </div>
+  );
+}
+
+function TraceBubble({
+  bubbles,
+  isLive,
+}: {
+  bubbles: LiveBubble[];
+  isLive: boolean;
+}) {
+  const [expanded, setExpanded] = useState(isLive);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const running = bubbles.some((bubble) => bubble.status === "running");
+  const hasError = bubbles.some((bubble) => bubble.status === "error");
+
+  useEffect(() => {
+    if (!expanded || !contentRef.current) return;
+    requestAnimationFrame(() => {
+      const element = contentRef.current;
+      if (element) {
+        element.scrollTop = element.scrollHeight;
+      }
+    });
+  }, [bubbles, expanded]);
+
+  if (bubbles.length === 0) return null;
+
+  return (
+    <div className="trace-bubble">
+      <button
+        className="trace-bubble__header"
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span>
+          {running ? (
+            <Loader2 size={15} className="spin-icon" />
+          ) : hasError ? (
+            <TriangleAlert size={15} />
+          ) : (
+            <CheckCircle2 size={15} />
+          )}
+          {running
+            ? "Coordinator 正在分析..."
+            : hasError
+              ? "分析出错"
+              : "分析过程"}
+        </span>
+        <span>{bubbles.length} 个气泡</span>
+        <ChevronDown size={14} className={expanded ? "rotate-icon" : ""} />
+      </button>
+      {expanded ? (
+        <div className="trace-bubble__content" ref={contentRef}>
+          {bubbles.map((bubble) => (
+            <TraceBubbleItem bubble={bubble} isLive={isLive} key={bubble.id} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TraceBubbleItem({
+  bubble,
+  isLive,
+}: {
+  bubble: LiveBubble;
+  isLive: boolean;
+}) {
+  const preRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    if (!isLive || !preRef.current) return;
+    requestAnimationFrame(() => {
+      const element = preRef.current;
+      if (element) {
+        element.scrollTop = element.scrollHeight;
+      }
+    });
+  }, [bubble.content, isLive]);
+
+  if (bubble.type === "status") {
+    return (
+      <div className="trace-status">
+        <span />
+        {bubble.label}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`trace-item trace-item--${bubble.status}`}>
+      <div className="trace-item__header">
+        <span>
+          {bubble.type === "thinking" ? <Brain size={14} /> : null}
+          {bubble.type === "tool" ? <Wrench size={14} /> : null}
+          {bubble.label}
+        </span>
+        {!isLive ? <em>{traceStatusText(bubble.status)}</em> : null}
+      </div>
+      {bubble.content ? <pre ref={preRef}>{bubble.content}</pre> : null}
+    </div>
+  );
+}
+
+function ClarificationPanel({
+  requirement,
+  answers,
+  busy,
+  onAnswerChange,
+  onSubmit,
+}: {
+  requirement: Requirement;
+  answers: Record<string, DraftClarificationAnswer>;
+  busy: boolean;
+  onAnswerChange: (
+    clarification: RequirementClarification,
+    answer: DraftClarificationAnswer,
+  ) => void;
+  onSubmit: () => void;
+}) {
+  const [step, setStep] = useState(0);
+  const items = requirement.clarifications;
+  const current = items[step];
+  const currentAnswer = answers[current.id] ?? createDraftAnswer(current);
+  const currentAnswered = hasDraftAnswer(current, currentAnswer);
+  const allAnswered = items.every((item) =>
+    hasDraftAnswer(item, answers[item.id]),
+  );
+  const isLast = step === items.length - 1;
+
+  // Reset to the first unanswered step when the clarification round changes.
+  useEffect(() => {
+    const firstUnanswered = items.findIndex(
+      (item) => !hasDraftAnswer(item, answers[item.id]),
+    );
+    setStep(firstUnanswered === -1 ? 0 : firstUnanswered);
+  }, [requirement.clarification_round]);
+
+  function goToStep(index: number) {
+    // Only allow navigating to completed steps or the current/first unanswered step.
+    const target = items[index];
+    if (!target || (index > step && !hasDraftAnswer(current, currentAnswer))) {
+      return;
+    }
+    setStep(index);
+  }
+
+  function goNext() {
+    if (!currentAnswered) return;
+    if (isLast) {
+      if (allAnswered) onSubmit();
+      return;
+    }
+    setStep((value) => Math.min(value + 1, items.length - 1));
+  }
+
+  function goPrev() {
+    setStep((value) => Math.max(value - 1, 0));
+  }
+
+  return (
+    <div className="clarification-panel">
+      <div className="clarification-panel__head">
+        <span>
+          <FileQuestion size={15} />
+          需要你确认
+        </span>
+        <em>
+          第 {requirement.clarification_round} 轮澄清 ({step + 1}/{items.length}
+          )
+        </em>
+      </div>
+
+      <div className="clarification-steps">
+        {items.map((item, index) => {
+          const answered = hasDraftAnswer(item, answers[item.id]);
+          const status =
+            index === step ? "current" : answered ? "completed" : "pending";
+          return (
+            <button
+              className={`clarification-step clarification-step--${status}`}
+              disabled={busy || (!answered && index !== step)}
+              key={item.id}
+              type="button"
+              onClick={() => goToStep(index)}
+            >
+              {answered && index !== step ? <Check size={12} /> : index + 1}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="clarification-panel__items">
+        <ClarificationCard
+          answer={currentAnswer}
+          clarification={current}
+          index={step}
+          onChange={(answer) => onAnswerChange(current, answer)}
+        />
+      </div>
+
+      <div className="clarification-panel__actions">
+        <button
+          className="clarification-panel__prev"
+          disabled={busy || step === 0}
+          type="button"
+          onClick={goPrev}
+        >
+          <ChevronLeft size={14} />
+          上一步
+        </button>
+        <button
+          className="clarification-panel__next"
+          disabled={busy || !currentAnswered}
+          type="button"
+          onClick={goNext}
+        >
+          {busy ? (
+            <Loader2 size={14} className="spin-icon" />
+          ) : isLast ? (
+            <Send size={14} />
+          ) : (
+            <ChevronRight size={14} />
+          )}
+          {busy ? "提交中" : isLast ? "提交澄清答案" : "下一步"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ClarificationCard({
+  clarification,
+  index,
+  answer,
+  onChange,
+}: {
+  clarification: RequirementClarification;
+  index: number;
+  answer: DraftClarificationAnswer;
+  onChange: (answer: DraftClarificationAnswer) => void;
+}) {
+  const isFreeText = clarification.question_type === "free_text";
+
+  return (
+    <section className="clarification-card">
+      <div className="clarification-card__question">
+        <span>Q{index + 1}</span>
+        <strong>{clarification.question}</strong>
+      </div>
+      {isFreeText ? (
+        <textarea
+          value={answer.customText}
+          onChange={(event) =>
+            onChange({ ...answer, customText: event.target.value })
+          }
+          placeholder="补充你的答案..."
+        />
+      ) : (
+        <div className="clarification-options">
+          {clarification.options.map((option) => {
+            const checked = answer.selectedOptions.includes(option.value);
+            return (
+              <button
+                className={checked ? "clarification-option--selected" : ""}
+                key={option.value}
+                type="button"
+                onClick={() =>
+                  onChange(
+                    toggleClarificationOption(
+                      clarification,
+                      answer,
+                      option.value,
+                    ),
+                  )
+                }
+              >
+                <span>
+                  {checked ? <Check size={13} /> : null}
+                  {option.label}
+                  {option.recommended ? <em>推荐</em> : null}
+                </span>
+                <small>{option.description}</small>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1039,6 +1479,12 @@ function App() {
   const [requirementInput, setRequirementInput] = useState("");
   const [requirementBusy, setRequirementBusy] = useState(false);
   const [requirementError, setRequirementError] = useState<string | null>(null);
+  const [requirementStreamEvents, setRequirementStreamEvents] = useState<
+    StreamEvent[]
+  >([]);
+  const [clarificationAnswers, setClarificationAnswers] = useState<
+    Record<string, DraftClarificationAnswer>
+  >({});
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -1097,6 +1543,8 @@ function App() {
       setProjectCanvas(null);
       setRequirementInput("");
       setRequirementError(null);
+      setRequirementStreamEvents([]);
+      setClarificationAnswers({});
       void loadProjectCanvas(project.id).catch((reason) =>
         setRequirementError(readError(reason)),
       );
@@ -1110,8 +1558,59 @@ function App() {
     setProjectCanvas(null);
     setRequirementInput("");
     setRequirementError(null);
+    setRequirementStreamEvents([]);
+    setClarificationAnswers({});
     void loadStart();
   }, [loadStart]);
+
+  const activeRequirementId = projectCanvas?.active_requirement?.id ?? null;
+
+  useEffect(() => {
+    setRequirementStreamEvents([]);
+    setClarificationAnswers({});
+  }, [activeRequirementId]);
+
+  useEffect(() => {
+    if (!activeRequirementId || !selectedProjectId) {
+      return;
+    }
+
+    const source = new EventSource(
+      `/api/requirements/${encodeURIComponent(activeRequirementId)}/events`,
+    );
+
+    const handleEvent = (event: MessageEvent<string>) => {
+      const parsed = parseStreamEvent(event.data);
+      if (!parsed) {
+        return;
+      }
+      setRequirementStreamEvents((current) => [...current, parsed]);
+
+      const transient =
+        parsed.event === "coordinator_started" ||
+        parsed.event === "coordinator_progress" ||
+        parsed.event === "pi_event";
+      if (!transient) {
+        void loadProjectCanvas(selectedProjectId).catch((reason) =>
+          setRequirementError(readError(reason)),
+        );
+      }
+    };
+
+    source.onmessage = handleEvent;
+    for (const eventName of [
+      "coordinator_started",
+      "coordinator_progress",
+      "pi_event",
+      "clarifications_ready",
+      "draft_ready",
+      "analysis_failed",
+    ]) {
+      source.addEventListener(eventName, handleEvent);
+    }
+
+    return () => source.close();
+  }, [activeRequirementId, loadProjectCanvas, selectedProjectId]);
 
   const loadModelSettings = useCallback(async () => {
     setModelRpcStatus("loading");
@@ -1138,9 +1637,15 @@ function App() {
     }
   }, []);
 
-  const openModelSettings = useCallback(() => {
-    setModelSettingsOpen(true);
-    void loadModelSettings();
+  const toggleModelSettings = useCallback(() => {
+    setModelSettingsOpen((open) => {
+      if (open) {
+        return false;
+      }
+
+      void loadModelSettings();
+      return true;
+    });
   }, [loadModelSettings]);
 
   const updateModelTier = useCallback(
@@ -1285,6 +1790,8 @@ function App() {
         } | null;
         throw new Error(body?.message ?? "提交需求失败");
       }
+      setRequirementStreamEvents([]);
+      setClarificationAnswers({});
       setProjectCanvas((await response.json()) as ProjectCanvasData);
       setRequirementInput("");
     } catch (reason) {
@@ -1293,6 +1800,59 @@ function App() {
       setRequirementBusy(false);
     }
   }, [projectCanvas, requirementInput, selectedProjectId]);
+
+  const updateClarificationAnswer = useCallback(
+    (
+      clarification: RequirementClarification,
+      answer: DraftClarificationAnswer,
+    ) => {
+      setClarificationAnswers((current) => ({
+        ...current,
+        [clarification.id]: answer,
+      }));
+    },
+    [],
+  );
+
+  const submitClarifications = useCallback(
+    async (requirement: Requirement) => {
+      setRequirementBusy(true);
+      setRequirementError(null);
+      try {
+        const answers = requirement.clarifications.map((clarification) =>
+          buildClarificationAnswerPayload(
+            clarification,
+            clarificationAnswers[clarification.id] ??
+              createDraftAnswer(clarification),
+          ),
+        );
+        const response = await fetch(
+          `/api/requirements/${encodeURIComponent(requirement.id)}/clarifications`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(answers),
+          },
+        );
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as {
+            message?: string;
+          } | null;
+          throw new Error(body?.message ?? "提交澄清答案失败");
+        }
+        setRequirementStreamEvents([]);
+        setClarificationAnswers({});
+        setProjectCanvas((await response.json()) as ProjectCanvasData);
+      } catch (reason) {
+        setRequirementError(readError(reason));
+      } finally {
+        setRequirementBusy(false);
+      }
+    },
+    [clarificationAnswers],
+  );
 
   const confirmRequirement = useCallback(async (requirement: Requirement) => {
     setRequirementBusy(true);
@@ -1363,8 +1923,12 @@ function App() {
             input: requirementInput,
             busy: requirementBusy,
             error: requirementError,
+            streamEvents: requirementStreamEvents,
+            answers: clarificationAnswers,
             onInputChange: setRequirementInput,
             onSend: sendRequirementMessage,
+            onAnswerChange: updateClarificationAnswer,
+            onSubmitClarifications: submitClarifications,
             onConfirm: confirmRequirement,
           },
         },
@@ -1406,8 +1970,7 @@ function App() {
           icon: "model",
           title: startData.model_summary.title,
           description: startData.model_summary.description,
-          actionLabel: "配置模型",
-          onAction: openModelSettings,
+          onAction: toggleModelSettings,
         },
       },
       {
@@ -1522,6 +2085,7 @@ function App() {
     currentCanvas,
     deleteError,
     deletingId,
+    clarificationAnswers,
     draftModelSettings,
     error,
     modelError,
@@ -1535,6 +2099,7 @@ function App() {
     requirementBusy,
     requirementError,
     requirementInput,
+    requirementStreamEvents,
     saveModelSettings,
     selectedProjectId,
     sendRequirementMessage,
@@ -1542,7 +2107,9 @@ function App() {
     setModelSettingsOpen,
     startData,
     theme,
-    openModelSettings,
+    toggleModelSettings,
+    submitClarifications,
+    updateClarificationAnswer,
     updateModelTier,
   ]);
 
@@ -1654,6 +2221,14 @@ function readError(reason: unknown) {
   return reason instanceof Error ? reason.message : "未知错误";
 }
 
+function parseStreamEvent(raw: string): StreamEvent | null {
+  try {
+    return JSON.parse(raw) as StreamEvent;
+  } catch {
+    return null;
+  }
+}
+
 function shortenGitUrl(value: string) {
   return value.replace(/^git@([^:]+):/, "$1/").replace(/^https?:\/\//, "");
 }
@@ -1699,7 +2274,216 @@ function requirementMessageRoleText(role: RequirementMessage["role"]) {
   if (role === "assistant") {
     return "Coordinator";
   }
+  if (role === "trace") {
+    return "过程";
+  }
   return "系统";
+}
+
+function traceStatusText(status: LiveBubble["status"]) {
+  if (status === "running") return "进行中";
+  if (status === "error") return "失败";
+  return "完成";
+}
+
+function traceFromMessage(message: RequirementMessage): TraceData | null {
+  if (message.role !== "trace" || message.metadata?.type !== "pi_trace") {
+    return null;
+  }
+  return message.metadata.trace;
+}
+
+function buildBubbleStreamFromTrace(trace: TraceData): LiveBubble[] {
+  const bubbles: LiveBubble[] = [];
+  let seq = 0;
+
+  for (const status of trace.statuses ?? []) {
+    bubbles.push({
+      id: `status-${seq++}`,
+      type: "status",
+      label: status.message,
+      content: "",
+      status: "done",
+    });
+  }
+
+  if (trace.thinking?.trim()) {
+    bubbles.push({
+      id: `thinking-${seq++}`,
+      type: "thinking",
+      label: "思考过程",
+      content: trace.thinking,
+      status: "done",
+    });
+  }
+
+  for (const tool of trace.tools ?? []) {
+    bubbles.push({
+      id: tool.toolCallId,
+      type: "tool",
+      label: tool.toolName,
+      content: tool.output,
+      toolName: tool.toolName,
+      status: tool.isError || tool.status === "error" ? "error" : "done",
+    });
+  }
+
+  // trace.output is intentionally not rendered: Pi Agent returns structured JSON
+  // which is parsed into the assistant message and clarifications/draft. Showing
+  // the raw JSON output would duplicate content and leak implementation details.
+  return bubbles;
+}
+
+function buildBubbleStreamFromEvents(events: StreamEvent[]): LiveBubble[] {
+  const bubbles: LiveBubble[] = [];
+  let seq = 0;
+
+  for (const event of events) {
+    if (event.event !== "pi_event") continue;
+    const payload = asRecord(event.payload);
+
+    if (event.pi_type === "message_update") {
+      const assistantEvent = asRecord(payload?.assistantMessageEvent);
+      const deltaType = String(assistantEvent?.type ?? "");
+      const delta = String(assistantEvent?.delta ?? assistantEvent?.text ?? "");
+      if (!delta) continue;
+
+      // Only stream thinking deltas; text deltas contain the structured JSON
+      // response which is parsed into the assistant message after analysis ends.
+      if (deltaType !== "thinking_delta") continue;
+
+      const last = bubbles.at(-1);
+      if (last?.type === "thinking") {
+        last.content += delta;
+      } else {
+        bubbles.push({
+          id: `thinking-${seq++}`,
+          type: "thinking",
+          label: "思考中...",
+          content: delta,
+          status: "running",
+        });
+      }
+      continue;
+    }
+
+    if (event.pi_type === "tool_execution_start") {
+      const toolCallId = String(
+        payload?.toolCallId ?? payload?.tool_call_id ?? `tool-${seq++}`,
+      );
+      const toolName = String(
+        payload?.toolName ?? payload?.tool_name ?? "tool",
+      );
+      bubbles.push({
+        id: toolCallId,
+        type: "tool",
+        label: toolName,
+        content: "",
+        toolName,
+        status: "running",
+      });
+      continue;
+    }
+
+    if (
+      event.pi_type === "tool_execution_update" ||
+      event.pi_type === "tool_execution_end"
+    ) {
+      const toolCallId = String(payload?.toolCallId ?? payload?.tool_call_id);
+      const bubble = bubbles.find(
+        (item) => item.id === toolCallId && item.type === "tool",
+      );
+      if (!bubble) continue;
+      const output = extractToolOutput(payload);
+      if (output) bubble.content = output;
+      if (event.pi_type === "tool_execution_end") {
+        bubble.status =
+          payload?.isError || payload?.is_error ? "error" : "done";
+      }
+      continue;
+    }
+
+    if (event.pi_type === "agent_end") {
+      for (const bubble of bubbles) {
+        if (bubble.status === "running") bubble.status = "done";
+      }
+      bubbles.push({
+        id: `end-${seq++}`,
+        type: "status",
+        label: "分析完成",
+        content: "",
+        status: "done",
+      });
+    }
+  }
+
+  return bubbles;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function extractToolOutput(payload: Record<string, unknown> | null) {
+  const result = asRecord(
+    payload?.partialResult ?? payload?.partial_result ?? payload?.result,
+  );
+  const content = Array.isArray(result?.content) ? result.content : [];
+  return content
+    .map((item) => asRecord(item)?.text)
+    .filter((text): text is string => typeof text === "string")
+    .join("\n");
+}
+
+function createDraftAnswer(
+  clarification: RequirementClarification,
+): DraftClarificationAnswer {
+  return {
+    selectedOptions: clarification.answer?.selected_options ?? [],
+    customText: clarification.answer?.custom_text ?? "",
+  };
+}
+
+function hasDraftAnswer(
+  clarification: RequirementClarification,
+  answer?: DraftClarificationAnswer,
+) {
+  if (!answer) return false;
+  if (clarification.question_type === "free_text") {
+    return answer.customText.trim().length > 0;
+  }
+  return (
+    answer.selectedOptions.length > 0 || answer.customText.trim().length > 0
+  );
+}
+
+function toggleClarificationOption(
+  clarification: RequirementClarification,
+  answer: DraftClarificationAnswer,
+  value: string,
+): DraftClarificationAnswer {
+  if (clarification.question_type === "single_choice") {
+    return { ...answer, selectedOptions: [value] };
+  }
+
+  const selectedOptions = answer.selectedOptions.includes(value)
+    ? answer.selectedOptions.filter((item) => item !== value)
+    : [...answer.selectedOptions, value];
+  return { ...answer, selectedOptions };
+}
+
+function buildClarificationAnswerPayload(
+  clarification: RequirementClarification,
+  answer: DraftClarificationAnswer,
+) {
+  return {
+    clarification_id: clarification.id,
+    selected_options:
+      clarification.question_type === "free_text" ? [] : answer.selectedOptions,
+    custom_text: answer.customText.trim() || null,
+  };
 }
 
 function readStoredTheme(): ThemeMode {

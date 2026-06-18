@@ -1,7 +1,10 @@
 use axum::{
     extract::{Path as AxumPath, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     routing::{delete, get, post},
     Json, Router,
 };
@@ -18,12 +21,14 @@ use std::{
     process::Stdio,
     sync::atomic::{AtomicU64, Ordering},
     sync::Arc,
+    time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::Mutex,
+    sync::{broadcast, Mutex},
 };
+use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 use tower_http::{
     cors::{Any, CorsLayer},
     services::{ServeDir, ServeFile},
@@ -34,9 +39,32 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 struct AppState {
     store: Arc<Mutex<JsonStore>>,
     model_provider: Arc<dyn ModelProvider>,
+    requirement_events: RequirementEventBus,
 }
 
 static PI_RPC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone)]
+struct RequirementEventBus {
+    tx: broadcast::Sender<RequirementEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RequirementEvent {
+    requirement_id: String,
+    event: String,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pi_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
+struct RequirementEventEmitter {
+    requirement_id: String,
+    bus: RequirementEventBus,
+}
 
 struct JsonStore {
     path: PathBuf,
@@ -73,6 +101,10 @@ struct Requirement {
     original_message: String,
     status: RequirementStatus,
     messages: Vec<RequirementMessage>,
+    #[serde(default)]
+    clarification_round: u32,
+    #[serde(default)]
+    clarifications: Vec<RequirementClarification>,
     draft: Option<RequirementDraft>,
     pi_session_file: Option<String>,
     error: Option<String>,
@@ -96,6 +128,8 @@ enum RequirementStatus {
 struct RequirementMessage {
     role: RequirementMessageRole,
     content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    metadata: Option<Value>,
     created_at: DateTime<Utc>,
 }
 
@@ -105,6 +139,7 @@ enum RequirementMessageRole {
     User,
     Assistant,
     System,
+    Trace,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -112,6 +147,38 @@ struct RequirementDraft {
     title: String,
     summary: String,
     acceptance_criteria: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct RequirementClarification {
+    id: String,
+    question: String,
+    question_type: ClarificationQuestionType,
+    options: Vec<ClarificationOption>,
+    answer: Option<ClarificationAnswer>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ClarificationQuestionType {
+    SingleChoice,
+    MultiChoice,
+    FreeText,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct ClarificationOption {
+    value: String,
+    label: String,
+    description: String,
+    #[serde(default)]
+    recommended: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct ClarificationAnswer {
+    selected_options: Vec<String>,
+    custom_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,14 +250,18 @@ type RequirementAnalysisFuture<'a> =
 
 trait ModelProvider: Send + Sync {
     fn available_models(&self) -> ModelProviderFuture<'_>;
-    fn analyze_requirement(&self, input: RequirementAnalysisInput)
-        -> RequirementAnalysisFuture<'_>;
+    fn analyze_requirement(
+        &self,
+        input: RequirementAnalysisInput,
+        events: Option<RequirementEventEmitter>,
+    ) -> RequirementAnalysisFuture<'_>;
 }
 
 #[derive(Debug, Clone)]
 struct RequirementAnalysisInput {
     project: Project,
     messages: Vec<RequirementMessage>,
+    clarifications: Vec<RequirementClarification>,
     draft: Option<RequirementDraft>,
     model_settings: ModelSettings,
     pi_session_file: Option<String>,
@@ -200,9 +271,12 @@ struct RequirementAnalysisInput {
 struct RequirementAnalysisOutput {
     status: RequirementStatus,
     assistant_message: String,
+    progress: String,
+    clarifications: Vec<RequirementClarification>,
     draft: Option<RequirementDraft>,
     pi_session_file: Option<String>,
     error: Option<String>,
+    trace: Option<Value>,
 }
 
 struct PiRpcModelProvider {
@@ -226,6 +300,13 @@ struct CreateProjectRequest {
 #[derive(Debug, Deserialize)]
 struct RequirementMessageRequest {
     message: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ClarificationAnswerRequest {
+    clarification_id: String,
+    selected_options: Vec<String>,
+    custom_text: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -268,9 +349,11 @@ fn build_app_with_model_provider(
     public_dir: PathBuf,
     model_provider: Arc<dyn ModelProvider>,
 ) -> Router {
+    let (event_tx, _) = broadcast::channel(256);
     let state = AppState {
         store: Arc::new(Mutex::new(store)),
         model_provider,
+        requirement_events: RequirementEventBus { tx: event_tx },
     };
 
     let api = Router::new()
@@ -283,6 +366,11 @@ fn build_app_with_model_provider(
             "/requirements/{id}/messages",
             post(append_requirement_message),
         )
+        .route(
+            "/requirements/{id}/clarifications",
+            post(submit_requirement_clarifications),
+        )
+        .route("/requirements/{id}/events", get(requirement_events))
         .route("/requirements/{id}/confirm", post(confirm_requirement))
         .route(
             "/settings/models",
@@ -350,11 +438,8 @@ async fn create_requirement(
         store.create_requirement(&project_id, message).await?
     };
 
-    let output = state.model_provider.analyze_requirement(input).await;
-    let mut store = state.store.lock().await;
-    store
-        .apply_requirement_analysis(&requirement_id, output)
-        .await?;
+    spawn_requirement_analysis(state.clone(), requirement_id, input);
+    let store = state.store.lock().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
 
@@ -375,12 +460,48 @@ async fn append_requirement_message(
             .await?
     };
 
-    let output = state.model_provider.analyze_requirement(input).await;
-    let mut store = state.store.lock().await;
-    store
-        .apply_requirement_analysis(&requirement_id, output)
-        .await?;
+    spawn_requirement_analysis(state.clone(), requirement_id, input);
+    let store = state.store.lock().await;
     Ok(Json(store.project_canvas(&project_id)?))
+}
+
+async fn submit_requirement_clarifications(
+    State(state): State<AppState>,
+    AxumPath(requirement_id): AxumPath<String>,
+    Json(payload): Json<Vec<ClarificationAnswerRequest>>,
+) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    let (project_id, input) = {
+        let mut store = state.store.lock().await;
+        store
+            .submit_requirement_clarifications(&requirement_id, payload)
+            .await?
+    };
+
+    spawn_requirement_analysis(state.clone(), requirement_id, input);
+    let store = state.store.lock().await;
+    Ok(Json(store.project_canvas(&project_id)?))
+}
+
+async fn requirement_events(
+    State(state): State<AppState>,
+    AxumPath(requirement_id): AxumPath<String>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let stream =
+        BroadcastStream::new(state.requirement_events.tx.subscribe()).filter_map(move |event| {
+            let requirement_id = requirement_id.clone();
+            match event {
+                Ok(event) if event.requirement_id == requirement_id => {
+                    let event_name = event.event.clone();
+                    let data = serde_json::to_string(&event).unwrap_or_else(|_| {
+                        r#"{"event":"serialization_failed","message":"事件序列化失败"}"#.to_owned()
+                    });
+                    Some(Ok(Event::default().event(event_name).data(data)))
+                }
+                _ => None,
+            }
+        });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn confirm_requirement(
@@ -435,6 +556,83 @@ async fn put_model_settings(
         rpc_status: RpcStatus::Ready,
         rpc_error: None,
     }))
+}
+
+fn spawn_requirement_analysis(
+    state: AppState,
+    requirement_id: String,
+    input: RequirementAnalysisInput,
+) {
+    tokio::spawn(async move {
+        let emitter = RequirementEventEmitter {
+            requirement_id: requirement_id.clone(),
+            bus: state.requirement_events.clone(),
+        };
+        emitter.emit("coordinator_started", "Coordinator 开始分析需求。");
+
+        let output = state
+            .model_provider
+            .analyze_requirement(input, Some(emitter.clone()))
+            .await;
+
+        let event = match &output {
+            Ok(output) => {
+                if !output.progress.trim().is_empty() {
+                    emitter.emit("coordinator_progress", output.progress.trim());
+                }
+                match output.status {
+                    RequirementStatus::Clarifying => {
+                        ("clarifications_ready", "新的澄清问题已生成。")
+                    }
+                    RequirementStatus::DraftReady => ("draft_ready", "确认需求卡片已生成。"),
+                    RequirementStatus::Failed => ("analysis_failed", "需求分析失败。"),
+                    _ => ("coordinator_progress", "需求分析已更新。"),
+                }
+            }
+            Err(_) => ("analysis_failed", "需求分析失败。"),
+        };
+
+        {
+            let mut store = state.store.lock().await;
+            if let Err(error) = store
+                .apply_requirement_analysis(&requirement_id, output)
+                .await
+            {
+                emitter.emit("analysis_failed", &format!("保存分析结果失败：{error}"));
+                return;
+            }
+        }
+
+        emitter.emit(event.0, event.1);
+    });
+}
+
+impl RequirementEventEmitter {
+    fn emit(&self, event: &str, message: &str) {
+        let _ = self.bus.tx.send(RequirementEvent {
+            requirement_id: self.requirement_id.clone(),
+            event: event.to_owned(),
+            message: message.to_owned(),
+            pi_type: None,
+            payload: None,
+        });
+    }
+
+    fn emit_pi_event(&self, payload: Value) {
+        let pi_type = payload
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned();
+        let message = summarize_pi_event(&pi_type, &payload);
+        let _ = self.bus.tx.send(RequirementEvent {
+            requirement_id: self.requirement_id.clone(),
+            event: "pi_event".to_owned(),
+            message,
+            pi_type: Some(pi_type),
+            payload: Some(payload),
+        });
+    }
 }
 
 impl JsonStore {
@@ -645,8 +843,11 @@ impl JsonStore {
             messages: vec![RequirementMessage {
                 role: RequirementMessageRole::User,
                 content: message,
+                metadata: None,
                 created_at: now,
             }],
+            clarification_round: 0,
+            clarifications: Vec::new(),
             draft: None,
             pi_session_file: None,
             error: None,
@@ -657,6 +858,7 @@ impl JsonStore {
         let input = RequirementAnalysisInput {
             project,
             messages: requirement.messages.clone(),
+            clarifications: requirement.clarifications.clone(),
             draft: None,
             model_settings: self.data.model_settings.clone(),
             pi_session_file: None,
@@ -695,10 +897,12 @@ impl JsonStore {
             let requirement = &mut self.data.requirements[index];
             requirement.status = RequirementStatus::Analyzing;
             requirement.error = None;
+            requirement.clarifications.clear();
             requirement.updated_at = now;
             requirement.messages.push(RequirementMessage {
                 role: RequirementMessageRole::User,
                 content: message,
+                metadata: None,
                 created_at: now,
             });
         }
@@ -710,6 +914,84 @@ impl JsonStore {
             RequirementAnalysisInput {
                 project,
                 messages: requirement.messages,
+                clarifications: requirement.clarifications,
+                draft: requirement.draft,
+                model_settings: self.data.model_settings.clone(),
+                pi_session_file: requirement.pi_session_file,
+            },
+        ))
+    }
+
+    async fn submit_requirement_clarifications(
+        &mut self,
+        requirement_id: &str,
+        answers: Vec<ClarificationAnswerRequest>,
+    ) -> Result<(String, RequirementAnalysisInput), AppError> {
+        if answers.is_empty() {
+            return Err(AppError::bad_request("请先回答澄清问题"));
+        }
+
+        let index = self.requirement_index(requirement_id)?;
+        if self.data.requirements[index].status != RequirementStatus::Clarifying {
+            return Err(AppError::bad_request("当前需求不在澄清状态"));
+        }
+
+        let project_id = self.data.requirements[index].project_id.clone();
+        let project = self
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+
+        let mut clarifications = self.data.requirements[index].clarifications.clone();
+        for request in answers {
+            let clarification = clarifications
+                .iter_mut()
+                .find(|item| item.id == request.clarification_id)
+                .ok_or_else(|| AppError::bad_request("澄清项不存在"))?;
+            let answer = ClarificationAnswer {
+                selected_options: request.selected_options,
+                custom_text: request.custom_text.filter(|text| !text.trim().is_empty()),
+            };
+            if !clarification_has_answer(clarification, &answer) {
+                return Err(AppError::bad_request("澄清答案不能为空"));
+            }
+            clarification.answer = Some(answer);
+        }
+
+        if clarifications
+            .iter()
+            .any(|clarification| clarification.answer.is_none())
+        {
+            return Err(AppError::bad_request("请完成全部澄清问题"));
+        }
+
+        let summary = build_clarification_answer_summary(&clarifications);
+        let now = Utc::now();
+        {
+            let requirement = &mut self.data.requirements[index];
+            requirement.status = RequirementStatus::Analyzing;
+            requirement.error = None;
+            requirement.clarifications = clarifications;
+            requirement.updated_at = now;
+            requirement.messages.push(RequirementMessage {
+                role: RequirementMessageRole::User,
+                content: summary,
+                metadata: None,
+                created_at: now,
+            });
+        }
+
+        let requirement = self.data.requirements[index].clone();
+        write_json(&self.path, &self.data).await?;
+        Ok((
+            project_id,
+            RequirementAnalysisInput {
+                project,
+                messages: requirement.messages,
+                clarifications: requirement.clarifications,
                 draft: requirement.draft,
                 model_settings: self.data.model_settings.clone(),
                 pi_session_file: requirement.pi_session_file,
@@ -732,10 +1014,26 @@ impl JsonStore {
                 requirement.pi_session_file = output.pi_session_file;
                 requirement.error = output.error;
                 requirement.updated_at = now;
+                if !output.clarifications.is_empty() {
+                    requirement.clarification_round =
+                        requirement.clarification_round.saturating_add(1);
+                    requirement.clarifications = output.clarifications;
+                } else if output.status == RequirementStatus::DraftReady {
+                    requirement.clarifications.clear();
+                }
                 if !output.assistant_message.trim().is_empty() {
                     requirement.messages.push(RequirementMessage {
                         role: RequirementMessageRole::Assistant,
                         content: output.assistant_message,
+                        metadata: None,
+                        created_at: now,
+                    });
+                }
+                if let Some(trace) = output.trace {
+                    requirement.messages.push(RequirementMessage {
+                        role: RequirementMessageRole::Trace,
+                        content: "Pi Agent 分析过程".to_owned(),
+                        metadata: Some(trace),
                         created_at: now,
                     });
                 }
@@ -747,6 +1045,7 @@ impl JsonStore {
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::System,
                     content: format!("需求分析失败：{error}"),
+                    metadata: None,
                     created_at: now,
                 });
             }
@@ -850,10 +1149,35 @@ enum RequirementAnalysisStatus {
 }
 
 #[derive(Debug, Deserialize)]
-struct RequirementAnalysisJson {
+struct RawRequirementAnalysisJson {
     status: RequirementAnalysisStatus,
+    #[serde(default)]
     message: String,
+    #[serde(default)]
+    progress: String,
+    #[serde(default)]
+    clarifications: Vec<RawRequirementClarification>,
     draft: Option<RequirementDraft>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawRequirementClarification {
+    id: Option<String>,
+    question: String,
+    #[serde(alias = "questionType", alias = "type")]
+    question_type: Option<ClarificationQuestionType>,
+    #[serde(default)]
+    options: Vec<RawClarificationOption>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawClarificationOption {
+    value: Option<String>,
+    label: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    recommended: bool,
 }
 
 fn build_requirement_prompt(input: &RequirementAnalysisInput) -> String {
@@ -863,9 +1187,29 @@ fn build_requirement_prompt(input: &RequirementAnalysisInput) -> String {
             RequirementMessageRole::User => "用户",
             RequirementMessageRole::Assistant => "Coordinator",
             RequirementMessageRole::System => "系统",
+            RequirementMessageRole::Trace => "过程记录",
         };
+        if message.role == RequirementMessageRole::Trace {
+            continue;
+        }
         history.push_str(&format!("{role}: {}\n", message.content));
     }
+
+    let clarifications = if input.clarifications.is_empty() {
+        "当前没有待澄清项。\n".to_owned()
+    } else {
+        let mut lines = String::new();
+        for item in &input.clarifications {
+            lines.push_str(&format!("- {}：{}\n", item.id, item.question));
+            if let Some(answer) = &item.answer {
+                lines.push_str(&format!(
+                    "  用户回答：{}\n",
+                    format_clarification_answer(item, answer)
+                ));
+            }
+        }
+        lines
+    };
 
     let existing_draft = input
         .draft
@@ -893,19 +1237,44 @@ fn build_requirement_prompt(input: &RequirementAnalysisInput) -> String {
 JSON 格式：
 {{
   "status": "needs_clarification",
+  "progress": "你已经完成了哪些判断，以及为什么需要继续澄清",
   "message": "需要向用户确认的问题或说明",
+  "clarifications": [
+    {{
+      "id": "q1",
+      "question": "澄清问题",
+      "question_type": "single_choice",
+      "options": [
+        {{
+          "value": "option-a",
+          "label": "选项标题",
+          "description": "选择后的影响或取舍",
+          "recommended": true
+        }}
+      ],
+      "answer": null
+    }}
+  ],
   "draft": null
 }}
 或：
 {{
   "status": "ready",
+  "progress": "需求已经足够清晰的依据",
   "message": "需求已经足够清晰，我已整理确认卡片。",
+  "clarifications": [],
   "draft": {{
     "title": "确认需求标题",
     "summary": "最终需求范围摘要",
     "acceptance_criteria": ["验收标准 1", "验收标准 2"]
   }}
 }}
+
+澄清问题要求：
+- question_type 只能是 single_choice、multi_choice、free_text。
+- single_choice 和 multi_choice 必须提供 2-4 个有意义选项。
+- free_text 的 options 使用空数组。
+- clarifications 最多 6 个。
 
 ## 项目上下文
 项目名：{}
@@ -914,12 +1283,15 @@ Git：{}
 
 ## 已有草案
 {}
+## 待澄清项与用户答案
+{}
 ## 对话历史
 {}"#,
         input.project.name,
         input.project.git_url,
         input.project.local_path,
         existing_draft,
+        clarifications,
         history
     )
 }
@@ -927,67 +1299,442 @@ Git：{}
 fn parse_requirement_analysis(
     assistant_text: &str,
     pi_session_file: Option<String>,
+    trace: Option<Value>,
 ) -> RequirementAnalysisOutput {
     let Some(json_text) = extract_json_object(assistant_text) else {
+        let message = if looks_like_html(assistant_text) {
+            "Pi Agent 返回了 HTML 内容，未能提取结构化澄清结果。".to_owned()
+        } else {
+            assistant_text.to_owned()
+        };
         return RequirementAnalysisOutput {
             status: RequirementStatus::Failed,
-            assistant_message: assistant_text.to_owned(),
+            assistant_message: message,
+            progress: String::new(),
+            clarifications: Vec::new(),
             draft: None,
             pi_session_file,
             error: Some("Pi Agent 未返回结构化 JSON".to_owned()),
+            trace,
         };
     };
 
-    match serde_json::from_str::<RequirementAnalysisJson>(&json_text) {
+    match serde_json::from_str::<RawRequirementAnalysisJson>(&json_text) {
         Ok(parsed) => match parsed.status {
-            RequirementAnalysisStatus::NeedsClarification => RequirementAnalysisOutput {
-                status: RequirementStatus::Clarifying,
-                assistant_message: parsed.message,
-                draft: None,
-                pi_session_file,
-                error: None,
-            },
+            RequirementAnalysisStatus::NeedsClarification => {
+                let progress = if parsed.progress.trim().is_empty() {
+                    parsed.message.clone()
+                } else {
+                    parsed.progress
+                };
+                let clarifications = normalize_requirement_clarifications(parsed.clarifications);
+                RequirementAnalysisOutput {
+                    status: RequirementStatus::Clarifying,
+                    assistant_message: parsed.message,
+                    progress,
+                    clarifications,
+                    draft: None,
+                    pi_session_file,
+                    error: None,
+                    trace,
+                }
+            }
             RequirementAnalysisStatus::Ready => {
                 let Some(draft) = parsed.draft else {
                     return RequirementAnalysisOutput {
                         status: RequirementStatus::Failed,
                         assistant_message: parsed.message,
+                        progress: parsed.progress,
+                        clarifications: Vec::new(),
                         draft: None,
                         pi_session_file,
                         error: Some("ready 状态缺少确认需求草案".to_owned()),
+                        trace,
                     };
                 };
                 RequirementAnalysisOutput {
                     status: RequirementStatus::DraftReady,
                     assistant_message: parsed.message,
+                    progress: parsed.progress,
+                    clarifications: Vec::new(),
                     draft: Some(draft),
                     pi_session_file,
                     error: None,
+                    trace,
                 }
             }
         },
         Err(error) => RequirementAnalysisOutput {
             status: RequirementStatus::Failed,
-            assistant_message: assistant_text.to_owned(),
+            assistant_message: if looks_like_html(assistant_text) {
+                "Pi Agent 返回了 HTML 内容，解析结构化澄清结果失败。".to_owned()
+            } else {
+                assistant_text.to_owned()
+            },
+            progress: String::new(),
+            clarifications: Vec::new(),
             draft: None,
             pi_session_file,
             error: Some(format!("解析 Pi Agent JSON 失败：{error}")),
+            trace,
         },
     }
 }
 
 fn extract_json_object(value: &str) -> Option<String> {
     let trimmed = value.trim();
-    if trimmed.starts_with('{') && trimmed.ends_with('}') {
-        return Some(trimmed.to_owned());
+
+    if let Some(json) = extract_markdown_json(trimmed) {
+        return Some(json);
     }
 
-    let start = trimmed.find('{')?;
-    let end = trimmed.rfind('}')?;
-    if start <= end {
-        Some(trimmed[start..=end].to_owned())
+    let (start, end) = find_balanced_braces(trimmed)?;
+    Some(sanitize_json_fragment(trimmed[start..=end].trim()))
+}
+
+fn extract_markdown_json(text: &str) -> Option<String> {
+    for marker in ["```json\n", "```json ", "```\n", "``` "] {
+        if let Some(start) = text.find(marker) {
+            let after_marker = &text[start + marker.len()..];
+            if let Some(end) = after_marker.find("```") {
+                let content = after_marker[..end].trim();
+                if content.starts_with('{') {
+                    return Some(content.to_owned());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn find_balanced_braces(text: &str) -> Option<(usize, usize)> {
+    let mut start = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (index, ch) in text.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+
+        match ch {
+            '\\' if in_string => escape_next = true,
+            '"' => in_string = !in_string,
+            '{' if !in_string => {
+                if start.is_none() {
+                    start = Some(index);
+                }
+                depth += 1;
+            }
+            '}' if !in_string => {
+                if depth > 0 {
+                    depth -= 1;
+                    if depth == 0 {
+                        return start.map(|start| (start, index));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn sanitize_json_fragment(text: &str) -> String {
+    text.replace(",\n}", "\n}")
+        .replace(",\n]", "\n]")
+        .replace(",}", "}")
+        .replace(",]", "]")
+}
+
+fn looks_like_html(text: &str) -> bool {
+    let trimmed = text.trim_start().to_ascii_lowercase();
+    trimmed.starts_with("<!doctype") || trimmed.starts_with("<html")
+}
+
+fn normalize_requirement_clarifications(
+    items: Vec<RawRequirementClarification>,
+) -> Vec<RequirementClarification> {
+    items
+        .into_iter()
+        .take(6)
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let question = item.question.trim().to_owned();
+            if question.is_empty() {
+                return None;
+            }
+
+            let question_type = item
+                .question_type
+                .unwrap_or(ClarificationQuestionType::FreeText);
+            let options = if question_type == ClarificationQuestionType::FreeText {
+                Vec::new()
+            } else {
+                normalize_clarification_options(item.options)
+            };
+
+            Some(RequirementClarification {
+                id: item.id.unwrap_or_else(|| format!("q{}", index + 1)),
+                question,
+                question_type,
+                options,
+                answer: None,
+            })
+        })
+        .collect()
+}
+
+fn normalize_clarification_options(items: Vec<RawClarificationOption>) -> Vec<ClarificationOption> {
+    let mut options = items
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let label = item.label.trim().to_owned();
+            if label.is_empty() {
+                return None;
+            }
+            let value = item
+                .value
+                .unwrap_or_else(|| format!("option-{}", index + 1));
+            Some(ClarificationOption {
+                value,
+                label,
+                description: item.description.trim().to_owned(),
+                recommended: item.recommended,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if options.len() > 4 {
+        options.sort_by(|left, right| right.recommended.cmp(&left.recommended));
+        options.truncate(4);
+    }
+    options
+}
+
+fn clarification_has_answer(
+    clarification: &RequirementClarification,
+    answer: &ClarificationAnswer,
+) -> bool {
+    match clarification.question_type {
+        ClarificationQuestionType::FreeText => answer
+            .custom_text
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty()),
+        ClarificationQuestionType::SingleChoice | ClarificationQuestionType::MultiChoice => {
+            !answer.selected_options.is_empty()
+                || answer
+                    .custom_text
+                    .as_deref()
+                    .is_some_and(|text| !text.trim().is_empty())
+        }
+    }
+}
+
+fn build_clarification_answer_summary(clarifications: &[RequirementClarification]) -> String {
+    let mut lines = vec!["已提交澄清答案：".to_owned()];
+    for item in clarifications {
+        if let Some(answer) = &item.answer {
+            lines.push(format!(
+                "- {}：{}",
+                item.question,
+                format_clarification_answer(item, answer)
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+fn format_clarification_answer(
+    item: &RequirementClarification,
+    answer: &ClarificationAnswer,
+) -> String {
+    let mut parts = Vec::new();
+    for selected in &answer.selected_options {
+        let label = item
+            .options
+            .iter()
+            .find(|option| option.value == *selected)
+            .map(|option| option.label.as_str())
+            .unwrap_or(selected);
+        parts.push(label.to_owned());
+    }
+    if let Some(custom_text) = answer.custom_text.as_deref() {
+        if !custom_text.trim().is_empty() {
+            parts.push(custom_text.trim().to_owned());
+        }
+    }
+    if parts.is_empty() {
+        "未填写".to_owned()
     } else {
-        None
+        parts.join("；")
+    }
+}
+
+fn build_pi_trace_metadata(events: &[Value]) -> Option<Value> {
+    if events.is_empty() {
+        return None;
+    }
+
+    let mut thinking = String::new();
+    // output remains empty: text_delta is parsed into the assistant message,
+    // so the raw structured JSON is not duplicated in the trace.
+    let output = String::new();
+    let mut statuses = Vec::new();
+    let mut tools = Vec::new();
+
+    for event in events {
+        let pi_type = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        match pi_type {
+            "message_update" => collect_message_update(event, &mut thinking),
+            "tool_execution_start" | "tool_execution_update" | "tool_execution_end" => {
+                upsert_trace_tool(&mut tools, event, pi_type)
+            }
+            "agent_start" | "agent_end" | "turn_start" | "turn_end" | "auto_retry_start"
+            | "auto_retry_end" | "compaction_start" | "compaction_end" | "extension_error" => {
+                statuses.push(json!({
+                    "type": pi_type,
+                    "message": summarize_pi_event(pi_type, event),
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    Some(json!({
+        "type": "pi_trace",
+        "version": 1,
+        "trace": {
+            "thinking": thinking,
+            "output": output,
+            "tools": tools,
+            "statuses": statuses,
+            "completed": true,
+            "live": false,
+        }
+    }))
+}
+
+fn collect_message_update(event: &Value, thinking: &mut String) {
+    let assistant_event = match event.get("assistantMessageEvent") {
+        Some(Value::Object(_)) => &event["assistantMessageEvent"],
+        _ => return,
+    };
+    let delta_type = assistant_event
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let delta = assistant_event
+        .get("delta")
+        .or_else(|| assistant_event.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if delta_type == "thinking_delta" {
+        thinking.push_str(delta);
+    }
+    // text_delta contains the structured JSON response; it is parsed into the
+    // assistant message and should not be duplicated in the trace output.
+}
+
+fn upsert_trace_tool(tools: &mut Vec<Value>, event: &Value, pi_type: &str) {
+    let tool_call_id = event
+        .get("toolCallId")
+        .or_else(|| event.get("tool_call_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_owned();
+    let existing_index = tools.iter().position(|tool| {
+        tool.get("toolCallId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id == tool_call_id)
+    });
+    let tool_name = event
+        .get("toolName")
+        .or_else(|| event.get("tool_name"))
+        .and_then(Value::as_str)
+        .unwrap_or("tool");
+    let status = match pi_type {
+        "tool_execution_start" | "tool_execution_update" => "running",
+        "tool_execution_end" => "done",
+        _ => "unknown",
+    };
+    let is_error = event
+        .get("isError")
+        .or_else(|| event.get("is_error"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let mut tool = existing_index
+        .and_then(|index| tools.get(index).cloned())
+        .unwrap_or_else(|| {
+            json!({
+                "toolCallId": tool_call_id,
+                "toolName": tool_name,
+                "status": status,
+                "output": "",
+                "isError": false,
+            })
+        });
+
+    tool["toolName"] = json!(tool_name);
+    tool["status"] = json!(if is_error { "error" } else { status });
+    tool["isError"] = json!(is_error);
+    if let Some(output) = extract_tool_text(event) {
+        tool["output"] = json!(output);
+    }
+
+    if let Some(index) = existing_index {
+        tools[index] = tool;
+    } else {
+        tools.push(tool);
+    }
+}
+
+fn extract_tool_text(event: &Value) -> Option<String> {
+    let result = event
+        .get("partialResult")
+        .or_else(|| event.get("partial_result"))
+        .or_else(|| event.get("result"))?;
+    result
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|text| !text.is_empty())
+}
+
+fn summarize_pi_event(pi_type: &str, payload: &Value) -> String {
+    match pi_type {
+        "agent_start" => "Pi Agent 开始处理。".to_owned(),
+        "agent_end" => "Pi Agent 处理完成。".to_owned(),
+        "turn_start" => "开始新一轮推理。".to_owned(),
+        "turn_end" => "本轮推理完成。".to_owned(),
+        "message_start" => "开始生成消息。".to_owned(),
+        "message_update" => "正在生成内容。".to_owned(),
+        "message_end" => "消息生成完成。".to_owned(),
+        "tool_execution_start" => format!(
+            "开始调用工具：{}",
+            payload
+                .get("toolName")
+                .or_else(|| payload.get("tool_name"))
+                .and_then(Value::as_str)
+                .unwrap_or("tool")
+        ),
+        "tool_execution_update" => "工具执行中。".to_owned(),
+        "tool_execution_end" => "工具执行完成。".to_owned(),
+        "extension_error" => "扩展执行出错。".to_owned(),
+        _ => format!("Pi Agent 事件：{pi_type}"),
     }
 }
 
@@ -1024,10 +1771,11 @@ impl ModelProvider for PiRpcModelProvider {
     fn analyze_requirement(
         &self,
         input: RequirementAnalysisInput,
+        events: Option<RequirementEventEmitter>,
     ) -> RequirementAnalysisFuture<'_> {
         Box::pin(async move {
             match &self.client {
-                Some(client) => client.analyze_requirement(input).await,
+                Some(client) => client.analyze_requirement(input, events).await,
                 None => Err(AppError::internal(
                     self.startup_error
                         .clone()
@@ -1106,6 +1854,7 @@ impl PiRpcClient {
     async fn analyze_requirement(
         &self,
         input: RequirementAnalysisInput,
+        events: Option<RequirementEventEmitter>,
     ) -> Result<RequirementAnalysisOutput, AppError> {
         let high = input.model_settings.high.clone();
         let model_id = high
@@ -1126,15 +1875,25 @@ impl PiRpcClient {
         self.set_thinking_level(high.thinking_level.as_str())
             .await?;
         self.prompt(&build_requirement_prompt(&input)).await?;
-        self.wait_for_agent_end(std::time::Duration::from_secs(120))
-            .await?;
+        let mut pi_events = Vec::new();
+        self.wait_for_agent_end_with_events(Duration::from_secs(120), |event| {
+            if let Some(emitter) = &events {
+                emitter.emit_pi_event(event.clone());
+            }
+            pi_events.push(event);
+        })
+        .await?;
 
         let assistant_text = self
             .get_last_assistant_text()
             .await?
             .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
         let session_file = self.get_session_file().await?;
-        Ok(parse_requirement_analysis(&assistant_text, session_file))
+        Ok(parse_requirement_analysis(
+            &assistant_text,
+            session_file,
+            build_pi_trace_metadata(&pi_events),
+        ))
     }
 
     async fn set_model(&self, provider: &str, model_id: &str) -> Result<(), AppError> {
@@ -1202,7 +1961,14 @@ impl PiRpcClient {
             .map(str::to_owned))
     }
 
-    async fn wait_for_agent_end(&self, timeout: std::time::Duration) -> Result<(), AppError> {
+    async fn wait_for_agent_end_with_events<F>(
+        &self,
+        timeout: Duration,
+        mut on_event: F,
+    ) -> Result<(), AppError>
+    where
+        F: FnMut(Value) + Send,
+    {
         let _guard = self.io_lock.lock().await;
         let mut stdout = self.stdout.lock().await;
         let mut line = String::new();
@@ -1218,6 +1984,14 @@ impl PiRpcClient {
                     continue;
                 }
                 let value: Value = serde_json::from_str(trimmed)?;
+                if value.get("type") != Some(&json!("response")) {
+                    let is_agent_end = value.get("type") == Some(&json!("agent_end"));
+                    on_event(value);
+                    if is_agent_end {
+                        return Ok(());
+                    }
+                    continue;
+                }
                 if value.get("type") == Some(&json!("agent_end")) {
                     return Ok(());
                 }
@@ -1414,8 +2188,23 @@ impl From<serde_json::Error> for AppError {
 }
 
 async fn write_json(path: &Path, data: &AppData) -> Result<(), AppError> {
-    let content = serde_json::to_string_pretty(data)?;
-    tokio::fs::write(path, format!("{content}\n")).await?;
+    let mut content = serde_json::to_string_pretty(data)?;
+    content.push('\n');
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::internal(format!("无法获取 {} 的父目录", path.display())))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("app.json");
+    let temp_name = format!(".{file_name}.{}.tmp", Utc::now().timestamp_millis());
+    let temp_path = parent.join(temp_name);
+
+    tokio::fs::write(&temp_path, content).await?;
+    if let Err(error) = tokio::fs::rename(&temp_path, path).await {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(error.into());
+    }
     Ok(())
 }
 
@@ -1597,6 +2386,7 @@ mod tests {
         fn analyze_requirement(
             &self,
             _input: RequirementAnalysisInput,
+            _events: Option<RequirementEventEmitter>,
         ) -> RequirementAnalysisFuture<'_> {
             Box::pin(async move { self.analysis.clone().map_err(AppError::internal) })
         }
@@ -1608,9 +2398,12 @@ mod tests {
             analysis: Ok(RequirementAnalysisOutput {
                 status: RequirementStatus::Clarifying,
                 assistant_message: "请补充目标用户和验收标准。".to_owned(),
+                progress: "正在澄清需求。".to_owned(),
+                clarifications: vec![test_clarification("q1")],
                 draft: None,
                 pi_session_file: Some("session.json".to_owned()),
                 error: None,
+                trace: None,
             }),
         })
     }
@@ -1960,6 +2753,8 @@ mod tests {
             fake_analysis_provider(RequirementAnalysisOutput {
                 status: RequirementStatus::DraftReady,
                 assistant_message: "需求已经足够清晰。".to_owned(),
+                progress: "需求已清晰。".to_owned(),
+                clarifications: Vec::new(),
                 draft: Some(RequirementDraft {
                     title: "新增登录".to_owned(),
                     summary: "实现登录入口。".to_owned(),
@@ -1967,6 +2762,7 @@ mod tests {
                 }),
                 pi_session_file: Some("session.json".to_owned()),
                 error: None,
+                trace: None,
             }),
         );
 
@@ -1986,8 +2782,12 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let canvas: ProjectCanvasResponse = serde_json::from_slice(&body).unwrap();
         let active = canvas.active_requirement.unwrap();
-        assert_eq!(active.status, RequirementStatus::DraftReady);
-        assert_eq!(active.draft.unwrap().title, "新增登录");
+        assert_eq!(active.status, RequirementStatus::Analyzing);
+
+        let active =
+            wait_for_requirement_status(&data_path, &active.id, RequirementStatus::DraftReady)
+                .await;
+        assert_eq!(active.draft.as_ref().unwrap().title, "新增登录");
 
         let response = app
             .clone()
@@ -2024,17 +2824,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn requirement_clarification_answers_resume_analysis() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_path = temp_dir.path().join("data/app.json");
+        let mut store = JsonStore::open(data_path).await.unwrap();
+        let project = test_project("alpha");
+        store.data.projects.push(project.clone());
+
+        let (requirement_id, _) = store
+            .create_requirement(&project.id, "实现需求澄清".to_owned())
+            .await
+            .unwrap();
+        store
+            .apply_requirement_analysis(
+                &requirement_id,
+                Ok(RequirementAnalysisOutput {
+                    status: RequirementStatus::Clarifying,
+                    assistant_message: "请确认范围。".to_owned(),
+                    progress: "需要确认范围。".to_owned(),
+                    clarifications: vec![test_clarification("q1")],
+                    draft: None,
+                    pi_session_file: Some("session.json".to_owned()),
+                    error: None,
+                    trace: Some(json!({
+                        "type": "pi_trace",
+                        "version": 1,
+                        "trace": {
+                            "thinking": "分析范围",
+                            "output": "",
+                            "tools": [],
+                            "statuses": []
+                        }
+                    })),
+                }),
+            )
+            .await
+            .unwrap();
+
+        let requirement = store
+            .data
+            .requirements
+            .iter()
+            .find(|requirement| requirement.id == requirement_id)
+            .unwrap();
+        assert_eq!(requirement.status, RequirementStatus::Clarifying);
+        assert_eq!(requirement.clarification_round, 1);
+        assert_eq!(requirement.clarifications.len(), 1);
+        assert!(requirement
+            .messages
+            .iter()
+            .any(|message| message.role == RequirementMessageRole::Trace));
+
+        let (_, input) = store
+            .submit_requirement_clarifications(
+                &requirement_id,
+                vec![ClarificationAnswerRequest {
+                    clarification_id: "q1".to_owned(),
+                    selected_options: vec!["small".to_owned()],
+                    custom_text: None,
+                }],
+            )
+            .await
+            .unwrap();
+
+        let requirement = store
+            .data
+            .requirements
+            .iter()
+            .find(|requirement| requirement.id == requirement_id)
+            .unwrap();
+        assert_eq!(requirement.status, RequirementStatus::Analyzing);
+        assert!(requirement
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("小范围"));
+        assert_eq!(
+            input.clarifications[0]
+                .answer
+                .as_ref()
+                .unwrap()
+                .selected_options,
+            vec!["small"]
+        );
+    }
+
+    #[tokio::test]
     async fn requirement_analysis_parse_failure_returns_failed_output() {
-        let output = parse_requirement_analysis("普通文本", Some("session.json".to_owned()));
+        let output = parse_requirement_analysis("普通文本", Some("session.json".to_owned()), None);
         assert_eq!(output.status, RequirementStatus::Failed);
         assert!(output.error.unwrap().contains("结构化 JSON"));
 
         let output = parse_requirement_analysis(
             r#"{"status":"needs_clarification","message":"请确认范围","draft":null}"#,
             None,
+            None,
         );
         assert_eq!(output.status, RequirementStatus::Clarifying);
         assert_eq!(output.assistant_message, "请确认范围");
+
+        let output = parse_requirement_analysis(
+            r#"<!doctype html><html>{"status":"needs_clarification","progress":"需要确认展示范围","message":"请确认展示范围","clarifications":[{"question":"展示哪些内容？","type":"multi_choice","options":[{"label":"思考","description":"展示思考过程"},{"label":"工具","description":"展示工具调用"}]}],"draft":null}"#,
+            None,
+            None,
+        );
+        assert_eq!(output.status, RequirementStatus::Clarifying);
+        assert_eq!(output.clarifications.len(), 1);
+        assert_eq!(output.clarifications[0].options.len(), 2);
     }
 
     fn temp_git_repo(root: &Path) -> PathBuf {
@@ -2083,13 +2980,61 @@ mod tests {
             messages: vec![RequirementMessage {
                 role: RequirementMessageRole::User,
                 content: id.to_owned(),
+                metadata: None,
                 created_at: now,
             }],
+            clarification_round: 0,
+            clarifications: Vec::new(),
             draft: None,
             pi_session_file: None,
             error: None,
             created_at: now,
             updated_at: now,
         }
+    }
+
+    fn test_clarification(id: &str) -> RequirementClarification {
+        RequirementClarification {
+            id: id.to_owned(),
+            question: "请选择范围".to_owned(),
+            question_type: ClarificationQuestionType::SingleChoice,
+            options: vec![
+                ClarificationOption {
+                    value: "small".to_owned(),
+                    label: "小范围".to_owned(),
+                    description: "先做核心流程".to_owned(),
+                    recommended: true,
+                },
+                ClarificationOption {
+                    value: "full".to_owned(),
+                    label: "完整范围".to_owned(),
+                    description: "一次完成全部能力".to_owned(),
+                    recommended: false,
+                },
+            ],
+            answer: None,
+        }
+    }
+
+    async fn wait_for_requirement_status(
+        data_path: &Path,
+        requirement_id: &str,
+        status: RequirementStatus,
+    ) -> Requirement {
+        for _ in 0..20 {
+            let store = JsonStore::open(data_path.to_path_buf()).await.unwrap();
+            if let Some(requirement) = store
+                .data
+                .requirements
+                .iter()
+                .find(|requirement| requirement.id == requirement_id)
+            {
+                if requirement.status == status {
+                    return requirement.clone();
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("requirement {requirement_id} did not reach {status:?}");
     }
 }

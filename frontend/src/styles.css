@@ -29,6 +29,7 @@
     --accent-style: #65a30d;
     --accent-model: #f97316;
     --accent-danger: #fb7185;
+    --success: #22c55e;
     --glow-create: rgba(59, 130, 246, 0.32);
     --glow-projects: rgba(20, 184, 166, 0.32);
     --glow-style: rgba(101, 163, 13, 0.28);
@@ -59,6 +60,7 @@
     --accent-style: #4d7c0f;
     --accent-model: #c2410c;
     --accent-danger: #be123c;
+    --success: #16a34a;
     --glow-create: rgba(37, 99, 235, 0.16);
     --glow-projects: rgba(15, 118, 110, 0.16);
     --glow-style: rgba(77, 124, 15, 0.18);
@@ -85,6 +87,60 @@
   textarea {
     font: inherit;
   }
+}
+
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--card-border-strong);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+}
+
+.react-flow__controls-button {
+  width: 32px;
+  height: 32px;
+  border-bottom: 1px solid var(--card-border);
+  background: var(--card-bg);
+  color: var(--text-soft);
+  fill: var(--text-soft);
+}
+
+[data-theme="dark"] .react-flow__controls {
+  border-color: rgba(226, 232, 240, 0.24);
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 12px 34px rgba(0, 0, 0, 0.42);
+}
+
+[data-theme="dark"] .react-flow__controls-button {
+  border-bottom-color: rgba(226, 232, 240, 0.18);
+  background: rgba(15, 23, 42, 0.98);
+  color: #e2e8f0;
+  fill: #e2e8f0;
+}
+
+[data-theme="dark"] .react-flow__controls-button:hover {
+  background: rgba(30, 41, 59, 1);
+  color: #ffffff;
+  fill: #ffffff;
+}
+
+[data-theme="dark"] .react-flow__controls-button:disabled {
+  color: #94a3b8;
+  fill: #94a3b8;
+  opacity: 0.7;
+}
+
+.react-flow__controls-button svg {
+  opacity: 1;
+}
+
+.react-flow__controls-button svg,
+.react-flow__controls-button path {
+  fill: currentColor;
+  stroke: currentColor;
 }
 
 @layer components {
@@ -182,6 +238,13 @@
       0 0 28px var(--glow-style);
   }
 
+  .node-card--summary {
+    @apply min-h-[92px] cursor-pointer;
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px var(--glow-model);
+  }
+
   .node-card--delete-confirm {
     @apply min-h-[360px] w-[300px];
     box-shadow:
@@ -197,10 +260,19 @@
   }
 
   .node-card--project-back {
-    @apply min-h-[130px] w-[260px];
+    @apply min-h-[88px] w-[246px] cursor-pointer;
     box-shadow:
       var(--shadow-card),
       0 0 28px var(--glow-projects);
+  }
+
+  .node-card--clickable {
+    @apply flex items-center;
+  }
+
+  .node-card--clickable:focus-visible {
+    outline: 2px solid var(--card-border-strong);
+    outline-offset: 4px;
   }
 
   .node-card--requirement-list {
@@ -546,6 +618,236 @@
   .requirement-input textarea {
     @apply min-h-[76px] resize-y rounded-xl;
   }
+
+  .requirement-events {
+    @apply grid gap-1.5;
+  }
+
+  .requirement-events span,
+  .requirement-analyzing,
+  .trace-status {
+    @apply flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px];
+    background: color-mix(in srgb, var(--canvas-bg) 36%, transparent);
+    color: var(--text-soft);
+  }
+
+  .requirement-analyzing svg,
+  .spin-icon {
+    @apply animate-spin;
+  }
+
+  .trace-bubble {
+    @apply overflow-hidden rounded-xl border;
+    border-color: color-mix(in srgb, var(--accent-model) 24%, transparent);
+    background: color-mix(in srgb, var(--canvas-bg) 28%, transparent);
+  }
+
+  .trace-bubble__header {
+    @apply flex w-full cursor-pointer items-center justify-between gap-2 border-0 px-3 py-2 text-left text-xs font-bold;
+    background: transparent;
+    color: var(--text-strong);
+  }
+
+  .trace-bubble__header span {
+    @apply flex min-w-0 items-center gap-1.5;
+  }
+
+  .trace-bubble__header span:first-child {
+    @apply flex-1;
+  }
+
+  .trace-bubble__header span:nth-child(2) {
+    @apply text-[10px] font-semibold;
+    color: var(--text-muted);
+  }
+
+  .rotate-icon {
+    transform: rotate(180deg);
+  }
+
+  .trace-bubble__content {
+    @apply grid max-h-[300px] gap-2 overflow-y-auto px-3 pb-3;
+  }
+
+  .trace-item {
+    @apply grid gap-1.5 rounded-lg border px-3 py-2;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--card-bg-hover) 72%, transparent);
+  }
+
+  .trace-item--error {
+    border-color: color-mix(in srgb, var(--accent-danger) 38%, transparent);
+  }
+
+  .trace-item__header {
+    @apply flex items-center justify-between gap-2 text-[11px] font-bold;
+    color: var(--text-strong);
+  }
+
+  .trace-item__header span {
+    @apply flex min-w-0 items-center gap-1.5;
+  }
+
+  .trace-item__header em {
+    @apply shrink-0 not-italic;
+    color: var(--text-muted);
+  }
+
+  .trace-item pre {
+    @apply m-0 max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words rounded-md px-2 py-1.5 font-sans text-[11px] leading-relaxed;
+    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+    color: var(--text-soft);
+  }
+
+  .trace-status span {
+    @apply h-1.5 w-1.5 rounded-full;
+    background: var(--accent-model);
+  }
+
+  .clarification-panel {
+    @apply grid gap-3 rounded-xl border p-3;
+    border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 8%, transparent);
+  }
+
+  .clarification-panel__head {
+    @apply flex items-center justify-between gap-2 text-xs font-bold;
+    color: var(--text-strong);
+  }
+
+  .clarification-panel__head span {
+    @apply flex items-center gap-1.5;
+  }
+
+  .clarification-panel__head em {
+    @apply not-italic;
+    color: var(--text-muted);
+  }
+
+  .clarification-steps {
+    @apply flex items-center justify-center gap-2;
+  }
+
+  .clarification-step {
+    @apply flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-[11px] font-bold transition;
+    border: 1px solid var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 38%, transparent);
+    color: var(--text-soft);
+  }
+
+  .clarification-step:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent-model) 42%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 14%, transparent);
+    color: var(--text-strong);
+  }
+
+  .clarification-step--current {
+    border-color: color-mix(in srgb, var(--accent-model) 55%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 22%, transparent);
+    color: var(--accent-model);
+  }
+
+  .clarification-step--completed {
+    border-color: color-mix(in srgb, var(--success) 45%, transparent);
+    background: color-mix(in srgb, var(--success) 14%, transparent);
+    color: var(--success);
+  }
+
+  .clarification-step:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+
+  .clarification-panel__items {
+    @apply grid gap-2.5;
+  }
+
+  .clarification-card {
+    @apply grid gap-2 rounded-xl border p-3;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
+  }
+
+  .clarification-card__question {
+    @apply flex items-start gap-2;
+  }
+
+  .clarification-card__question span {
+    @apply flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold;
+    background: color-mix(in srgb, var(--accent-model) 18%, transparent);
+    color: var(--accent-model);
+  }
+
+  .clarification-card__question strong {
+    @apply text-xs leading-relaxed;
+    color: var(--text-strong);
+  }
+
+  .clarification-card textarea {
+    @apply min-h-[72px] resize-y rounded-lg border px-3 py-2 text-xs outline-none;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+    color: var(--text-strong);
+  }
+
+  .clarification-options {
+    @apply grid gap-2;
+  }
+
+  .clarification-options button {
+    @apply cursor-pointer rounded-lg border px-3 py-2 text-left transition;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 38%, transparent);
+    color: var(--text-soft);
+  }
+
+  .clarification-options button:hover,
+  .clarification-option--selected {
+    border-color: color-mix(in srgb, var(--accent-model) 42%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 14%, transparent);
+    color: var(--text-strong);
+  }
+
+  .clarification-options button span {
+    @apply flex items-center gap-1.5 text-xs font-bold;
+  }
+
+  .clarification-options button em {
+    @apply rounded-full px-1.5 py-0.5 text-[10px] not-italic;
+    background: color-mix(in srgb, var(--accent-model) 18%, transparent);
+    color: var(--accent-model);
+  }
+
+  .clarification-options button small {
+    @apply mt-1 block text-[11px] leading-relaxed;
+    color: var(--text-muted);
+  }
+
+  .clarification-panel__actions {
+    @apply flex items-center justify-end gap-2;
+  }
+
+  .clarification-panel__prev,
+  .clarification-panel__next {
+    @apply inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border-0 px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
+  }
+
+  .clarification-panel__prev {
+    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+    color: var(--text-strong);
+  }
+
+  .clarification-panel__prev:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--canvas-bg) 68%, transparent);
+  }
+
+  .clarification-panel__next {
+    background: var(--accent-model);
+    color: white;
+  }
+
+  .clarification-panel__next:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
 }
 
 @layer utilities {
@@ -596,10 +898,41 @@
     fill: var(--text-soft);
   }
 
+  [data-theme="dark"] .react-flow__controls {
+    border-color: rgba(226, 232, 240, 0.24);
+    background: rgba(15, 23, 42, 0.98);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 12px 34px rgba(0, 0, 0, 0.42);
+  }
+
+  [data-theme="dark"] .react-flow__controls-button {
+    border-bottom-color: rgba(226, 232, 240, 0.18);
+    background: rgba(15, 23, 42, 0.98);
+    color: #e2e8f0;
+    fill: #e2e8f0;
+  }
+
+  [data-theme="dark"] .react-flow__controls-button svg {
+    opacity: 1;
+  }
+
   .react-flow__controls-button:hover {
     background: var(--card-bg-hover);
     color: var(--text-strong);
     fill: var(--text-strong);
+  }
+
+  [data-theme="dark"] .react-flow__controls-button:hover {
+    background: rgba(30, 41, 59, 1);
+    color: #ffffff;
+    fill: #ffffff;
+  }
+
+  [data-theme="dark"] .react-flow__controls-button:disabled {
+    color: #94a3b8;
+    fill: #94a3b8;
+    opacity: 0.7;
   }
 
   .react-flow__controls-button svg,
