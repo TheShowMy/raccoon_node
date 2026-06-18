@@ -12,7 +12,7 @@ function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: root,
     stdio: "inherit",
-    shell: process.platform === "win32",
+    shell: false,
     ...options
   });
   if (result.error) {
@@ -66,11 +66,11 @@ await fs.writeFile(
     `./bin/${binaryName}`,
     "```",
     "",
-    "默认监听地址：0.0.0.0:3001",
+    "默认监听地址：127.0.0.1:3001",
     "",
     "本机访问：http://127.0.0.1:3001",
     "",
-    "局域网访问：http://<本机局域网 IP>:3001",
+    "如需监听所有接口：RACCOON_HOST=0.0.0.0",
     "",
     "可选环境变量：",
     "",

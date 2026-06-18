@@ -21,7 +21,7 @@ repos:
         name: 删除行尾多余空格
 
   - repo: https://github.com/psf/black
-    rev: 26.5.1
+    rev: 25.1.0
     hooks:
       - id: black
         name: 使用 Black 格式化 Python 代码
@@ -36,49 +36,49 @@ repos:
     hooks:
       - id: prettier
         name: 使用 Prettier 检查 TS/TSX/CSS 文件
-        entry: bash -c 'cd frontend && npm run format:check'
+        entry: npm --prefix frontend run format:check
         language: system
         files: ^frontend/.*\.(ts|tsx|css)$
         pass_filenames: false
 
       - id: tsc
         name: TypeScript 类型检查
-        entry: bash -c 'cd frontend && npm run check'
+        entry: npm --prefix frontend run check
         language: system
         files: ^frontend/.*\.(ts|tsx)$
         pass_filenames: false
 
       - id: frontend-build
         name: 前端生产构建检查
-        entry: bash -c 'cd frontend && npm run build'
+        entry: npm --prefix frontend run build
         language: system
         files: ^frontend/.*\.(ts|tsx|css|html)$
         pass_filenames: false
 
       - id: cargo-fmt
         name: 使用 rustfmt 格式化检查 Rust 文件
-        entry: bash -c 'cargo fmt -- --check'
+        entry: cargo fmt -- --check
         language: system
         files: \.rs$
         pass_filenames: false
 
       - id: cargo-check
         name: Rust 编译检查
-        entry: bash -c 'cargo check --all'
+        entry: cargo check --all
         language: system
         files: \.rs$
         pass_filenames: false
 
       - id: cargo-clippy
         name: Rust Clippy 静态检查
-        entry: bash -c 'cargo clippy --all-targets --all-features --tests --benches -- -D warnings'
+        entry: cargo clippy --all-targets --all-features --tests --benches -- -D warnings
         language: system
         files: \.rs$
         pass_filenames: false
 
       - id: cargo-test
         name: 运行 Rust 单元测试
-        entry: bash -c 'cargo test'
+        entry: cargo test
         language: system
         files: \.rs$
         pass_filenames: false

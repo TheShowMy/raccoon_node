@@ -2,6 +2,9 @@
   "name": "raccoon-node",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "concurrently -k -n backend,frontend -c cyan,green \"cargo run\" \"npm --prefix frontend run dev\"",
     "build": "node scripts/build.mjs",
