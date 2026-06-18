@@ -595,12 +595,6 @@ function DeleteConfirmNode({
           </strong>
         </div>
         <div>
-          <span>本地路径</span>
-          <strong title={data.project.local_path}>
-            {data.project.local_path}
-          </strong>
-        </div>
-        <div>
           <span>更新时间</span>
           <strong>{formatDate(data.project.updated_at)}</strong>
         </div>
