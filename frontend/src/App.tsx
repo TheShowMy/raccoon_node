@@ -421,76 +421,90 @@ export default function App() {
     [],
   );
 
-  const nodes = useMemo<Node<StartNodeData>[]>(() => {
-    if (currentCanvas === "project") {
-      const fallbackProject = selectedProjectId
-        ? startData.projects.find((project) => project.id === selectedProjectId)
-        : null;
-      const project = projectCanvas?.project ?? fallbackProject;
-      if (!project) {
-        return [];
-      }
-
-      return [
-        {
-          id: "project-back",
-          type: "startNode",
-          position: { x: -260, y: 20 },
-          data: {
-            kind: "project-back",
-            project,
-            onBack: backToStartCanvas,
-          },
-        },
-        {
-          id: "completed-requirements",
-          type: "startNode",
-          position: { x: -260, y: 210 },
-          data: {
-            kind: "requirement-list",
-            title: "已完成需求",
-            description: `${projectCanvas?.completed_requirements.length ?? 0} 个`,
-            requirements: projectCanvas?.completed_requirements ?? [],
-            emptyText: "暂无已完成需求",
-            tone: "done",
-          },
-        },
-        {
-          id: "requirement-chat",
-          type: "startNode",
-          position: { x: 130, y: 70 },
-          data: {
-            kind: "requirement-chat",
-            project,
-            requirement: projectCanvas?.active_requirement ?? null,
-            input: requirementInput,
-            busy: requirementBusy,
-            error: requirementError,
-            streamEvents: requirementStreamEvents,
-            answers: clarificationAnswers,
-            onInputChange: setRequirementInput,
-            onSend: sendRequirementMessage,
-            onAnswerChange: updateClarificationAnswer,
-            onSubmitClarifications: submitClarifications,
-            onConfirm: confirmRequirementCallback,
-          },
-        },
-        {
-          id: "queued-requirements",
-          type: "startNode",
-          position: { x: 760, y: 210 },
-          data: {
-            kind: "requirement-list",
-            title: "待执行 / 执行中",
-            description: `${projectCanvas?.queued_requirements.length ?? 0} 个`,
-            requirements: projectCanvas?.queued_requirements ?? [],
-            emptyText: "确认需求后会进入这里",
-            tone: "pending",
-          },
-        },
-      ];
+  const projectNodes = useMemo<Node<StartNodeData>[]>(() => {
+    const fallbackProject = selectedProjectId
+      ? startData.projects.find((project) => project.id === selectedProjectId)
+      : null;
+    const project = projectCanvas?.project ?? fallbackProject;
+    if (!project) {
+      return [];
     }
 
+    return [
+      {
+        id: "project-back",
+        type: "startNode",
+        position: { x: -260, y: 20 },
+        data: {
+          kind: "project-back",
+          project,
+          onBack: backToStartCanvas,
+        },
+      },
+      {
+        id: "completed-requirements",
+        type: "startNode",
+        position: { x: -260, y: 210 },
+        data: {
+          kind: "requirement-list",
+          title: "已完成需求",
+          description: `${projectCanvas?.completed_requirements.length ?? 0} 个`,
+          requirements: projectCanvas?.completed_requirements ?? [],
+          emptyText: "暂无已完成需求",
+          tone: "done",
+        },
+      },
+      {
+        id: "requirement-chat",
+        type: "startNode",
+        position: { x: 130, y: 70 },
+        data: {
+          kind: "requirement-chat",
+          project,
+          requirement: projectCanvas?.active_requirement ?? null,
+          input: requirementInput,
+          busy: requirementBusy,
+          error: requirementError,
+          streamEvents: requirementStreamEvents,
+          answers: clarificationAnswers,
+          onInputChange: setRequirementInput,
+          onSend: sendRequirementMessage,
+          onAnswerChange: updateClarificationAnswer,
+          onSubmitClarifications: submitClarifications,
+          onConfirm: confirmRequirementCallback,
+        },
+      },
+      {
+        id: "queued-requirements",
+        type: "startNode",
+        position: { x: 760, y: 210 },
+        data: {
+          kind: "requirement-list",
+          title: "待执行 / 执行中",
+          description: `${projectCanvas?.queued_requirements.length ?? 0} 个`,
+          requirements: projectCanvas?.queued_requirements ?? [],
+          emptyText: "确认需求后会进入这里",
+          tone: "pending",
+        },
+      },
+    ];
+  }, [
+    backToStartCanvas,
+    confirmRequirementCallback,
+    clarificationAnswers,
+    projectCanvas,
+    requirementBusy,
+    requirementError,
+    requirementInput,
+    requirementStreamEvents,
+    selectedProjectId,
+    sendRequirementMessage,
+    startData.projects,
+    submitClarifications,
+    updateClarificationAnswer,
+  ]);
+
+  const startNodes = useMemo<Node<StartNodeData>[]>(() => {
     const projectListHeight = getProjectListHeight(startData.projects.length);
 
     const baseNodes: Node<StartNodeData>[] = [
@@ -619,16 +633,12 @@ export default function App() {
 
     return baseNodes;
   }, [
-    backToStartCanvas,
     cancelDeleteProject,
     confirmDeleteProject,
-    confirmRequirementCallback,
     createProject,
     creating,
-    currentCanvas,
     deleteError,
     deletingId,
-    clarificationAnswers,
     draftModelSettings,
     error,
     modelError,
@@ -636,31 +646,22 @@ export default function App() {
     modelSettingsOpen,
     models,
     pendingDeleteProject,
-    projectCanvas,
     openProjectCanvas,
     requestDeleteProject,
-    requirementBusy,
-    requirementError,
-    requirementInput,
-    requirementStreamEvents,
     saveModelSettingsCallback,
-    selectedProjectId,
-    sendRequirementMessage,
     savingModels,
     setModelSettingsOpen,
     startData,
     theme,
     toggleModelSettings,
-    submitClarifications,
-    updateClarificationAnswer,
     updateModelTier,
   ]);
 
-  const edges = useMemo<Edge[]>(() => {
-    if (currentCanvas === "project") {
-      return [];
-    }
+  const nodes = currentCanvas === "project" ? projectNodes : startNodes;
 
+  const projectEdges = useMemo<Edge[]>(() => [], []);
+
+  const startEdges = useMemo<Edge[]>(() => {
     const flowEdges: Edge[] = [
       {
         id: "create-project-to-project-list",
@@ -711,7 +712,9 @@ export default function App() {
     }
 
     return flowEdges;
-  }, [currentCanvas, modelSettingsOpen, pendingDeleteProject]);
+  }, [modelSettingsOpen, pendingDeleteProject]);
+
+  const edges = currentCanvas === "project" ? projectEdges : startEdges;
 
   return (
     <main className="app-shell" data-theme={theme}>

@@ -285,8 +285,8 @@ pub async fn clone_git_repo(git_url: &str, repo_dir: &Path) -> Result<(), AppErr
 }
 
 pub async fn write_json(path: &Path, data: &AppData) -> Result<(), AppError> {
-    let mut content = serde_json::to_string_pretty(data)?;
-    content.push('\n');
+    let mut content = serde_json::to_vec(data)?;
+    content.push(b'\n');
     let parent = path
         .parent()
         .ok_or_else(|| AppError::internal(format!("无法获取 {} 的父目录", path.display())))?;

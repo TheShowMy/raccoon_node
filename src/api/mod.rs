@@ -36,7 +36,7 @@ pub fn build_app_with_model_provider(
 ) -> Router {
     let (event_tx, _) = broadcast::channel(256);
     let state = AppState {
-        store: Arc::new(tokio::sync::Mutex::new(store)),
+        store: Arc::new(tokio::sync::RwLock::new(store)),
         model_provider,
         requirement_events: RequirementEventBus { tx: event_tx },
     };

@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
 use crate::error::AppError;
@@ -18,13 +18,13 @@ use crate::store::JsonStore;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub store: Arc<Mutex<JsonStore>>,
+    pub store: Arc<RwLock<JsonStore>>,
     pub model_provider: Arc<dyn crate::models::ModelProvider>,
     pub requirement_events: RequirementEventBus,
 }
 
 pub async fn get_start(State(state): State<AppState>) -> Json<AppData> {
-    let store = state.store.lock().await;
+    let store = state.store.read().await;
     Json(store.data.clone())
 }
 
@@ -33,7 +33,7 @@ pub async fn create_project(
     Json(payload): Json<crate::models::CreateProjectRequest>,
 ) -> Result<Json<Project>, AppError> {
     let (id, repo_dir) = {
-        let store = state.store.lock().await;
+        let store = state.store.read().await;
         store.prepare_project(&payload.name, &payload.git_url)?
     };
 
@@ -46,7 +46,7 @@ pub async fn create_project(
         return Err(error);
     }
 
-    let mut store = state.store.lock().await;
+    let mut store = state.store.write().await;
     let project = store.commit_project(id, name, git_url, repo_dir).await?;
     Ok(Json(project))
 }
@@ -55,7 +55,7 @@ pub async fn delete_project(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<StatusCode, AppError> {
-    let mut store = state.store.lock().await;
+    let mut store = state.store.write().await;
     store.delete_project(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -64,7 +64,7 @@ pub async fn get_project_canvas(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    let store = state.store.lock().await;
+    let store = state.store.read().await;
     Ok(Json(store.project_canvas(&id)?))
 }
 
@@ -79,12 +79,12 @@ pub async fn create_requirement(
     }
 
     let (requirement_id, input) = {
-        let mut store = state.store.lock().await;
+        let mut store = state.store.write().await;
         store.create_requirement(&project_id, message).await?
     };
 
     spawn_requirement_analysis(state.clone(), requirement_id, input);
-    let store = state.store.lock().await;
+    let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
 
@@ -99,14 +99,14 @@ pub async fn append_requirement_message(
     }
 
     let (project_id, input) = {
-        let mut store = state.store.lock().await;
+        let mut store = state.store.write().await;
         store
             .append_requirement_message(&requirement_id, message)
             .await?
     };
 
     spawn_requirement_analysis(state.clone(), requirement_id, input);
-    let store = state.store.lock().await;
+    let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
 
@@ -116,14 +116,14 @@ pub async fn submit_requirement_clarifications(
     Json(payload): Json<Vec<ClarificationAnswerRequest>>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
     let (project_id, input) = {
-        let mut store = state.store.lock().await;
+        let mut store = state.store.write().await;
         store
             .submit_requirement_clarifications(&requirement_id, payload)
             .await?
     };
 
     spawn_requirement_analysis(state.clone(), requirement_id, input);
-    let store = state.store.lock().await;
+    let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
 
@@ -167,7 +167,7 @@ pub async fn confirm_requirement(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    let mut store = state.store.lock().await;
+    let mut store = state.store.write().await;
     let project_id = store.confirm_requirement(&requirement_id).await?;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -176,7 +176,7 @@ pub async fn get_model_settings(
     State(state): State<AppState>,
 ) -> Result<Json<ModelSettingsResponse>, AppError> {
     let settings = {
-        let store = state.store.lock().await;
+        let store = state.store.read().await;
         store.data.model_settings.clone()
     };
 
@@ -204,11 +204,11 @@ pub async fn put_model_settings(
 ) -> Result<Json<ModelSettingsResponse>, AppError> {
     let models = state.model_provider.available_models().await?;
     {
-        let mut store = state.store.lock().await;
+        let mut store = state.store.write().await;
         store.save_model_settings(payload, &models).await?;
     }
 
-    let store = state.store.lock().await;
+    let store = state.store.read().await;
     Ok(Json(ModelSettingsResponse {
         models,
         settings: store.data.model_settings.clone(),
@@ -252,7 +252,7 @@ fn spawn_requirement_analysis(
         };
 
         {
-            let mut store = state.store.lock().await;
+            let mut store = state.store.write().await;
             if let Err(error) = store
                 .apply_requirement_analysis(&requirement_id, output)
                 .await

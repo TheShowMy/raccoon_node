@@ -1,4 +1,4 @@
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub mod api;
@@ -15,7 +15,7 @@ use crate::utils::{data_file_path, public_dir_path, server_addr};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub store: std::sync::Arc<Mutex<JsonStore>>,
+    pub store: std::sync::Arc<RwLock<JsonStore>>,
     pub model_provider: std::sync::Arc<dyn ModelProvider>,
     pub requirement_events: RequirementEventBus,
 }
@@ -57,6 +57,8 @@ mod tests {
     use chrono::Utc;
     use serde_json::json;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
     use tower::ServiceExt;
 
     use crate::api::build_app_with_model_provider;
@@ -837,5 +839,56 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let child = root.join("projects").join("new-project");
         assert!(crate::utils::ensure_child_path(&root, &child).is_ok());
+    }
+
+    #[tokio::test]
+    async fn concurrent_create_requirement_no_data_loss() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("app.json");
+        let mut store = JsonStore::open(path.clone()).await.unwrap();
+
+        let project = store
+            .create_project(
+                "Demo".to_owned(),
+                temp_git_repo(temp_dir.path()).to_string_lossy().to_string(),
+            )
+            .await
+            .unwrap();
+
+        let store = Arc::new(RwLock::new(store));
+        let mut handles = Vec::new();
+        for index in 0..5 {
+            let store = store.clone();
+            let project_id = project.id.clone();
+            handles.push(tokio::spawn(async move {
+                let mut store = store.write().await;
+                store
+                    .create_requirement(&project_id, format!("requirement {index}"))
+                    .await
+            }));
+        }
+
+        for handle in handles {
+            handle.await.unwrap().unwrap();
+        }
+
+        let store = JsonStore::open(path).await.unwrap();
+        assert_eq!(store.data.requirements.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn rejects_project_id_with_path_traversal() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("app.json");
+        let mut store = JsonStore::open(path).await.unwrap();
+
+        let err = store
+            .create_project(
+                "../etc/passwd".to_owned(),
+                temp_git_repo(temp_dir.path()).to_string_lossy().to_string(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
     }
 }
