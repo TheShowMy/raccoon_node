@@ -226,14 +226,14 @@ export function buildBubbleStreamFromEvents(
       continue;
     }
 
-    if (event.pi_type === "agent_end") {
+    if (event.pi_type === "agent_end" || event.pi_type === "turn_end") {
       for (const bubble of bubbles) {
         if (bubble.status === "running") bubble.status = "done";
       }
       bubbles.push({
         id: `end-${seq++}`,
         type: "status",
-        label: "分析完成",
+        label: event.pi_type === "agent_end" ? "分析完成" : "本轮分析完成",
         content: "",
         status: "done",
       });

@@ -66,6 +66,22 @@ pub fn build_requirement_prompt(input: &RequirementAnalysisInput) -> String {
         .replace("{{HISTORY}}", &history)
 }
 
+fn deduplicate_json_keys(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut result = serde_json::Map::new();
+            for (key, inner) in map {
+                if !result.contains_key(&key) {
+                    result.insert(key, deduplicate_json_keys(inner));
+                }
+            }
+            Value::Object(result)
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(deduplicate_json_keys).collect()),
+        other => other,
+    }
+}
+
 pub fn parse_requirement_analysis(
     assistant_text: &str,
     pi_session_file: Option<String>,
@@ -89,7 +105,27 @@ pub fn parse_requirement_analysis(
         };
     };
 
-    match serde_json::from_str::<RawRequirementAnalysisJson>(&json_text) {
+    let value = match serde_json::from_str::<Value>(&json_text) {
+        Ok(value) => deduplicate_json_keys(value),
+        Err(error) => {
+            return RequirementAnalysisOutput {
+                status: RequirementStatus::Failed,
+                assistant_message: if looks_like_html(assistant_text) {
+                    "Pi Agent 返回了 HTML 内容，解析结构化澄清结果失败。".to_owned()
+                } else {
+                    assistant_text.to_owned()
+                },
+                progress: String::new(),
+                clarifications: Vec::new(),
+                draft: None,
+                pi_session_file,
+                error: Some(format!("解析 Pi Agent JSON 失败：{error}")),
+                trace,
+            }
+        }
+    };
+
+    match serde_json::from_value::<RawRequirementAnalysisJson>(value) {
         Ok(parsed) => match parsed.status {
             RequirementAnalysisStatus::NeedsClarification => {
                 let progress = if parsed.progress.trim().is_empty() {
@@ -446,5 +482,28 @@ pub fn summarize_pi_event(pi_type: &str, payload: &Value) -> String {
         "tool_execution_end" => "工具执行完成。".to_owned(),
         "extension_error" => "扩展执行出错。".to_owned(),
         _ => format!("Pi Agent 事件：{pi_type}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tolerates_duplicate_keys_in_clarification_options() {
+        let text = r#"{"status":"needs_clarification","message":"请确认","clarifications":[{"id":"q1","question":"范围？","question_type":"single_choice","options":[{"value":"small","label":"小","label":"重复","description":"d"}]}],"draft":null}"#;
+        let output = parse_requirement_analysis(text, None, None);
+        assert_eq!(output.status, RequirementStatus::Clarifying);
+        assert_eq!(output.clarifications.len(), 1);
+        assert_eq!(output.clarifications[0].options.len(), 1);
+        assert!(!output.clarifications[0].options[0].label.is_empty());
+    }
+
+    #[test]
+    fn deduplicate_keeps_last_value() {
+        let value = serde_json::from_str::<Value>(r#"{"a":1,"a":2}"#).unwrap();
+        let deduped = deduplicate_json_keys(value);
+        let obj = deduped.as_object().unwrap();
+        assert_eq!(obj.get("a").unwrap(), &2);
     }
 }
