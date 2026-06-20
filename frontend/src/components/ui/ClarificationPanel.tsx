@@ -12,6 +12,7 @@ import type {
   DraftClarificationAnswer,
   RequirementClarification,
 } from "../../types/api";
+import { stopWheelPropagation } from "../../utils/events";
 import {
   createDraftAnswer,
   hasDraftAnswer,
@@ -165,7 +166,10 @@ export default function ClarificationPanel({
         })}
       </div>
 
-      <div className="clarification-panel__items">
+      <div
+        className="clarification-panel__items"
+        onWheel={stopWheelPropagation}
+      >
         <ClarificationCard
           answer={currentAnswer}
           clarification={current}

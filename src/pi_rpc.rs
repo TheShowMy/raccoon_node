@@ -1,9 +1,10 @@
 use std::{
+    collections::HashMap,
     io::ErrorKind,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::{json, Value};
@@ -24,21 +25,32 @@ use crate::requirement_analysis::{
 };
 use crate::utils::ensure_child_path;
 
+const MAX_PROJECT_CLIENTS: usize = 5;
+
 pub struct PiRpcModelProvider {
-    pub client: Option<Arc<PiRpcClient>>,
+    pub data_root: PathBuf,
+    pub session_dir: PathBuf,
+    pub global_client: Option<Arc<PiRpcClient>>,
+    pub project_clients: tokio::sync::Mutex<HashMap<String, (Arc<PiRpcClient>, Instant)>>,
     pub startup_error: Option<String>,
 }
 
 impl PiRpcModelProvider {
     pub async fn start(data_root: PathBuf) -> Self {
         let session_dir = data_root.join("pi-sessions");
-        match PiRpcClient::start(&session_dir).await {
+        match PiRpcClient::start(&session_dir, &data_root).await {
             Ok(client) => Self {
-                client: Some(Arc::new(client)),
+                data_root,
+                session_dir,
+                global_client: Some(Arc::new(client)),
+                project_clients: tokio::sync::Mutex::new(HashMap::new()),
                 startup_error: None,
             },
             Err(error) => Self {
-                client: None,
+                data_root,
+                session_dir,
+                global_client: None,
+                project_clients: tokio::sync::Mutex::new(HashMap::new()),
                 startup_error: Some(format!(
                     "无法启动 Pi Agent RPC。请确认 'pi' 已安装并在 PATH 中。错误：{}",
                     error
@@ -46,12 +58,48 @@ impl PiRpcModelProvider {
             },
         }
     }
+
+    async fn project_client(
+        &self,
+        project: &crate::models::Project,
+    ) -> Result<Arc<PiRpcClient>, AppError> {
+        let project_id = project.id.clone();
+        let mut clients = self.project_clients.lock().await;
+
+        if let Some((client, _last_used)) = clients.get_mut(&project_id) {
+            *_last_used = Instant::now();
+            return Ok(client.clone());
+        }
+
+        if clients.len() >= MAX_PROJECT_CLIENTS {
+            Self::evict_oldest(&mut clients);
+        }
+
+        let working_dir = PathBuf::from(&project.local_path);
+        crate::utils::ensure_child_path(&self.data_root, &working_dir)?;
+
+        let project_session_dir = self.session_dir.join(&project_id);
+        let client = PiRpcClient::start(&project_session_dir, &working_dir).await?;
+        let client = Arc::new(client);
+        clients.insert(project_id, (client.clone(), Instant::now()));
+        Ok(client)
+    }
+
+    fn evict_oldest(clients: &mut HashMap<String, (Arc<PiRpcClient>, Instant)>) {
+        let oldest = clients
+            .iter()
+            .min_by_key(|(_id, (_client, instant))| *instant)
+            .map(|(id, _)| id.clone());
+        if let Some(id) = oldest {
+            clients.remove(&id);
+        }
+    }
 }
 
 impl ModelProvider for PiRpcModelProvider {
     fn available_models(&self) -> ModelProviderFuture<'_> {
         Box::pin(async move {
-            match &self.client {
+            match &self.global_client {
                 Some(client) => client.get_available_models().await,
                 None => Err(AppError::internal(
                     self.startup_error
@@ -68,14 +116,8 @@ impl ModelProvider for PiRpcModelProvider {
         events: Option<RequirementEventEmitter>,
     ) -> RequirementAnalysisFuture<'_> {
         Box::pin(async move {
-            match &self.client {
-                Some(client) => client.analyze_requirement(input, events).await,
-                None => Err(AppError::internal(
-                    self.startup_error
-                        .clone()
-                        .unwrap_or_else(|| "Pi Agent RPC 未启动".to_owned()),
-                )),
-            }
+            let client = self.project_client(&input.project).await?;
+            client.analyze_requirement(input, events).await
         })
     }
 }
@@ -89,7 +131,7 @@ pub struct PiRpcClient {
 }
 
 impl PiRpcClient {
-    pub async fn start(session_dir: &Path) -> Result<Self, AppError> {
+    pub async fn start(session_dir: &Path, working_dir: &Path) -> Result<Self, AppError> {
         tokio::fs::create_dir_all(session_dir).await?;
 
         let candidates: Vec<&str> = if cfg!(target_os = "windows") {
@@ -100,7 +142,7 @@ impl PiRpcClient {
 
         let mut last_error = None;
         for program in &candidates {
-            match Self::start_with_program(program, session_dir).await {
+            match Self::start_with_program(program, session_dir, working_dir).await {
                 Ok(client) => {
                     tracing::info!("started Pi Agent RPC using {}", program);
                     return Ok(client);
@@ -115,12 +157,18 @@ impl PiRpcClient {
         Err(last_error.unwrap_or_else(|| AppError::internal("未知错误")))
     }
 
-    async fn start_with_program(program: &str, session_dir: &Path) -> Result<Self, AppError> {
+    async fn start_with_program(
+        program: &str,
+        session_dir: &Path,
+        working_dir: &Path,
+    ) -> Result<Self, AppError> {
         let mut child = Command::new(program)
             .arg("--mode")
             .arg("rpc")
             .arg("--session-dir")
             .arg(session_dir)
+            .arg("--no-context-files")
+            .current_dir(working_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -303,6 +351,7 @@ impl PiRpcClient {
         let mut stdout = self.stdout.lock().await;
         let mut line = String::new();
         let wait = async {
+            let mut saw_tool_execution_this_turn = false;
             loop {
                 line.clear();
                 let read = stdout.read_line(&mut line).await?;
@@ -314,17 +363,28 @@ impl PiRpcClient {
                     continue;
                 }
                 let value: Value = serde_json::from_str(trimmed)?;
-                if value.get("type") != Some(&json!("response")) {
-                    let is_agent_end = value.get("type") == Some(&json!("agent_end"));
-                    on_event(value);
-                    if is_agent_end {
-                        return Ok(());
-                    }
+                if value.get("type") == Some(&json!("response")) {
                     continue;
                 }
-                if value.get("type") == Some(&json!("agent_end")) {
-                    return Ok(());
+
+                let event_type = value
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                match event_type {
+                    "turn_start" | "agent_start" => saw_tool_execution_this_turn = false,
+                    "tool_execution_start" => saw_tool_execution_this_turn = true,
+                    "agent_end" => {
+                        on_event(value);
+                        return Ok(());
+                    }
+                    "turn_end" if !saw_tool_execution_this_turn => {
+                        on_event(value);
+                        return Ok(());
+                    }
+                    _ => {}
                 }
+                on_event(value);
             }
         };
         tokio::time::timeout(timeout, wait)

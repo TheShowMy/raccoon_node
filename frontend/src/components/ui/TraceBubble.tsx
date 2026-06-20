@@ -5,10 +5,12 @@ import {
   Loader2,
   TriangleAlert,
   CheckCircle2,
+  Brain,
+  Wrench,
 } from "lucide-react";
 import type { LiveBubble } from "../../types/api";
 import { traceStatusText } from "../../utils/format";
-import { Brain, Wrench } from "lucide-react";
+import { stopWheelPropagation } from "../../utils/events";
 
 function TraceBubbleItem({
   bubble,
@@ -102,7 +104,11 @@ export default function TraceBubble({
         <ChevronDown size={14} className={expanded ? "rotate-icon" : ""} />
       </button>
       {expanded ? (
-        <div className="trace-bubble__content" ref={contentRef}>
+        <div
+          ref={contentRef}
+          className="trace-bubble__content"
+          onWheel={stopWheelPropagation}
+        >
           {bubbles.map((bubble) => (
             <TraceBubbleItem bubble={bubble} isLive={isLive} key={bubble.id} />
           ))}

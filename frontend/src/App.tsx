@@ -434,7 +434,7 @@ export default function App() {
       {
         id: "project-back",
         type: "startNode",
-        position: { x: -260, y: 20 },
+        position: { x: -328, y: 20 },
         data: {
           kind: "project-back",
           project,
@@ -444,7 +444,7 @@ export default function App() {
       {
         id: "completed-requirements",
         type: "startNode",
-        position: { x: -260, y: 210 },
+        position: { x: -350, y: 140 },
         data: {
           kind: "requirement-list",
           title: "已完成需求",
@@ -457,7 +457,7 @@ export default function App() {
       {
         id: "requirement-chat",
         type: "startNode",
-        position: { x: 130, y: 70 },
+        position: { x: 0, y: 20 },
         data: {
           kind: "requirement-chat",
           project,
@@ -477,7 +477,7 @@ export default function App() {
       {
         id: "queued-requirements",
         type: "startNode",
-        position: { x: 760, y: 210 },
+        position: { x: 780, y: 140 },
         data: {
           kind: "requirement-list",
           title: "待执行 / 执行中",

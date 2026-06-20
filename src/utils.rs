@@ -32,12 +32,49 @@ pub fn ensure_child_path(root: &Path, child: &Path) -> Result<(), AppError> {
     }
 
     // For not-yet-existing paths, normalize `.` and `..` components manually
-    // and verify the result still lives under the root.
+    // and verify the result still lives under the root. On macOS, temporary
+    // directories live under `/var` which symlinks to `/private/var`, so we
+    // also attempt to canonicalize the longest existing prefix and append the
+    // remaining tail relative to the canonical root.
     let normalized = strip_unc_prefix(normalize_path(&resolved));
-    if !normalized.starts_with(&root_canonical) {
-        return Err(AppError::bad_request("路径必须位于数据目录内"));
+    if normalized.starts_with(&root_canonical) {
+        return Ok(());
     }
-    Ok(())
+
+    if let Some(resolved_under_root) = resolve_under_root(&root_canonical, &resolved) {
+        if resolved_under_root.starts_with(&root_canonical) {
+            return Ok(());
+        }
+    }
+
+    Err(AppError::bad_request("路径必须位于数据目录内"))
+}
+
+fn resolve_under_root(_root_canonical: &Path, child: &Path) -> Option<PathBuf> {
+    // Walk up from `child` until we find an existing directory, canonicalize
+    // it, then append the components we walked back down.
+    let mut existing = child.to_path_buf();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+
+    loop {
+        if let Ok(canonical) = std::fs::canonicalize(&existing) {
+            let mut result = strip_unc_prefix(canonical);
+            for component in tail.into_iter().rev() {
+                result.push(component);
+            }
+            return Some(result);
+        }
+
+        match existing.parent() {
+            Some(parent) => {
+                if let Some(file_name) = existing.file_name() {
+                    tail.push(file_name.to_os_string());
+                }
+                existing = parent.to_path_buf();
+            }
+            None => return None,
+        }
+    }
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {
