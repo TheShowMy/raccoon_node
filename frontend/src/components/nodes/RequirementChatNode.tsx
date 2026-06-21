@@ -15,11 +15,20 @@ export default function RequirementChatNode({
   data: Extract<StartNodeData, { kind: "requirement-chat" }>;
 }) {
   const requirement = data.requirement;
-  const canConfirm = requirement?.status === "draft_ready" && requirement.draft;
+  const canConfirm = Boolean(
+    requirement?.status === "draft_ready" && requirement.draft,
+  );
   const isAnalyzing = requirement?.status === "analyzing";
+  const showClarificationPanel =
+    requirement?.status === "clarifying" &&
+    requirement.clarifications.length > 0;
+  const showDraftConfirm =
+    requirement?.status === "draft_ready" && Boolean(requirement.draft);
+  const actionPanelActive = showClarificationPanel || showDraftConfirm;
   const canSend =
     !data.busy &&
     !isAnalyzing &&
+    !actionPanelActive &&
     data.input.trim().length > 0 &&
     (!requirement ||
       ["analyzing", "clarifying", "draft_ready", "failed"].includes(
@@ -39,53 +48,19 @@ export default function RequirementChatNode({
   }
 
   useEffect(() => {
-    const handleWheel = (event: WheelEvent) => {
-      const target = event.target as Node;
-      const node = scrollableRef.current;
-      if (!node || !node.contains(target)) {
-        return;
+    const frame = requestAnimationFrame(() => {
+      const element = scrollableRef.current;
+      if (element) {
+        element.scrollTop = element.scrollHeight;
       }
-      event.stopPropagation();
-      event.preventDefault();
-    };
-
-    document.addEventListener("wheel", handleWheel, {
-      passive: false,
-      capture: true,
     });
-    return () => {
-      document.removeEventListener("wheel", handleWheel, { capture: true });
-    };
-  }, []);
-
-  useEffect(() => {
-    const element = scrollableRef.current;
-    if (!element) return;
-
-    const handleWheel = (event: WheelEvent) => {
-      event.stopPropagation();
-      event.preventDefault();
-    };
-
-    element.addEventListener("wheel", handleWheel, {
-      passive: false,
-      capture: true,
-    });
-    return () => {
-      element.removeEventListener("wheel", handleWheel, { capture: true });
-    };
-  }, []);
-
-  useEffect(() => {
-    const element = scrollableRef.current;
-    if (!element) return;
-
-    const isNearBottom =
-      element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-    if (isNearBottom) {
-      element.scrollTop = element.scrollHeight;
-    }
-  }, [requirement?.messages.length, data.streamEvents.length]);
+    return () => cancelAnimationFrame(frame);
+  }, [
+    data.streamEvents.length,
+    requirement?.id,
+    requirement?.messages.length,
+    requirement?.updated_at,
+  ]);
 
   return (
     <>
@@ -103,7 +78,10 @@ export default function RequirementChatNode({
         </div>
       </div>
       <div className="requirement-chat">
-        <div ref={scrollableRef} className="requirement-chat__scrollable">
+        <div
+          ref={scrollableRef}
+          className="requirement-chat__scrollable nowheel nodrag"
+        >
           {requirement ? (
             <div className="requirement-messages">
               {requirement.messages.map((message) => (
@@ -138,8 +116,14 @@ export default function RequirementChatNode({
             </div>
           ) : null}
 
-          {requirement?.status === "clarifying" &&
-          requirement.clarifications.length > 0 ? (
+          {requirement?.error ? (
+            <p className="form-error">{requirement.error}</p>
+          ) : null}
+          {data.error ? <p className="form-error">{data.error}</p> : null}
+        </div>
+
+        {showClarificationPanel && requirement ? (
+          <div className="requirement-action-panel nowheel nodrag">
             <ClarificationPanel
               requirement={requirement}
               answers={data.answers}
@@ -147,9 +131,11 @@ export default function RequirementChatNode({
               onAnswerChange={data.onAnswerChange}
               onSubmit={() => void data.onSubmitClarifications(requirement)}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {requirement?.draft ? (
+        {showDraftConfirm && requirement?.draft ? (
+          <div className="requirement-action-panel nowheel nodrag">
             <div className="requirement-draft">
               <div>
                 <strong>{requirement.draft.title}</strong>
@@ -161,28 +147,23 @@ export default function RequirementChatNode({
                 ))}
               </ul>
               <button
-                className="model-actions__save"
+                className="requirement-draft__confirm"
                 type="button"
                 disabled={data.busy || !canConfirm}
-                onClick={() => requirement && void data.onConfirm(requirement)}
+                onClick={() => void data.onConfirm(requirement)}
               >
                 确认并加入执行队列
               </button>
             </div>
-          ) : null}
+          </div>
+        ) : null}
 
-          {requirement?.error ? (
-            <p className="form-error">{requirement.error}</p>
-          ) : null}
-          {data.error ? <p className="form-error">{data.error}</p> : null}
-        </div>
-
-        <form className="requirement-input" onSubmit={submit}>
+        <form className="requirement-input nowheel nodrag" onSubmit={submit}>
           <textarea
             id="requirement-input"
             name="requirement-input"
             value={data.input}
-            disabled={data.busy}
+            disabled={data.busy || actionPanelActive}
             onChange={(event) => data.onInputChange(event.target.value)}
             placeholder={
               requirement

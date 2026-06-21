@@ -75,11 +75,9 @@ impl PiRpcModelProvider {
             Self::evict_oldest(&mut clients);
         }
 
-        let working_dir = PathBuf::from(&project.local_path);
-        crate::utils::ensure_child_path(&self.data_root, &working_dir)?;
+        let working_dir = resolve_project_working_dir(&self.data_root, &project.local_path)?;
 
-        let project_session_dir = self.session_dir.join(&project_id);
-        let client = PiRpcClient::start(&project_session_dir, &working_dir).await?;
+        let client = PiRpcClient::start(&self.session_dir, &working_dir).await?;
         let client = Arc::new(client);
         clients.insert(project_id, (client.clone(), Instant::now()));
         Ok(client)
@@ -94,6 +92,38 @@ impl PiRpcModelProvider {
             clients.remove(&id);
         }
     }
+}
+
+pub(crate) fn resolve_project_working_dir(
+    data_root: &Path,
+    local_path: &str,
+) -> Result<PathBuf, AppError> {
+    let raw_path = PathBuf::from(local_path);
+    let candidates = if raw_path.is_absolute() {
+        vec![raw_path]
+    } else {
+        let mut candidates = Vec::with_capacity(3);
+        candidates.push(data_root.join(&raw_path));
+        if let Some(workspace_root) = data_root.parent() {
+            candidates.push(workspace_root.join(&raw_path));
+        }
+        candidates.push(raw_path);
+        candidates
+    };
+
+    let mut first_valid = None;
+    for candidate in candidates {
+        if ensure_child_path(data_root, &candidate).is_ok() {
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+            if first_valid.is_none() {
+                first_valid = Some(candidate);
+            }
+        }
+    }
+
+    first_valid.ok_or_else(|| AppError::bad_request("路径必须位于数据目录内"))
 }
 
 impl ModelProvider for PiRpcModelProvider {

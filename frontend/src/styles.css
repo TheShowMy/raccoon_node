@@ -222,14 +222,14 @@
   }
 
   .node-card--requirement-list {
-    @apply min-h-[360px] w-[290px];
+    @apply flex h-[640px] w-[290px] flex-col overflow-hidden;
     box-shadow:
       var(--shadow-card),
       0 0 28px color-mix(in srgb, var(--accent-projects) 18%, transparent);
   }
 
   .node-card--requirement-chat {
-    @apply flex h-[760px] w-[720px] flex-col;
+    @apply flex h-[760px] w-[720px] flex-col overflow-visible;
     box-shadow:
       var(--shadow-card),
       0 0 32px var(--glow-model);
@@ -326,7 +326,7 @@
   .delete-actions button,
   .model-actions button,
   .requirement-input button,
-  .requirement-draft button {
+  .requirement-draft__confirm {
     @apply cursor-pointer rounded-[10px] border-0 px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
   }
 
@@ -414,9 +414,13 @@
   }
 
   .model-config-grid,
-  .requirement-list,
   .delete-detail {
     @apply mt-4 grid gap-3;
+  }
+
+  .requirement-list {
+    @apply mt-4 grid min-h-0 flex-1 gap-3 overflow-y-auto pr-1;
+    overscroll-behavior: contain;
   }
 
   .model-config-tier,
@@ -498,8 +502,7 @@
 
   .model-actions__save,
   .delete-actions__confirm,
-  .requirement-input button,
-  .requirement-draft button {
+  .requirement-input button {
     @apply inline-flex items-center justify-center gap-1.5 text-white;
     border-color: color-mix(in srgb, var(--accent-danger) 45%, transparent);
     background: var(--accent-danger);
@@ -510,11 +513,12 @@
   }
 
   .requirement-chat {
-    @apply mt-4 flex min-h-0 flex-1 flex-col gap-3.5;
+    @apply relative mt-4 flex min-h-0 flex-1 flex-col gap-3.5;
   }
 
   .requirement-chat__scrollable {
     @apply flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto pr-1 pb-1;
+    overscroll-behavior: contain;
   }
 
   .requirement-empty {
@@ -643,8 +647,29 @@
     color: var(--text-soft);
   }
 
-  .requirement-draft button {
-    @apply mt-1;
+  .requirement-action-panel {
+    @apply absolute right-0 bottom-0 left-0 z-20 rounded-xl border p-2;
+    border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
+    background: color-mix(in srgb, var(--card-bg-hover) 92%, transparent);
+    box-shadow:
+      var(--shadow-hover),
+      0 0 28px color-mix(in srgb, var(--accent-model) 18%, transparent);
+    backdrop-filter: blur(12px);
+  }
+
+  .requirement-action-panel .clarification-panel,
+  .requirement-action-panel .requirement-draft {
+    @apply overflow-visible;
+  }
+
+  .requirement-draft__confirm {
+    @apply mt-1 inline-flex items-center justify-center gap-1.5 text-white;
+    border-color: color-mix(in srgb, var(--accent-model) 45%, transparent);
+    background: var(--accent-model);
+  }
+
+  .requirement-draft__confirm:hover:not(:disabled) {
+    filter: brightness(1.08);
   }
 
   .requirement-input {
@@ -714,7 +739,7 @@
   }
 
   .trace-bubble__content {
-    @apply grid gap-2 overflow-y-auto px-3 pb-3;
+    @apply grid gap-2 overflow-visible px-3 pb-3;
   }
 
   .trace-item {
@@ -742,7 +767,7 @@
   }
 
   .trace-item pre {
-    @apply m-0 max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words rounded-md px-2 py-1.5 font-sans text-[11px] leading-relaxed;
+    @apply m-0 overflow-visible whitespace-pre-wrap break-words rounded-md px-2 py-1.5 font-sans text-[11px] leading-relaxed;
     background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
     color: var(--text-soft);
   }
@@ -819,15 +844,26 @@
     @apply flex items-start gap-2;
   }
 
-  .clarification-card__question span {
+  .clarification-card__question > span {
     @apply flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold;
     background: color-mix(in srgb, var(--accent-model) 18%, transparent);
     color: var(--accent-model);
   }
 
+  .clarification-card__question > div {
+    @apply grid min-w-0 gap-1;
+  }
+
   .clarification-card__question strong {
     @apply text-xs leading-relaxed;
     color: var(--text-strong);
+  }
+
+  .clarification-card__question div > em {
+    @apply w-fit rounded-full px-1.5 py-0.5 text-[10px] leading-none font-bold not-italic;
+    border: 1px solid color-mix(in srgb, var(--accent-model) 32%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 12%, transparent);
+    color: var(--accent-model);
   }
 
   .clarification-card textarea {
@@ -842,7 +878,7 @@
   }
 
   .clarification-options button {
-    @apply cursor-pointer rounded-lg border px-3 py-2 text-left transition;
+    @apply grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-left transition;
     border-color: var(--card-border);
     background: color-mix(in srgb, var(--canvas-bg) 38%, transparent);
     color: var(--text-soft);
@@ -855,8 +891,36 @@
     color: var(--text-strong);
   }
 
+  .clarification-option > i {
+    @apply mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border not-italic;
+    border-color: var(--card-border-strong);
+    color: white;
+  }
+
+  .clarification-option--single_choice > i {
+    @apply rounded-full;
+  }
+
+  .clarification-option--multi_choice > i {
+    @apply rounded-[5px];
+  }
+
+  .clarification-option--selected > i {
+    border-color: var(--accent-model);
+    background: var(--accent-model);
+  }
+
+  .clarification-option--single_choice.clarification-option--selected
+    > i::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: white;
+  }
+
   .clarification-options button span {
-    @apply flex items-center gap-1.5 text-xs font-bold;
+    @apply flex min-w-0 items-center gap-1.5 text-xs font-bold;
   }
 
   .clarification-options button em {
@@ -866,7 +930,7 @@
   }
 
   .clarification-options button small {
-    @apply mt-1 block text-[11px] leading-relaxed;
+    @apply col-start-2 mt-1 block text-[11px] leading-relaxed;
     color: var(--text-muted);
   }
 
@@ -925,6 +989,11 @@
   }
 
   .node-link-handle--model {
+    background: var(--accent-model);
+    color: var(--accent-model);
+  }
+
+  .node-link-handle--requirement {
     background: var(--accent-model);
     color: var(--accent-model);
   }

@@ -841,6 +841,24 @@ mod tests {
         assert!(crate::utils::ensure_child_path(&root, &child).is_ok());
     }
 
+    #[test]
+    fn resolves_project_working_dir_from_legacy_relative_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let data_root = temp.path().join("data");
+        let repo = data_root.join("projects").join("project-1").join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+
+        let data_prefixed =
+            crate::pi_rpc::resolve_project_working_dir(&data_root, "data/projects/project-1/repo")
+                .unwrap();
+        assert_eq!(data_prefixed, repo);
+
+        let data_relative =
+            crate::pi_rpc::resolve_project_working_dir(&data_root, "projects/project-1/repo")
+                .unwrap();
+        assert_eq!(data_relative, repo);
+    }
+
     #[tokio::test]
     async fn concurrent_create_requirement_no_data_loss() {
         let temp_dir = tempfile::tempdir().unwrap();

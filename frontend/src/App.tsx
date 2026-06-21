@@ -62,6 +62,21 @@ import {
 
 const nodeTypes = { startNode: StartNode };
 
+function projectIdFromPathname(pathname: string) {
+  const match = /^\/projects\/([^/]+)\/?$/.exec(pathname);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function projectCanvasPath(projectId: string) {
+  return `/projects/${encodeURIComponent(projectId)}`;
+}
+
+function writeBrowserPath(path: string, mode: "push" | "replace") {
+  if (window.location.pathname === path) return;
+  const method = mode === "push" ? "pushState" : "replaceState";
+  window.history[method]({}, "", path);
+}
+
 const emptyStartData: StartData = {
   projects: [],
   settings_summary: {
@@ -96,13 +111,14 @@ function FitViewOnGraphChange({
 }
 
 export default function App() {
+  const initialProjectId = projectIdFromPathname(window.location.pathname);
   const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme());
   const [startData, setStartData] = useState<StartData>(emptyStartData);
   const [currentCanvas, setCurrentCanvas] = useState<"start" | "project">(
-    "start",
+    initialProjectId ? "project" : "start",
   );
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-    null,
+    initialProjectId,
   );
   const [projectCanvas, setProjectCanvas] = useState<ProjectCanvasData | null>(
     null,
@@ -156,32 +172,84 @@ export default function App() {
     return data;
   }, []);
 
-  const openProjectCanvas = useCallback(
-    (project: import("./types/api").Project) => {
-      setCurrentCanvas("project");
-      setSelectedProjectId(project.id);
-      setProjectCanvas(null);
-      setRequirementInput("");
-      setRequirementError(null);
-      setRequirementStreamEvents([]);
-      setClarificationAnswers({});
-      void loadProjectCanvas(project.id).catch((reason) =>
-        setRequirementError(readError(reason)),
-      );
-    },
-    [loadProjectCanvas],
-  );
-
-  const backToStartCanvas = useCallback(() => {
-    setCurrentCanvas("start");
-    setSelectedProjectId(null);
+  const clearProjectCanvasState = useCallback(() => {
     setProjectCanvas(null);
     setRequirementInput("");
     setRequirementError(null);
     setRequirementStreamEvents([]);
     setClarificationAnswers({});
+  }, []);
+
+  const openProjectCanvas = useCallback(
+    (project: import("./types/api").Project) => {
+      writeBrowserPath(projectCanvasPath(project.id), "push");
+      setCurrentCanvas("project");
+      setSelectedProjectId(project.id);
+      setError(null);
+      clearProjectCanvasState();
+    },
+    [clearProjectCanvasState],
+  );
+
+  const backToStartCanvas = useCallback(() => {
+    writeBrowserPath("/", "push");
+    setCurrentCanvas("start");
+    setSelectedProjectId(null);
+    clearProjectCanvasState();
     void loadStart();
-  }, [loadStart]);
+  }, [clearProjectCanvasState, loadStart]);
+
+  useEffect(() => {
+    if (currentCanvas !== "project" || !selectedProjectId) {
+      return;
+    }
+
+    let cancelled = false;
+    setRequirementError(null);
+    void loadProjectCanvas(selectedProjectId)
+      .then(() => {
+        if (!cancelled) {
+          setError(null);
+        }
+      })
+      .catch((reason) => {
+        if (cancelled) return;
+        setError(readError(reason));
+        writeBrowserPath("/", "replace");
+        setCurrentCanvas("start");
+        setSelectedProjectId(null);
+        clearProjectCanvasState();
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    clearProjectCanvasState,
+    currentCanvas,
+    loadProjectCanvas,
+    selectedProjectId,
+  ]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const projectId = projectIdFromPathname(window.location.pathname);
+      if (projectId) {
+        setCurrentCanvas("project");
+        setSelectedProjectId(projectId);
+        clearProjectCanvasState();
+        return;
+      }
+
+      setCurrentCanvas("start");
+      setSelectedProjectId(null);
+      clearProjectCanvasState();
+      void loadStart();
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [clearProjectCanvasState, loadStart]);
 
   const activeRequirementId = projectCanvas?.active_requirement?.id ?? null;
 
@@ -659,7 +727,37 @@ export default function App() {
 
   const nodes = currentCanvas === "project" ? projectNodes : startNodes;
 
-  const projectEdges = useMemo<Edge[]>(() => [], []);
+  const projectEdges = useMemo<Edge[]>(
+    () => [
+      {
+        id: "completed-requirements-to-requirement-chat",
+        source: "completed-requirements",
+        sourceHandle: "requirement-list-right",
+        target: "requirement-chat",
+        targetHandle: "requirement-chat-left",
+        type: "smoothstep",
+        animated: true,
+        style: {
+          stroke: "rgba(20, 184, 166, 0.62)",
+          strokeWidth: 2,
+        },
+      },
+      {
+        id: "requirement-chat-to-queued-requirements",
+        source: "requirement-chat",
+        sourceHandle: "requirement-chat-right",
+        target: "queued-requirements",
+        targetHandle: "requirement-list-left",
+        type: "smoothstep",
+        animated: true,
+        style: {
+          stroke: "rgba(249, 115, 22, 0.68)",
+          strokeWidth: 2,
+        },
+      },
+    ],
+    [],
+  );
 
   const startEdges = useMemo<Edge[]>(() => {
     const flowEdges: Edge[] = [

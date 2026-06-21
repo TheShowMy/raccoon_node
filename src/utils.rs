@@ -156,10 +156,8 @@ pub fn sort_requirements_desc(requirements: &mut [Requirement]) {
 }
 
 pub fn data_root_from_file(path: &Path) -> Result<PathBuf, AppError> {
-    Ok(path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf())
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    Ok(std::fs::canonicalize(parent).map_err(|_| AppError::bad_request("无法解析数据目录"))?)
 }
 
 pub fn public_dir_path() -> PathBuf {

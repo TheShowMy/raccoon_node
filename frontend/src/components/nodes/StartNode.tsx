@@ -40,6 +40,12 @@ export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const hasModelTargetHandle = data.kind === "model-config";
   const hasDeleteRightHandle = data.kind === "project-item";
   const hasDeleteLeftHandle = data.kind === "delete-confirm";
+  const hasRequirementChatLeftHandle = data.kind === "requirement-chat";
+  const hasRequirementChatRightHandle = data.kind === "requirement-chat";
+  const hasRequirementListLeftHandle =
+    data.kind === "requirement-list" && data.tone === "pending";
+  const hasRequirementListRightHandle =
+    data.kind === "requirement-list" && data.tone === "done";
 
   const ContentComponent = nodeTypeMap[data.kind];
 
@@ -83,6 +89,22 @@ export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
           className="node-link-handle node-link-handle--model"
         />
       ) : null}
+      {hasRequirementChatLeftHandle ? (
+        <Handle
+          id="requirement-chat-left"
+          type="target"
+          position={Position.Left}
+          className="node-link-handle node-link-handle--requirement"
+        />
+      ) : null}
+      {hasRequirementListLeftHandle ? (
+        <Handle
+          id="requirement-list-left"
+          type="target"
+          position={Position.Left}
+          className="node-link-handle node-link-handle--requirement"
+        />
+      ) : null}
       {ContentComponent ? <ContentComponent data={data} /> : null}
       {hasDeleteRightHandle ? (
         <Handle
@@ -90,6 +112,22 @@ export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
           type="source"
           position={Position.Right}
           className="node-link-handle node-link-handle--danger"
+        />
+      ) : null}
+      {hasRequirementChatRightHandle ? (
+        <Handle
+          id="requirement-chat-right"
+          type="source"
+          position={Position.Right}
+          className="node-link-handle node-link-handle--requirement"
+        />
+      ) : null}
+      {hasRequirementListRightHandle ? (
+        <Handle
+          id="requirement-list-right"
+          type="source"
+          position={Position.Right}
+          className="node-link-handle node-link-handle--requirement"
         />
       ) : null}
       {hasModelSourceHandle ? (

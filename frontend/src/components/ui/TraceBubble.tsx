@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import type { LiveBubble } from "../../types/api";
 import { traceStatusText } from "../../utils/format";
-import { stopWheelPropagation } from "../../utils/events";
 
 function TraceBubbleItem({
   bubble,
@@ -19,18 +18,6 @@ function TraceBubbleItem({
   bubble: LiveBubble;
   isLive: boolean;
 }) {
-  const preRef = useRef<HTMLPreElement>(null);
-
-  useEffect(() => {
-    if (!isLive || !preRef.current) return;
-    requestAnimationFrame(() => {
-      const element = preRef.current;
-      if (element) {
-        element.scrollTop = element.scrollHeight;
-      }
-    });
-  }, [bubble.content, isLive]);
-
   if (bubble.type === "status") {
     return (
       <div className="trace-status">
@@ -50,7 +37,7 @@ function TraceBubbleItem({
         </span>
         {!isLive ? <em>{traceStatusText(bubble.status)}</em> : null}
       </div>
-      {bubble.content ? <pre ref={preRef}>{bubble.content}</pre> : null}
+      {bubble.content ? <pre>{bubble.content}</pre> : null}
     </div>
   );
 }
@@ -63,19 +50,8 @@ export default function TraceBubble({
   isLive: boolean;
 }) {
   const [expanded, setExpanded] = useState(isLive);
-  const contentRef = useRef<HTMLDivElement>(null);
   const running = bubbles.some((bubble) => bubble.status === "running");
   const hasError = bubbles.some((bubble) => bubble.status === "error");
-
-  useEffect(() => {
-    if (!expanded || !contentRef.current) return;
-    requestAnimationFrame(() => {
-      const element = contentRef.current;
-      if (element) {
-        element.scrollTop = element.scrollHeight;
-      }
-    });
-  }, [bubbles, expanded]);
 
   if (bubbles.length === 0) return null;
 
@@ -104,11 +80,7 @@ export default function TraceBubble({
         <ChevronDown size={14} className={expanded ? "rotate-icon" : ""} />
       </button>
       {expanded ? (
-        <div
-          ref={contentRef}
-          className="trace-bubble__content"
-          onWheel={stopWheelPropagation}
-        >
+        <div className="trace-bubble__content">
           {bubbles.map((bubble) => (
             <TraceBubbleItem bubble={bubble} isLive={isLive} key={bubble.id} />
           ))}

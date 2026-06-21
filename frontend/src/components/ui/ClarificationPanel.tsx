@@ -31,12 +31,21 @@ function ClarificationCard({
   onChange: (answer: DraftClarificationAnswer) => void;
 }) {
   const isFreeText = clarification.question_type === "free_text";
+  const questionTypeLabel =
+    clarification.question_type === "single_choice"
+      ? "单选"
+      : clarification.question_type === "multi_choice"
+        ? "多选"
+        : "填空";
 
   return (
     <section className="clarification-card">
       <div className="clarification-card__question">
         <span>Q{index + 1}</span>
-        <strong>{clarification.question}</strong>
+        <div>
+          <strong>{clarification.question}</strong>
+          <em>{questionTypeLabel}</em>
+        </div>
       </div>
       {isFreeText ? (
         <textarea
@@ -52,7 +61,10 @@ function ClarificationCard({
             const checked = answer.selectedOptions.includes(option.value);
             return (
               <button
-                className={checked ? "clarification-option--selected" : ""}
+                aria-pressed={checked}
+                className={`clarification-option clarification-option--${clarification.question_type} ${
+                  checked ? "clarification-option--selected" : ""
+                }`}
                 key={option.value}
                 type="button"
                 onClick={() =>
@@ -65,8 +77,12 @@ function ClarificationCard({
                   )
                 }
               >
+                <i aria-hidden="true">
+                  {checked && clarification.question_type === "multi_choice" ? (
+                    <Check size={12} />
+                  ) : null}
+                </i>
                 <span>
-                  {checked ? <Check size={13} /> : null}
                   {option.label}
                   {option.recommended ? <em>推荐</em> : null}
                 </span>

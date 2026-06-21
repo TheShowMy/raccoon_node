@@ -27,7 +27,7 @@ export default function RequirementListNode({
       {data.requirements.length === 0 ? (
         <div className="empty-state">{data.emptyText}</div>
       ) : (
-        <div className="requirement-list">
+        <div className="requirement-list nowheel nodrag">
           {data.requirements.map((requirement) => (
             <div className="requirement-list__item" key={requirement.id}>
               <strong>{requirement.title}</strong>
