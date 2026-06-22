@@ -16,12 +16,17 @@ use tokio::{
 
 use crate::error::AppError;
 use crate::models::{
-    ModelProvider, ModelProviderFuture, PiModel, RequirementAnalysisFuture,
+    ModelProvider, ModelProviderFuture, ModelSettings, PiModel, RequirementAnalysisFuture,
     RequirementAnalysisInput, RequirementAnalysisOutput, RequirementEventEmitter,
-    PI_RPC_REQUEST_ID,
+    RequirementPlanFuture, RequirementPlanInput, RequirementTaskExecutionFuture,
+    RequirementTaskExecutionInput, RequirementTaskExecutionOutput, PI_RPC_REQUEST_ID,
 };
 use crate::requirement_analysis::{
     build_pi_trace_metadata, build_requirement_prompt, parse_requirement_analysis,
+};
+use crate::requirement_execution::{
+    build_requirement_plan_prompt, build_requirement_task_prompt, parse_requirement_plan,
+    parse_task_execution_output,
 };
 use crate::utils::ensure_child_path;
 
@@ -150,6 +155,28 @@ impl ModelProvider for PiRpcModelProvider {
             client.analyze_requirement(input, events).await
         })
     }
+
+    fn plan_requirement_execution(
+        &self,
+        input: RequirementPlanInput,
+        events: Option<RequirementEventEmitter>,
+    ) -> RequirementPlanFuture<'_> {
+        Box::pin(async move {
+            let client = self.project_client(&input.project).await?;
+            client.plan_requirement_execution(input, events).await
+        })
+    }
+
+    fn execute_requirement_task(
+        &self,
+        input: RequirementTaskExecutionInput,
+        events: Option<RequirementEventEmitter>,
+    ) -> RequirementTaskExecutionFuture<'_> {
+        Box::pin(async move {
+            let client = self.project_client(&input.project).await?;
+            client.execute_requirement_task(input, events).await
+        })
+    }
 }
 
 pub struct PiRpcClient {
@@ -262,16 +289,6 @@ impl PiRpcClient {
         input: RequirementAnalysisInput,
         events: Option<RequirementEventEmitter>,
     ) -> Result<RequirementAnalysisOutput, AppError> {
-        let high = input.model_settings.high.clone();
-        let model_id = high
-            .model_id
-            .ok_or_else(|| AppError::bad_request("请先在模型设置中配置高档模型"))?;
-        let models = self.get_available_models().await?;
-        let model = models
-            .iter()
-            .find(|model| model.id == model_id)
-            .ok_or_else(|| AppError::bad_request("高档模型不存在于 Pi Agent 已配置模型列表"))?;
-
         if let Some(session_file) = input.pi_session_file.as_deref() {
             let session_path = Path::new(session_file);
             ensure_child_path(&self.session_dir, session_path)?;
@@ -279,9 +296,7 @@ impl PiRpcClient {
         } else {
             self.new_session().await?;
         }
-        self.set_model(&model.provider, &model.id).await?;
-        self.set_thinking_level(high.thinking_level.as_str())
-            .await?;
+        self.prepare_high_model(&input.model_settings).await?;
         self.prompt(&build_requirement_prompt(&input)).await?;
         let mut pi_events = Vec::new();
         self.wait_for_agent_end_with_events(Duration::from_secs(120), |event| {
@@ -302,6 +317,74 @@ impl PiRpcClient {
             session_file,
             build_pi_trace_metadata(&pi_events),
         ))
+    }
+
+    pub async fn plan_requirement_execution(
+        &self,
+        input: RequirementPlanInput,
+        events: Option<RequirementEventEmitter>,
+    ) -> Result<crate::models::RequirementExecutionPlan, AppError> {
+        self.new_session().await?;
+        self.prepare_high_model(&input.model_settings).await?;
+        self.prompt(&build_requirement_plan_prompt(&input.requirement))
+            .await?;
+        let mut pi_events = Vec::new();
+        self.wait_for_agent_end_with_events(Duration::from_secs(120), |event| {
+            if let Some(emitter) = &events {
+                emitter.emit_pi_event(event.clone());
+            }
+            pi_events.push(event);
+        })
+        .await?;
+        let assistant_text = self
+            .get_last_assistant_text()
+            .await?
+            .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
+        parse_requirement_plan(&assistant_text)
+    }
+
+    pub async fn execute_requirement_task(
+        &self,
+        input: RequirementTaskExecutionInput,
+        events: Option<RequirementEventEmitter>,
+    ) -> Result<RequirementTaskExecutionOutput, AppError> {
+        self.new_session().await?;
+        self.prepare_high_model(&input.model_settings).await?;
+        self.prompt(&build_requirement_task_prompt(
+            &input.requirement,
+            &input.plan,
+            &input.task,
+        ))
+        .await?;
+        let mut pi_events = Vec::new();
+        self.wait_for_agent_end_with_events(Duration::from_secs(300), |event| {
+            if let Some(emitter) = &events {
+                emitter.emit_pi_event(event.clone());
+            }
+            pi_events.push(event);
+        })
+        .await?;
+        let assistant_text = self
+            .get_last_assistant_text()
+            .await?
+            .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
+        parse_task_execution_output(&assistant_text, build_pi_trace_metadata(&pi_events))
+    }
+
+    async fn prepare_high_model(&self, model_settings: &ModelSettings) -> Result<(), AppError> {
+        let high = model_settings.high.clone();
+        let model_id = high
+            .model_id
+            .ok_or_else(|| AppError::bad_request("请先在模型设置中配置高档模型"))?;
+        let models = self.get_available_models().await?;
+        let model = models
+            .iter()
+            .find(|model| model.id == model_id)
+            .ok_or_else(|| AppError::bad_request("高档模型不存在于 Pi Agent 已配置模型列表"))?;
+        self.set_model(&model.provider, &model.id).await?;
+        self.set_thinking_level(high.thinking_level.as_str())
+            .await?;
+        Ok(())
     }
 
     async fn set_model(&self, provider: &str, model_id: &str) -> Result<(), AppError> {

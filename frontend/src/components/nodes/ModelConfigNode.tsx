@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { SlidersHorizontal } from "lucide-react";
 import type {
   StartNodeData,
@@ -10,7 +10,6 @@ import {
   tierLabels,
   thinkingLevels,
 } from "../../utils/format";
-import ModelSelect from "../ui/ModelSelect";
 
 export default function ModelConfigNode({
   data,
@@ -19,7 +18,6 @@ export default function ModelConfigNode({
 }) {
   const noModels = data.rpcStatus === "ready" && data.models.length === 0;
   const disabled = data.rpcStatus !== "ready" || data.models.length === 0;
-  const [openSelectId, setOpenSelectId] = useState<string | null>(null);
 
   return (
     <>
@@ -41,57 +39,48 @@ export default function ModelConfigNode({
       <div className="model-config-grid">
         {(["low", "medium", "high"] as ModelTierKey[]).map((tier) => {
           const setting = data.settings[tier];
-          const modelSelectId = `${tier}-model`;
-          const thinkingSelectId = `${tier}-thinking`;
 
           return (
             <section className="model-config-tier" key={tier}>
               <strong>{tierLabels[tier]}档</strong>
               <label>
                 <span>模型</span>
-                <ModelSelect
+                <select
                   value={setting.model_id ?? ""}
                   disabled={disabled}
-                  placeholder="选择模型"
-                  open={openSelectId === modelSelectId}
-                  onOpenChange={(isOpen) =>
-                    setOpenSelectId(isOpen ? modelSelectId : null)
-                  }
-                  options={[
-                    { value: "", label: "选择模型" },
-                    ...data.models.map((model) => ({
-                      value: model.id,
-                      label: `${model.provider}/${model.name}`,
-                    })),
-                  ]}
-                  onChange={(value) =>
+                  onChange={(event) =>
                     data.onChange(tier, {
                       ...setting,
-                      model_id: value || null,
+                      model_id: event.target.value || null,
                     })
                   }
-                />
+                >
+                  <option value="">选择模型</option>
+                  {data.models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.provider}/{model.name}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
                 <span>思考强度</span>
-                <ModelSelect
+                <select
                   value={setting.thinking_level}
                   disabled={disabled}
-                  open={openSelectId === thinkingSelectId}
-                  onOpenChange={(isOpen) =>
-                    setOpenSelectId(isOpen ? thinkingSelectId : null)
-                  }
-                  options={thinkingLevels.map((level) => ({
-                    value: level.value,
-                    label: level.label,
-                  }))}
-                  onChange={(value) =>
+                  onChange={(event) =>
                     data.onChange(tier, {
                       ...setting,
-                      thinking_level: value as ThinkingLevel,
+                      thinking_level: event.target.value as ThinkingLevel,
                     })
                   }
-                />
+                >
+                  {thinkingLevels.map((level) => (
+                    <option key={level.value} value={level.value}>
+                      {level.label}
+                    </option>
+                  ))}
+                </select>
               </label>
             </section>
           );

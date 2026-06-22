@@ -14,12 +14,13 @@ pub mod handlers;
 
 use crate::api::handlers::{
     append_requirement_message, confirm_requirement, create_project, create_requirement,
-    delete_project, get_model_settings, get_project_canvas, get_start, put_model_settings,
-    requirement_events, submit_requirement_clarifications, AppState,
+    delete_project, get_model_settings, get_project_canvas, get_requirement_conversation,
+    get_start, plan_requirement_execution, put_model_settings, requirement_events,
+    start_requirement_execution, submit_requirement_clarifications,
 };
-use crate::models::RequirementEventBus;
 use crate::pi_rpc::PiRpcModelProvider;
 use crate::store::JsonStore;
+use crate::AppState;
 
 pub async fn build_app(data_path: PathBuf, public_dir: PathBuf) -> Router {
     let store = JsonStore::open(data_path)
@@ -38,7 +39,7 @@ pub fn build_app_with_model_provider(
     let state = AppState {
         store: Arc::new(tokio::sync::RwLock::new(store)),
         model_provider,
-        requirement_events: RequirementEventBus { tx: event_tx },
+        requirement_events: event_tx,
     };
 
     let api = Router::new()
@@ -52,11 +53,20 @@ pub fn build_app_with_model_provider(
             post(append_requirement_message),
         )
         .route(
+            "/requirements/{id}/conversation",
+            get(get_requirement_conversation),
+        )
+        .route(
             "/requirements/{id}/clarifications",
             post(submit_requirement_clarifications),
         )
         .route("/requirements/{id}/events", get(requirement_events))
         .route("/requirements/{id}/confirm", post(confirm_requirement))
+        .route("/requirements/{id}/plan", post(plan_requirement_execution))
+        .route(
+            "/requirements/{id}/execute",
+            post(start_requirement_execution),
+        )
         .route(
             "/settings/models",
             get(get_model_settings).put(put_model_settings),

@@ -28,6 +28,8 @@ export type RequirementStatus =
   | "analyzing"
   | "clarifying"
   | "draft_ready"
+  | "planning"
+  | "plan_ready"
   | "queued"
   | "running"
   | "completed"
@@ -46,6 +48,29 @@ export type RequirementDraft = {
   acceptance_criteria: string[];
 };
 
+export type RequirementTaskStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped";
+
+export type RequirementExecutionTask = {
+  id: string;
+  title: string;
+  description: string;
+  depends_on: string[];
+  status: RequirementTaskStatus;
+  target_files: string[];
+  result_summary: string | null;
+  error: string | null;
+};
+
+export type RequirementExecutionPlan = {
+  summary: string;
+  tasks: RequirementExecutionTask[];
+};
+
 export type Requirement = {
   id: string;
   project_id: string;
@@ -56,9 +81,62 @@ export type Requirement = {
   clarification_round: number;
   clarifications: RequirementClarification[];
   draft: RequirementDraft | null;
+  execution_plan: RequirementExecutionPlan | null;
   pi_session_file: string | null;
   error: string | null;
   created_at: string;
+  updated_at: string;
+};
+
+export type RequirementConversationItem =
+  | {
+      kind: "user";
+      id: string;
+      text: string;
+      created_at: string;
+    }
+  | {
+      kind: "assistant";
+      id: string;
+      text: string;
+      created_at: string;
+    }
+  | {
+      kind: "notice";
+      id: string;
+      level: "info" | "warn";
+      text: string;
+      created_at: string;
+    }
+  | {
+      kind: "process";
+      id: string;
+      title: string;
+      status: "running" | "done" | "error";
+      metadata: TraceMetadata | null;
+      created_at: string;
+    };
+
+export type RequirementConversationPrompt =
+  | {
+      type: "clarification";
+      round: number;
+      questions: RequirementClarification[];
+    }
+  | {
+      type: "confirmation";
+      draft: RequirementDraft;
+    };
+
+export type RequirementConversation = {
+  id: string;
+  project_id: string;
+  title: string;
+  status: RequirementStatus;
+  running: boolean;
+  items: RequirementConversationItem[];
+  prompt: RequirementConversationPrompt | null;
+  error: string | null;
   updated_at: string;
 };
 
@@ -230,11 +308,17 @@ export type StartNodeData =
       requirements: Requirement[];
       emptyText: string;
       tone: "done" | "pending";
+      selectedRequirementId: string | null;
+      busyRequirementId: string | null;
+      onSelectRequirement: (requirement: Requirement) => void;
+      onPlanRequirement: (requirement: Requirement) => Promise<void>;
     }
   | {
       kind: "requirement-chat";
       project: Project;
       requirement: Requirement | null;
+      conversation: RequirementConversation | null;
+      promptDismissed: boolean;
       input: string;
       busy: boolean;
       error: string | null;
@@ -248,4 +332,16 @@ export type StartNodeData =
       ) => void;
       onSubmitClarifications: (requirement: Requirement) => Promise<void>;
       onConfirm: (requirement: Requirement) => Promise<void>;
+      onContinueEditing: (requirement: Requirement) => void;
+    }
+  | {
+      kind: "requirement-dag";
+      requirement: Requirement;
+      busy: boolean;
+      onStartExecution: (requirement: Requirement) => Promise<void>;
+      onClose: () => void;
+    }
+  | {
+      kind: "requirement-task";
+      task: RequirementExecutionTask;
     };

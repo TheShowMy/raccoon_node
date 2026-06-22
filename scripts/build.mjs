@@ -1,4 +1,4 @@
-import fs from "fs-extra";
+import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,39 +23,51 @@ function run(command, args, options = {}) {
   }
 }
 
-await fs.remove(buildDir);
-await fs.ensureDir(path.join(buildDir, "bin"));
-await fs.ensureDir(path.join(buildDir, "data"));
+async function pathExists(target) {
+  try {
+    await stat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+await rm(buildDir, { recursive: true, force: true });
+await mkdir(path.join(buildDir, "bin"), { recursive: true });
+await mkdir(path.join(buildDir, "data"), { recursive: true });
 
 run(npmCommand, ["--prefix", "frontend", "run", "build"]);
 run("cargo", ["build", "--release"]);
 
-await fs.copy(path.join(root, "target", "release", binaryName), path.join(buildDir, "bin", binaryName));
-await fs.copy(path.join(root, "frontend", "dist"), path.join(buildDir, "public"));
+await cp(path.join(root, "target", "release", binaryName), path.join(buildDir, "bin", binaryName));
+await cp(path.join(root, "frontend", "dist"), path.join(buildDir, "public"), { recursive: true });
 
 const sourceData = path.join(root, "data", "app.json");
 const targetData = path.join(buildDir, "data", "app.json");
-if (await fs.pathExists(sourceData)) {
-  await fs.copy(sourceData, targetData);
+if (await pathExists(sourceData)) {
+  await cp(sourceData, targetData);
 } else {
-  await fs.writeJson(
+  await writeFile(
     targetData,
-    {
-      projects: [],
-      settings_summary: {
-        title: "设置",
-        description: "基础设置待配置"
+    JSON.stringify(
+      {
+        projects: [],
+        settings_summary: {
+          title: "设置",
+          description: "基础设置待配置"
+        },
+        model_summary: {
+          title: "模型设置",
+          description: "默认模型待配置"
+        }
       },
-      model_summary: {
-        title: "模型设置",
-        description: "默认模型待配置"
-      }
-    },
-    { spaces: 2 }
+      null,
+      2
+    )
   );
 }
 
-await fs.writeFile(
+await writeFile(
   path.join(buildDir, "README.md"),
   [
     "# Raccoon Node Build",

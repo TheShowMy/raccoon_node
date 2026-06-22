@@ -6,6 +6,7 @@ pub mod error;
 pub mod models;
 pub mod pi_rpc;
 pub mod requirement_analysis;
+pub mod requirement_execution;
 pub mod store;
 pub mod utils;
 
@@ -67,8 +68,12 @@ mod tests {
         ClarificationAnswerRequest, ClarificationOption, ClarificationQuestionType, ModelProvider,
         ModelProviderFuture, ModelSettings, PiModel, Project, Requirement,
         RequirementAnalysisFuture, RequirementAnalysisInput, RequirementAnalysisOutput,
-        RequirementClarification, RequirementDraft, RequirementEventEmitter, RequirementMessage,
-        RequirementMessageRole, RequirementStatus, ThinkingLevel,
+        RequirementClarification, RequirementConversationItem, RequirementConversationPrompt,
+        RequirementDraft, RequirementEventEmitter, RequirementExecutionPlan,
+        RequirementExecutionTask, RequirementMessage, RequirementMessageRole,
+        RequirementPlanFuture, RequirementPlanInput, RequirementStatus,
+        RequirementTaskExecutionFuture, RequirementTaskExecutionInput,
+        RequirementTaskExecutionOutput, RequirementTaskStatus, ThinkingLevel,
     };
     use crate::requirement_analysis::{build_requirement_prompt, parse_requirement_analysis};
     use crate::store::JsonStore;
@@ -78,6 +83,8 @@ mod tests {
     struct FakeModelProvider {
         result: Result<Vec<PiModel>, String>,
         analysis: Result<RequirementAnalysisOutput, String>,
+        plan: Result<RequirementExecutionPlan, String>,
+        task: Result<RequirementTaskExecutionOutput, String>,
     }
 
     impl ModelProvider for FakeModelProvider {
@@ -91,6 +98,22 @@ mod tests {
             _events: Option<RequirementEventEmitter>,
         ) -> RequirementAnalysisFuture<'_> {
             Box::pin(async move { self.analysis.clone().map_err(AppError::internal) })
+        }
+
+        fn plan_requirement_execution(
+            &self,
+            _input: RequirementPlanInput,
+            _events: Option<RequirementEventEmitter>,
+        ) -> RequirementPlanFuture<'_> {
+            Box::pin(async move { self.plan.clone().map_err(AppError::internal) })
+        }
+
+        fn execute_requirement_task(
+            &self,
+            _input: RequirementTaskExecutionInput,
+            _events: Option<RequirementEventEmitter>,
+        ) -> RequirementTaskExecutionFuture<'_> {
+            Box::pin(async move { self.task.clone().map_err(AppError::internal) })
         }
     }
 
@@ -107,6 +130,8 @@ mod tests {
                 error: None,
                 trace: None,
             }),
+            plan: Ok(test_execution_plan()),
+            task: Ok(test_task_output()),
         })
     }
 
@@ -116,6 +141,8 @@ mod tests {
         std::sync::Arc::new(FakeModelProvider {
             result: Ok(vec![test_model("test/model", "Test Model")]),
             analysis: Ok(analysis),
+            plan: Ok(test_execution_plan()),
+            task: Ok(test_task_output()),
         })
     }
 
@@ -123,7 +150,32 @@ mod tests {
         std::sync::Arc::new(FakeModelProvider {
             result: Err(message.to_owned()),
             analysis: Err(message.to_owned()),
+            plan: Err(message.to_owned()),
+            task: Err(message.to_owned()),
         })
+    }
+
+    fn test_execution_plan() -> RequirementExecutionPlan {
+        RequirementExecutionPlan {
+            summary: "实现登录需求的执行计划。".to_owned(),
+            tasks: vec![RequirementExecutionTask {
+                id: "task-1".to_owned(),
+                title: "实现登录入口".to_owned(),
+                description: "补齐登录页面和提交逻辑。".to_owned(),
+                depends_on: Vec::new(),
+                status: RequirementTaskStatus::Pending,
+                target_files: vec!["src".to_owned()],
+                result_summary: None,
+                error: None,
+            }],
+        }
+    }
+
+    fn test_task_output() -> RequirementTaskExecutionOutput {
+        RequirementTaskExecutionOutput {
+            result_summary: "登录入口已实现。".to_owned(),
+            trace: None,
+        }
     }
 
     fn test_model(id: &str, name: &str) -> PiModel {
@@ -429,16 +481,29 @@ mod tests {
             now,
         ));
         store.data.requirements.push(test_requirement(
+            "running",
+            &project.id,
+            RequirementStatus::Running,
+            now + chrono::Duration::seconds(1),
+        ));
+        store.data.requirements.push(test_requirement(
             "active",
             &project.id,
             RequirementStatus::Clarifying,
-            now,
+            now + chrono::Duration::seconds(2),
         ));
 
         let canvas = store.project_canvas(&project.id).unwrap();
         assert_eq!(canvas.project.id, project.id);
         assert_eq!(canvas.active_requirement.unwrap().id, "active");
-        assert_eq!(canvas.queued_requirements[0].id, "queued");
+        assert!(canvas
+            .queued_requirements
+            .iter()
+            .any(|requirement| requirement.id == "queued"));
+        assert!(canvas
+            .queued_requirements
+            .iter()
+            .any(|requirement| requirement.id == "running"));
         assert_eq!(canvas.completed_requirements[0].id, "done");
 
         let missing = store.project_canvas("missing").unwrap_err();
@@ -446,7 +511,89 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn requirement_api_creates_clarifies_and_confirms_queue() {
+    async fn requirement_conversation_maps_items_and_clarification_prompt() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_path = temp_dir.path().join("data/app.json");
+        let mut store = JsonStore::open(data_path).await.unwrap();
+        let project = test_project("alpha");
+        let now = Utc::now();
+        let mut requirement =
+            test_requirement("active", &project.id, RequirementStatus::Clarifying, now);
+        requirement.messages.push(RequirementMessage {
+            role: RequirementMessageRole::Assistant,
+            content: "需要确认范围。".to_owned(),
+            metadata: None,
+            created_at: now,
+        });
+        requirement.messages.push(RequirementMessage {
+            role: RequirementMessageRole::Trace,
+            content: "Pi 分析过程".to_owned(),
+            metadata: Some(json!({
+                "type": "pi_trace",
+                "version": 1,
+                "trace": {
+                    "thinking": "检查用户输入",
+                    "output": "",
+                    "tools": [],
+                    "statuses": []
+                }
+            })),
+            created_at: now,
+        });
+        requirement.clarification_round = 1;
+        requirement.clarifications = vec![test_clarification("q1")];
+        store.data.projects.push(project);
+        store.data.requirements.push(requirement);
+
+        let conversation = store.requirement_conversation("active").unwrap();
+        assert_eq!(conversation.items.len(), 3);
+        assert!(matches!(
+            conversation.items[0],
+            RequirementConversationItem::User { .. }
+        ));
+        assert!(matches!(
+            conversation.items[1],
+            RequirementConversationItem::Assistant { .. }
+        ));
+        assert!(matches!(
+            conversation.items[2],
+            RequirementConversationItem::Process { .. }
+        ));
+        assert!(matches!(
+            conversation.prompt,
+            Some(RequirementConversationPrompt::Clarification { round: 1, .. })
+        ));
+        assert!(!conversation.running);
+    }
+
+    #[tokio::test]
+    async fn requirement_conversation_maps_confirmation_prompt() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_path = temp_dir.path().join("data/app.json");
+        let mut store = JsonStore::open(data_path).await.unwrap();
+        let project = test_project("alpha");
+        let now = Utc::now();
+        let mut requirement =
+            test_requirement("draft", &project.id, RequirementStatus::DraftReady, now);
+        requirement.draft = Some(RequirementDraft {
+            title: "新增登录".to_owned(),
+            summary: "实现账号密码登录入口。".to_owned(),
+            acceptance_criteria: vec!["可以提交账号密码".to_owned()],
+        });
+        store.data.projects.push(project);
+        store.data.requirements.push(requirement);
+
+        let conversation = store.requirement_conversation("draft").unwrap();
+        assert!(matches!(
+            conversation.prompt,
+            Some(RequirementConversationPrompt::Confirmation { .. })
+        ));
+        assert_eq!(conversation.status, RequirementStatus::DraftReady);
+        assert!(!conversation.running);
+    }
+
+    #[tokio::test]
+    async fn requirement_api_creates_clarifies_plans_and_executes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_path = temp_dir.path().join("data/app.json");
         let mut store = JsonStore::open(data_path.clone()).await.unwrap();
@@ -514,6 +661,52 @@ mod tests {
         assert_eq!(
             canvas.queued_requirements[0].status,
             RequirementStatus::Queued
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/requirements/{}/plan", active.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let canvas: crate::models::ProjectCanvasResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            canvas.queued_requirements[0].status,
+            RequirementStatus::Planning
+        );
+
+        let active =
+            wait_for_requirement_status(&data_path, &active.id, RequirementStatus::PlanReady).await;
+        assert_eq!(
+            active.execution_plan.as_ref().unwrap().tasks[0].status,
+            RequirementTaskStatus::Pending
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/requirements/{}/execute", active.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let completed =
+            wait_for_requirement_status(&data_path, &active.id, RequirementStatus::Completed).await;
+        assert_eq!(
+            completed.execution_plan.as_ref().unwrap().tasks[0].status,
+            RequirementTaskStatus::Completed
         );
 
         let response = app
@@ -722,6 +915,7 @@ mod tests {
             clarification_round: 0,
             clarifications: Vec::new(),
             draft: None,
+            execution_plan: None,
             pi_session_file: None,
             error: None,
             created_at: now,
@@ -800,6 +994,7 @@ mod tests {
             clarification_round: 0,
             clarifications: Vec::new(),
             draft: None,
+            execution_plan: None,
             pi_session_file: Some("/data/pi-sessions/secret.json".to_owned()),
             error: None,
             created_at: now,

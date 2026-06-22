@@ -61,6 +61,8 @@ pub struct Requirement {
     #[serde(default)]
     pub clarifications: Vec<RequirementClarification>,
     pub draft: Option<RequirementDraft>,
+    #[serde(default)]
+    pub execution_plan: Option<RequirementExecutionPlan>,
     #[serde(skip_serializing)]
     pub pi_session_file: Option<String>,
     pub error: Option<String>,
@@ -74,6 +76,8 @@ pub enum RequirementStatus {
     Analyzing,
     Clarifying,
     DraftReady,
+    Planning,
+    PlanReady,
     Queued,
     Running,
     Completed,
@@ -103,6 +107,36 @@ pub struct RequirementDraft {
     pub title: String,
     pub summary: String,
     pub acceptance_criteria: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RequirementExecutionPlan {
+    pub summary: String,
+    pub tasks: Vec<RequirementExecutionTask>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RequirementExecutionTask {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    pub status: RequirementTaskStatus,
+    #[serde(default)]
+    pub target_files: Vec<String>,
+    pub result_summary: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementTaskStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Skipped,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -143,6 +177,74 @@ pub struct ProjectCanvasResponse {
     pub active_requirement: Option<Requirement>,
     pub queued_requirements: Vec<Requirement>,
     pub completed_requirements: Vec<Requirement>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RequirementConversationResponse {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub status: RequirementStatus,
+    pub running: bool,
+    pub items: Vec<RequirementConversationItem>,
+    pub prompt: Option<RequirementConversationPrompt>,
+    pub error: Option<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RequirementConversationItem {
+    User {
+        id: String,
+        text: String,
+        created_at: DateTime<Utc>,
+    },
+    Assistant {
+        id: String,
+        text: String,
+        created_at: DateTime<Utc>,
+    },
+    Notice {
+        id: String,
+        level: RequirementNoticeLevel,
+        text: String,
+        created_at: DateTime<Utc>,
+    },
+    Process {
+        id: String,
+        title: String,
+        status: RequirementProcessStatus,
+        metadata: Option<Value>,
+        created_at: DateTime<Utc>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RequirementNoticeLevel {
+    Info,
+    Warn,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RequirementProcessStatus {
+    Running,
+    Done,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RequirementConversationPrompt {
+    Clarification {
+        round: u32,
+        questions: Vec<RequirementClarification>,
+    },
+    Confirmation {
+        draft: RequirementDraft,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -235,6 +337,10 @@ pub type ModelProviderFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<PiModel>, AppError>> + Send + 'a>>;
 pub type RequirementAnalysisFuture<'a> =
     Pin<Box<dyn Future<Output = Result<RequirementAnalysisOutput, AppError>> + Send + 'a>>;
+pub type RequirementPlanFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<RequirementExecutionPlan, AppError>> + Send + 'a>>;
+pub type RequirementTaskExecutionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<RequirementTaskExecutionOutput, AppError>> + Send + 'a>>;
 
 pub trait ModelProvider: Send + Sync {
     fn available_models(&self) -> ModelProviderFuture<'_>;
@@ -243,6 +349,16 @@ pub trait ModelProvider: Send + Sync {
         input: RequirementAnalysisInput,
         events: Option<RequirementEventEmitter>,
     ) -> RequirementAnalysisFuture<'_>;
+    fn plan_requirement_execution(
+        &self,
+        input: RequirementPlanInput,
+        events: Option<RequirementEventEmitter>,
+    ) -> RequirementPlanFuture<'_>;
+    fn execute_requirement_task(
+        &self,
+        input: RequirementTaskExecutionInput,
+        events: Option<RequirementEventEmitter>,
+    ) -> RequirementTaskExecutionFuture<'_>;
 }
 
 #[derive(Debug, Clone)]
@@ -268,9 +384,28 @@ pub struct RequirementAnalysisOutput {
 }
 
 #[derive(Debug, Clone)]
-pub struct RequirementEventBus {
-    pub tx: broadcast::Sender<RequirementEvent>,
+pub struct RequirementPlanInput {
+    pub project: Project,
+    pub requirement: Requirement,
+    pub model_settings: ModelSettings,
 }
+
+#[derive(Debug, Clone)]
+pub struct RequirementTaskExecutionInput {
+    pub project: Project,
+    pub requirement: Requirement,
+    pub plan: RequirementExecutionPlan,
+    pub task: RequirementExecutionTask,
+    pub model_settings: ModelSettings,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequirementTaskExecutionOutput {
+    pub result_summary: String,
+    pub trace: Option<Value>,
+}
+
+pub type RequirementEventBus = broadcast::Sender<RequirementEvent>;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequirementEvent {
@@ -286,12 +421,12 @@ pub struct RequirementEvent {
 #[derive(Debug, Clone)]
 pub struct RequirementEventEmitter {
     pub requirement_id: String,
-    pub bus: RequirementEventBus,
+    pub bus: broadcast::Sender<RequirementEvent>,
 }
 
 impl RequirementEventEmitter {
     pub fn emit(&self, event: &str, message: &str) {
-        let _ = self.bus.tx.send(RequirementEvent {
+        let _ = self.bus.send(RequirementEvent {
             requirement_id: self.requirement_id.clone(),
             event: event.to_owned(),
             message: message.to_owned(),
@@ -307,7 +442,7 @@ impl RequirementEventEmitter {
             .unwrap_or("unknown")
             .to_owned();
         let message = crate::requirement_analysis::summarize_pi_event(&pi_type, &payload);
-        let _ = self.bus.tx.send(RequirementEvent {
+        let _ = self.bus.send(RequirementEvent {
             requirement_id: self.requirement_id.clone(),
             event: "pi_event".to_owned(),
             message,
@@ -411,6 +546,7 @@ mod tests {
             clarification_round: 0,
             clarifications: Vec::new(),
             draft: None,
+            execution_plan: None,
             pi_session_file: Some("/secret/session.json".to_owned()),
             error: None,
             created_at: now,

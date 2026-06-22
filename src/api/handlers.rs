@@ -4,24 +4,15 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
     Json,
 };
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
 use crate::error::AppError;
 use crate::models::{
     AppData, ClarificationAnswerRequest, ModelSettings, ModelSettingsResponse, Project,
-    ProjectCanvasResponse, RequirementAnalysisInput, RequirementEventBus, RequirementEventEmitter,
-    RequirementMessageRequest, RequirementStatus, RpcStatus,
+    ProjectCanvasResponse, RequirementAnalysisInput, RequirementConversationResponse,
+    RequirementEventEmitter, RequirementMessageRequest, RequirementStatus, RpcStatus,
 };
-use crate::store::JsonStore;
-
-#[derive(Clone)]
-pub struct AppState {
-    pub store: Arc<RwLock<JsonStore>>,
-    pub model_provider: Arc<dyn crate::models::ModelProvider>,
-    pub requirement_events: RequirementEventBus,
-}
+use crate::AppState;
 
 pub async fn get_start(State(state): State<AppState>) -> Json<AppData> {
     let store = state.store.read().await;
@@ -66,6 +57,14 @@ pub async fn get_project_canvas(
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&id)?))
+}
+
+pub async fn get_requirement_conversation(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<RequirementConversationResponse>, AppError> {
+    let store = state.store.read().await;
+    Ok(Json(store.requirement_conversation(&id)?))
 }
 
 pub async fn create_requirement(
@@ -132,7 +131,7 @@ pub async fn requirement_events(
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let stream =
-        BroadcastStream::new(state.requirement_events.tx.subscribe()).filter_map(move |result| {
+        BroadcastStream::new(state.requirement_events.subscribe()).filter_map(move |result| {
             let requirement_id = requirement_id.clone();
             match result {
                 Ok(event) if event.requirement_id == requirement_id => {
@@ -167,8 +166,37 @@ pub async fn confirm_requirement(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    let mut store = state.store.write().await;
-    let project_id = store.confirm_requirement(&requirement_id).await?;
+    let project_id = {
+        let mut store = state.store.write().await;
+        store.confirm_requirement(&requirement_id).await?
+    };
+    let store = state.store.read().await;
+    Ok(Json(store.project_canvas(&project_id)?))
+}
+
+pub async fn plan_requirement_execution(
+    State(state): State<AppState>,
+    AxumPath(requirement_id): AxumPath<String>,
+) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    let (project_id, input) = {
+        let mut store = state.store.write().await;
+        store.start_requirement_planning(&requirement_id).await?
+    };
+    spawn_requirement_execution_plan(state.clone(), requirement_id, input);
+    let store = state.store.read().await;
+    Ok(Json(store.project_canvas(&project_id)?))
+}
+
+pub async fn start_requirement_execution(
+    State(state): State<AppState>,
+    AxumPath(requirement_id): AxumPath<String>,
+) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    let project_id = {
+        let mut store = state.store.write().await;
+        store.start_requirement_execution(&requirement_id).await?
+    };
+    spawn_requirement_execution(state.clone(), requirement_id);
+    let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
 
@@ -263,5 +291,104 @@ fn spawn_requirement_analysis(
         }
 
         emitter.emit(event.0, event.1);
+    });
+}
+
+fn spawn_requirement_execution_plan(
+    state: AppState,
+    requirement_id: String,
+    input: crate::models::RequirementPlanInput,
+) {
+    tokio::spawn(async move {
+        let emitter = RequirementEventEmitter {
+            requirement_id: requirement_id.clone(),
+            bus: state.requirement_events.clone(),
+        };
+        emitter.emit("execution_planning_started", "开始拆分执行 DAG。");
+
+        let output = state
+            .model_provider
+            .plan_requirement_execution(input, Some(emitter.clone()))
+            .await;
+        let event = if output.is_ok() {
+            ("execution_plan_ready", "执行 DAG 已生成。")
+        } else {
+            ("execution_plan_failed", "执行 DAG 生成失败。")
+        };
+
+        {
+            let mut store = state.store.write().await;
+            if let Err(error) = store
+                .apply_requirement_execution_plan(&requirement_id, output)
+                .await
+            {
+                emitter.emit(
+                    "execution_plan_failed",
+                    &format!("保存执行 DAG 失败：{error}"),
+                );
+                return;
+            }
+        }
+
+        emitter.emit(event.0, event.1);
+    });
+}
+
+fn spawn_requirement_execution(state: AppState, requirement_id: String) {
+    tokio::spawn(async move {
+        let emitter = RequirementEventEmitter {
+            requirement_id: requirement_id.clone(),
+            bus: state.requirement_events.clone(),
+        };
+        emitter.emit("execution_started", "开始按 DAG 执行任务。");
+
+        loop {
+            let input = {
+                let mut store = state.store.write().await;
+                match store.prepare_next_execution_task(&requirement_id).await {
+                    Ok(input) => input,
+                    Err(error) => {
+                        let _ = store
+                            .fail_requirement_execution(&requirement_id, error)
+                            .await;
+                        emitter.emit("execution_failed", "执行 DAG 依赖检查失败。");
+                        return;
+                    }
+                }
+            };
+
+            let Some(input) = input else {
+                emitter.emit("execution_completed", "需求执行完成。");
+                return;
+            };
+
+            let task_id = input.task.id.clone();
+            emitter.emit(
+                "execution_task_started",
+                &format!("开始执行任务：{}", input.task.title),
+            );
+            let output = state
+                .model_provider
+                .execute_requirement_task(input, Some(emitter.clone()))
+                .await;
+            let succeeded = output.is_ok();
+            {
+                let mut store = state.store.write().await;
+                if let Err(error) = store
+                    .apply_task_execution_result(&requirement_id, &task_id, output)
+                    .await
+                {
+                    emitter.emit("execution_failed", &format!("保存任务结果失败：{error}"));
+                    return;
+                }
+            }
+
+            if succeeded {
+                emitter.emit("execution_task_completed", "任务执行完成。");
+            } else {
+                emitter.emit("execution_failed", "任务执行失败。");
+                return;
+            }
+        }
     });
 }

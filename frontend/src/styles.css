@@ -229,10 +229,24 @@
   }
 
   .node-card--requirement-chat {
-    @apply flex h-[760px] w-[720px] flex-col overflow-visible;
+    @apply flex h-[760px] w-[720px] flex-col overflow-hidden;
     box-shadow:
       var(--shadow-card),
       0 0 32px var(--glow-model);
+  }
+
+  .node-card--requirement-dag {
+    @apply flex h-[220px] w-[300px] flex-col overflow-hidden;
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px color-mix(in srgb, var(--accent-model) 20%, transparent);
+  }
+
+  .node-card--requirement-task {
+    @apply flex h-[160px] w-[300px] flex-col overflow-hidden;
+    box-shadow:
+      var(--shadow-card),
+      0 0 24px color-mix(in srgb, var(--accent-create) 16%, transparent);
   }
 
   .node-card--pending-delete {
@@ -419,7 +433,7 @@
   }
 
   .requirement-list {
-    @apply mt-4 grid min-h-0 flex-1 gap-3 overflow-y-auto pr-1;
+    @apply mt-4 grid min-h-0 flex-1 content-start gap-3 overflow-y-auto pr-1;
     overscroll-behavior: contain;
   }
 
@@ -452,33 +466,91 @@
     color: var(--text-muted);
   }
 
-  .model-select {
-    @apply relative;
+  .requirement-list__item em {
+    @apply inline-flex w-fit items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] leading-none font-bold not-italic;
+    background: color-mix(in srgb, var(--accent-model) 14%, transparent);
+    color: var(--accent-model);
   }
 
-  .model-select__trigger {
-    @apply flex w-full items-center justify-between gap-2 rounded-[10px] border px-2.5 py-2 text-left text-xs outline-none;
+  .requirement-list__item {
+    @apply cursor-pointer text-left transition;
+    color: var(--text-soft);
+  }
+
+  .requirement-list__item:hover,
+  .requirement-list__item--selected {
+    border-color: color-mix(in srgb, var(--accent-model) 38%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 10%, transparent);
+  }
+
+  .requirement-list__item:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent-model) 60%, transparent);
+    outline-offset: 2px;
+  }
+
+  .requirement-list__item-head {
+    @apply grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-2;
+  }
+
+  .requirement-list__status {
+    @apply shrink-0 rounded-full px-2 py-0.5 text-[10px] leading-none font-bold;
+    border: 1px solid transparent;
+  }
+
+  .requirement-list__status--analyzing,
+  .requirement-list__status--clarifying,
+  .requirement-list__status--planning {
+    border-color: color-mix(in srgb, var(--accent-model) 30%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 14%, transparent);
+    color: var(--accent-model);
+  }
+
+  .requirement-list__status--draft_ready,
+  .requirement-list__status--plan_ready,
+  .requirement-list__status--queued,
+  .requirement-list__status--running {
+    border-color: color-mix(in srgb, var(--accent-create) 35%, transparent);
+    background: color-mix(in srgb, var(--accent-create) 16%, transparent);
+    color: var(--accent-create);
+  }
+
+  .requirement-list__status--completed {
+    border-color: color-mix(in srgb, var(--success) 35%, transparent);
+    background: color-mix(in srgb, var(--success) 16%, transparent);
+    color: var(--success);
+  }
+
+  .requirement-list__status--failed {
+    border-color: color-mix(in srgb, var(--accent-danger) 36%, transparent);
+    background: color-mix(in srgb, var(--accent-danger) 16%, transparent);
+    color: var(--accent-danger);
+  }
+
+  .requirement-list__actions {
+    @apply flex items-center gap-2;
+  }
+
+  .requirement-list__actions button,
+  .requirement-list__actions span {
+    @apply inline-flex w-fit items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] leading-none font-bold;
+    border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 10%, transparent);
+    color: var(--accent-model);
+  }
+
+  .requirement-list__actions button {
+    @apply cursor-pointer transition disabled:cursor-not-allowed disabled:opacity-55;
+  }
+
+  .model-config-tier select {
+    @apply w-full rounded-[10px] border px-2.5 py-2 text-xs outline-none;
     border-color: var(--card-border);
     background: color-mix(in srgb, var(--canvas-bg) 52%, transparent);
     color: var(--text-strong);
   }
 
-  .model-select__dropdown {
-    @apply absolute top-[calc(100%+6px)] left-0 z-20 grid max-h-48 w-full gap-1 overflow-y-auto rounded-xl border p-1;
-    border-color: var(--card-border-strong);
-    background: var(--card-bg-hover);
-    box-shadow: var(--shadow-hover);
-  }
-
-  .model-select__option {
-    @apply flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs;
-    color: var(--text-soft);
-  }
-
-  .model-select__option--selected,
-  .model-select__option--highlighted {
-    background: color-mix(in srgb, var(--accent-model) 16%, transparent);
-    color: var(--text-strong);
+  .model-config-tier select:disabled {
+    @apply cursor-not-allowed opacity-55;
   }
 
   .model-notice,
@@ -513,16 +585,16 @@
   }
 
   .requirement-chat {
-    @apply relative mt-4 flex min-h-0 flex-1 flex-col gap-3.5;
+    @apply mt-4 flex min-h-0 flex-1 flex-col gap-3;
   }
 
   .requirement-chat__scrollable {
-    @apply flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto pr-1 pb-1;
+    @apply flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1 pb-1;
     overscroll-behavior: contain;
   }
 
   .requirement-empty {
-    @apply grid flex-1 justify-items-center gap-2 rounded-[14px] border border-dashed px-5 py-10 text-center;
+    @apply grid flex-1 place-content-center justify-items-center gap-2 rounded-[14px] border border-dashed px-5 py-10 text-center;
     border-color: var(--card-border-strong);
     background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
     color: var(--text-muted);
@@ -533,7 +605,7 @@
   }
 
   .requirement-message {
-    @apply grid max-w-[92%] gap-1.5;
+    @apply grid max-w-[90%] gap-1;
     grid-template-columns: auto 1fr;
   }
 
@@ -546,13 +618,8 @@
   }
 
   .requirement-message__meta {
-    @apply flex items-center gap-2 text-[10px];
+    @apply flex items-center gap-2 text-[10px] font-medium;
     color: var(--text-muted);
-  }
-
-  .requirement-message__meta strong {
-    @apply font-bold;
-    color: var(--text-strong);
   }
 
   .requirement-message__bubble {
@@ -560,6 +627,7 @@
     border-color: var(--card-border);
     background: color-mix(in srgb, var(--canvas-bg) 32%, transparent);
     color: var(--text-soft);
+    overflow-wrap: anywhere;
   }
 
   .requirement-message--user {
@@ -614,27 +682,24 @@
     color: color-mix(in srgb, var(--accent-danger) 92%, var(--text-strong));
   }
 
-  .requirement-message--trace {
-    @apply max-w-full;
-    grid-template-columns: 1fr;
-  }
-
-  .requirement-message--trace .requirement-message__content {
-    @apply rounded-xl border p-2;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 24%, transparent);
-  }
-
   .requirement-message p,
   .requirement-draft p {
     @apply m-0 text-xs leading-relaxed whitespace-pre-wrap;
     color: var(--text-soft);
+    overflow-wrap: anywhere;
   }
 
   .requirement-draft {
-    @apply grid gap-2.5 rounded-xl border p-3.5;
+    @apply grid gap-2.5;
+  }
+
+  .requirement-draft__eyebrow {
+    @apply mb-2 flex items-center gap-1.5 text-[11px] font-bold;
+    color: var(--accent-model);
+  }
+
+  .requirement-draft {
     border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 8%, transparent);
   }
 
   .requirement-draft strong {
@@ -648,13 +713,9 @@
   }
 
   .requirement-action-panel {
-    @apply absolute right-0 bottom-0 left-0 z-20 rounded-xl border p-2;
+    @apply max-h-[260px] overflow-y-auto rounded-xl border p-3;
     border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
-    background: color-mix(in srgb, var(--card-bg-hover) 92%, transparent);
-    box-shadow:
-      var(--shadow-hover),
-      0 0 28px color-mix(in srgb, var(--accent-model) 18%, transparent);
-    backdrop-filter: blur(12px);
+    background: color-mix(in srgb, var(--accent-model) 8%, transparent);
   }
 
   .requirement-action-panel .clarification-panel,
@@ -672,8 +733,442 @@
     filter: brightness(1.08);
   }
 
+  .dag-node__close {
+    @apply ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border transition;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
+    color: var(--text-soft);
+  }
+
+  .dag-node__close:hover {
+    border-color: var(--card-border-strong);
+    color: var(--text-strong);
+  }
+
+  .dag-node__body,
+  .task-node__body {
+    @apply mt-4 grid min-h-0 gap-2 overflow-hidden;
+  }
+
+  .dag-node__body strong,
+  .task-node__head strong {
+    @apply text-[13px] font-bold;
+    color: var(--text-strong);
+  }
+
+  .dag-node__body p,
+  .task-node__body p {
+    @apply m-0 text-xs leading-relaxed;
+    color: var(--text-soft);
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  .dag-node__body small,
+  .task-node__body small {
+    @apply text-[11px] leading-relaxed;
+    color: var(--text-muted);
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .dag-node__error,
+  .task-node__error {
+    color: color-mix(
+      in srgb,
+      var(--accent-danger) 92%,
+      var(--text-strong)
+    ) !important;
+  }
+
+  .dag-node__actions {
+    @apply mt-auto flex items-center gap-2 pt-4;
+  }
+
+  .dag-node__actions button {
+    @apply inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border-0 px-3 py-2 text-xs font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-55;
+    background: var(--accent-model);
+  }
+
+  .dag-node__actions button:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+
+  .task-node__head {
+    @apply flex items-start gap-3;
+  }
+
+  .task-node__head > div {
+    @apply grid min-w-0 gap-1;
+  }
+
+  .task-node__status {
+    @apply w-fit rounded-full px-2 py-0.5 text-[10px] leading-none font-bold;
+    background: color-mix(in srgb, var(--accent-model) 14%, transparent);
+    color: var(--accent-model);
+  }
+
+  .task-node__status--completed {
+    background: color-mix(in srgb, var(--success) 16%, transparent);
+    color: var(--success);
+  }
+
+  .task-node__status--failed {
+    background: color-mix(in srgb, var(--accent-danger) 16%, transparent);
+    color: var(--accent-danger);
+  }
+
+  .rq-workbench {
+    @apply relative mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[16px] border;
+    border-color: color-mix(in srgb, var(--accent-model) 18%, transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--canvas-bg) 68%, transparent),
+      color-mix(in srgb, var(--canvas-bg) 46%, transparent)
+    );
+  }
+
+  .rq-transcript {
+    @apply min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-[96px];
+    overscroll-behavior: contain;
+  }
+
+  .rq-transcript,
+  .rq-shelf,
+  .rq-process__body,
+  .rq-process-step pre,
+  .requirement-list {
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--accent-model) 42%, transparent)
+      transparent;
+  }
+
+  .rq-transcript::-webkit-scrollbar,
+  .rq-shelf::-webkit-scrollbar,
+  .rq-process__body::-webkit-scrollbar,
+  .rq-process-step pre::-webkit-scrollbar,
+  .requirement-list::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .rq-transcript::-webkit-scrollbar-track,
+  .rq-shelf::-webkit-scrollbar-track,
+  .rq-process__body::-webkit-scrollbar-track,
+  .rq-process-step pre::-webkit-scrollbar-track,
+  .requirement-list::-webkit-scrollbar-track {
+    border-radius: 999px;
+    background: transparent;
+  }
+
+  .rq-transcript::-webkit-scrollbar-thumb,
+  .rq-shelf::-webkit-scrollbar-thumb,
+  .rq-process__body::-webkit-scrollbar-thumb,
+  .rq-process-step pre::-webkit-scrollbar-thumb,
+  .requirement-list::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-model) 48%, var(--text-muted))
+      content-box;
+    background-clip: content-box;
+  }
+
+  .rq-transcript::-webkit-scrollbar-thumb:hover,
+  .rq-shelf::-webkit-scrollbar-thumb:hover,
+  .rq-process__body::-webkit-scrollbar-thumb:hover,
+  .rq-process-step pre::-webkit-scrollbar-thumb:hover,
+  .requirement-list::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--accent-model) 68%, var(--text-soft))
+      content-box;
+    background-clip: content-box;
+  }
+
+  .rq-transcript__items {
+    @apply mx-auto flex max-w-[620px] flex-col gap-4;
+  }
+
+  .rq-empty {
+    @apply grid h-full place-content-center justify-items-center gap-2 text-center;
+    color: var(--text-muted);
+  }
+
+  .rq-empty strong {
+    @apply text-sm;
+    color: var(--text-strong);
+  }
+
+  .rq-empty span {
+    @apply max-w-[320px] text-xs leading-relaxed;
+  }
+
+  .rq-message {
+    @apply grid gap-2;
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .rq-message--user {
+    @apply ml-auto max-w-[78%];
+    grid-template-columns: minmax(0, 1fr) 28px;
+  }
+
+  .rq-message__avatar {
+    @apply flex h-7 w-7 items-center justify-center rounded-full border;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+    color: var(--text-soft);
+  }
+
+  .rq-message--user .rq-message__avatar {
+    @apply order-2;
+    border-color: color-mix(in srgb, var(--accent-create) 30%, transparent);
+    color: var(--accent-create);
+  }
+
+  .rq-message--user .rq-message__body {
+    @apply order-1;
+  }
+
+  .rq-message__meta {
+    @apply mb-1.5 flex items-center gap-2 text-[10px] font-semibold;
+    color: var(--text-muted);
+  }
+
+  .rq-message--user .rq-message__meta {
+    @apply justify-end;
+  }
+
+  .rq-message__body p {
+    @apply m-0 rounded-[14px] border px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
+    color: var(--text-soft);
+    overflow-wrap: anywhere;
+  }
+
+  .rq-message--assistant {
+    @apply max-w-[92%];
+  }
+
+  .rq-message--assistant .rq-message__body p {
+    @apply rounded-tl-[4px];
+    border-color: color-mix(in srgb, var(--accent-model) 22%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 6%, transparent);
+  }
+
+  .rq-message--user .rq-message__body p {
+    @apply rounded-tr-[4px];
+    border-color: color-mix(in srgb, var(--accent-create) 34%, transparent);
+    background: color-mix(in srgb, var(--accent-create) 16%, transparent);
+    color: var(--text-strong);
+  }
+
+  .rq-notice {
+    @apply mx-auto flex w-fit max-w-full items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 40%, transparent);
+    color: var(--text-soft);
+  }
+
+  .rq-notice--warn {
+    border-color: color-mix(in srgb, var(--accent-danger) 34%, transparent);
+    background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
+    color: color-mix(in srgb, var(--accent-danger) 88%, var(--text-strong));
+  }
+
+  .rq-process {
+    @apply overflow-hidden rounded-[14px] border;
+    border-color: color-mix(in srgb, var(--accent-model) 24%, transparent);
+    background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
+  }
+
+  .rq-process--running {
+    border-color: color-mix(in srgb, var(--accent-model) 40%, transparent);
+  }
+
+  .rq-process--error {
+    border-color: color-mix(in srgb, var(--accent-danger) 42%, transparent);
+  }
+
+  .rq-process__head {
+    @apply flex min-h-10 w-full cursor-pointer items-center gap-2 border-0 px-3 py-2 text-left text-xs;
+    background: transparent;
+    color: var(--text-soft);
+  }
+
+  .rq-process__head strong {
+    @apply min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-bold;
+    color: var(--text-strong);
+  }
+
+  .rq-process__head span:not(.rq-process__icon) {
+    @apply shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold;
+    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+    color: var(--text-muted);
+  }
+
+  .rq-spin {
+    @apply animate-spin;
+  }
+
+  .rq-process__body {
+    @apply grid max-h-[320px] gap-2 overflow-y-auto border-t p-3;
+    border-color: var(--card-border);
+  }
+
+  .rq-process-step {
+    @apply grid gap-1 rounded-[10px] border px-3 py-2 text-xs;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
+    color: var(--text-soft);
+  }
+
+  .rq-process-step span {
+    @apply font-bold;
+    color: var(--text-strong);
+  }
+
+  .rq-process-step pre {
+    @apply m-0 max-h-[180px] overflow-auto text-[11px] leading-relaxed whitespace-pre-wrap;
+    color: var(--text-soft);
+    overflow-wrap: anywhere;
+  }
+
+  .rq-prompt-layer {
+    @apply pointer-events-none absolute right-4 bottom-[74px] left-4 z-30;
+  }
+
+  .rq-shelf {
+    @apply pointer-events-auto mx-auto grid max-h-[330px] max-w-[620px] gap-3 overflow-y-auto rounded-[16px] border p-4 backdrop-blur-xl;
+    border-color: color-mix(in srgb, var(--accent-model) 35%, transparent);
+    background: color-mix(in srgb, var(--card-bg) 92%, transparent);
+    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
+  }
+
+  .rq-shelf__topline {
+    @apply flex items-center justify-between gap-3 text-[11px] font-bold;
+    color: var(--accent-model);
+  }
+
+  .rq-shelf strong {
+    @apply text-sm leading-snug;
+    color: var(--text-strong);
+  }
+
+  .rq-shelf p {
+    @apply m-0 text-xs leading-relaxed whitespace-pre-wrap;
+    color: var(--text-soft);
+    overflow-wrap: anywhere;
+  }
+
+  .rq-shelf ul {
+    @apply m-0 grid gap-1.5 pl-5 text-xs leading-relaxed;
+    color: var(--text-soft);
+  }
+
+  .rq-ask__crumbs {
+    @apply flex flex-wrap gap-1.5;
+  }
+
+  .rq-ask__crumbs button {
+    @apply inline-flex h-7 min-w-7 cursor-pointer items-center justify-center gap-1 rounded-full border px-2 text-[11px] font-bold transition;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
+    color: var(--text-soft);
+  }
+
+  .rq-ask__crumbs button.is-active {
+    border-color: color-mix(in srgb, var(--accent-model) 42%, transparent);
+    color: var(--accent-model);
+  }
+
+  .rq-ask textarea,
+  .rq-composer textarea {
+    @apply w-full resize-none border-0 bg-transparent outline-none;
+    color: var(--text-strong);
+  }
+
+  .rq-ask textarea {
+    @apply rounded-[12px] border px-3 py-2 text-xs leading-relaxed;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 38%, transparent);
+  }
+
+  .rq-ask__options {
+    @apply grid gap-2;
+  }
+
+  .rq-ask__options button {
+    @apply grid cursor-pointer gap-1 rounded-[12px] border px-3 py-2 text-left transition;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
+    color: var(--text-soft);
+  }
+
+  .rq-ask__options button.is-selected,
+  .rq-ask__options button:hover {
+    border-color: color-mix(in srgb, var(--accent-model) 42%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 12%, transparent);
+    color: var(--text-strong);
+  }
+
+  .rq-ask__options span {
+    @apply text-xs font-bold;
+  }
+
+  .rq-ask__options small {
+    @apply text-[11px] leading-relaxed;
+    color: var(--text-muted);
+  }
+
+  .rq-shelf__actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .rq-shelf__actions button {
+    @apply inline-flex cursor-pointer items-center justify-center rounded-[10px] border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-50;
+    border-color: color-mix(in srgb, var(--accent-model) 34%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 14%, transparent);
+    color: var(--text-strong);
+  }
+
+  .rq-shelf__actions button:first-child {
+    @apply text-white;
+    background: var(--accent-model);
+  }
+
+  .rq-composer {
+    @apply absolute right-4 bottom-4 left-4 z-20 grid grid-cols-[minmax(0,1fr)_42px] gap-2 rounded-[16px] border p-2 backdrop-blur-xl;
+    border-color: var(--card-border-strong);
+    background: color-mix(in srgb, var(--card-bg) 92%, transparent);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.32);
+  }
+
+  .rq-composer textarea {
+    @apply min-h-[42px] max-h-[130px] px-3 py-2.5 text-[13px] leading-relaxed;
+  }
+
+  .rq-composer textarea::placeholder,
+  .rq-ask textarea::placeholder {
+    color: var(--text-muted);
+  }
+
+  .rq-composer button {
+    @apply flex h-[42px] w-[42px] cursor-pointer items-center justify-center rounded-[12px] border-0 text-white transition disabled:cursor-not-allowed disabled:opacity-45;
+    background: var(--accent-model);
+  }
+
+  .rq-composer button:hover:not(:disabled),
+  .rq-shelf__actions button:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+
   .requirement-input {
-    @apply mt-auto grid grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-xl border p-2;
+    @apply grid grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-xl border p-2;
     border-color: var(--card-border);
     background: color-mix(in srgb, var(--canvas-bg) 42%, transparent);
     backdrop-filter: blur(8px);
@@ -715,22 +1210,31 @@
     background: color-mix(in srgb, var(--canvas-bg) 28%, transparent);
   }
 
+  .trace-bubble[data-state="running"] {
+    border-color: color-mix(in srgb, var(--accent-model) 38%, transparent);
+  }
+
+  .trace-bubble[data-state="error"] {
+    border-color: color-mix(in srgb, var(--accent-danger) 42%, transparent);
+  }
+
   .trace-bubble__header {
-    @apply flex w-full cursor-pointer items-center justify-between gap-2 border-0 px-3 py-2 text-left text-xs font-bold;
+    @apply flex min-h-9 w-full cursor-pointer items-center gap-2 border-0 px-3 py-2 text-left text-xs font-bold;
     background: transparent;
     color: var(--text-strong);
   }
 
-  .trace-bubble__header span {
+  .trace-bubble__title {
     @apply flex min-w-0 items-center gap-1.5;
   }
 
-  .trace-bubble__header span:first-child {
-    @apply flex-1;
+  .trace-bubble__summary {
+    @apply min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-medium;
+    color: var(--text-soft);
   }
 
-  .trace-bubble__header span:nth-child(2) {
-    @apply text-[10px] font-semibold;
+  .trace-bubble__meta {
+    @apply shrink-0 text-[10px] font-semibold;
     color: var(--text-muted);
   }
 
@@ -739,7 +1243,8 @@
   }
 
   .trace-bubble__content {
-    @apply grid gap-2 overflow-visible px-3 pb-3;
+    @apply grid gap-2 border-t px-3 py-3;
+    border-color: var(--card-border);
   }
 
   .trace-item {
@@ -767,7 +1272,7 @@
   }
 
   .trace-item pre {
-    @apply m-0 overflow-visible whitespace-pre-wrap break-words rounded-md px-2 py-1.5 font-sans text-[11px] leading-relaxed;
+    @apply m-0 max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded-md px-2 py-1.5 font-sans text-[11px] leading-relaxed;
     background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
     color: var(--text-soft);
   }
@@ -778,9 +1283,7 @@
   }
 
   .clarification-panel {
-    @apply grid gap-3 rounded-xl border p-3;
-    border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 8%, transparent);
+    @apply grid gap-3;
   }
 
   .clarification-panel__head {
@@ -797,37 +1300,19 @@
     color: var(--text-muted);
   }
 
-  .clarification-steps {
-    @apply flex items-center justify-center gap-2;
+  .clarification-crumbs {
+    @apply flex flex-wrap gap-1.5;
   }
 
-  .clarification-step {
-    @apply flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-[11px] font-bold transition;
-    border: 1px solid var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 38%, transparent);
-    color: var(--text-soft);
-  }
-
-  .clarification-step:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--accent-model) 42%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 14%, transparent);
-    color: var(--text-strong);
-  }
-
-  .clarification-step--current {
-    border-color: color-mix(in srgb, var(--accent-model) 55%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 22%, transparent);
-    color: var(--accent-model);
-  }
-
-  .clarification-step--completed {
-    border-color: color-mix(in srgb, var(--success) 45%, transparent);
-    background: color-mix(in srgb, var(--success) 14%, transparent);
+  .clarification-crumbs button {
+    @apply inline-flex max-w-full cursor-pointer items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60;
+    border-color: color-mix(in srgb, var(--success) 34%, transparent);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
     color: var(--success);
   }
 
-  .clarification-step:disabled {
-    @apply cursor-not-allowed opacity-50;
+  .clarification-crumbs button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--success) 16%, transparent);
   }
 
   .clarification-panel__items {
@@ -835,9 +1320,7 @@
   }
 
   .clarification-card {
-    @apply grid gap-2 rounded-xl border p-3;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
+    @apply grid gap-2;
   }
 
   .clarification-card__question {
@@ -859,13 +1342,6 @@
     color: var(--text-strong);
   }
 
-  .clarification-card__question div > em {
-    @apply w-fit rounded-full px-1.5 py-0.5 text-[10px] leading-none font-bold not-italic;
-    border: 1px solid color-mix(in srgb, var(--accent-model) 32%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 12%, transparent);
-    color: var(--accent-model);
-  }
-
   .clarification-card textarea {
     @apply min-h-[72px] resize-y rounded-lg border px-3 py-2 text-xs outline-none;
     border-color: var(--card-border);
@@ -874,7 +1350,7 @@
   }
 
   .clarification-options {
-    @apply grid gap-2;
+    @apply grid gap-1.5;
   }
 
   .clarification-options button {

@@ -18,6 +18,7 @@ import type {
   StreamEvent,
   DraftClarificationAnswer,
   Requirement,
+  RequirementConversation,
   RequirementClarification,
   ModelSettings,
   ModelTierKey,
@@ -32,8 +33,11 @@ import {
   getProjectCanvas,
   createRequirement,
   appendRequirementMessage,
+  getRequirementConversation,
   submitRequirementClarifications,
   confirmRequirement,
+  planRequirementExecution,
+  startRequirementExecution,
   getModelSettings,
   saveModelSettings,
   buildClarificationAnswerPayload,
@@ -41,7 +45,7 @@ import {
 
 import {
   readError,
-  defaultModelSettings,
+  DEFAULT_MODEL_SETTINGS,
   readStoredTheme,
   clamp,
   getProjectListHeight,
@@ -87,8 +91,51 @@ const emptyStartData: StartData = {
     title: "模型设置",
     description: "默认模型待配置",
   },
-  model_settings: defaultModelSettings(),
+  model_settings: DEFAULT_MODEL_SETTINGS,
 };
+
+function getTaskLayout(
+  tasks: NonNullable<Requirement["execution_plan"]>["tasks"],
+) {
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const layerCache = new Map<string, number>();
+
+  function resolveLayer(taskId: string, visiting = new Set<string>()): number {
+    const cached = layerCache.get(taskId);
+    if (cached !== undefined) return cached;
+    const task = taskMap.get(taskId);
+    if (!task || visiting.has(taskId) || task.depends_on.length === 0) {
+      layerCache.set(taskId, 0);
+      return 0;
+    }
+
+    visiting.add(taskId);
+    const layer =
+      Math.max(
+        ...task.depends_on.map((dependency) =>
+          resolveLayer(dependency, new Set(visiting)),
+        ),
+      ) + 1;
+    layerCache.set(taskId, layer);
+    return layer;
+  }
+
+  const layerRows = new Map<number, number>();
+  return new Map(
+    tasks.map((task) => {
+      const layer = resolveLayer(task.id);
+      const row = layerRows.get(layer) ?? 0;
+      layerRows.set(layer, row + 1);
+      return [
+        task.id,
+        {
+          x: 580 + layer * 310,
+          y: 80 + row * 188,
+        },
+      ];
+    }),
+  );
+}
 
 function FitViewOnGraphChange({
   nodeCount,
@@ -123,12 +170,22 @@ export default function App() {
   const [projectCanvas, setProjectCanvas] = useState<ProjectCanvasData | null>(
     null,
   );
+  const [selectedDagRequirementId, setSelectedDagRequirementId] = useState<
+    string | null
+  >(null);
+  const [requirementActionBusyId, setRequirementActionBusyId] = useState<
+    string | null
+  >(null);
   const [requirementInput, setRequirementInput] = useState("");
   const [requirementBusy, setRequirementBusy] = useState(false);
   const [requirementError, setRequirementError] = useState<string | null>(null);
   const [requirementStreamEvents, setRequirementStreamEvents] = useState<
     StreamEvent[]
   >([]);
+  const [requirementConversation, setRequirementConversation] =
+    useState<RequirementConversation | null>(null);
+  const [dismissedPromptRequirementId, setDismissedPromptRequirementId] =
+    useState<string | null>(null);
   const [clarificationAnswers, setClarificationAnswers] = useState<
     Record<string, DraftClarificationAnswer>
   >({});
@@ -143,7 +200,7 @@ export default function App() {
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const [models, setModels] = useState<import("./types/api").PiModel[]>([]);
   const [draftModelSettings, setDraftModelSettings] = useState<ModelSettings>(
-    defaultModelSettings(),
+    DEFAULT_MODEL_SETTINGS,
   );
   const [modelRpcStatus, setModelRpcStatus] = useState<
     "idle" | "loading" | "ready" | "error"
@@ -172,12 +229,25 @@ export default function App() {
     return data;
   }, []);
 
+  const loadRequirementConversation = useCallback(
+    async (requirementId: string) => {
+      const data = await getRequirementConversation(requirementId);
+      setRequirementConversation(data);
+      return data;
+    },
+    [],
+  );
+
   const clearProjectCanvasState = useCallback(() => {
     setProjectCanvas(null);
     setRequirementInput("");
     setRequirementError(null);
     setRequirementStreamEvents([]);
+    setRequirementConversation(null);
+    setDismissedPromptRequirementId(null);
     setClarificationAnswers({});
+    setSelectedDagRequirementId(null);
+    setRequirementActionBusyId(null);
   }, []);
 
   const openProjectCanvas = useCallback(
@@ -251,35 +321,77 @@ export default function App() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, [clearProjectCanvasState, loadStart]);
 
+  const allProjectRequirements = useMemo(() => {
+    const requirements = [
+      ...(projectCanvas?.active_requirement
+        ? [projectCanvas.active_requirement]
+        : []),
+      ...(projectCanvas?.queued_requirements ?? []),
+      ...(projectCanvas?.completed_requirements ?? []),
+    ];
+    return requirements.filter(
+      (requirement, index, list) =>
+        list.findIndex((item) => item.id === requirement.id) === index,
+    );
+  }, [projectCanvas]);
+
   const activeRequirementId = projectCanvas?.active_requirement?.id ?? null;
+  const selectedDagRequirement =
+    allProjectRequirements.find(
+      (requirement) => requirement.id === selectedDagRequirementId,
+    ) ?? null;
+  const observedRequirementId = selectedDagRequirementId ?? activeRequirementId;
 
   useEffect(() => {
     setRequirementStreamEvents([]);
     setClarificationAnswers({});
-  }, [activeRequirementId]);
+    setDismissedPromptRequirementId(null);
+    if (activeRequirementId) {
+      void loadRequirementConversation(activeRequirementId).catch((reason) =>
+        setRequirementError(readError(reason)),
+      );
+      return;
+    }
+    setRequirementConversation(null);
+  }, [activeRequirementId, loadRequirementConversation]);
 
   useEffect(() => {
-    if (!activeRequirementId || !selectedProjectId) {
+    if (
+      selectedDagRequirementId &&
+      projectCanvas &&
+      !allProjectRequirements.some(
+        (requirement) => requirement.id === selectedDagRequirementId,
+      )
+    ) {
+      setSelectedDagRequirementId(null);
+    }
+  }, [allProjectRequirements, projectCanvas, selectedDagRequirementId]);
+
+  useEffect(() => {
+    if (!observedRequirementId || !selectedProjectId) {
       return;
     }
 
     const source = new EventSource(
-      `/api/requirements/${encodeURIComponent(activeRequirementId)}/events`,
+      `/api/requirements/${encodeURIComponent(observedRequirementId)}/events`,
     );
 
     const handleEvent = (event: MessageEvent<string>) => {
       try {
         const parsed = JSON.parse(event.data) as StreamEvent;
-        setRequirementStreamEvents((current) => [...current, parsed]);
+        if (parsed.requirement_id === activeRequirementId) {
+          setRequirementStreamEvents((current) => [...current, parsed]);
+        }
 
         const transient =
           parsed.event === "coordinator_started" ||
           parsed.event === "coordinator_progress" ||
           parsed.event === "pi_event";
         if (!transient) {
-          void loadProjectCanvas(selectedProjectId).catch((reason) =>
-            setRequirementError(readError(reason)),
-          );
+          void Promise.all([
+            loadProjectCanvas(selectedProjectId),
+            loadRequirementConversation(parsed.requirement_id),
+          ]).catch((reason) => setRequirementError(readError(reason)));
         }
       } catch {
         // ignore parse errors
@@ -294,12 +406,26 @@ export default function App() {
       "clarifications_ready",
       "draft_ready",
       "analysis_failed",
+      "execution_planning_started",
+      "execution_plan_ready",
+      "execution_plan_failed",
+      "execution_started",
+      "execution_task_started",
+      "execution_task_completed",
+      "execution_completed",
+      "execution_failed",
     ]) {
       source.addEventListener(eventName, handleEvent);
     }
 
     return () => source.close();
-  }, [activeRequirementId, loadProjectCanvas, selectedProjectId]);
+  }, [
+    activeRequirementId,
+    loadRequirementConversation,
+    loadProjectCanvas,
+    observedRequirementId,
+    selectedProjectId,
+  ]);
 
   const loadModelSettings = useCallback(async () => {
     setModelRpcStatus("loading");
@@ -421,14 +547,27 @@ export default function App() {
         : await createRequirement(selectedProjectId, message);
       setRequirementStreamEvents([]);
       setClarificationAnswers({});
+      setDismissedPromptRequirementId(null);
       setProjectCanvas(data);
+      if (data.active_requirement) {
+        void loadRequirementConversation(data.active_requirement.id).catch(
+          (reason) => setRequirementError(readError(reason)),
+        );
+      } else {
+        setRequirementConversation(null);
+      }
       setRequirementInput("");
     } catch (reason) {
       setRequirementError(readError(reason));
     } finally {
       setRequirementBusy(false);
     }
-  }, [projectCanvas, requirementInput, selectedProjectId]);
+  }, [
+    loadRequirementConversation,
+    projectCanvas,
+    requirementInput,
+    selectedProjectId,
+  ]);
 
   const updateClarificationAnswer = useCallback(
     (
@@ -463,14 +602,20 @@ export default function App() {
         );
         setRequirementStreamEvents([]);
         setClarificationAnswers({});
+        setDismissedPromptRequirementId(null);
         setProjectCanvas(data);
+        if (data.active_requirement) {
+          void loadRequirementConversation(data.active_requirement.id).catch(
+            (reason) => setRequirementError(readError(reason)),
+          );
+        }
       } catch (reason) {
         setRequirementError(readError(reason));
       } finally {
         setRequirementBusy(false);
       }
     },
-    [clarificationAnswers],
+    [clarificationAnswers, loadRequirementConversation],
   );
 
   const confirmRequirementCallback = useCallback(
@@ -479,11 +624,65 @@ export default function App() {
       setRequirementError(null);
       try {
         const data = await confirmRequirement(requirement.id);
+        setDismissedPromptRequirementId(null);
         setProjectCanvas(data);
+        if (data.active_requirement) {
+          void loadRequirementConversation(data.active_requirement.id).catch(
+            (reason) => setRequirementError(readError(reason)),
+          );
+        } else {
+          setRequirementConversation(null);
+        }
       } catch (reason) {
         setRequirementError(readError(reason));
       } finally {
         setRequirementBusy(false);
+      }
+    },
+    [loadRequirementConversation],
+  );
+
+  const continueEditingRequirement = useCallback((requirement: Requirement) => {
+    setDismissedPromptRequirementId(requirement.id);
+  }, []);
+
+  const selectDagRequirement = useCallback((requirement: Requirement) => {
+    setSelectedDagRequirementId(requirement.id);
+  }, []);
+
+  const closeDag = useCallback(() => {
+    setSelectedDagRequirementId(null);
+  }, []);
+
+  const planRequirementCallback = useCallback(
+    async (requirement: Requirement) => {
+      setSelectedDagRequirementId(requirement.id);
+      setRequirementActionBusyId(requirement.id);
+      setRequirementError(null);
+      try {
+        const data = await planRequirementExecution(requirement.id);
+        setProjectCanvas(data);
+      } catch (reason) {
+        setRequirementError(readError(reason));
+      } finally {
+        setRequirementActionBusyId(null);
+      }
+    },
+    [],
+  );
+
+  const startRequirementExecutionCallback = useCallback(
+    async (requirement: Requirement) => {
+      setSelectedDagRequirementId(requirement.id);
+      setRequirementActionBusyId(requirement.id);
+      setRequirementError(null);
+      try {
+        const data = await startRequirementExecution(requirement.id);
+        setProjectCanvas(data);
+      } catch (reason) {
+        setRequirementError(readError(reason));
+      } finally {
+        setRequirementActionBusyId(null);
       }
     },
     [],
@@ -497,12 +696,16 @@ export default function App() {
     if (!project) {
       return [];
     }
+    const taskLayout = getTaskLayout(
+      selectedDagRequirement?.execution_plan?.tasks ?? [],
+    );
+    const dagFocused = Boolean(selectedDagRequirement);
 
     return [
       {
         id: "project-back",
         type: "startNode",
-        position: { x: -328, y: 20 },
+        position: dagFocused ? { x: -420, y: 20 } : { x: -328, y: 20 },
         data: {
           kind: "project-back",
           project,
@@ -512,7 +715,7 @@ export default function App() {
       {
         id: "completed-requirements",
         type: "startNode",
-        position: { x: -350, y: 140 },
+        position: dagFocused ? { x: -420, y: 140 } : { x: -350, y: 140 },
         data: {
           kind: "requirement-list",
           title: "已完成需求",
@@ -520,32 +723,45 @@ export default function App() {
           requirements: projectCanvas?.completed_requirements ?? [],
           emptyText: "暂无已完成需求",
           tone: "done",
+          selectedRequirementId: selectedDagRequirementId,
+          busyRequirementId: requirementActionBusyId,
+          onSelectRequirement: selectDagRequirement,
+          onPlanRequirement: planRequirementCallback,
         },
       },
-      {
-        id: "requirement-chat",
-        type: "startNode",
-        position: { x: 0, y: 20 },
-        data: {
-          kind: "requirement-chat",
-          project,
-          requirement: projectCanvas?.active_requirement ?? null,
-          input: requirementInput,
-          busy: requirementBusy,
-          error: requirementError,
-          streamEvents: requirementStreamEvents,
-          answers: clarificationAnswers,
-          onInputChange: setRequirementInput,
-          onSend: sendRequirementMessage,
-          onAnswerChange: updateClarificationAnswer,
-          onSubmitClarifications: submitClarifications,
-          onConfirm: confirmRequirementCallback,
-        },
-      },
+      ...(!dagFocused
+        ? [
+            {
+              id: "requirement-chat",
+              type: "startNode" as const,
+              position: { x: 0, y: 20 },
+              data: {
+                kind: "requirement-chat" as const,
+                project,
+                requirement: projectCanvas?.active_requirement ?? null,
+                conversation: requirementConversation,
+                promptDismissed:
+                  dismissedPromptRequirementId ===
+                  (projectCanvas?.active_requirement?.id ?? null),
+                input: requirementInput,
+                busy: requirementBusy,
+                error: requirementError,
+                streamEvents: requirementStreamEvents,
+                answers: clarificationAnswers,
+                onInputChange: setRequirementInput,
+                onSend: sendRequirementMessage,
+                onAnswerChange: updateClarificationAnswer,
+                onSubmitClarifications: submitClarifications,
+                onConfirm: confirmRequirementCallback,
+                onContinueEditing: continueEditingRequirement,
+              },
+            },
+          ]
+        : []),
       {
         id: "queued-requirements",
         type: "startNode",
-        position: { x: 780, y: 140 },
+        position: dagFocused ? { x: -100, y: 140 } : { x: 780, y: 140 },
         data: {
           kind: "requirement-list",
           title: "待执行 / 执行中",
@@ -553,20 +769,61 @@ export default function App() {
           requirements: projectCanvas?.queued_requirements ?? [],
           emptyText: "确认需求后会进入这里",
           tone: "pending",
+          selectedRequirementId: selectedDagRequirementId,
+          busyRequirementId: requirementActionBusyId,
+          onSelectRequirement: selectDagRequirement,
+          onPlanRequirement: planRequirementCallback,
         },
       },
+      ...(selectedDagRequirement
+        ? [
+            {
+              id: "requirement-dag",
+              type: "startNode" as const,
+              position: { x: 240, y: 140 },
+              data: {
+                kind: "requirement-dag" as const,
+                requirement: selectedDagRequirement,
+                busy: requirementActionBusyId === selectedDagRequirement.id,
+                onStartExecution: startRequirementExecutionCallback,
+                onClose: closeDag,
+              },
+            },
+            ...(selectedDagRequirement.execution_plan?.tasks ?? []).map(
+              (task) => ({
+                id: `requirement-task-${task.id}`,
+                type: "startNode" as const,
+                position: taskLayout.get(task.id) ?? { x: 580, y: 80 },
+                data: {
+                  kind: "requirement-task" as const,
+                  task,
+                },
+              }),
+            ),
+          ]
+        : []),
     ];
   }, [
     backToStartCanvas,
+    closeDag,
     confirmRequirementCallback,
+    continueEditingRequirement,
     clarificationAnswers,
+    dismissedPromptRequirementId,
+    planRequirementCallback,
     projectCanvas,
+    requirementConversation,
+    requirementActionBusyId,
     requirementBusy,
     requirementError,
     requirementInput,
     requirementStreamEvents,
+    selectedDagRequirement,
+    selectedDagRequirementId,
     selectedProjectId,
+    selectDagRequirement,
     sendRequirementMessage,
+    startRequirementExecutionCallback,
     startData.projects,
     submitClarifications,
     updateClarificationAnswer,
@@ -727,37 +984,95 @@ export default function App() {
 
   const nodes = currentCanvas === "project" ? projectNodes : startNodes;
 
-  const projectEdges = useMemo<Edge[]>(
-    () => [
-      {
-        id: "completed-requirements-to-requirement-chat",
-        source: "completed-requirements",
+  const projectEdges = useMemo<Edge[]>(() => {
+    const flowEdges: Edge[] = selectedDagRequirement
+      ? []
+      : [
+          {
+            id: "completed-requirements-to-requirement-chat",
+            source: "completed-requirements",
+            sourceHandle: "requirement-list-right",
+            target: "requirement-chat",
+            targetHandle: "requirement-chat-left",
+            type: "smoothstep",
+            animated: true,
+            style: {
+              stroke: "rgba(20, 184, 166, 0.62)",
+              strokeWidth: 2,
+            },
+          },
+          {
+            id: "requirement-chat-to-queued-requirements",
+            source: "requirement-chat",
+            sourceHandle: "requirement-chat-right",
+            target: "queued-requirements",
+            targetHandle: "requirement-list-left",
+            type: "smoothstep",
+            animated: true,
+            style: {
+              stroke: "rgba(249, 115, 22, 0.68)",
+              strokeWidth: 2,
+            },
+          },
+        ];
+
+    if (selectedDagRequirement) {
+      const sourceList =
+        selectedDagRequirement.status === "completed"
+          ? "completed-requirements"
+          : "queued-requirements";
+      flowEdges.push({
+        id: `${sourceList}-to-requirement-dag`,
+        source: sourceList,
         sourceHandle: "requirement-list-right",
-        target: "requirement-chat",
-        targetHandle: "requirement-chat-left",
-        type: "smoothstep",
-        animated: true,
-        style: {
-          stroke: "rgba(20, 184, 166, 0.62)",
-          strokeWidth: 2,
-        },
-      },
-      {
-        id: "requirement-chat-to-queued-requirements",
-        source: "requirement-chat",
-        sourceHandle: "requirement-chat-right",
-        target: "queued-requirements",
-        targetHandle: "requirement-list-left",
+        target: "requirement-dag",
+        targetHandle: "requirement-dag-left",
         type: "smoothstep",
         animated: true,
         style: {
           stroke: "rgba(249, 115, 22, 0.68)",
           strokeWidth: 2,
         },
-      },
-    ],
-    [],
-  );
+      });
+
+      for (const task of selectedDagRequirement.execution_plan?.tasks ?? []) {
+        if (task.depends_on.length === 0) {
+          flowEdges.push({
+            id: `requirement-dag-to-task-${task.id}`,
+            source: "requirement-dag",
+            sourceHandle: "requirement-dag-right",
+            target: `requirement-task-${task.id}`,
+            targetHandle: "requirement-task-left",
+            type: "smoothstep",
+            animated: task.status === "running",
+            style: {
+              stroke: "rgba(249, 115, 22, 0.64)",
+              strokeWidth: 2,
+            },
+          });
+          continue;
+        }
+
+        for (const dependency of task.depends_on) {
+          flowEdges.push({
+            id: `requirement-task-${dependency}-to-${task.id}`,
+            source: `requirement-task-${dependency}`,
+            sourceHandle: "requirement-task-right",
+            target: `requirement-task-${task.id}`,
+            targetHandle: "requirement-task-left",
+            type: "smoothstep",
+            animated: task.status === "running",
+            style: {
+              stroke: "rgba(20, 184, 166, 0.62)",
+              strokeWidth: 2,
+            },
+          });
+        }
+      }
+    }
+
+    return flowEdges;
+  }, [selectedDagRequirement]);
 
   const startEdges = useMemo<Edge[]>(() => {
     const flowEdges: Edge[] = [

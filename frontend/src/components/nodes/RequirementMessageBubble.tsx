@@ -50,12 +50,7 @@ export default function RequirementMessageBubble({
   const trace = traceFromMessage(message);
   if (trace) {
     return (
-      <div className="requirement-message requirement-message--trace">
-        <TraceBubble
-          bubbles={buildBubbleStreamFromTrace(trace)}
-          isLive={false}
-        />
-      </div>
+      <TraceBubble bubbles={buildBubbleStreamFromTrace(trace)} isLive={false} />
     );
   }
 
@@ -64,7 +59,7 @@ export default function RequirementMessageBubble({
       <MessageAvatar role={message.role} />
       <div className="requirement-message__content">
         <div className="requirement-message__meta">
-          <strong>{requirementMessageRoleText(message.role)}</strong>
+          <span>{requirementMessageRoleText(message.role)}</span>
           <time dateTime={message.created_at}>
             {formatDate(message.created_at)}
           </time>

@@ -11,6 +11,8 @@ import SummaryCard from "./SummaryCard";
 import ProjectBackNode from "./ProjectBackNode";
 import RequirementListNode from "./RequirementListNode";
 import RequirementChatNode from "./RequirementChatNode";
+import RequirementDagNode from "./RequirementDagNode";
+import RequirementTaskNode from "./RequirementTaskNode";
 
 const nodeTypeMap: Record<string, React.FC<any>> = {
   create: CreateProjectNode,
@@ -23,6 +25,8 @@ const nodeTypeMap: Record<string, React.FC<any>> = {
   "project-back": ProjectBackNode,
   "requirement-list": RequirementListNode,
   "requirement-chat": RequirementChatNode,
+  "requirement-dag": RequirementDagNode,
+  "requirement-task": RequirementTaskNode,
 };
 
 export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
@@ -44,8 +48,11 @@ export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const hasRequirementChatRightHandle = data.kind === "requirement-chat";
   const hasRequirementListLeftHandle =
     data.kind === "requirement-list" && data.tone === "pending";
-  const hasRequirementListRightHandle =
-    data.kind === "requirement-list" && data.tone === "done";
+  const hasRequirementListRightHandle = data.kind === "requirement-list";
+  const hasRequirementDagLeftHandle = data.kind === "requirement-dag";
+  const hasRequirementDagRightHandle = data.kind === "requirement-dag";
+  const hasRequirementTaskLeftHandle = data.kind === "requirement-task";
+  const hasRequirementTaskRightHandle = data.kind === "requirement-task";
 
   const ContentComponent = nodeTypeMap[data.kind];
 
@@ -105,6 +112,22 @@ export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
           className="node-link-handle node-link-handle--requirement"
         />
       ) : null}
+      {hasRequirementDagLeftHandle ? (
+        <Handle
+          id="requirement-dag-left"
+          type="target"
+          position={Position.Left}
+          className="node-link-handle node-link-handle--requirement"
+        />
+      ) : null}
+      {hasRequirementTaskLeftHandle ? (
+        <Handle
+          id="requirement-task-left"
+          type="target"
+          position={Position.Left}
+          className="node-link-handle node-link-handle--requirement"
+        />
+      ) : null}
       {ContentComponent ? <ContentComponent data={data} /> : null}
       {hasDeleteRightHandle ? (
         <Handle
@@ -125,6 +148,22 @@ export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
       {hasRequirementListRightHandle ? (
         <Handle
           id="requirement-list-right"
+          type="source"
+          position={Position.Right}
+          className="node-link-handle node-link-handle--requirement"
+        />
+      ) : null}
+      {hasRequirementDagRightHandle ? (
+        <Handle
+          id="requirement-dag-right"
+          type="source"
+          position={Position.Right}
+          className="node-link-handle node-link-handle--requirement"
+        />
+      ) : null}
+      {hasRequirementTaskRightHandle ? (
+        <Handle
+          id="requirement-task-right"
           type="source"
           position={Position.Right}
           className="node-link-handle node-link-handle--requirement"

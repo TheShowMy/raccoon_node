@@ -4,6 +4,7 @@ import {
   type ModelSettings,
   type ModelSettingsResponse,
   type Requirement,
+  type RequirementConversation,
   type DraftClarificationAnswer,
   type RequirementClarification,
 } from "../types/api";
@@ -108,6 +109,21 @@ export async function appendRequirementMessage(
   return response.json();
 }
 
+export async function getRequirementConversation(
+  requirementId: string,
+): Promise<RequirementConversation> {
+  const response = await fetch(
+    `/api/requirements/${encodeURIComponent(requirementId)}/conversation`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取需求会话失败");
+  }
+  return response.json();
+}
+
 export async function submitRequirementClarifications(
   requirementId: string,
   answers: ReturnType<typeof buildClarificationAnswerPayload>[],
@@ -141,6 +157,38 @@ export async function confirmRequirement(
       message?: string;
     } | null;
     throw new Error(body?.message ?? "确认需求失败");
+  }
+  return response.json();
+}
+
+export async function planRequirementExecution(
+  requirementId: string,
+): Promise<ProjectCanvasData> {
+  const response = await fetch(
+    `/api/requirements/${encodeURIComponent(requirementId)}/plan`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "生成执行 DAG 失败");
+  }
+  return response.json();
+}
+
+export async function startRequirementExecution(
+  requirementId: string,
+): Promise<ProjectCanvasData> {
+  const response = await fetch(
+    `/api/requirements/${encodeURIComponent(requirementId)}/execute`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "开始执行需求失败");
   }
   return response.json();
 }

@@ -1,11 +1,11 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
-  Check,
   ChevronDown,
   Loader2,
   TriangleAlert,
   CheckCircle2,
   Brain,
+  FileText,
   Wrench,
 } from "lucide-react";
 import type { LiveBubble } from "../../types/api";
@@ -33,6 +33,7 @@ function TraceBubbleItem({
         <span>
           {bubble.type === "thinking" ? <Brain size={14} /> : null}
           {bubble.type === "tool" ? <Wrench size={14} /> : null}
+          {bubble.type === "output" ? <FileText size={14} /> : null}
           {bubble.label}
         </span>
         {!isLive ? <em>{traceStatusText(bubble.status)}</em> : null}
@@ -52,17 +53,31 @@ export default function TraceBubble({
   const [expanded, setExpanded] = useState(isLive);
   const running = bubbles.some((bubble) => bubble.status === "running");
   const hasError = bubbles.some((bubble) => bubble.status === "error");
+  const summary =
+    bubbles.find((bubble) => bubble.type !== "status")?.label ??
+    bubbles[0]?.label ??
+    "";
+
+  useEffect(() => {
+    if (isLive || running) {
+      setExpanded(true);
+    }
+  }, [isLive, running]);
 
   if (bubbles.length === 0) return null;
 
   return (
-    <div className="trace-bubble">
+    <div
+      className={`trace-bubble ${expanded ? "trace-bubble--open" : ""}`}
+      data-state={running ? "running" : hasError ? "error" : "done"}
+    >
       <button
         className="trace-bubble__header"
         type="button"
         onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
       >
-        <span>
+        <span className="trace-bubble__title">
           {running ? (
             <Loader2 size={15} className="spin-icon" />
           ) : hasError ? (
@@ -76,7 +91,10 @@ export default function TraceBubble({
               ? "分析出错"
               : "分析过程"}
         </span>
-        <span>{bubbles.length} 个气泡</span>
+        {summary ? (
+          <span className="trace-bubble__summary">{summary}</span>
+        ) : null}
+        <span className="trace-bubble__meta">{bubbles.length} 步</span>
         <ChevronDown size={14} className={expanded ? "rotate-icon" : ""} />
       </button>
       {expanded ? (

@@ -5,14 +5,16 @@ use chrono::Utc;
 use crate::error::AppError;
 use crate::models::{
     AppData, ClarificationAnswer, ModelSettings, PiModel, Project, ProjectCanvasResponse,
-    Requirement, RequirementAnalysisInput, RequirementAnalysisOutput, RequirementMessage,
-    RequirementMessageRole, RequirementStatus,
+    Requirement, RequirementAnalysisInput, RequirementAnalysisOutput, RequirementConversationItem,
+    RequirementConversationPrompt, RequirementConversationResponse, RequirementExecutionPlan,
+    RequirementMessage, RequirementMessageRole, RequirementNoticeLevel, RequirementPlanInput,
+    RequirementProcessStatus, RequirementStatus, RequirementTaskExecutionInput,
+    RequirementTaskExecutionOutput, RequirementTaskStatus,
 };
 use crate::utils::{
     build_clarification_answer_summary, clarification_has_answer, clone_git_repo,
-    data_root_from_file, derive_requirement_title, display_path, ensure_child_path,
-    remove_dir_if_exists, slugify, sort_requirements_desc, validate_git_url,
-    validate_model_settings, write_json,
+    data_root_from_file, derive_requirement_title, ensure_child_path, remove_dir_if_exists,
+    slugify, sort_requirements_desc, validate_git_url, validate_model_settings, write_json,
 };
 
 pub struct JsonStore {
@@ -100,7 +102,7 @@ impl JsonStore {
             id,
             name,
             git_url,
-            local_path: display_path(&repo_dir),
+            local_path: repo_dir.to_string_lossy().to_string(),
             created_at: now,
             updated_at: now,
         };
@@ -184,6 +186,8 @@ impl JsonStore {
                             | RequirementStatus::DraftReady
                             | RequirementStatus::Failed
                     )
+                    && (requirement.status != RequirementStatus::Failed
+                        || requirement.draft.is_none())
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -197,8 +201,14 @@ impl JsonStore {
                 requirement.project_id == project_id
                     && matches!(
                         requirement.status,
-                        RequirementStatus::Queued | RequirementStatus::Running
+                        RequirementStatus::Queued
+                            | RequirementStatus::Planning
+                            | RequirementStatus::PlanReady
+                            | RequirementStatus::Running
+                            | RequirementStatus::Failed
                     )
+                    && (requirement.status != RequirementStatus::Failed
+                        || requirement.draft.is_some())
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -222,6 +232,21 @@ impl JsonStore {
             queued_requirements,
             completed_requirements,
         })
+    }
+
+    pub fn requirement_conversation(
+        &self,
+        requirement_id: &str,
+    ) -> Result<RequirementConversationResponse, AppError> {
+        let requirement = self
+            .data
+            .requirements
+            .iter()
+            .find(|requirement| requirement.id == requirement_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("需求不存在"))?;
+
+        Ok(build_requirement_conversation(requirement))
     }
 
     pub async fn create_requirement(
@@ -254,6 +279,7 @@ impl JsonStore {
             clarification_round: 0,
             clarifications: Vec::new(),
             draft: None,
+            execution_plan: None,
             pi_session_file: None,
             error: None,
             created_at: now,
@@ -285,6 +311,8 @@ impl JsonStore {
                 | RequirementStatus::Analyzing
                 | RequirementStatus::Failed
                 | RequirementStatus::DraftReady
+                | RequirementStatus::Planning
+                | RequirementStatus::PlanReady
         ) {
             return Err(AppError::bad_request("当前需求状态不允许继续补充"));
         }
@@ -303,6 +331,8 @@ impl JsonStore {
             requirement.status = RequirementStatus::Analyzing;
             requirement.error = None;
             requirement.clarifications.clear();
+            requirement.draft = None;
+            requirement.execution_plan = None;
             requirement.updated_at = now;
             requirement.messages.push(RequirementMessage {
                 role: RequirementMessageRole::User,
@@ -416,6 +446,9 @@ impl JsonStore {
             Ok(output) => {
                 requirement.status = output.status;
                 requirement.draft = output.draft;
+                if requirement.status == RequirementStatus::DraftReady {
+                    requirement.execution_plan = None;
+                }
                 requirement.pi_session_file = output.pi_session_file;
                 requirement.error = output.error;
                 requirement.updated_at = now;
@@ -466,10 +499,250 @@ impl JsonStore {
         }
         let now = Utc::now();
         let project_id = self.data.requirements[index].project_id.clone();
-        self.data.requirements[index].status = RequirementStatus::Queued;
+        let requirement = &mut self.data.requirements[index];
+        requirement.status = RequirementStatus::Queued;
+        requirement.error = None;
+        requirement.execution_plan = None;
+        requirement.updated_at = now;
+        write_json(&self.path, &self.data).await?;
+        Ok(project_id)
+    }
+
+    pub async fn start_requirement_planning(
+        &mut self,
+        requirement_id: &str,
+    ) -> Result<(String, RequirementPlanInput), AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        if !matches!(
+            self.data.requirements[index].status,
+            RequirementStatus::Queued | RequirementStatus::Failed
+        ) {
+            return Err(AppError::bad_request("只有待执行需求才能生成执行 DAG"));
+        }
+        let now = Utc::now();
+        let project_id = self.data.requirements[index].project_id.clone();
+        let project = self
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+        {
+            let requirement = &mut self.data.requirements[index];
+            requirement.status = RequirementStatus::Planning;
+            requirement.error = None;
+            requirement.execution_plan = None;
+            requirement.updated_at = now;
+        }
+        let requirement = self.data.requirements[index].clone();
+        let input = RequirementPlanInput {
+            project,
+            requirement,
+            model_settings: self.data.model_settings.clone(),
+        };
+        write_json(&self.path, &self.data).await?;
+        Ok((project_id, input))
+    }
+
+    pub async fn apply_requirement_execution_plan(
+        &mut self,
+        requirement_id: &str,
+        output: Result<RequirementExecutionPlan, AppError>,
+    ) -> Result<(), AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        let now = Utc::now();
+        let requirement = &mut self.data.requirements[index];
+        match output {
+            Ok(plan) => {
+                requirement.status = RequirementStatus::PlanReady;
+                requirement.execution_plan = Some(plan);
+                requirement.error = None;
+                requirement.updated_at = now;
+                requirement.messages.push(RequirementMessage {
+                    role: RequirementMessageRole::Assistant,
+                    content: "执行 DAG 已生成，请确认后开始执行。".to_owned(),
+                    metadata: None,
+                    created_at: now,
+                });
+            }
+            Err(error) => {
+                requirement.status = RequirementStatus::Failed;
+                requirement.error = Some(error.to_string());
+                requirement.updated_at = now;
+                requirement.messages.push(RequirementMessage {
+                    role: RequirementMessageRole::System,
+                    content: format!("执行计划生成失败：{error}"),
+                    metadata: None,
+                    created_at: now,
+                });
+            }
+        }
+        write_json(&self.path, &self.data).await?;
+        Ok(())
+    }
+
+    pub async fn start_requirement_execution(
+        &mut self,
+        requirement_id: &str,
+    ) -> Result<String, AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        if self.data.requirements[index].status != RequirementStatus::PlanReady {
+            return Err(AppError::bad_request(
+                "只有已生成执行 DAG 的需求才能开始执行",
+            ));
+        }
+        if self.data.requirements[index].execution_plan.is_none() {
+            return Err(AppError::bad_request("执行 DAG 不存在"));
+        }
+        let now = Utc::now();
+        let project_id = self.data.requirements[index].project_id.clone();
+        self.data.requirements[index].status = RequirementStatus::Running;
+        self.data.requirements[index].error = None;
         self.data.requirements[index].updated_at = now;
         write_json(&self.path, &self.data).await?;
         Ok(project_id)
+    }
+
+    pub async fn prepare_next_execution_task(
+        &mut self,
+        requirement_id: &str,
+    ) -> Result<Option<RequirementTaskExecutionInput>, AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        let requirement = self.data.requirements[index].clone();
+        if requirement.status != RequirementStatus::Running {
+            return Ok(None);
+        }
+        let Some(plan) = requirement.execution_plan.clone() else {
+            return Err(AppError::bad_request("执行 DAG 不存在"));
+        };
+
+        let task_index = next_runnable_task_index(&plan)?;
+        let Some(task_index) = task_index else {
+            return Ok(None);
+        };
+
+        let project = self
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == requirement.project_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+
+        let now = Utc::now();
+        let requirement = &mut self.data.requirements[index];
+        let plan = requirement
+            .execution_plan
+            .as_mut()
+            .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
+        plan.tasks[task_index].status = RequirementTaskStatus::Running;
+        plan.tasks[task_index].error = None;
+        requirement.updated_at = now;
+        let task = plan.tasks[task_index].clone();
+        let plan = plan.clone();
+        let requirement = requirement.clone();
+        write_json(&self.path, &self.data).await?;
+
+        Ok(Some(RequirementTaskExecutionInput {
+            project,
+            requirement,
+            plan,
+            task,
+            model_settings: self.data.model_settings.clone(),
+        }))
+    }
+
+    pub async fn apply_task_execution_result(
+        &mut self,
+        requirement_id: &str,
+        task_id: &str,
+        output: Result<RequirementTaskExecutionOutput, AppError>,
+    ) -> Result<(), AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        let now = Utc::now();
+        let requirement = &mut self.data.requirements[index];
+        let plan = requirement
+            .execution_plan
+            .as_mut()
+            .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
+        let task = plan
+            .tasks
+            .iter_mut()
+            .find(|task| task.id == task_id)
+            .ok_or_else(|| AppError::bad_request("执行任务不存在"))?;
+
+        match output {
+            Ok(output) => {
+                task.status = RequirementTaskStatus::Completed;
+                task.result_summary = Some(output.result_summary.clone());
+                task.error = None;
+                requirement.updated_at = now;
+                requirement.messages.push(RequirementMessage {
+                    role: RequirementMessageRole::Assistant,
+                    content: format!("任务「{}」已完成：{}", task.title, output.result_summary),
+                    metadata: None,
+                    created_at: now,
+                });
+                if let Some(trace) = output.trace {
+                    requirement.messages.push(RequirementMessage {
+                        role: RequirementMessageRole::Trace,
+                        content: format!("任务「{}」执行过程", task.title),
+                        metadata: Some(trace),
+                        created_at: now,
+                    });
+                }
+                if plan
+                    .tasks
+                    .iter()
+                    .all(|task| task.status == RequirementTaskStatus::Completed)
+                {
+                    requirement.status = RequirementStatus::Completed;
+                    requirement.messages.push(RequirementMessage {
+                        role: RequirementMessageRole::System,
+                        content: "需求执行完成。".to_owned(),
+                        metadata: None,
+                        created_at: now,
+                    });
+                }
+            }
+            Err(error) => {
+                task.status = RequirementTaskStatus::Failed;
+                task.error = Some(error.to_string());
+                requirement.status = RequirementStatus::Failed;
+                requirement.error = Some(format!("任务「{}」执行失败：{error}", task.title));
+                requirement.updated_at = now;
+                requirement.messages.push(RequirementMessage {
+                    role: RequirementMessageRole::System,
+                    content: format!("任务「{}」执行失败：{error}", task.title),
+                    metadata: None,
+                    created_at: now,
+                });
+            }
+        }
+        write_json(&self.path, &self.data).await?;
+        Ok(())
+    }
+
+    pub async fn fail_requirement_execution(
+        &mut self,
+        requirement_id: &str,
+        error: AppError,
+    ) -> Result<(), AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        let now = Utc::now();
+        let requirement = &mut self.data.requirements[index];
+        requirement.status = RequirementStatus::Failed;
+        requirement.error = Some(error.to_string());
+        requirement.updated_at = now;
+        requirement.messages.push(RequirementMessage {
+            role: RequirementMessageRole::System,
+            content: format!("需求执行失败：{error}"),
+            metadata: None,
+            created_at: now,
+        });
+        write_json(&self.path, &self.data).await?;
+        Ok(())
     }
 
     fn requirement_index(&self, requirement_id: &str) -> Result<usize, AppError> {
@@ -493,5 +766,121 @@ impl JsonStore {
         let project_dir = projects_root.join(id);
         ensure_child_path(&self.data_root, &project_dir)?;
         Ok(project_dir)
+    }
+}
+
+fn next_runnable_task_index(plan: &RequirementExecutionPlan) -> Result<Option<usize>, AppError> {
+    for (index, task) in plan.tasks.iter().enumerate() {
+        if task.status != RequirementTaskStatus::Pending {
+            continue;
+        }
+        let dependencies_completed = task.depends_on.iter().all(|dependency| {
+            plan.tasks.iter().any(|candidate| {
+                candidate.id == *dependency && candidate.status == RequirementTaskStatus::Completed
+            })
+        });
+        if dependencies_completed {
+            return Ok(Some(index));
+        }
+    }
+
+    if plan
+        .tasks
+        .iter()
+        .any(|task| task.status == RequirementTaskStatus::Pending)
+    {
+        return Err(AppError::internal("执行 DAG 存在无法满足的依赖"));
+    }
+
+    Ok(None)
+}
+
+fn build_requirement_conversation(requirement: Requirement) -> RequirementConversationResponse {
+    let mut items = Vec::new();
+    for (index, message) in requirement.messages.iter().enumerate() {
+        let id = format!("message-{index}");
+        match message.role {
+            RequirementMessageRole::User => items.push(RequirementConversationItem::User {
+                id,
+                text: message.content.clone(),
+                created_at: message.created_at,
+            }),
+            RequirementMessageRole::Assistant => {
+                items.push(RequirementConversationItem::Assistant {
+                    id,
+                    text: message.content.clone(),
+                    created_at: message.created_at,
+                })
+            }
+            RequirementMessageRole::System => items.push(RequirementConversationItem::Notice {
+                id,
+                level: RequirementNoticeLevel::Warn,
+                text: message.content.clone(),
+                created_at: message.created_at,
+            }),
+            RequirementMessageRole::Trace => items.push(RequirementConversationItem::Process {
+                id,
+                title: message.content.clone(),
+                status: if requirement.status == RequirementStatus::Failed {
+                    RequirementProcessStatus::Error
+                } else {
+                    RequirementProcessStatus::Done
+                },
+                metadata: message.metadata.clone(),
+                created_at: message.created_at,
+            }),
+        }
+    }
+
+    let prompt = match requirement.status {
+        RequirementStatus::Clarifying if !requirement.clarifications.is_empty() => {
+            Some(RequirementConversationPrompt::Clarification {
+                round: requirement.clarification_round,
+                questions: requirement.clarifications.clone(),
+            })
+        }
+        RequirementStatus::DraftReady => requirement
+            .draft
+            .clone()
+            .map(|draft| RequirementConversationPrompt::Confirmation { draft }),
+        _ => None,
+    };
+
+    let running = matches!(
+        requirement.status,
+        RequirementStatus::Analyzing | RequirementStatus::Planning | RequirementStatus::Running
+    );
+
+    if let Some(error) = &requirement.error {
+        let has_error_notice = items.iter().any(|item| {
+            matches!(
+                item,
+                RequirementConversationItem::Notice {
+                    level: RequirementNoticeLevel::Warn,
+                    text,
+                    ..
+                } if text.contains(error)
+            )
+        });
+        if !has_error_notice {
+            items.push(RequirementConversationItem::Notice {
+                id: "requirement-error".to_owned(),
+                level: RequirementNoticeLevel::Warn,
+                text: error.clone(),
+                created_at: requirement.updated_at,
+            });
+        }
+    }
+
+    RequirementConversationResponse {
+        id: requirement.id,
+        project_id: requirement.project_id,
+        title: requirement.title,
+        status: requirement.status,
+        running,
+        items,
+        prompt,
+        error: requirement.error,
+        updated_at: requirement.updated_at,
     }
 }

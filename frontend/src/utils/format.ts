@@ -6,6 +6,7 @@ import {
   type RequirementMessage,
   type LiveBubble,
   type TraceData,
+  type TraceMetadata,
   type StreamEvent,
   type ModelSettings,
   type ThemeMode,
@@ -42,27 +43,15 @@ export function readError(reason: unknown) {
   return reason instanceof Error ? reason.message : "未知错误";
 }
 
-export function parseStreamEvent(
-  raw: string,
-): import("../types/api").StreamEvent | null {
-  try {
-    return JSON.parse(raw) as import("../types/api").StreamEvent;
-  } catch {
-    return null;
-  }
-}
-
 export function shortenGitUrl(value: string) {
   return value.replace(/^git@([^:]+):/, "$1/").replace(/^https?:\/\//, "");
 }
 
-export function defaultModelSettings(): ModelSettings {
-  return {
-    low: { model_id: null, thinking_level: "low" },
-    medium: { model_id: null, thinking_level: "medium" },
-    high: { model_id: null, thinking_level: "high" },
-  };
-}
+export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
+  low: { model_id: null, thinking_level: "low" },
+  medium: { model_id: null, thinking_level: "medium" },
+  high: { model_id: null, thinking_level: "high" },
+};
 
 export function modelStatusText(
   status: "idle" | "loading" | "ready" | "error",
@@ -84,10 +73,12 @@ export function requirementStatusText(status: RequirementStatus) {
     analyzing: "分析中",
     clarifying: "澄清中",
     draft_ready: "待确认",
+    planning: "拆分任务中",
+    plan_ready: "待执行",
     queued: "等待执行",
     running: "执行中",
     completed: "已完成",
-    failed: "分析失败",
+    failed: "失败",
   };
   return labels[status];
 }
@@ -118,6 +109,12 @@ export function traceFromMessage(
     return null;
   }
   return message.metadata.trace;
+}
+
+export function traceFromMetadata(
+  metadata: TraceMetadata | null | undefined,
+): TraceData | null {
+  return metadata?.type === "pi_trace" ? metadata.trace : null;
 }
 
 export function buildBubbleStreamFromTrace(trace: TraceData): LiveBubble[] {

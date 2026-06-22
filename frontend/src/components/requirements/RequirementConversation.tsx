@@ -1,0 +1,565 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  Loader2,
+  MessageSquare,
+  Send,
+  Sparkles,
+  User,
+} from "lucide-react";
+import type {
+  DraftClarificationAnswer,
+  LiveBubble,
+  Requirement,
+  RequirementClarification,
+  RequirementConversation,
+  RequirementConversationItem,
+  RequirementConversationPrompt,
+  StreamEvent,
+} from "../../types/api";
+import {
+  buildBubbleStreamFromEvents,
+  buildBubbleStreamFromTrace,
+  createDraftAnswer,
+  formatDate,
+  hasDraftAnswer,
+  requirementStatusText,
+  toggleClarificationOption,
+  traceFromMetadata,
+  traceStatusText,
+} from "../../utils/format";
+
+type Props = {
+  conversation: RequirementConversation | null;
+  requirement: Requirement | null;
+  projectName: string;
+  prompt: RequirementConversationPrompt | null;
+  promptDismissed: boolean;
+  input: string;
+  busy: boolean;
+  error: string | null;
+  streamEvents: StreamEvent[];
+  answers: Record<string, DraftClarificationAnswer>;
+  onInputChange: (value: string) => void;
+  onSend: () => Promise<void>;
+  onAnswerChange: (
+    clarification: RequirementClarification,
+    answer: DraftClarificationAnswer,
+  ) => void;
+  onSubmitClarifications: (requirement: Requirement) => Promise<void>;
+  onConfirm: (requirement: Requirement) => Promise<void>;
+  onContinueEditing: (requirement: Requirement) => void;
+};
+
+export default function RequirementConversationWorkbench({
+  conversation,
+  requirement,
+  projectName,
+  prompt,
+  promptDismissed,
+  input,
+  busy,
+  error,
+  streamEvents,
+  answers,
+  onInputChange,
+  onSend,
+  onAnswerChange,
+  onSubmitClarifications,
+  onConfirm,
+  onContinueEditing,
+}: Props) {
+  const running =
+    conversation?.running ??
+    (requirement ? requirement.status === "analyzing" : false);
+  const hasBlockingPrompt = Boolean(prompt);
+  const canSend =
+    !busy &&
+    !running &&
+    !hasBlockingPrompt &&
+    input.trim().length > 0 &&
+    (!requirement ||
+      ["analyzing", "clarifying", "draft_ready", "failed"].includes(
+        requirement.status,
+      ) ||
+      promptDismissed);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (canSend) {
+      await onSend();
+    }
+  }
+
+  return (
+    <>
+      <div className="node-header node-header--model">
+        <span className="node-icon">
+          <MessageSquare size={20} />
+        </span>
+        <div>
+          <strong>
+            {conversation?.title ?? requirement?.title ?? "新的需求会话"}
+          </strong>
+          <span>
+            {projectName} ·{" "}
+            {conversation
+              ? requirementStatusText(conversation.status)
+              : requirement
+                ? requirementStatusText(requirement.status)
+                : "等待描述"}
+          </span>
+        </div>
+      </div>
+
+      <div className="rq-workbench">
+        <RequirementTranscript
+          conversation={conversation}
+          running={running}
+          streamEvents={streamEvents}
+          error={error ?? conversation?.error ?? null}
+        />
+
+        {prompt && requirement ? (
+          <RequirementPromptLayer>
+            {prompt.type === "clarification" ? (
+              <RequirementAskCard
+                prompt={prompt}
+                answers={answers}
+                busy={busy}
+                onAnswerChange={onAnswerChange}
+                onSubmit={() => void onSubmitClarifications(requirement)}
+              />
+            ) : (
+              <RequirementConfirmCard
+                prompt={prompt}
+                requirement={requirement}
+                busy={busy}
+                onConfirm={() => void onConfirm(requirement)}
+                onContinueEditing={() => onContinueEditing(requirement)}
+              />
+            )}
+          </RequirementPromptLayer>
+        ) : null}
+
+        <RequirementComposer
+          value={input}
+          busy={busy}
+          running={running}
+          blocked={hasBlockingPrompt}
+          canSend={canSend}
+          onChange={onInputChange}
+          onSubmit={submit}
+        />
+      </div>
+    </>
+  );
+}
+
+function RequirementTranscript({
+  conversation,
+  running,
+  streamEvents,
+  error,
+}: {
+  conversation: RequirementConversation | null;
+  running: boolean;
+  streamEvents: StreamEvent[];
+  error: string | null;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const liveBubbles = useMemo(
+    () => buildBubbleStreamFromEvents(streamEvents),
+    [streamEvents],
+  );
+  const transientEvents = streamEvents.filter(
+    (event) => event.event !== "pi_event",
+  );
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const element = scrollRef.current;
+      if (element) {
+        element.scrollTop = element.scrollHeight;
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    conversation?.updated_at,
+    conversation?.items.length,
+    liveBubbles.length,
+    streamEvents.length,
+  ]);
+
+  return (
+    <div ref={scrollRef} className="rq-transcript nowheel nodrag">
+      {conversation ? (
+        <div className="rq-transcript__items">
+          {conversation.items.map((item) => (
+            <RequirementTranscriptItem key={item.id} item={item} />
+          ))}
+          {transientEvents.length > 0 ? (
+            <div className="rq-notice rq-notice--info">
+              {transientEvents.at(-1)?.message}
+            </div>
+          ) : null}
+          {liveBubbles.length > 0 || running ? (
+            <RequirementProcessCard
+              title="Coordinator 正在处理"
+              status={running ? "running" : "done"}
+              bubbles={liveBubbles}
+              live
+            />
+          ) : null}
+          {error ? (
+            <div className="rq-notice rq-notice--warn">{error}</div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="rq-empty">
+          <Sparkles size={24} />
+          <strong>描述一个需求</strong>
+          <span>Coordinator 会用对话澄清范围，并在准备好后给出确认卡片。</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RequirementTranscriptItem({
+  item,
+}: {
+  item: RequirementConversationItem;
+}) {
+  if (item.kind === "process") {
+    return (
+      <RequirementProcessCard
+        title={item.title}
+        status={item.status}
+        bubbles={buildBubbleStreamFromTrace(
+          traceFromMetadata(item.metadata) ?? {
+            thinking: "",
+            output: "",
+            tools: [],
+            statuses: [],
+          },
+        )}
+      />
+    );
+  }
+
+  if (item.kind === "notice") {
+    return (
+      <div className={`rq-notice rq-notice--${item.level}`}>
+        {item.level === "warn" ? (
+          <AlertTriangle size={14} />
+        ) : (
+          <Circle size={10} />
+        )}
+        <span>{item.text}</span>
+      </div>
+    );
+  }
+
+  return (
+    <article className={`rq-message rq-message--${item.kind}`}>
+      <div className="rq-message__avatar">
+        {item.kind === "user" ? <User size={14} /> : <Bot size={14} />}
+      </div>
+      <div className="rq-message__body">
+        <div className="rq-message__meta">
+          <span>{item.kind === "user" ? "你" : "Coordinator"}</span>
+          <time>{formatDate(item.created_at)}</time>
+        </div>
+        <p>{item.text}</p>
+      </div>
+    </article>
+  );
+}
+
+function RequirementProcessCard({
+  title,
+  status,
+  bubbles,
+  live = false,
+}: {
+  title: string;
+  status: "running" | "done" | "error";
+  bubbles: LiveBubble[];
+  live?: boolean;
+}) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(status === "running" || live);
+  const errored =
+    status === "error" || bubbles.some((bubble) => bubble.status === "error");
+  const bubbleScrollKey = bubbles
+    .map((bubble) => `${bubble.id}:${bubble.status}:${bubble.content.length}`)
+    .join("|");
+
+  useEffect(() => {
+    if (!open || (status !== "running" && !live)) return;
+    const frame = requestAnimationFrame(() => {
+      const body = bodyRef.current;
+      if (!body) return;
+      body.scrollTop = body.scrollHeight;
+      body.querySelectorAll("pre").forEach((element) => {
+        element.scrollTop = element.scrollHeight;
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [bubbleScrollKey, live, open, status]);
+
+  return (
+    <section className={`rq-process rq-process--${errored ? "error" : status}`}>
+      <button
+        className="rq-process__head"
+        type="button"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="rq-process__icon">
+          {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+        </span>
+        <strong>{title || "Pi Agent 过程"}</strong>
+        <span>{errored ? "异常" : traceStatusText(status)}</span>
+        <span>{bubbles.length} 步</span>
+        {status === "running" ? (
+          <Loader2 className="rq-spin" size={14} />
+        ) : null}
+      </button>
+      {open ? (
+        <div ref={bodyRef} className="rq-process__body">
+          {bubbles.length > 0 ? (
+            bubbles.map((bubble) => (
+              <div
+                key={bubble.id}
+                className={`rq-process-step rq-process-step--${bubble.status}`}
+              >
+                <span>{bubble.label}</span>
+                {bubble.content ? <pre>{bubble.content}</pre> : null}
+              </div>
+            ))
+          ) : (
+            <div className="rq-process-step rq-process-step--running">
+              <span>等待 Pi Agent 事件...</span>
+            </div>
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RequirementPromptLayer({ children }: { children: React.ReactNode }) {
+  return <div className="rq-prompt-layer nowheel nodrag">{children}</div>;
+}
+
+function RequirementAskCard({
+  prompt,
+  answers,
+  busy,
+  onAnswerChange,
+  onSubmit,
+}: {
+  prompt: Extract<RequirementConversationPrompt, { type: "clarification" }>;
+  answers: Record<string, DraftClarificationAnswer>;
+  busy: boolean;
+  onAnswerChange: (
+    clarification: RequirementClarification,
+    answer: DraftClarificationAnswer,
+  ) => void;
+  onSubmit: () => void;
+}) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const question = prompt.questions[activeIndex];
+  const answer = question
+    ? (answers[question.id] ?? createDraftAnswer(question))
+    : undefined;
+  const allAnswered = prompt.questions.every((item) =>
+    hasDraftAnswer(item, answers[item.id] ?? createDraftAnswer(item)),
+  );
+
+  if (!question || !answer) {
+    return null;
+  }
+
+  function advance() {
+    if (activeIndex < prompt.questions.length - 1) {
+      setActiveIndex(activeIndex + 1);
+      return;
+    }
+    onSubmit();
+  }
+
+  return (
+    <section className="rq-shelf rq-ask">
+      <div className="rq-shelf__topline">
+        <span>澄清 · 第 {prompt.round} 轮</span>
+        <span>
+          {activeIndex + 1}/{prompt.questions.length}
+        </span>
+      </div>
+      <div className="rq-ask__crumbs">
+        {prompt.questions.map((item, index) => (
+          <button
+            key={item.id}
+            type="button"
+            className={index === activeIndex ? "is-active" : ""}
+            onClick={() => setActiveIndex(index)}
+          >
+            {index + 1}
+            {hasDraftAnswer(
+              item,
+              answers[item.id] ?? createDraftAnswer(item),
+            ) ? (
+              <Check size={11} />
+            ) : null}
+          </button>
+        ))}
+      </div>
+      <strong>{question.question}</strong>
+      {question.question_type === "free_text" ? (
+        <textarea
+          value={answer.customText}
+          onChange={(event) =>
+            onAnswerChange(question, {
+              ...answer,
+              customText: event.target.value,
+            })
+          }
+          placeholder="输入你的补充说明"
+          rows={3}
+        />
+      ) : (
+        <div className="rq-ask__options">
+          {question.options.map((option) => {
+            const selected = answer.selectedOptions.includes(option.value);
+            return (
+              <button
+                key={option.value}
+                type="button"
+                className={selected ? "is-selected" : ""}
+                onClick={() => {
+                  const next = toggleClarificationOption(
+                    question,
+                    answer,
+                    option.value,
+                  );
+                  onAnswerChange(question, next);
+                  if (
+                    question.question_type === "single_choice" &&
+                    activeIndex < prompt.questions.length - 1
+                  ) {
+                    setActiveIndex(activeIndex + 1);
+                  }
+                }}
+              >
+                <span>{option.label}</span>
+                {option.description ? (
+                  <small>{option.description}</small>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div className="rq-shelf__actions">
+        <button
+          type="button"
+          disabled={busy || !hasDraftAnswer(question, answer)}
+          onClick={advance}
+        >
+          {activeIndex < prompt.questions.length - 1 ? "继续" : "提交澄清"}
+        </button>
+        <button
+          type="button"
+          disabled={busy || !allAnswered}
+          onClick={onSubmit}
+        >
+          全部提交
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function RequirementConfirmCard({
+  prompt,
+  requirement,
+  busy,
+  onConfirm,
+  onContinueEditing,
+}: {
+  prompt: Extract<RequirementConversationPrompt, { type: "confirmation" }>;
+  requirement: Requirement;
+  busy: boolean;
+  onConfirm: () => void;
+  onContinueEditing: () => void;
+}) {
+  return (
+    <section className="rq-shelf rq-confirm">
+      <div className="rq-shelf__topline">
+        <span>需求确认</span>
+        <span>{requirementStatusText(requirement.status)}</span>
+      </div>
+      <strong>{prompt.draft.title}</strong>
+      <p>{prompt.draft.summary}</p>
+      <ul>
+        {prompt.draft.acceptance_criteria.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+      <div className="rq-shelf__actions">
+        <button type="button" disabled={busy} onClick={onConfirm}>
+          确认需求
+        </button>
+        <button type="button" disabled={busy} onClick={onContinueEditing}>
+          继续补充
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function RequirementComposer({
+  value,
+  busy,
+  running,
+  blocked,
+  canSend,
+  onChange,
+  onSubmit,
+}: {
+  value: string;
+  busy: boolean;
+  running: boolean;
+  blocked: boolean;
+  canSend: boolean;
+  onChange: (value: string) => void;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form className="rq-composer nowheel nodrag" onSubmit={onSubmit}>
+      <textarea
+        value={value}
+        disabled={busy || running || blocked}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={
+          blocked
+            ? "先处理上方卡片，或选择继续补充"
+            : running
+              ? "Coordinator 正在处理，过程会实时显示"
+              : "继续描述你的需求..."
+        }
+        rows={1}
+      />
+      <button type="submit" disabled={!canSend}>
+        <Send size={15} />
+      </button>
+    </form>
+  );
+}

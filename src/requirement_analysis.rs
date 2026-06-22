@@ -66,22 +66,6 @@ pub fn build_requirement_prompt(input: &RequirementAnalysisInput) -> String {
         .replace("{{HISTORY}}", &history)
 }
 
-fn deduplicate_json_keys(value: Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut result = serde_json::Map::new();
-            for (key, inner) in map {
-                if !result.contains_key(&key) {
-                    result.insert(key, deduplicate_json_keys(inner));
-                }
-            }
-            Value::Object(result)
-        }
-        Value::Array(items) => Value::Array(items.into_iter().map(deduplicate_json_keys).collect()),
-        other => other,
-    }
-}
-
 pub fn parse_requirement_analysis(
     assistant_text: &str,
     pi_session_file: Option<String>,
@@ -106,7 +90,7 @@ pub fn parse_requirement_analysis(
     };
 
     let value = match serde_json::from_str::<Value>(&json_text) {
-        Ok(value) => deduplicate_json_keys(value),
+        Ok(value) => value,
         Err(error) => {
             return RequirementAnalysisOutput {
                 status: RequirementStatus::Failed,
@@ -497,13 +481,5 @@ mod tests {
         assert_eq!(output.clarifications.len(), 1);
         assert_eq!(output.clarifications[0].options.len(), 1);
         assert!(!output.clarifications[0].options[0].label.is_empty());
-    }
-
-    #[test]
-    fn deduplicate_keeps_last_value() {
-        let value = serde_json::from_str::<Value>(r#"{"a":1,"a":2}"#).unwrap();
-        let deduped = deduplicate_json_keys(value);
-        let obj = deduped.as_object().unwrap();
-        assert_eq!(obj.get("a").unwrap(), &2);
     }
 }

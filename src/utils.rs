@@ -108,10 +108,6 @@ pub fn strip_unc_prefix(path: PathBuf) -> PathBuf {
     path
 }
 
-pub fn display_path(path: &Path) -> String {
-    path.to_string_lossy().to_string()
-}
-
 pub fn slugify(value: &str) -> String {
     let mut slug = String::new();
 
@@ -157,7 +153,7 @@ pub fn sort_requirements_desc(requirements: &mut [Requirement]) {
 
 pub fn data_root_from_file(path: &Path) -> Result<PathBuf, AppError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    Ok(std::fs::canonicalize(parent).map_err(|_| AppError::bad_request("无法解析数据目录"))?)
+    std::fs::canonicalize(parent).map_err(|_| AppError::bad_request("无法解析数据目录"))
 }
 
 pub fn public_dir_path() -> PathBuf {
