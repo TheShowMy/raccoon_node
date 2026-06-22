@@ -16,10 +16,11 @@ use tokio::{
 
 use crate::error::AppError;
 use crate::models::{
-    ModelProvider, ModelProviderFuture, ModelSettings, PiModel, RequirementAnalysisFuture,
-    RequirementAnalysisInput, RequirementAnalysisOutput, RequirementEventEmitter,
-    RequirementPlanFuture, RequirementPlanInput, RequirementTaskExecutionFuture,
-    RequirementTaskExecutionInput, RequirementTaskExecutionOutput, PI_RPC_REQUEST_ID,
+    ModelProvider, ModelProviderFuture, ModelSettings, ModelTierSetting, PiModel,
+    RequirementAnalysisFuture, RequirementAnalysisInput, RequirementAnalysisOutput,
+    RequirementEventEmitter, RequirementModelTier, RequirementPlanFuture, RequirementPlanInput,
+    RequirementReviewStatus, RequirementTaskExecutionFuture, RequirementTaskExecutionInput,
+    RequirementTaskExecutionOutput, RequirementTaskKind, PI_RPC_REQUEST_ID,
 };
 use crate::requirement_analysis::{
     build_pi_trace_metadata, build_requirement_prompt, parse_requirement_analysis,
@@ -173,7 +174,17 @@ impl ModelProvider for PiRpcModelProvider {
         events: Option<RequirementEventEmitter>,
     ) -> RequirementTaskExecutionFuture<'_> {
         Box::pin(async move {
-            let client = self.project_client(&input.project).await?;
+            let (working_dir, branch_name, worktree_path) =
+                prepare_task_workspace(&self.data_root, &input).await?;
+            let client = PiRpcClient::start(&self.session_dir, &working_dir).await?;
+            let mut input = input;
+            if input.task.branch_name.is_none() {
+                input.task.branch_name = branch_name;
+            }
+            if input.task.worktree_path.is_none() {
+                input.task.worktree_path =
+                    worktree_path.map(|path| path.to_string_lossy().to_string());
+            }
             client.execute_requirement_task(input, events).await
         })
     }
@@ -329,7 +340,7 @@ impl PiRpcClient {
         self.prompt(&build_requirement_plan_prompt(&input.requirement))
             .await?;
         let mut pi_events = Vec::new();
-        self.wait_for_agent_end_with_events(Duration::from_secs(120), |event| {
+        self.wait_for_agent_end_with_events(Duration::from_secs(600), |event| {
             if let Some(emitter) = &events {
                 emitter.emit_pi_event(event.clone());
             }
@@ -348,8 +359,19 @@ impl PiRpcClient {
         input: RequirementTaskExecutionInput,
         events: Option<RequirementEventEmitter>,
     ) -> Result<RequirementTaskExecutionOutput, AppError> {
-        self.new_session().await?;
-        self.prepare_high_model(&input.model_settings).await?;
+        if input.task.status == crate::models::RequirementTaskStatus::Fixing {
+            if let Some(session_file) = input.task.pi_session_file.as_deref() {
+                let session_path = Path::new(session_file);
+                ensure_child_path(&self.session_dir, session_path)?;
+                self.switch_session(session_file).await?;
+            } else {
+                self.new_session().await?;
+            }
+        } else {
+            self.new_session().await?;
+        }
+        self.prepare_model_tier(&input.model_settings, input.task.model_tier)
+            .await?;
         self.prompt(&build_requirement_task_prompt(
             &input.requirement,
             &input.plan,
@@ -357,32 +379,81 @@ impl PiRpcClient {
         ))
         .await?;
         let mut pi_events = Vec::new();
-        self.wait_for_agent_end_with_events(Duration::from_secs(300), |event| {
-            if let Some(emitter) = &events {
-                emitter.emit_pi_event(event.clone());
-            }
-            pi_events.push(event);
-        })
-        .await?;
+        self.wait_for_agent_end_with_events(
+            Duration::from_secs(input.task.timeout_seconds),
+            |event| {
+                if let Some(emitter) = &events {
+                    emitter.emit_pi_event(event.clone());
+                }
+                pi_events.push(event);
+            },
+        )
+        .await
+        .map_err(|error| {
+            AppError::internal(format!(
+                "节点「{}」执行超时或失败：{error}",
+                input.task.title
+            ))
+        })?;
         let assistant_text = self
             .get_last_assistant_text()
             .await?
             .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
-        parse_task_execution_output(&assistant_text, build_pi_trace_metadata(&pi_events))
+        let mut output =
+            parse_task_execution_output(&assistant_text, build_pi_trace_metadata(&pi_events))?;
+        output.pi_session_file = self.get_session_file().await?;
+        output.branch_name = input.task.branch_name.clone();
+        output.worktree_path = input.task.worktree_path.clone();
+        if matches!(
+            input.task.kind,
+            RequirementTaskKind::Implementation | RequirementTaskKind::MergeReview
+        ) {
+            output.commit_sha = Some(commit_task_changes(&input.task).await?);
+        }
+        Ok(output)
     }
 
     async fn prepare_high_model(&self, model_settings: &ModelSettings) -> Result<(), AppError> {
-        let high = model_settings.high.clone();
-        let model_id = high
+        self.prepare_model_tier(model_settings, RequirementModelTier::High)
+            .await
+    }
+
+    async fn prepare_model_tier(
+        &self,
+        model_settings: &ModelSettings,
+        tier: RequirementModelTier,
+    ) -> Result<(), AppError> {
+        let setting = match tier {
+            RequirementModelTier::Low => &model_settings.low,
+            RequirementModelTier::Medium => &model_settings.medium,
+            RequirementModelTier::High => &model_settings.high,
+        };
+        self.prepare_model_setting(setting, tier).await
+    }
+
+    async fn prepare_model_setting(
+        &self,
+        setting: &ModelTierSetting,
+        tier: RequirementModelTier,
+    ) -> Result<(), AppError> {
+        let tier_name = match tier {
+            RequirementModelTier::Low => "低档",
+            RequirementModelTier::Medium => "中档",
+            RequirementModelTier::High => "高档",
+        };
+        let model_id = setting
             .model_id
-            .ok_or_else(|| AppError::bad_request("请先在模型设置中配置高档模型"))?;
+            .clone()
+            .ok_or_else(|| AppError::bad_request(format!("请先在模型设置中配置{tier_name}模型")))?;
         let models = self.get_available_models().await?;
         let model = models
             .iter()
             .find(|model| model.id == model_id)
-            .ok_or_else(|| AppError::bad_request("高档模型不存在于 Pi Agent 已配置模型列表"))?;
+            .ok_or_else(|| {
+                AppError::bad_request(format!("{tier_name}模型不存在于 Pi Agent 已配置模型列表"))
+            })?;
         self.set_model(&model.provider, &model.id).await?;
-        self.set_thinking_level(high.thinking_level.as_str())
+        self.set_thinking_level(setting.thinking_level.as_str())
             .await?;
         Ok(())
     }
@@ -581,6 +652,218 @@ impl PiRpcClient {
         }
         Ok(())
     }
+}
+
+async fn prepare_task_workspace(
+    data_root: &Path,
+    input: &RequirementTaskExecutionInput,
+) -> Result<(PathBuf, Option<String>, Option<PathBuf>), AppError> {
+    match input.task.kind {
+        RequirementTaskKind::Review => {
+            let review_for = input
+                .task
+                .review_for
+                .as_deref()
+                .ok_or_else(|| AppError::bad_request("审核节点缺少 review_for"))?;
+            let reviewed = input
+                .plan
+                .tasks
+                .iter()
+                .find(|task| task.id == review_for)
+                .ok_or_else(|| AppError::bad_request("审核目标不存在"))?;
+            let worktree = reviewed
+                .worktree_path
+                .as_deref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(&input.project.local_path));
+            ensure_child_path(data_root, &worktree)?;
+            if !worktree.exists() {
+                return Err(AppError::internal("恢复审核失败：目标 worktree 不存在"));
+            }
+            if let Some(commit) = reviewed.commit_sha.as_deref() {
+                ensure_commit_exists(&worktree, commit).await?;
+            }
+            Ok((worktree, None, None))
+        }
+        RequirementTaskKind::Implementation | RequirementTaskKind::MergeReview => {
+            let repo = resolve_project_working_dir(data_root, &input.project.local_path)?;
+            let branch = input
+                .task
+                .branch_name
+                .clone()
+                .unwrap_or_else(|| task_branch_name(&input.requirement.id, &input.task.id));
+            let worktree = input
+                .task
+                .worktree_path
+                .as_deref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    task_worktree_path(data_root, &input.project.id, &input.task.id)
+                });
+            ensure_child_path(data_root, &worktree)?;
+
+            let existed = worktree.join(".git").exists();
+            let recovering = input.task.worktree_path.is_some()
+                || input.task.branch_name.is_some()
+                || input.task.commit_sha.is_some();
+            if recovering && !existed {
+                return Err(AppError::internal("恢复节点失败：worktree 不存在"));
+            }
+            if let Some(existing_branch) = input.task.branch_name.as_deref() {
+                ensure_branch_exists(&repo, existing_branch).await?;
+            }
+            if let Some(commit) = input.task.commit_sha.as_deref() {
+                ensure_commit_exists(&repo, commit).await?;
+            }
+            if !existed {
+                if let Some(parent) = worktree.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                git(
+                    &repo,
+                    &[
+                        "worktree",
+                        "add",
+                        "-B",
+                        &branch,
+                        path_str(&worktree)?,
+                        "HEAD",
+                    ],
+                )
+                .await?;
+                merge_dependencies(&worktree, input).await?;
+            }
+            Ok((worktree.clone(), Some(branch), Some(worktree)))
+        }
+    }
+}
+
+async fn ensure_branch_exists(repo: &Path, branch: &str) -> Result<(), AppError> {
+    git(repo, &["rev-parse", "--verify", branch])
+        .await
+        .map(|_| ())
+        .map_err(|_| AppError::internal(format!("恢复节点失败：分支 {branch} 不存在")))
+}
+
+async fn ensure_commit_exists(repo: &Path, commit: &str) -> Result<(), AppError> {
+    let commit_ref = format!("{commit}^{{commit}}");
+    git(repo, &["cat-file", "-e", &commit_ref])
+        .await
+        .map(|_| ())
+        .map_err(|_| AppError::internal(format!("恢复节点失败：提交 {commit} 不可达")))
+}
+
+async fn merge_dependencies(
+    worktree: &Path,
+    input: &RequirementTaskExecutionInput,
+) -> Result<(), AppError> {
+    let dependency_commits = match input.task.kind {
+        RequirementTaskKind::Implementation => input
+            .task
+            .depends_on
+            .iter()
+            .filter_map(|dependency| {
+                input
+                    .plan
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == *dependency)
+                    .and_then(|task| task.commit_sha.clone())
+            })
+            .collect::<Vec<_>>(),
+        RequirementTaskKind::MergeReview => input
+            .plan
+            .tasks
+            .iter()
+            .filter(|task| {
+                task.kind == RequirementTaskKind::Implementation
+                    && task.review_status == RequirementReviewStatus::Approved
+            })
+            .filter_map(|task| task.commit_sha.clone())
+            .collect::<Vec<_>>(),
+        RequirementTaskKind::Review => Vec::new(),
+    };
+
+    for commit in dependency_commits {
+        git(worktree, &["merge", "--no-ff", "--no-edit", &commit]).await?;
+    }
+    Ok(())
+}
+
+async fn commit_task_changes(
+    task: &crate::models::RequirementExecutionTask,
+) -> Result<String, AppError> {
+    let worktree = task
+        .worktree_path
+        .as_deref()
+        .map(PathBuf::from)
+        .ok_or_else(|| AppError::internal("执行节点缺少 worktree_path"))?;
+    let status = git(&worktree, &["status", "--porcelain"]).await?;
+    if !status.trim().is_empty() {
+        git(&worktree, &["add", "-A"]).await?;
+        let message = format!("raccoon_node: {}", task.title);
+        git(&worktree, &["commit", "-m", &message]).await?;
+    } else if task.kind == RequirementTaskKind::Implementation {
+        return Err(AppError::internal("实现节点没有产生可提交改动"));
+    }
+    git(&worktree, &["rev-parse", "HEAD"])
+        .await
+        .map(|sha| sha.trim().to_owned())
+}
+
+async fn git(dir: &Path, args: &[&str]) -> Result<String, AppError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .await?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(AppError::internal(format!(
+        "git {} 失败：{}",
+        args.join(" "),
+        stderr.trim()
+    )))
+}
+
+fn task_branch_name(requirement_id: &str, task_id: &str) -> String {
+    format!("rn/{}/{}", slug(requirement_id), slug(task_id))
+}
+
+fn task_worktree_path(data_root: &Path, project_id: &str, task_id: &str) -> PathBuf {
+    data_root
+        .join("projects")
+        .join(project_id)
+        .join("worktrees")
+        .join(slug(task_id))
+}
+
+fn slug(value: &str) -> String {
+    let slug = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned();
+    if slug.is_empty() {
+        "node".to_owned()
+    } else {
+        slug
+    }
+}
+
+fn path_str(path: &Path) -> Result<&str, AppError> {
+    path.to_str()
+        .ok_or_else(|| AppError::internal("路径不是有效 UTF-8"))
 }
 
 impl Drop for PiRpcClient {

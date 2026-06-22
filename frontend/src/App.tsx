@@ -38,6 +38,9 @@ import {
   confirmRequirement,
   planRequirementExecution,
   startRequirementExecution,
+  retryFailedNode,
+  retryFromNode,
+  rerunReview,
   getModelSettings,
   saveModelSettings,
   buildClarificationAnswerPayload,
@@ -97,44 +100,92 @@ const emptyStartData: StartData = {
 function getTaskLayout(
   tasks: NonNullable<Requirement["execution_plan"]>["tasks"],
 ) {
+  const baseX = 720;
+  const baseY = 60;
+  const columnGap = 680;
+  const rowGap = 300;
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const implementationTasks = tasks.filter(
+    (task) => task.kind === "implementation",
+  );
+  const mergeTask = tasks.find((task) => task.kind === "merge_review");
   const layerCache = new Map<string, number>();
 
   function resolveLayer(taskId: string, visiting = new Set<string>()): number {
     const cached = layerCache.get(taskId);
     if (cached !== undefined) return cached;
     const task = taskMap.get(taskId);
-    if (!task || visiting.has(taskId) || task.depends_on.length === 0) {
+    if (
+      !task ||
+      task.kind !== "implementation" ||
+      visiting.has(taskId) ||
+      task.depends_on.length === 0
+    ) {
       layerCache.set(taskId, 0);
       return 0;
     }
 
     visiting.add(taskId);
+    const implementationDependencies = task.depends_on.filter(
+      (dependency) => taskMap.get(dependency)?.kind === "implementation",
+    );
     const layer =
-      Math.max(
-        ...task.depends_on.map((dependency) =>
-          resolveLayer(dependency, new Set(visiting)),
-        ),
-      ) + 1;
+      implementationDependencies.length === 0
+        ? 0
+        : Math.max(
+            ...implementationDependencies.map((dependency) =>
+              resolveLayer(dependency, new Set(visiting)),
+            ),
+          ) + 1;
     layerCache.set(taskId, layer);
     return layer;
   }
 
   const layerRows = new Map<number, number>();
-  return new Map(
-    tasks.map((task) => {
-      const layer = resolveLayer(task.id);
-      const row = layerRows.get(layer) ?? 0;
-      layerRows.set(layer, row + 1);
-      return [
-        task.id,
-        {
-          x: 580 + layer * 310,
-          y: 80 + row * 188,
-        },
-      ];
-    }),
+  const positions = new Map<string, { x: number; y: number }>();
+
+  for (const task of implementationTasks) {
+    const layer = resolveLayer(task.id);
+    const row = layerRows.get(layer) ?? 0;
+    layerRows.set(layer, row + 1);
+    const position = {
+      x: baseX + layer * columnGap,
+      y: baseY + row * rowGap,
+    };
+    positions.set(task.id, position);
+  }
+
+  const maxImplementationLayer = Math.max(
+    0,
+    ...implementationTasks.map((task) => resolveLayer(task.id)),
   );
+  const maxRows = Math.max(1, ...Array.from(layerRows.values()));
+  if (mergeTask) {
+    positions.set(mergeTask.id, {
+      x: baseX + (maxImplementationLayer + 1) * columnGap,
+      y: baseY + Math.floor((maxRows - 1) * rowGap * 0.5),
+    });
+  }
+
+  for (const task of [
+    ...implementationTasks,
+    ...(mergeTask ? [mergeTask] : []),
+  ]) {
+    if (!positions.has(task.id)) {
+      const row = positions.size;
+      positions.set(task.id, {
+        x: baseX,
+        y: baseY + row * rowGap,
+      });
+    }
+  }
+
+  return positions;
+}
+
+function getTaskNodeHeight(reviewCount: number, isMergeReview: boolean) {
+  if (isMergeReview) return 360;
+  return 320 + Math.max(1, reviewCount) * 100;
 }
 
 function FitViewOnGraphChange({
@@ -688,6 +739,47 @@ export default function App() {
     [],
   );
 
+  const runTaskRecoveryAction = useCallback(
+    async (
+      requirementId: string,
+      taskId: string,
+      action: (
+        requirementId: string,
+        taskId: string,
+      ) => Promise<ProjectCanvasData>,
+    ) => {
+      setRequirementActionBusyId(requirementId);
+      setRequirementError(null);
+      try {
+        const data = await action(requirementId, taskId);
+        setProjectCanvas(data);
+      } catch (reason) {
+        setRequirementError(readError(reason));
+      } finally {
+        setRequirementActionBusyId(null);
+      }
+    },
+    [],
+  );
+
+  const retryFailedNodeCallback = useCallback(
+    (requirementId: string, taskId: string) =>
+      runTaskRecoveryAction(requirementId, taskId, retryFailedNode),
+    [runTaskRecoveryAction],
+  );
+
+  const retryFromNodeCallback = useCallback(
+    (requirementId: string, taskId: string) =>
+      runTaskRecoveryAction(requirementId, taskId, retryFromNode),
+    [runTaskRecoveryAction],
+  );
+
+  const rerunReviewCallback = useCallback(
+    (requirementId: string, taskId: string) =>
+      runTaskRecoveryAction(requirementId, taskId, rerunReview),
+    [runTaskRecoveryAction],
+  );
+
   const projectNodes = useMemo<Node<StartNodeData>[]>(() => {
     const fallbackProject = selectedProjectId
       ? startData.projects.find((project) => project.id === selectedProjectId)
@@ -698,6 +790,17 @@ export default function App() {
     }
     const taskLayout = getTaskLayout(
       selectedDagRequirement?.execution_plan?.tasks ?? [],
+    );
+    const selectedTasks = selectedDagRequirement?.execution_plan?.tasks ?? [];
+    const reviewTasksByTarget = new Map<string, typeof selectedTasks>();
+    for (const reviewTask of selectedTasks) {
+      if (reviewTask.kind !== "review" || !reviewTask.review_for) continue;
+      const reviews = reviewTasksByTarget.get(reviewTask.review_for) ?? [];
+      reviews.push(reviewTask);
+      reviewTasksByTarget.set(reviewTask.review_for, reviews);
+    }
+    const visibleExecutionTasks = selectedTasks.filter(
+      (task) => task.kind === "implementation" || task.kind === "merge_review",
     );
     const dagFocused = Boolean(selectedDagRequirement);
 
@@ -780,7 +883,7 @@ export default function App() {
             {
               id: "requirement-dag",
               type: "startNode" as const,
-              position: { x: 240, y: 140 },
+              position: { x: 280, y: 80 },
               data: {
                 kind: "requirement-dag" as const,
                 requirement: selectedDagRequirement,
@@ -789,17 +892,31 @@ export default function App() {
                 onClose: closeDag,
               },
             },
-            ...(selectedDagRequirement.execution_plan?.tasks ?? []).map(
-              (task) => ({
+            ...visibleExecutionTasks.map((task) => {
+              const reviews = reviewTasksByTarget.get(task.id) ?? [];
+              return {
                 id: `requirement-task-${task.id}`,
                 type: "startNode" as const,
-                position: taskLayout.get(task.id) ?? { x: 580, y: 80 },
+                position: taskLayout.get(task.id) ?? { x: 720, y: 60 },
+                style: {
+                  width: 520,
+                  height: getTaskNodeHeight(
+                    reviews.length,
+                    task.kind === "merge_review",
+                  ),
+                },
                 data: {
                   kind: "requirement-task" as const,
+                  requirementId: selectedDagRequirement.id,
                   task,
+                  reviews,
+                  busy: requirementActionBusyId === selectedDagRequirement.id,
+                  onRetryFailedNode: retryFailedNodeCallback,
+                  onRetryFromNode: retryFromNodeCallback,
+                  onRerunReview: rerunReviewCallback,
                 },
-              }),
-            ),
+              };
+            }),
           ]
         : []),
     ];
@@ -818,6 +935,9 @@ export default function App() {
     requirementError,
     requirementInput,
     requirementStreamEvents,
+    rerunReviewCallback,
+    retryFailedNodeCallback,
+    retryFromNodeCallback,
     selectedDagRequirement,
     selectedDagRequirementId,
     selectedProjectId,
@@ -1035,12 +1155,23 @@ export default function App() {
         },
       });
 
-      for (const task of selectedDagRequirement.execution_plan?.tasks ?? []) {
-        if (task.depends_on.length === 0) {
+      const tasks = selectedDagRequirement.execution_plan?.tasks ?? [];
+      const taskById = new Map(tasks.map((task) => [task.id, task]));
+      const implementationTasks = tasks.filter(
+        (task) => task.kind === "implementation",
+      );
+      const mergeTask = tasks.find((task) => task.kind === "merge_review");
+
+      for (const task of implementationTasks) {
+        const implementationDependencies = task.depends_on.filter(
+          (dependency) => taskById.get(dependency)?.kind === "implementation",
+        );
+
+        if (implementationDependencies.length === 0) {
           flowEdges.push({
             id: `requirement-dag-to-task-${task.id}`,
             source: "requirement-dag",
-            sourceHandle: "requirement-dag-right",
+            sourceHandle: "requirement-dag-entry",
             target: `requirement-task-${task.id}`,
             targetHandle: "requirement-task-left",
             type: "smoothstep",
@@ -1050,10 +1181,9 @@ export default function App() {
               strokeWidth: 2,
             },
           });
-          continue;
         }
 
-        for (const dependency of task.depends_on) {
+        for (const dependency of implementationDependencies) {
           flowEdges.push({
             id: `requirement-task-${dependency}-to-${task.id}`,
             source: `requirement-task-${dependency}`,
@@ -1064,6 +1194,30 @@ export default function App() {
             animated: task.status === "running",
             style: {
               stroke: "rgba(20, 184, 166, 0.62)",
+              strokeWidth: 2,
+            },
+          });
+        }
+      }
+
+      if (mergeTask) {
+        const lastImplementationLayer = implementationTasks.filter(
+          (task) =>
+            !implementationTasks.some((candidate) =>
+              candidate.depends_on.includes(task.id),
+            ),
+        );
+        for (const task of lastImplementationLayer) {
+          flowEdges.push({
+            id: `requirement-task-${task.id}-to-${mergeTask.id}`,
+            source: `requirement-task-${task.id}`,
+            sourceHandle: "requirement-task-right",
+            target: `requirement-task-${mergeTask.id}`,
+            targetHandle: "requirement-task-left",
+            type: "smoothstep",
+            animated: mergeTask.status === "running",
+            style: {
+              stroke: "rgba(249, 115, 22, 0.58)",
               strokeWidth: 2,
             },
           });

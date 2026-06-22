@@ -50,7 +50,7 @@ export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
     data.kind === "requirement-list" && data.tone === "pending";
   const hasRequirementListRightHandle = data.kind === "requirement-list";
   const hasRequirementDagLeftHandle = data.kind === "requirement-dag";
-  const hasRequirementDagRightHandle = data.kind === "requirement-dag";
+  const hasRequirementDagRightHandle = false;
   const hasRequirementTaskLeftHandle = data.kind === "requirement-task";
   const hasRequirementTaskRightHandle = data.kind === "requirement-task";
 

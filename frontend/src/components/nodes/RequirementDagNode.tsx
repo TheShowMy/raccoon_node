@@ -1,4 +1,5 @@
 import React from "react";
+import { Handle, Position } from "@xyflow/react";
 import { GitBranch, Loader2, Play, X } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import { requirementStatusText } from "../../utils/format";
@@ -62,6 +63,12 @@ export default function RequirementDagNode({
           </button>
         ) : null}
       </div>
+      <Handle
+        id="requirement-dag-entry"
+        type="source"
+        position={Position.Right}
+        className="node-link-handle node-link-handle--requirement dag-node__entry-handle"
+      />
     </>
   );
 }

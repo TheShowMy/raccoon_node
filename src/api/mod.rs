@@ -15,8 +15,9 @@ pub mod handlers;
 use crate::api::handlers::{
     append_requirement_message, confirm_requirement, create_project, create_requirement,
     delete_project, get_model_settings, get_project_canvas, get_requirement_conversation,
-    get_start, plan_requirement_execution, put_model_settings, requirement_events,
-    start_requirement_execution, submit_requirement_clarifications,
+    get_start, plan_requirement_execution, put_model_settings, requirement_events, rerun_review,
+    retry_failed_node, retry_from_node, start_requirement_execution,
+    submit_requirement_clarifications,
 };
 use crate::pi_rpc::PiRpcModelProvider;
 use crate::store::JsonStore;
@@ -66,6 +67,18 @@ pub fn build_app_with_model_provider(
         .route(
             "/requirements/{id}/execute",
             post(start_requirement_execution),
+        )
+        .route(
+            "/requirements/{id}/tasks/{task_id}/retry",
+            post(retry_failed_node),
+        )
+        .route(
+            "/requirements/{id}/tasks/{task_id}/retry-from",
+            post(retry_from_node),
+        )
+        .route(
+            "/requirements/{id}/tasks/{task_id}/rerun-review",
+            post(rerun_review),
         )
         .route(
             "/settings/models",

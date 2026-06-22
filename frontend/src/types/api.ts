@@ -51,15 +51,35 @@ export type RequirementDraft = {
 export type RequirementTaskStatus =
   | "pending"
   | "running"
+  | "awaiting_review"
+  | "fixing"
   | "completed"
   | "failed"
-  | "skipped";
+  | "skipped"
+  | "approved"
+  | "rejected";
+
+export type RequirementTaskKind = "implementation" | "review" | "merge_review";
+
+export type RequirementReviewStatus = "pending" | "approved" | "rejected";
 
 export type RequirementExecutionTask = {
   id: string;
   title: string;
   description: string;
   depends_on: string[];
+  kind: RequirementTaskKind;
+  model_tier: ModelTierKey;
+  timeout_seconds: number;
+  pi_session_file: string | null;
+  branch_name: string | null;
+  worktree_path: string | null;
+  commit_sha: string | null;
+  review_for: string | null;
+  review_angle: string | null;
+  review_status: RequirementReviewStatus;
+  attempt: number;
+  last_review_feedback: string | null;
   status: RequirementTaskStatus;
   target_files: string[];
   result_summary: string | null;
@@ -343,5 +363,14 @@ export type StartNodeData =
     }
   | {
       kind: "requirement-task";
+      requirementId: string;
       task: RequirementExecutionTask;
+      reviews: RequirementExecutionTask[];
+      busy: boolean;
+      onRetryFailedNode: (
+        requirementId: string,
+        taskId: string,
+      ) => Promise<void>;
+      onRetryFromNode: (requirementId: string, taskId: string) => Promise<void>;
+      onRerunReview: (requirementId: string, taskId: string) => Promise<void>;
     };

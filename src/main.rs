@@ -70,10 +70,10 @@ mod tests {
         RequirementAnalysisFuture, RequirementAnalysisInput, RequirementAnalysisOutput,
         RequirementClarification, RequirementConversationItem, RequirementConversationPrompt,
         RequirementDraft, RequirementEventEmitter, RequirementExecutionPlan,
-        RequirementExecutionTask, RequirementMessage, RequirementMessageRole,
-        RequirementPlanFuture, RequirementPlanInput, RequirementStatus,
+        RequirementExecutionTask, RequirementMessage, RequirementMessageRole, RequirementModelTier,
+        RequirementPlanFuture, RequirementPlanInput, RequirementReviewStatus, RequirementStatus,
         RequirementTaskExecutionFuture, RequirementTaskExecutionInput,
-        RequirementTaskExecutionOutput, RequirementTaskStatus, ThinkingLevel,
+        RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus, ThinkingLevel,
     };
     use crate::requirement_analysis::{build_requirement_prompt, parse_requirement_analysis};
     use crate::store::JsonStore;
@@ -158,22 +158,76 @@ mod tests {
     fn test_execution_plan() -> RequirementExecutionPlan {
         RequirementExecutionPlan {
             summary: "实现登录需求的执行计划。".to_owned(),
-            tasks: vec![RequirementExecutionTask {
-                id: "task-1".to_owned(),
-                title: "实现登录入口".to_owned(),
-                description: "补齐登录页面和提交逻辑。".to_owned(),
-                depends_on: Vec::new(),
-                status: RequirementTaskStatus::Pending,
-                target_files: vec!["src".to_owned()],
-                result_summary: None,
-                error: None,
-            }],
+            tasks: vec![
+                test_execution_task(
+                    "task-1",
+                    "实现登录入口",
+                    RequirementTaskKind::Implementation,
+                    Vec::new(),
+                    None,
+                ),
+                test_execution_task(
+                    "review-task-1",
+                    "审核登录入口",
+                    RequirementTaskKind::Review,
+                    vec!["task-1".to_owned()],
+                    Some("task-1"),
+                ),
+                test_execution_task(
+                    "merge-review",
+                    "最终合并审核",
+                    RequirementTaskKind::MergeReview,
+                    vec!["task-1".to_owned()],
+                    None,
+                ),
+            ],
+        }
+    }
+
+    fn test_execution_task(
+        id: &str,
+        title: &str,
+        kind: RequirementTaskKind,
+        depends_on: Vec<String>,
+        review_for: Option<&str>,
+    ) -> RequirementExecutionTask {
+        RequirementExecutionTask {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            description: "补齐登录页面和提交逻辑。".to_owned(),
+            depends_on,
+            kind,
+            model_tier: if kind == RequirementTaskKind::Implementation {
+                RequirementModelTier::Medium
+            } else {
+                RequirementModelTier::High
+            },
+            timeout_seconds: 45 * 60,
+            pi_session_file: None,
+            branch_name: None,
+            worktree_path: None,
+            commit_sha: None,
+            review_for: review_for.map(str::to_owned),
+            review_angle: review_for.map(|_| "综合审核".to_owned()),
+            review_status: RequirementReviewStatus::Pending,
+            attempt: 0,
+            last_review_feedback: None,
+            status: RequirementTaskStatus::Pending,
+            target_files: vec!["src".to_owned()],
+            result_summary: None,
+            error: None,
         }
     }
 
     fn test_task_output() -> RequirementTaskExecutionOutput {
         RequirementTaskExecutionOutput {
             result_summary: "登录入口已实现。".to_owned(),
+            pi_session_file: None,
+            branch_name: None,
+            worktree_path: None,
+            commit_sha: None,
+            review_status: Some(RequirementReviewStatus::Approved),
+            review_feedback: Some("通过".to_owned()),
             trace: None,
         }
     }

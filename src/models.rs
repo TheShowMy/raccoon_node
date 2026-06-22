@@ -122,6 +122,30 @@ pub struct RequirementExecutionTask {
     pub description: String,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub kind: RequirementTaskKind,
+    #[serde(default)]
+    pub model_tier: RequirementModelTier,
+    #[serde(default = "default_task_timeout_seconds")]
+    pub timeout_seconds: u64,
+    #[serde(default)]
+    pub pi_session_file: Option<String>,
+    #[serde(default)]
+    pub branch_name: Option<String>,
+    #[serde(default)]
+    pub worktree_path: Option<String>,
+    #[serde(default)]
+    pub commit_sha: Option<String>,
+    #[serde(default)]
+    pub review_for: Option<String>,
+    #[serde(default)]
+    pub review_angle: Option<String>,
+    #[serde(default)]
+    pub review_status: RequirementReviewStatus,
+    #[serde(default)]
+    pub attempt: u32,
+    #[serde(default)]
+    pub last_review_feedback: Option<String>,
     pub status: RequirementTaskStatus,
     #[serde(default)]
     pub target_files: Vec<String>,
@@ -129,14 +153,49 @@ pub struct RequirementExecutionTask {
     pub error: Option<String>,
 }
 
+fn default_task_timeout_seconds() -> u64 {
+    45 * 60
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementTaskKind {
+    #[default]
+    Implementation,
+    Review,
+    MergeReview,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RequirementModelTier {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementReviewStatus {
+    #[default]
+    Pending,
+    Approved,
+    Rejected,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RequirementTaskStatus {
     Pending,
     Running,
+    AwaitingReview,
+    Fixing,
     Completed,
     Failed,
     Skipped,
+    Approved,
+    Rejected,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -402,6 +461,12 @@ pub struct RequirementTaskExecutionInput {
 #[derive(Debug, Clone)]
 pub struct RequirementTaskExecutionOutput {
     pub result_summary: String,
+    pub pi_session_file: Option<String>,
+    pub branch_name: Option<String>,
+    pub worktree_path: Option<String>,
+    pub commit_sha: Option<String>,
+    pub review_status: Option<RequirementReviewStatus>,
+    pub review_feedback: Option<String>,
     pub trace: Option<Value>,
 }
 

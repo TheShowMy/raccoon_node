@@ -236,14 +236,14 @@
   }
 
   .node-card--requirement-dag {
-    @apply flex h-[220px] w-[300px] flex-col overflow-hidden;
+    @apply flex h-[260px] w-[360px] flex-col overflow-hidden;
     box-shadow:
       var(--shadow-card),
       0 0 28px color-mix(in srgb, var(--accent-model) 20%, transparent);
   }
 
   .node-card--requirement-task {
-    @apply flex h-[160px] w-[300px] flex-col overflow-hidden;
+    @apply flex h-full min-h-[420px] w-full min-w-[520px] flex-col overflow-hidden;
     box-shadow:
       var(--shadow-card),
       0 0 24px color-mix(in srgb, var(--accent-create) 16%, transparent);
@@ -747,7 +747,7 @@
 
   .dag-node__body,
   .task-node__body {
-    @apply mt-4 grid min-h-0 gap-2 overflow-hidden;
+    @apply mt-4 grid min-h-0 gap-2;
   }
 
   .dag-node__body strong,
@@ -764,6 +764,14 @@
     overflow: hidden;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
+  }
+
+  .task-node__body {
+    @apply flex-1 overflow-y-auto pr-1;
+  }
+
+  .task-node__body p {
+    -webkit-line-clamp: 4;
   }
 
   .dag-node__body small,
@@ -798,6 +806,11 @@
     filter: brightness(1.08);
   }
 
+  .dag-node__entry-handle {
+    top: 132px !important;
+    right: -7px !important;
+  }
+
   .task-node__head {
     @apply flex items-start gap-3;
   }
@@ -817,9 +830,89 @@
     color: var(--success);
   }
 
+  .task-node__status--awaiting_review,
+  .task-node__status--fixing,
+  .task-node__status--rejected {
+    background: color-mix(in srgb, var(--accent-warning) 16%, transparent);
+    color: var(--accent-warning);
+  }
+
   .task-node__status--failed {
     background: color-mix(in srgb, var(--accent-danger) 16%, transparent);
     color: var(--accent-danger);
+  }
+
+  .task-node__actions {
+    @apply sticky bottom-0 mt-auto flex flex-wrap items-center gap-1 pt-2;
+    background: linear-gradient(
+      180deg,
+      transparent,
+      color-mix(in srgb, var(--card-bg) 92%, transparent) 22%,
+      var(--card-bg)
+    );
+  }
+
+  .task-node__mini-flow {
+    @apply grid items-stretch gap-2 py-2;
+    grid-template-columns: minmax(0, 1fr) 22px minmax(0, 1.25fr);
+  }
+
+  .task-node__review-stack {
+    @apply grid gap-2;
+  }
+
+  .task-node__mini-card {
+    @apply relative grid min-h-[76px] gap-1 rounded-[10px] border p-2;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--panel-bg) 76%, transparent);
+  }
+
+  .task-node__mini-card--code {
+    border-color: color-mix(in srgb, var(--accent-create) 34%, transparent);
+  }
+
+  .task-node__mini-card--review {
+    border-color: color-mix(in srgb, var(--accent-model) 30%, transparent);
+  }
+
+  .task-node__mini-card strong {
+    @apply text-[11px] font-bold;
+    color: var(--text-strong);
+  }
+
+  .task-node__mini-card span {
+    @apply text-[10px] font-bold;
+    color: var(--text-soft);
+  }
+
+  .task-node__mini-card small {
+    -webkit-line-clamp: 2;
+  }
+
+  .task-node__mini-arrow {
+    @apply self-center justify-self-center;
+    width: 18px;
+    height: 2px;
+    background: color-mix(in srgb, var(--accent-model) 60%, transparent);
+  }
+
+  .task-node__mini-action {
+    @apply mt-1 inline-flex w-fit cursor-pointer items-center gap-1 rounded-[7px] border px-1.5 py-0.5 text-[10px] font-bold disabled:cursor-not-allowed disabled:opacity-55;
+    border-color: var(--card-border);
+    color: var(--text-soft);
+    background: color-mix(in srgb, var(--card-bg) 86%, transparent);
+  }
+
+  .task-node__actions button {
+    @apply inline-flex cursor-pointer items-center gap-1 rounded-[8px] border px-2 py-1 text-[10px] font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
+    border-color: var(--card-border);
+    color: var(--text-soft);
+    background: color-mix(in srgb, var(--panel-bg) 74%, transparent);
+  }
+
+  .task-node__actions button:hover:not(:disabled) {
+    border-color: var(--accent-model);
+    color: var(--text-strong);
   }
 
   .rq-workbench {

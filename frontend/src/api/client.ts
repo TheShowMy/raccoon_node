@@ -193,6 +193,46 @@ export async function startRequirementExecution(
   return response.json();
 }
 
+export function retryFailedNode(
+  requirementId: string,
+  taskId: string,
+): Promise<ProjectCanvasData> {
+  return postTaskAction(requirementId, taskId, "retry", "重试失败节点失败");
+}
+
+export function retryFromNode(
+  requirementId: string,
+  taskId: string,
+): Promise<ProjectCanvasData> {
+  return postTaskAction(requirementId, taskId, "retry-from", "从节点恢复失败");
+}
+
+export function rerunReview(
+  requirementId: string,
+  taskId: string,
+): Promise<ProjectCanvasData> {
+  return postTaskAction(requirementId, taskId, "rerun-review", "重跑审核失败");
+}
+
+async function postTaskAction(
+  requirementId: string,
+  taskId: string,
+  action: string,
+  fallbackMessage: string,
+): Promise<ProjectCanvasData> {
+  const response = await fetch(
+    `/api/requirements/${encodeURIComponent(requirementId)}/tasks/${encodeURIComponent(taskId)}/${action}`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? fallbackMessage);
+  }
+  return response.json();
+}
+
 export async function getModelSettings(): Promise<ModelSettingsResponse> {
   const response = await fetch("/api/settings/models");
   if (!response.ok) {

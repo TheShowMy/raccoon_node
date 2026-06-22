@@ -8,14 +8,17 @@ use crate::models::{
     Requirement, RequirementAnalysisInput, RequirementAnalysisOutput, RequirementConversationItem,
     RequirementConversationPrompt, RequirementConversationResponse, RequirementExecutionPlan,
     RequirementMessage, RequirementMessageRole, RequirementNoticeLevel, RequirementPlanInput,
-    RequirementProcessStatus, RequirementStatus, RequirementTaskExecutionInput,
-    RequirementTaskExecutionOutput, RequirementTaskStatus,
+    RequirementProcessStatus, RequirementReviewStatus, RequirementStatus,
+    RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
+    RequirementTaskStatus,
 };
 use crate::utils::{
     build_clarification_answer_summary, clarification_has_answer, clone_git_repo,
     data_root_from_file, derive_requirement_title, ensure_child_path, remove_dir_if_exists,
     slugify, sort_requirements_desc, validate_git_url, validate_model_settings, write_json,
 };
+
+const MAX_REVIEW_ATTEMPTS: u32 = 3;
 
 pub struct JsonStore {
     pub path: PathBuf,
@@ -604,23 +607,23 @@ impl JsonStore {
         Ok(project_id)
     }
 
-    pub async fn prepare_next_execution_task(
+    pub async fn prepare_runnable_execution_tasks(
         &mut self,
         requirement_id: &str,
-    ) -> Result<Option<RequirementTaskExecutionInput>, AppError> {
+    ) -> Result<Vec<RequirementTaskExecutionInput>, AppError> {
         let index = self.requirement_index(requirement_id)?;
         let requirement = self.data.requirements[index].clone();
         if requirement.status != RequirementStatus::Running {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let Some(plan) = requirement.execution_plan.clone() else {
             return Err(AppError::bad_request("执行 DAG 不存在"));
         };
 
-        let task_index = next_runnable_task_index(&plan)?;
-        let Some(task_index) = task_index else {
-            return Ok(None);
-        };
+        let task_indexes = runnable_task_indexes(&plan)?;
+        if task_indexes.is_empty() {
+            return Ok(Vec::new());
+        }
 
         let project = self
             .data
@@ -636,21 +639,25 @@ impl JsonStore {
             .execution_plan
             .as_mut()
             .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
-        plan.tasks[task_index].status = RequirementTaskStatus::Running;
-        plan.tasks[task_index].error = None;
+        for task_index in &task_indexes {
+            plan.tasks[*task_index].status = RequirementTaskStatus::Running;
+            plan.tasks[*task_index].error = None;
+        }
         requirement.updated_at = now;
-        let task = plan.tasks[task_index].clone();
         let plan = plan.clone();
         let requirement = requirement.clone();
         write_json(&self.path, &self.data).await?;
 
-        Ok(Some(RequirementTaskExecutionInput {
-            project,
-            requirement,
-            plan,
-            task,
-            model_settings: self.data.model_settings.clone(),
-        }))
+        Ok(task_indexes
+            .into_iter()
+            .map(|task_index| RequirementTaskExecutionInput {
+                project: project.clone(),
+                requirement: requirement.clone(),
+                plan: plan.clone(),
+                task: plan.tasks[task_index].clone(),
+                model_settings: self.data.model_settings.clone(),
+            })
+            .collect())
     }
 
     pub async fn apply_task_execution_result(
@@ -666,37 +673,122 @@ impl JsonStore {
             .execution_plan
             .as_mut()
             .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
-        let task = plan
+        let task_index = plan
             .tasks
-            .iter_mut()
-            .find(|task| task.id == task_id)
+            .iter()
+            .position(|task| task.id == task_id)
             .ok_or_else(|| AppError::bad_request("执行任务不存在"))?;
 
         match output {
             Ok(output) => {
-                task.status = RequirementTaskStatus::Completed;
-                task.result_summary = Some(output.result_summary.clone());
-                task.error = None;
+                let task_kind = plan.tasks[task_index].kind;
+                let task_title = plan.tasks[task_index].title.clone();
+                let mut review_update = None;
+                {
+                    let task = &mut plan.tasks[task_index];
+                    task.pi_session_file = output
+                        .pi_session_file
+                        .clone()
+                        .or(task.pi_session_file.take());
+                    task.branch_name = output.branch_name.clone().or(task.branch_name.take());
+                    task.worktree_path = output.worktree_path.clone().or(task.worktree_path.take());
+                    task.commit_sha = output.commit_sha.clone().or(task.commit_sha.take());
+                    task.attempt = task.attempt.saturating_add(1);
+                    task.result_summary = Some(output.result_summary.clone());
+                    task.error = None;
+                    match task_kind {
+                        RequirementTaskKind::Implementation => {
+                            task.status = RequirementTaskStatus::AwaitingReview;
+                        }
+                        RequirementTaskKind::Review => {
+                            let review_status = output
+                                .review_status
+                                .unwrap_or(RequirementReviewStatus::Rejected);
+                            task.review_status = review_status;
+                            task.last_review_feedback = output.review_feedback.clone();
+                            task.status = match review_status {
+                                RequirementReviewStatus::Approved => {
+                                    RequirementTaskStatus::Completed
+                                }
+                                RequirementReviewStatus::Rejected => {
+                                    RequirementTaskStatus::Rejected
+                                }
+                                RequirementReviewStatus::Pending => RequirementTaskStatus::Pending,
+                            };
+                            review_update = Some(review_status);
+                        }
+                        RequirementTaskKind::MergeReview => {
+                            task.review_status = output
+                                .review_status
+                                .unwrap_or(RequirementReviewStatus::Approved);
+                            task.last_review_feedback = output.review_feedback.clone();
+                            task.status = if task.review_status == RequirementReviewStatus::Approved
+                            {
+                                RequirementTaskStatus::Completed
+                            } else {
+                                RequirementTaskStatus::Rejected
+                            };
+                        }
+                    }
+                }
+                match task_kind {
+                    RequirementTaskKind::Implementation => {
+                        reset_review_for(plan, task_id);
+                    }
+                    RequirementTaskKind::Review => {
+                        match review_update.unwrap_or(RequirementReviewStatus::Rejected) {
+                            RequirementReviewStatus::Approved => {
+                                approve_reviewed_task(
+                                    plan,
+                                    task_id,
+                                    output.review_feedback.clone(),
+                                )?;
+                            }
+                            RequirementReviewStatus::Rejected => {
+                                reject_reviewed_task(
+                                    plan,
+                                    task_id,
+                                    output.review_feedback.clone(),
+                                )?;
+                            }
+                            RequirementReviewStatus::Pending => {
+                                plan.tasks[task_index].status = RequirementTaskStatus::Pending;
+                            }
+                        }
+                    }
+                    RequirementTaskKind::MergeReview => {}
+                }
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::Assistant,
-                    content: format!("任务「{}」已完成：{}", task.title, output.result_summary),
+                    content: format!("任务「{}」已完成：{}", task_title, output.result_summary),
                     metadata: None,
                     created_at: now,
                 });
                 if let Some(trace) = output.trace {
                     requirement.messages.push(RequirementMessage {
                         role: RequirementMessageRole::Trace,
-                        content: format!("任务「{}」执行过程", task.title),
+                        content: format!("任务「{}」执行过程", task_title),
                         metadata: Some(trace),
                         created_at: now,
                     });
                 }
-                if plan
-                    .tasks
-                    .iter()
-                    .all(|task| task.status == RequirementTaskStatus::Completed)
-                {
+                if plan.tasks.iter().any(|task| {
+                    task.kind == RequirementTaskKind::Implementation
+                        && task.status == RequirementTaskStatus::Failed
+                }) {
+                    requirement.status = RequirementStatus::Failed;
+                    requirement.error = Some("审核多次未通过，需求执行已停止".to_owned());
+                } else if plan.tasks.iter().any(|task| {
+                    task.kind == RequirementTaskKind::MergeReview
+                        && task.status == RequirementTaskStatus::Rejected
+                }) {
+                    requirement.status = RequirementStatus::Failed;
+                    requirement.error = Some("最终合并审核未通过".to_owned());
+                } else if plan.tasks.iter().any(|task| {
+                    task.kind == RequirementTaskKind::MergeReview
+                        && task.status == RequirementTaskStatus::Completed
+                }) {
                     requirement.status = RequirementStatus::Completed;
                     requirement.messages.push(RequirementMessage {
                         role: RequirementMessageRole::System,
@@ -707,14 +799,15 @@ impl JsonStore {
                 }
             }
             Err(error) => {
-                task.status = RequirementTaskStatus::Failed;
-                task.error = Some(error.to_string());
+                let task_title = plan.tasks[task_index].title.clone();
+                plan.tasks[task_index].status = RequirementTaskStatus::Failed;
+                plan.tasks[task_index].error = Some(error.to_string());
                 requirement.status = RequirementStatus::Failed;
-                requirement.error = Some(format!("任务「{}」执行失败：{error}", task.title));
+                requirement.error = Some(format!("任务「{}」执行失败：{error}", task_title));
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::System,
-                    content: format!("任务「{}」执行失败：{error}", task.title),
+                    content: format!("任务「{}」执行失败：{error}", task_title),
                     metadata: None,
                     created_at: now,
                 });
@@ -722,6 +815,97 @@ impl JsonStore {
         }
         write_json(&self.path, &self.data).await?;
         Ok(())
+    }
+
+    pub async fn retry_failed_node(
+        &mut self,
+        requirement_id: &str,
+        task_id: &str,
+    ) -> Result<String, AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        let project_id = self.data.requirements[index].project_id.clone();
+        let requirement = &mut self.data.requirements[index];
+        let plan = requirement
+            .execution_plan
+            .as_mut()
+            .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
+        let task = plan
+            .tasks
+            .iter_mut()
+            .find(|task| task.id == task_id)
+            .ok_or_else(|| AppError::bad_request("执行任务不存在"))?;
+        if task.status != RequirementTaskStatus::Failed {
+            return Err(AppError::bad_request("只能重试失败节点"));
+        }
+        task.status = if task.kind == RequirementTaskKind::Implementation {
+            RequirementTaskStatus::Fixing
+        } else {
+            RequirementTaskStatus::Pending
+        };
+        task.error = None;
+        requirement.status = RequirementStatus::Running;
+        requirement.error = None;
+        requirement.updated_at = Utc::now();
+        write_json(&self.path, &self.data).await?;
+        Ok(project_id)
+    }
+
+    pub async fn retry_from_node(
+        &mut self,
+        requirement_id: &str,
+        task_id: &str,
+    ) -> Result<String, AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        let project_id = self.data.requirements[index].project_id.clone();
+        let requirement = &mut self.data.requirements[index];
+        let plan = requirement
+            .execution_plan
+            .as_mut()
+            .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
+        let affected = downstream_task_ids(plan, task_id)?;
+        for task in &mut plan.tasks {
+            if task.id == task_id || affected.iter().any(|id| id == &task.id) {
+                task.status = RequirementTaskStatus::Pending;
+                task.review_status = RequirementReviewStatus::Pending;
+                task.error = None;
+                task.result_summary = None;
+            }
+        }
+        requirement.status = RequirementStatus::Running;
+        requirement.error = None;
+        requirement.updated_at = Utc::now();
+        write_json(&self.path, &self.data).await?;
+        Ok(project_id)
+    }
+
+    pub async fn rerun_review(
+        &mut self,
+        requirement_id: &str,
+        task_id: &str,
+    ) -> Result<String, AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        let project_id = self.data.requirements[index].project_id.clone();
+        let requirement = &mut self.data.requirements[index];
+        let plan = requirement
+            .execution_plan
+            .as_mut()
+            .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
+        let task = plan
+            .tasks
+            .iter_mut()
+            .find(|task| task.id == task_id)
+            .ok_or_else(|| AppError::bad_request("执行任务不存在"))?;
+        if task.kind != RequirementTaskKind::Review {
+            return Err(AppError::bad_request("只能重跑审核节点"));
+        }
+        task.status = RequirementTaskStatus::Pending;
+        task.review_status = RequirementReviewStatus::Pending;
+        task.error = None;
+        requirement.status = RequirementStatus::Running;
+        requirement.error = None;
+        requirement.updated_at = Utc::now();
+        write_json(&self.path, &self.data).await?;
+        Ok(project_id)
     }
 
     pub async fn fail_requirement_execution(
@@ -769,30 +953,174 @@ impl JsonStore {
     }
 }
 
-fn next_runnable_task_index(plan: &RequirementExecutionPlan) -> Result<Option<usize>, AppError> {
+fn runnable_task_indexes(plan: &RequirementExecutionPlan) -> Result<Vec<usize>, AppError> {
+    let mut indexes = Vec::new();
     for (index, task) in plan.tasks.iter().enumerate() {
-        if task.status != RequirementTaskStatus::Pending {
+        let runnable_status = matches!(
+            task.status,
+            RequirementTaskStatus::Pending | RequirementTaskStatus::Fixing
+        );
+        if !runnable_status {
             continue;
         }
-        let dependencies_completed = task.depends_on.iter().all(|dependency| {
-            plan.tasks.iter().any(|candidate| {
-                candidate.id == *dependency && candidate.status == RequirementTaskStatus::Completed
-            })
-        });
-        if dependencies_completed {
-            return Ok(Some(index));
+        if task.kind == RequirementTaskKind::Review {
+            let Some(review_for) = task.review_for.as_deref() else {
+                continue;
+            };
+            let reviewed_ready = plan.tasks.iter().any(|candidate| {
+                candidate.id == review_for
+                    && candidate.status == RequirementTaskStatus::AwaitingReview
+            });
+            if reviewed_ready {
+                indexes.push(index);
+            }
+            continue;
+        }
+
+        if dependencies_completed(plan, task) {
+            indexes.push(index);
         }
     }
+    if !indexes.is_empty() {
+        return Ok(indexes);
+    }
 
-    if plan
-        .tasks
-        .iter()
-        .any(|task| task.status == RequirementTaskStatus::Pending)
-    {
+    if plan.tasks.iter().any(|task| {
+        matches!(
+            task.status,
+            RequirementTaskStatus::Pending | RequirementTaskStatus::Fixing
+        )
+    }) {
         return Err(AppError::internal("执行 DAG 存在无法满足的依赖"));
     }
 
-    Ok(None)
+    Ok(Vec::new())
+}
+
+fn dependencies_completed(
+    plan: &RequirementExecutionPlan,
+    task: &crate::models::RequirementExecutionTask,
+) -> bool {
+    task.depends_on.iter().all(|dependency| {
+        plan.tasks.iter().any(|candidate| {
+            candidate.id == *dependency && candidate.status == RequirementTaskStatus::Completed
+        })
+    })
+}
+
+fn reset_review_for(plan: &mut RequirementExecutionPlan, task_id: &str) {
+    for candidate in &mut plan.tasks {
+        if candidate.review_for.as_deref() == Some(task_id) {
+            candidate.status = RequirementTaskStatus::Pending;
+            candidate.review_status = RequirementReviewStatus::Pending;
+            candidate.error = None;
+        }
+    }
+}
+
+fn approve_reviewed_task(
+    plan: &mut RequirementExecutionPlan,
+    review_task_id: &str,
+    feedback: Option<String>,
+) -> Result<(), AppError> {
+    let review_for = plan
+        .tasks
+        .iter()
+        .find(|task| task.id == review_task_id)
+        .and_then(|task| task.review_for.clone())
+        .ok_or_else(|| AppError::bad_request("审核节点缺少 review_for"))?;
+    let all_reviews_approved = plan
+        .tasks
+        .iter()
+        .filter(|task| {
+            task.kind == RequirementTaskKind::Review
+                && task.review_for.as_deref() == Some(&review_for)
+        })
+        .all(|task| {
+            task.id == review_task_id
+                || (task.status == RequirementTaskStatus::Completed
+                    && task.review_status == RequirementReviewStatus::Approved)
+        });
+
+    let reviewed = plan
+        .tasks
+        .iter_mut()
+        .find(|task| task.id == review_for)
+        .ok_or_else(|| AppError::bad_request("审核目标不存在"))?;
+    if all_reviews_approved {
+        reviewed.status = RequirementTaskStatus::Completed;
+        reviewed.review_status = RequirementReviewStatus::Approved;
+    } else {
+        reviewed.status = RequirementTaskStatus::AwaitingReview;
+    }
+    reviewed.last_review_feedback = feedback;
+    Ok(())
+}
+
+fn reject_reviewed_task(
+    plan: &mut RequirementExecutionPlan,
+    review_task_id: &str,
+    feedback: Option<String>,
+) -> Result<(), AppError> {
+    let review_for = plan
+        .tasks
+        .iter()
+        .find(|task| task.id == review_task_id)
+        .and_then(|task| task.review_for.clone())
+        .ok_or_else(|| AppError::bad_request("审核节点缺少 review_for"))?;
+    let reviewed_index = plan
+        .tasks
+        .iter()
+        .position(|task| task.id == review_for)
+        .ok_or_else(|| AppError::bad_request("审核目标不存在"))?;
+    let reviewed_status = if plan.tasks[reviewed_index].attempt >= MAX_REVIEW_ATTEMPTS {
+        RequirementTaskStatus::Failed
+    } else {
+        RequirementTaskStatus::Fixing
+    };
+    plan.tasks[reviewed_index].review_status = RequirementReviewStatus::Rejected;
+    plan.tasks[reviewed_index].last_review_feedback = feedback;
+    plan.tasks[reviewed_index].status = reviewed_status;
+    for task in &mut plan.tasks {
+        if task.kind == RequirementTaskKind::Review
+            && task.review_for.as_deref() == Some(review_for.as_str())
+            && task.id != review_task_id
+        {
+            task.status = RequirementTaskStatus::Pending;
+            task.review_status = RequirementReviewStatus::Pending;
+            task.error = None;
+        }
+    }
+    Ok(())
+}
+
+fn downstream_task_ids(
+    plan: &RequirementExecutionPlan,
+    task_id: &str,
+) -> Result<Vec<String>, AppError> {
+    if !plan.tasks.iter().any(|task| task.id == task_id) {
+        return Err(AppError::bad_request("执行任务不存在"));
+    }
+    let mut affected = Vec::new();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for task in &plan.tasks {
+            let downstream = task
+                .depends_on
+                .iter()
+                .any(|dependency| dependency == task_id)
+                || task
+                    .depends_on
+                    .iter()
+                    .any(|dependency| affected.iter().any(|id| id == dependency));
+            if downstream && !affected.iter().any(|id| id == &task.id) {
+                affected.push(task.id.clone());
+                changed = true;
+            }
+        }
+    }
+    Ok(affected)
 }
 
 fn build_requirement_conversation(requirement: Requirement) -> RequirementConversationResponse {

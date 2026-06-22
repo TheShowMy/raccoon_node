@@ -200,6 +200,45 @@ pub async fn start_requirement_execution(
     Ok(Json(store.project_canvas(&project_id)?))
 }
 
+pub async fn retry_failed_node(
+    State(state): State<AppState>,
+    AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
+) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    let project_id = {
+        let mut store = state.store.write().await;
+        store.retry_failed_node(&requirement_id, &task_id).await?
+    };
+    spawn_requirement_execution(state.clone(), requirement_id);
+    let store = state.store.read().await;
+    Ok(Json(store.project_canvas(&project_id)?))
+}
+
+pub async fn retry_from_node(
+    State(state): State<AppState>,
+    AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
+) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    let project_id = {
+        let mut store = state.store.write().await;
+        store.retry_from_node(&requirement_id, &task_id).await?
+    };
+    spawn_requirement_execution(state.clone(), requirement_id);
+    let store = state.store.read().await;
+    Ok(Json(store.project_canvas(&project_id)?))
+}
+
+pub async fn rerun_review(
+    State(state): State<AppState>,
+    AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
+) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    let project_id = {
+        let mut store = state.store.write().await;
+        store.rerun_review(&requirement_id, &task_id).await?
+    };
+    spawn_requirement_execution(state.clone(), requirement_id);
+    let store = state.store.read().await;
+    Ok(Json(store.project_canvas(&project_id)?))
+}
+
 pub async fn get_model_settings(
     State(state): State<AppState>,
 ) -> Result<Json<ModelSettingsResponse>, AppError> {
@@ -343,10 +382,13 @@ fn spawn_requirement_execution(state: AppState, requirement_id: String) {
         emitter.emit("execution_started", "开始按 DAG 执行任务。");
 
         loop {
-            let input = {
+            let inputs = {
                 let mut store = state.store.write().await;
-                match store.prepare_next_execution_task(&requirement_id).await {
-                    Ok(input) => input,
+                match store
+                    .prepare_runnable_execution_tasks(&requirement_id)
+                    .await
+                {
+                    Ok(inputs) => inputs,
                     Err(error) => {
                         let _ = store
                             .fail_requirement_execution(&requirement_id, error)
@@ -357,37 +399,53 @@ fn spawn_requirement_execution(state: AppState, requirement_id: String) {
                 }
             };
 
-            let Some(input) = input else {
+            if inputs.is_empty() {
                 emitter.emit("execution_completed", "需求执行完成。");
                 return;
-            };
-
-            let task_id = input.task.id.clone();
-            emitter.emit(
-                "execution_task_started",
-                &format!("开始执行任务：{}", input.task.title),
-            );
-            let output = state
-                .model_provider
-                .execute_requirement_task(input, Some(emitter.clone()))
-                .await;
-            let succeeded = output.is_ok();
-            {
-                let mut store = state.store.write().await;
-                if let Err(error) = store
-                    .apply_task_execution_result(&requirement_id, &task_id, output)
-                    .await
-                {
-                    emitter.emit("execution_failed", &format!("保存任务结果失败：{error}"));
-                    return;
-                }
             }
 
-            if succeeded {
-                emitter.emit("execution_task_completed", "任务执行完成。");
-            } else {
-                emitter.emit("execution_failed", "任务执行失败。");
-                return;
+            let mut handles = Vec::with_capacity(inputs.len());
+            for input in inputs {
+                let task_id = input.task.id.clone();
+                let task_title = input.task.title.clone();
+                let state = state.clone();
+                let emitter = emitter.clone();
+                let requirement_id = requirement_id.clone();
+                emitter.emit(
+                    "execution_task_started",
+                    &format!("开始执行任务：{}", task_title),
+                );
+                handles.push(tokio::spawn(async move {
+                    let output = state
+                        .model_provider
+                        .execute_requirement_task(input, Some(emitter.clone()))
+                        .await;
+                    let succeeded = output.is_ok();
+                    {
+                        let mut store = state.store.write().await;
+                        if let Err(error) = store
+                            .apply_task_execution_result(&requirement_id, &task_id, output)
+                            .await
+                        {
+                            emitter.emit("execution_failed", &format!("保存任务结果失败：{error}"));
+                            return false;
+                        }
+                    }
+
+                    if succeeded {
+                        emitter.emit("execution_task_completed", "任务执行完成。");
+                    } else {
+                        emitter.emit("execution_failed", "任务执行失败。");
+                    }
+                    succeeded
+                }));
+            }
+
+            for handle in handles {
+                match handle.await {
+                    Ok(true) => {}
+                    Ok(false) | Err(_) => return,
+                }
             }
         }
     });
