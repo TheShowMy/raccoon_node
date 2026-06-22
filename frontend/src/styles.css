@@ -243,7 +243,7 @@
   }
 
   .node-card--requirement-task {
-    @apply flex h-full min-h-[420px] w-full min-w-[520px] flex-col overflow-hidden;
+    @apply flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden;
     box-shadow:
       var(--shadow-card),
       0 0 24px color-mix(in srgb, var(--accent-create) 16%, transparent);
@@ -768,6 +768,7 @@
 
   .task-node__body {
     @apply flex-1 overflow-y-auto pr-1;
+    max-height: 420px;
   }
 
   .task-node__body p {

@@ -3,6 +3,7 @@ import {
   Background,
   Controls,
   Edge,
+  MarkerType,
   Node,
   ReactFlow,
   ReactFlowProvider,
@@ -100,15 +101,22 @@ const emptyStartData: StartData = {
 function getTaskLayout(
   tasks: NonNullable<Requirement["execution_plan"]>["tasks"],
 ) {
-  const baseX = 720;
-  const baseY = 60;
-  const columnGap = 680;
-  const rowGap = 300;
+  const baseX = 700;
+  const baseY = 3.5;
+  const columnGap = 460;
+  const rowGap = 40;
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
   const implementationTasks = tasks.filter(
     (task) => task.kind === "implementation",
   );
   const mergeTask = tasks.find((task) => task.kind === "merge_review");
+  const reviewTasksByTarget = new Map<string, typeof tasks>();
+  for (const reviewTask of tasks) {
+    if (reviewTask.kind !== "review" || !reviewTask.review_for) continue;
+    const reviews = reviewTasksByTarget.get(reviewTask.review_for) ?? [];
+    reviews.push(reviewTask);
+    reviewTasksByTarget.set(reviewTask.review_for, reviews);
+  }
   const layerCache = new Map<string, number>();
 
   function resolveLayer(taskId: string, visiting = new Set<string>()): number {
@@ -141,29 +149,44 @@ function getTaskLayout(
     return layer;
   }
 
-  const layerRows = new Map<number, number>();
-  const positions = new Map<string, { x: number; y: number }>();
-
+  const layerTasks = new Map<number, typeof implementationTasks>();
   for (const task of implementationTasks) {
     const layer = resolveLayer(task.id);
-    const row = layerRows.get(layer) ?? 0;
-    layerRows.set(layer, row + 1);
-    const position = {
-      x: baseX + layer * columnGap,
-      y: baseY + row * rowGap,
-    };
-    positions.set(task.id, position);
+    const list = layerTasks.get(layer) ?? [];
+    list.push(task);
+    layerTasks.set(layer, list);
   }
 
-  const maxImplementationLayer = Math.max(
-    0,
-    ...implementationTasks.map((task) => resolveLayer(task.id)),
-  );
-  const maxRows = Math.max(1, ...Array.from(layerRows.values()));
+  const positions = new Map<string, { x: number; y: number }>();
+
+  for (const [layer, layerTaskList] of layerTasks) {
+    let currentY = baseY;
+    for (const task of layerTaskList) {
+      positions.set(task.id, {
+        x: baseX + layer * columnGap,
+        y: currentY,
+      });
+      const reviews = reviewTasksByTarget.get(task.id) ?? [];
+      const height = getTaskNodeHeight(reviews.length, false);
+      currentY += height + rowGap;
+    }
+  }
+
   if (mergeTask) {
+    const lastLayer = Math.max(0, ...Array.from(layerTasks.keys()));
+    const lastLayerTasks = layerTasks.get(lastLayer) ?? [];
+    let lastLayerHeight = 0;
+    for (const task of lastLayerTasks) {
+      const reviews = reviewTasksByTarget.get(task.id) ?? [];
+      lastLayerHeight += getTaskNodeHeight(reviews.length, false) + rowGap;
+    }
+    lastLayerHeight = Math.max(0, lastLayerHeight - rowGap);
+
+    const mergeHeight = getTaskNodeHeight(0, true);
+    const mergeY = baseY + Math.max(0, (lastLayerHeight - mergeHeight) * 0.5);
     positions.set(mergeTask.id, {
-      x: baseX + (maxImplementationLayer + 1) * columnGap,
-      y: baseY + Math.floor((maxRows - 1) * rowGap * 0.5),
+      x: baseX + (lastLayer + 1) * columnGap,
+      y: mergeY,
     });
   }
 
@@ -175,7 +198,7 @@ function getTaskLayout(
       const row = positions.size;
       positions.set(task.id, {
         x: baseX,
-        y: baseY + row * rowGap,
+        y: baseY + row * (getTaskNodeHeight(0, false) + rowGap),
       });
     }
   }
@@ -184,8 +207,8 @@ function getTaskLayout(
 }
 
 function getTaskNodeHeight(reviewCount: number, isMergeReview: boolean) {
-  if (isMergeReview) return 360;
-  return 320 + Math.max(1, reviewCount) * 100;
+  if (isMergeReview) return 460;
+  return 360 + Math.max(0, reviewCount) * 140;
 }
 
 function FitViewOnGraphChange({
@@ -199,7 +222,7 @@ function FitViewOnGraphChange({
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void fitView({ padding: 0.16, duration: 260 });
+      void fitView({ padding: 0.08, duration: 260 });
     }, 80);
 
     return () => window.clearTimeout(timer);
@@ -899,7 +922,7 @@ export default function App() {
                 type: "startNode" as const,
                 position: taskLayout.get(task.id) ?? { x: 720, y: 60 },
                 style: {
-                  width: 520,
+                  width: 380,
                   height: getTaskNodeHeight(
                     reviews.length,
                     task.kind === "merge_review",
@@ -1303,10 +1326,21 @@ export default function App() {
             edges={edges}
             nodeTypes={nodeTypes}
             fitView
-            fitViewOptions={{ padding: 0.16 }}
+            fitViewOptions={{ padding: 0.08 }}
+            minZoom={0.12}
+            maxZoom={1.5}
             nodesDraggable
             nodesConnectable={false}
             elementsSelectable
+            defaultEdgeOptions={{
+              type: "smoothstep",
+              style: { strokeWidth: 2 },
+              markerEnd: {
+                type: MarkerType.ArrowClosed,
+                width: 12,
+                height: 12,
+              },
+            }}
           >
             <Background color="rgba(148, 163, 184, 0.18)" gap={24} />
             <Controls position="bottom-right" />
