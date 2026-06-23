@@ -12,20 +12,43 @@ import type {
 import { buildRequirementDagEdges } from "./edges";
 import { getTaskLayout, getTaskNodeHeight } from "./layout";
 
-function withDimensions<T extends Record<string, unknown>>(
-  nodes: Node<T>[],
-): Node<T>[] {
+function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
   return nodes.map((node) => {
     if (node.width && node.height) {
       return node;
     }
     const style =
       typeof node.style === "object" && node.style !== null ? node.style : {};
-    const width =
-      typeof style.width === "number" ? style.width : (node.width ?? 252);
-    const height =
-      typeof style.height === "number" ? style.height : (node.height ?? 134);
-    return { ...node, width, height };
+    const styleWidth =
+      typeof style.width === "number" ? style.width : undefined;
+    const styleHeight =
+      typeof style.height === "number" ? style.height : undefined;
+
+    const defaults: Record<
+      StartNodeData["kind"],
+      { width: number; height: number }
+    > = {
+      create: { width: 252, height: 134 },
+      projects: { width: 420, height: 220 },
+      "project-item": { width: 348, height: 86 },
+      "delete-confirm": { width: 252, height: 134 },
+      "model-config": { width: 252, height: 360 },
+      "style-settings": { width: 252, height: 134 },
+      summary: { width: 252, height: 134 },
+      "project-back": { width: 252, height: 90 },
+      "project-github": { width: 252, height: 90 },
+      "requirement-list": { width: 290, height: 640 },
+      "requirement-chat": { width: 720, height: 760 },
+      "requirement-dag": { width: 360, height: 260 },
+      "requirement-task": { width: 252, height: 134 },
+    };
+
+    const fallback = defaults[node.data.kind];
+    return {
+      ...node,
+      width: styleWidth ?? node.width ?? fallback.width,
+      height: styleHeight ?? node.height ?? fallback.height,
+    };
   });
 }
 
@@ -132,7 +155,7 @@ export function buildProjectNodes({
   const dagFocused = Boolean(selectedDagRequirement);
   const projectControlX = dagFocused ? -420 : -328;
 
-  return withDimensions<StartNodeData>([
+  return withDimensions([
     {
       id: "project-github",
       type: "startNode",
