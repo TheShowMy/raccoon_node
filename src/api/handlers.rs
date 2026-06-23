@@ -4,13 +4,15 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
     Json,
 };
+use tokio::task::JoinSet;
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
 use crate::error::AppError;
 use crate::models::{
     AppData, ClarificationAnswerRequest, ModelSettings, ModelSettingsResponse, Project,
     ProjectCanvasResponse, RequirementAnalysisInput, RequirementConversationResponse,
-    RequirementEventEmitter, RequirementMessageRequest, RequirementStatus, RpcStatus,
+    RequirementEventEmitter, RequirementMessageRequest, RequirementStatus,
+    RequirementTaskExecutionInput, RpcStatus,
 };
 use crate::AppState;
 
@@ -383,6 +385,7 @@ fn spawn_requirement_execution(state: AppState, requirement_id: String) {
             bus: state.requirement_events.clone(),
         };
         emitter.emit("execution_started", "开始按 DAG 执行任务。");
+        let mut running_tasks = JoinSet::new();
 
         loop {
             let inputs = {
@@ -402,54 +405,66 @@ fn spawn_requirement_execution(state: AppState, requirement_id: String) {
                 }
             };
 
-            if inputs.is_empty() {
+            spawn_execution_tasks(&mut running_tasks, inputs, state.clone(), &requirement_id);
+
+            if running_tasks.is_empty() {
                 emitter.emit("execution_completed", "需求执行完成。");
                 return;
             }
 
-            let mut handles = Vec::with_capacity(inputs.len());
-            for input in inputs {
-                let task_id = input.task.id.clone();
-                let task_title = input.task.title.clone();
-                let state = state.clone();
-                let emitter = emitter.for_task(task_id.clone());
-                let requirement_id = requirement_id.clone();
-                emitter.emit(
-                    "execution_task_started",
-                    &format!("开始执行任务：{}", task_title),
-                );
-                handles.push(tokio::spawn(async move {
-                    let output = state
-                        .model_provider
-                        .execute_requirement_task(input, Some(emitter.clone()))
-                        .await;
-                    let succeeded = output.is_ok();
-                    {
-                        let mut store = state.store.write().await;
-                        if let Err(error) = store
-                            .apply_task_execution_result(&requirement_id, &task_id, output)
-                            .await
-                        {
-                            emitter.emit("execution_failed", &format!("保存任务结果失败：{error}"));
-                            return false;
-                        }
-                    }
-
-                    if succeeded {
-                        emitter.emit("execution_task_completed", "任务执行完成。");
-                    } else {
-                        emitter.emit("execution_failed", "任务执行失败。");
-                    }
-                    succeeded
-                }));
-            }
-
-            for handle in handles {
-                match handle.await {
-                    Ok(true) => {}
-                    Ok(false) | Err(_) => return,
-                }
+            match running_tasks.join_next().await {
+                Some(Ok(true)) => {}
+                Some(Ok(false)) | Some(Err(_)) => return,
+                None => {}
             }
         }
     });
+}
+
+fn spawn_execution_tasks(
+    running_tasks: &mut JoinSet<bool>,
+    inputs: Vec<RequirementTaskExecutionInput>,
+    state: AppState,
+    requirement_id: &str,
+) {
+    for input in inputs {
+        let task_id = input.task.id.clone();
+        let task_title = input.task.title.clone();
+        let state = state.clone();
+        let emitter = RequirementEventEmitter {
+            requirement_id: requirement_id.to_owned(),
+            task_id: None,
+            bus: state.requirement_events.clone(),
+        }
+        .for_task(task_id.clone());
+        let requirement_id = requirement_id.to_owned();
+        emitter.emit(
+            "execution_task_started",
+            &format!("开始执行任务：{}", task_title),
+        );
+        running_tasks.spawn(async move {
+            let output = state
+                .model_provider
+                .execute_requirement_task(input, Some(emitter.clone()))
+                .await;
+            let succeeded = output.is_ok();
+            {
+                let mut store = state.store.write().await;
+                if let Err(error) = store
+                    .apply_task_execution_result(&requirement_id, &task_id, output)
+                    .await
+                {
+                    emitter.emit("execution_failed", &format!("保存任务结果失败：{error}"));
+                    return false;
+                }
+            }
+
+            if succeeded {
+                emitter.emit("execution_task_completed", "任务执行完成。");
+            } else {
+                emitter.emit("execution_failed", "任务执行失败。");
+            }
+            succeeded
+        });
+    }
 }

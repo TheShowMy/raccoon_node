@@ -255,6 +255,44 @@
       opacity 180ms ease;
   }
 
+  .node-card--requirement-task:has(.task-node--status-pending) {
+    border-color: color-mix(in srgb, var(--text-soft) 26%, transparent);
+    box-shadow:
+      var(--shadow-card),
+      0 0 18px color-mix(in srgb, var(--text-soft) 10%, transparent);
+  }
+
+  .node-card--requirement-task:has(.task-node--status-running),
+  .node-card--requirement-task:has(.task-node--status-fixing) {
+    border-color: color-mix(in srgb, var(--accent-warning) 54%, transparent);
+    box-shadow:
+      var(--shadow-hover),
+      0 0 30px color-mix(in srgb, var(--accent-warning) 24%, transparent);
+  }
+
+  .node-card--requirement-task:has(.task-node--status-awaiting_review) {
+    border-color: color-mix(in srgb, var(--accent-model) 52%, transparent);
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px color-mix(in srgb, var(--accent-model) 22%, transparent);
+  }
+
+  .node-card--requirement-task:has(.task-node--status-completed),
+  .node-card--requirement-task:has(.task-node--status-approved) {
+    border-color: color-mix(in srgb, var(--success) 54%, transparent);
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px color-mix(in srgb, var(--success) 20%, transparent);
+  }
+
+  .node-card--requirement-task:has(.task-node--status-failed),
+  .node-card--requirement-task:has(.task-node--status-rejected) {
+    border-color: color-mix(in srgb, var(--accent-danger) 58%, transparent);
+    box-shadow:
+      var(--shadow-hover),
+      0 0 30px color-mix(in srgb, var(--accent-danger) 24%, transparent);
+  }
+
   .node-card--requirement-task:has(.task-node--code),
   .node-card--requirement-task:has(.task-node--review_summary) {
     @apply rounded-[14px] p-3;
@@ -884,6 +922,33 @@
     @apply rounded-[10px] border p-3;
     border-color: color-mix(in srgb, var(--accent-create) 28%, transparent);
     background: color-mix(in srgb, var(--panel-bg) 68%, transparent);
+  }
+
+  .task-node--status-pending.task-node--group .task-node__head {
+    border-color: color-mix(in srgb, var(--text-soft) 28%, transparent);
+  }
+
+  .task-node--status-running.task-node--group .task-node__head,
+  .task-node--status-fixing.task-node--group .task-node__head {
+    border-color: color-mix(in srgb, var(--accent-warning) 56%, transparent);
+    background: color-mix(in srgb, var(--accent-warning) 10%, var(--panel-bg));
+  }
+
+  .task-node--status-awaiting_review.task-node--group .task-node__head {
+    border-color: color-mix(in srgb, var(--accent-model) 52%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 10%, var(--panel-bg));
+  }
+
+  .task-node--status-completed.task-node--group .task-node__head,
+  .task-node--status-approved.task-node--group .task-node__head {
+    border-color: color-mix(in srgb, var(--success) 54%, transparent);
+    background: color-mix(in srgb, var(--success) 10%, var(--panel-bg));
+  }
+
+  .task-node--status-failed.task-node--group .task-node__head,
+  .task-node--status-rejected.task-node--group .task-node__head {
+    border-color: color-mix(in srgb, var(--accent-danger) 58%, transparent);
+    background: color-mix(in srgb, var(--accent-danger) 12%, var(--panel-bg));
   }
 
   .task-node--collapsed .task-node__head {

@@ -48,12 +48,13 @@ export default function RequirementTaskNode({
   const task = data.task;
   const canRecover = isRecoverable(task.status);
   const nodeRole = data.nodeRole ?? "external";
+  const statusClass = `task-node--status-${task.status}`;
   const [detailOpen, setDetailOpen] = useState(false);
   if (nodeRole === "group") {
     const CollapseIcon = data.collapsed ? ChevronRight : ChevronDown;
     return (
       <div
-        className={`task-node task-node--group ${
+        className={`task-node task-node--group ${statusClass} ${
           data.collapsed ? "task-node--collapsed" : ""
         }`}
       >
@@ -94,7 +95,7 @@ export default function RequirementTaskNode({
           : CircleDot;
   return (
     <>
-      <div className={`task-node task-node--${nodeRole}`}>
+      <div className={`task-node task-node--${nodeRole} ${statusClass}`}>
         <div className="task-node__head">
           <span className="node-icon">
             <Icon size={18} />

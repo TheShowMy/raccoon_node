@@ -10,7 +10,10 @@ import type {
   StreamEvent,
 } from "../types/api";
 import { buildRequirementDagEdges } from "./edges";
-import { getTaskLayout, getTaskNodeHeight } from "./layout";
+import { getTaskLayout, getTaskNodeHeight, type TaskPosition } from "./layout";
+
+const DAG_NODE_POSITION = { x: 1140, y: 80 };
+const DAG_TASK_X_OFFSET = 800;
 
 function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
   return nodes.map((node) => {
@@ -152,14 +155,19 @@ export function buildProjectNodes({
   const standaloneExecutionTasks = selectedTasks.filter(
     (task) => task.kind === "branch_merge" || task.kind === "merge_review",
   );
-  const dagFocused = Boolean(selectedDagRequirement);
-  const projectControlX = dagFocused ? -420 : -328;
+  const taskPosition = (
+    taskId: string,
+    fallback: TaskPosition = { x: 720, y: 60 },
+  ): TaskPosition => {
+    const position = taskLayout.get(taskId) ?? fallback;
+    return { ...position, x: position.x + DAG_TASK_X_OFFSET };
+  };
 
   return withDimensions([
     {
       id: "project-github",
       type: "startNode",
-      position: { x: projectControlX, y: -84 },
+      position: { x: -328, y: -84 },
       data: {
         kind: "project-github",
         project,
@@ -168,7 +176,7 @@ export function buildProjectNodes({
     {
       id: "project-back",
       type: "startNode",
-      position: { x: projectControlX, y: 20 },
+      position: { x: -328, y: 20 },
       data: {
         kind: "project-back",
         project,
@@ -178,7 +186,7 @@ export function buildProjectNodes({
     {
       id: "completed-requirements",
       type: "startNode",
-      position: dagFocused ? { x: -420, y: 140 } : { x: -350, y: 140 },
+      position: { x: -350, y: 140 },
       data: {
         kind: "requirement-list",
         title: "已完成需求",
@@ -192,39 +200,35 @@ export function buildProjectNodes({
         onPlanRequirement: planRequirement,
       },
     },
-    ...(!dagFocused
-      ? [
-          {
-            id: "requirement-chat",
-            type: "startNode" as const,
-            position: { x: 0, y: 20 },
-            data: {
-              kind: "requirement-chat" as const,
-              project,
-              requirement: projectCanvas?.active_requirement ?? null,
-              conversation: requirementConversation,
-              promptDismissed:
-                dismissedPromptRequirementId ===
-                (projectCanvas?.active_requirement?.id ?? null),
-              input: requirementInput,
-              busy: requirementBusy,
-              error: requirementError,
-              streamEvents: requirementStreamEvents,
-              answers: clarificationAnswers,
-              onInputChange: setRequirementInput,
-              onSend: sendRequirementMessage,
-              onAnswerChange: updateClarificationAnswer,
-              onSubmitClarifications: submitClarifications,
-              onConfirm: confirmRequirement,
-              onContinueEditing: continueEditingRequirement,
-            },
-          },
-        ]
-      : []),
+    {
+      id: "requirement-chat",
+      type: "startNode" as const,
+      position: { x: 0, y: 20 },
+      data: {
+        kind: "requirement-chat" as const,
+        project,
+        requirement: projectCanvas?.active_requirement ?? null,
+        conversation: requirementConversation,
+        promptDismissed:
+          dismissedPromptRequirementId ===
+          (projectCanvas?.active_requirement?.id ?? null),
+        input: requirementInput,
+        busy: requirementBusy,
+        error: requirementError,
+        streamEvents: requirementStreamEvents,
+        answers: clarificationAnswers,
+        onInputChange: setRequirementInput,
+        onSend: sendRequirementMessage,
+        onAnswerChange: updateClarificationAnswer,
+        onSubmitClarifications: submitClarifications,
+        onConfirm: confirmRequirement,
+        onContinueEditing: continueEditingRequirement,
+      },
+    },
     {
       id: "queued-requirements",
       type: "startNode",
-      position: dagFocused ? { x: -100, y: 140 } : { x: 780, y: 140 },
+      position: { x: 780, y: 140 },
       data: {
         kind: "requirement-list",
         title: "待执行 / 执行中",
@@ -243,7 +247,7 @@ export function buildProjectNodes({
           {
             id: "requirement-dag",
             type: "startNode" as const,
-            position: { x: 280, y: 80 },
+            position: DAG_NODE_POSITION,
             data: {
               kind: "requirement-dag" as const,
               requirement: selectedDagRequirement,
@@ -269,7 +273,7 @@ export function buildProjectNodes({
               {
                 id: groupId,
                 type: "startNode" as const,
-                position: taskLayout.get(task.id) ?? { x: 720, y: 60 },
+                position: taskPosition(task.id),
                 style: {
                   width: 590,
                   height: collapsed ? 82 : getTaskNodeHeight(task),
@@ -388,7 +392,7 @@ export function buildProjectNodes({
           ...standaloneExecutionTasks.map((task) => ({
             id: `requirement-task-${task.id}`,
             type: "startNode" as const,
-            position: taskLayout.get(task.id) ?? { x: 720, y: 60 },
+            position: taskPosition(task.id),
             style: {
               width: 380,
               height: getTaskNodeHeight(task),

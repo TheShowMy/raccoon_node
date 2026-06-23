@@ -743,6 +743,11 @@ async fn prepare_task_workspace(
                 if let Some(parent) = worktree.parent() {
                     tokio::fs::create_dir_all(parent).await?;
                 }
+                let dependency_commits = task_dependency_commits(input);
+                let base_ref = dependency_commits
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("HEAD");
                 git(
                     &repo,
                     &[
@@ -751,11 +756,11 @@ async fn prepare_task_workspace(
                         "-B",
                         &branch,
                         path_str(&worktree)?,
-                        "HEAD",
+                        base_ref,
                     ],
                 )
                 .await?;
-                merge_dependencies(&worktree, input).await?;
+                merge_dependency_commits(&worktree, dependency_commits.into_iter().skip(1)).await?;
             }
             Ok((worktree.clone(), Some(branch), Some(worktree)))
         }
@@ -777,43 +782,38 @@ async fn ensure_commit_exists(repo: &Path, commit: &str) -> Result<(), AppError>
         .map_err(|_| AppError::internal(format!("恢复节点失败：提交 {commit} 不可达")))
 }
 
-async fn merge_dependencies(
-    worktree: &Path,
-    input: &RequirementTaskExecutionInput,
-) -> Result<(), AppError> {
-    let dependency_commits = match input.task.kind {
-        RequirementTaskKind::Implementation | RequirementTaskKind::BranchMerge => input
-            .task
+fn task_dependency_commits(input: &RequirementTaskExecutionInput) -> Vec<String> {
+    dependency_commits_for_task(&input.task, &input.plan)
+}
+
+fn dependency_commits_for_task(
+    task: &crate::models::RequirementExecutionTask,
+    plan: &crate::models::RequirementExecutionPlan,
+) -> Vec<String> {
+    match task.kind {
+        RequirementTaskKind::Implementation
+        | RequirementTaskKind::BranchMerge
+        | RequirementTaskKind::MergeReview => task
             .depends_on
             .iter()
             .filter_map(|dependency| {
-                input
-                    .plan
-                    .tasks
+                plan.tasks
                     .iter()
                     .find(|task| task.id == *dependency)
                     .and_then(|task| task.commit_sha.clone())
             })
-            .collect::<Vec<_>>(),
-        RequirementTaskKind::MergeReview => input
-            .task
-            .depends_on
-            .iter()
-            .filter_map(|dependency| {
-                input
-                    .plan
-                    .tasks
-                    .iter()
-                    .find(|task| task.id == *dependency)
-                    .and_then(|task| task.commit_sha.clone())
-            })
-            .collect::<Vec<_>>(),
+            .collect(),
         RequirementTaskKind::Review
         | RequirementTaskKind::ReviewSubAgent
         | RequirementTaskKind::ReviewSummary => Vec::new(),
-    };
+    }
+}
 
-    for commit in dependency_commits {
+async fn merge_dependency_commits(
+    worktree: &Path,
+    commits: impl Iterator<Item = String>,
+) -> Result<(), AppError> {
+    for commit in commits {
         git(worktree, &["merge", "--no-ff", "--no-edit", &commit]).await?;
     }
     Ok(())
@@ -1137,11 +1137,12 @@ impl Drop for PiRpcClient {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_pr_merge_args, commit_task_changes, generated_branch_names, parse_default_branch,
+        build_pr_merge_args, commit_task_changes, dependency_commits_for_task,
+        generated_branch_names, parse_default_branch,
     };
     use crate::models::{
-        RequirementModelTier, RequirementReviewStatus, RequirementTaskExecutionOutput,
-        RequirementTaskKind, RequirementTaskStatus,
+        RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
+        RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
     };
     use serde_json::json;
     use std::path::Path;
@@ -1174,6 +1175,28 @@ mod tests {
         assert_eq!(
             branches.into_iter().collect::<Vec<_>>(),
             vec!["rn/req/task"]
+        );
+    }
+
+    #[test]
+    fn dependency_commits_follow_task_dependency_order() {
+        let mut task_a = test_task(Path::new("/tmp/a"));
+        task_a.id = "task-a".to_owned();
+        task_a.commit_sha = Some("commit-a".to_owned());
+        let mut task_b = test_task(Path::new("/tmp/b"));
+        task_b.id = "task-b".to_owned();
+        task_b.commit_sha = Some("commit-b".to_owned());
+        let mut task_c = test_task(Path::new("/tmp/c"));
+        task_c.id = "task-c".to_owned();
+        task_c.depends_on = vec!["task-b".to_owned(), "task-a".to_owned()];
+        let plan = RequirementExecutionPlan {
+            summary: "plan".to_owned(),
+            tasks: vec![task_a, task_b, task_c.clone()],
+        };
+
+        assert_eq!(
+            dependency_commits_for_task(&task_c, &plan),
+            vec!["commit-b", "commit-a"]
         );
     }
 

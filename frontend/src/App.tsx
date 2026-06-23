@@ -26,22 +26,130 @@ import { useModelSettings } from "./hooks/useModelSettings";
 
 const nodeTypes = { startNode: StartNode };
 
+export type ProjectViewportSnapshot = {
+  currentCanvas: "start" | "project";
+  projectLoaded: boolean;
+  selectedDagRequirementId: string | null;
+};
+
+export function getProjectViewportAction(
+  previous: ProjectViewportSnapshot,
+  current: ProjectViewportSnapshot,
+): "fit" | "focus-dag" | null {
+  if (current.currentCanvas !== "project" || !current.projectLoaded) {
+    return null;
+  }
+  if (previous.selectedDagRequirementId && !current.selectedDagRequirementId) {
+    return "fit";
+  }
+  if (
+    current.selectedDagRequirementId &&
+    current.selectedDagRequirementId !== previous.selectedDagRequirementId
+  ) {
+    return "focus-dag";
+  }
+  return null;
+}
+
+export function getReactFlowKey({
+  currentCanvas,
+  selectedProjectId,
+  projectLoaded,
+}: {
+  currentCanvas: "start" | "project";
+  selectedProjectId: string | null;
+  projectLoaded: boolean;
+}) {
+  if (currentCanvas === "start") {
+    return "start";
+  }
+  return `project-${selectedProjectId ?? "none"}-${projectLoaded ? "ready" : "loading"}`;
+}
+
 function FitViewOnGraphChange({
+  enabled,
   nodeCount,
   edgeCount,
 }: {
+  enabled: boolean;
   nodeCount: number;
   edgeCount: number;
 }) {
   const { fitView } = useReactFlow();
 
   React.useEffect(() => {
+    if (!enabled) return;
+
     const timer = window.setTimeout(() => {
       void fitView({ padding: 0.08, duration: 260 });
     }, 80);
 
     return () => window.clearTimeout(timer);
   }, [edgeCount, fitView, nodeCount]);
+
+  return null;
+}
+
+function ProjectCanvasViewportController({
+  currentCanvas,
+  projectLoaded,
+  selectedDagRequirementId,
+}: {
+  currentCanvas: "start" | "project";
+  projectLoaded: boolean;
+  selectedDagRequirementId: string | null;
+}) {
+  const { fitView, getNode, getViewport, setCenter } = useReactFlow();
+  const previous = React.useRef<{
+    currentCanvas: "start" | "project";
+    projectLoaded: boolean;
+    selectedDagRequirementId: string | null;
+  }>({
+    currentCanvas: "start",
+    projectLoaded: false,
+    selectedDagRequirementId: null,
+  });
+
+  React.useLayoutEffect(() => {
+    const last = previous.current;
+    previous.current = {
+      currentCanvas,
+      projectLoaded,
+      selectedDagRequirementId:
+        currentCanvas === "project" ? selectedDagRequirementId : null,
+    };
+
+    const action = getProjectViewportAction(last, previous.current);
+    if (!action) return;
+    if (action === "fit") {
+      void fitView({ padding: 0.08, duration: 0 });
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const dagNode = getNode("requirement-dag");
+      if (!dagNode) return;
+
+      const width = dagNode.measured?.width ?? dagNode.width ?? 360;
+      const height = dagNode.measured?.height ?? dagNode.height ?? 260;
+      const zoom = getViewport().zoom;
+      void setCenter(
+        dagNode.position.x + width / 2,
+        dagNode.position.y + height / 2,
+        { zoom, duration: 260 },
+      );
+    }, 80);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    currentCanvas,
+    fitView,
+    getNode,
+    getViewport,
+    projectLoaded,
+    selectedDagRequirementId,
+    setCenter,
+  ]);
 
   return null;
 }
@@ -312,6 +420,11 @@ export default function App() {
   }, [start.pendingDeleteProject, models.modelSettingsOpen]);
 
   const edges = start.currentCanvas === "project" ? projectEdges : startEdges;
+  const flowKey = getReactFlowKey({
+    currentCanvas: start.currentCanvas,
+    selectedProjectId: start.selectedProjectId,
+    projectLoaded: Boolean(project.projectCanvas),
+  });
 
   return (
     <main className="app-shell" data-theme={start.theme}>
@@ -329,11 +442,12 @@ export default function App() {
       <section className="canvas-shell">
         <ReactFlowProvider>
           <ReactFlow
+            key={flowKey}
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
             fitView
-            fitViewOptions={{ padding: 0.08 }}
+            fitViewOptions={{ padding: 0.08, duration: 0 }}
             minZoom={0.05}
             maxZoom={2}
             nodesDraggable
@@ -363,8 +477,14 @@ export default function App() {
             />
             <Controls position="bottom-right" />
             <FitViewOnGraphChange
+              enabled={start.currentCanvas === "start"}
               nodeCount={nodes.length}
               edgeCount={edges.length}
+            />
+            <ProjectCanvasViewportController
+              currentCanvas={start.currentCanvas}
+              projectLoaded={Boolean(project.projectCanvas)}
+              selectedDagRequirementId={project.selectedDagRequirementId}
             />
           </ReactFlow>
         </ReactFlowProvider>

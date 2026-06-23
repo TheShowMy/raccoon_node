@@ -1047,6 +1047,14 @@ fn runnable_task_indexes(plan: &RequirementExecutionPlan) -> Result<Vec<usize>, 
         return Ok(indexes);
     }
 
+    if plan
+        .tasks
+        .iter()
+        .any(|task| task.status == RequirementTaskStatus::Running)
+    {
+        return Ok(Vec::new());
+    }
+
     if plan.tasks.iter().any(|task| {
         matches!(
             task.status,
@@ -1318,5 +1326,109 @@ fn build_requirement_conversation(requirement: Requirement) -> RequirementConver
         prompt,
         error: requirement.error,
         updated_at: requirement.updated_at,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runnable_task_indexes;
+    use crate::models::{
+        RequirementExecutionPlan, RequirementExecutionTask, RequirementModelTier,
+        RequirementReviewStatus, RequirementTaskKind, RequirementTaskStatus,
+    };
+
+    #[test]
+    fn runnable_tasks_wait_without_error_while_dependencies_are_running() {
+        let plan = RequirementExecutionPlan {
+            summary: "plan".to_owned(),
+            tasks: vec![
+                task(
+                    "task-a",
+                    RequirementTaskKind::Implementation,
+                    RequirementTaskStatus::Running,
+                ),
+                task_with_dependencies(
+                    "task-b",
+                    RequirementTaskKind::Implementation,
+                    RequirementTaskStatus::Pending,
+                    vec!["task-a"],
+                    None,
+                ),
+            ],
+        };
+
+        assert_eq!(runnable_task_indexes(&plan).unwrap(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn runnable_tasks_can_start_review_while_parallel_task_is_running() {
+        let plan = RequirementExecutionPlan {
+            summary: "plan".to_owned(),
+            tasks: vec![
+                task(
+                    "fast-task",
+                    RequirementTaskKind::Implementation,
+                    RequirementTaskStatus::AwaitingReview,
+                ),
+                task(
+                    "slow-task",
+                    RequirementTaskKind::Implementation,
+                    RequirementTaskStatus::Running,
+                ),
+                task_with_dependencies(
+                    "review-fast",
+                    RequirementTaskKind::ReviewSubAgent,
+                    RequirementTaskStatus::Pending,
+                    vec!["fast-task"],
+                    Some("fast-task"),
+                ),
+            ],
+        };
+
+        assert_eq!(runnable_task_indexes(&plan).unwrap(), vec![2]);
+    }
+
+    fn task(
+        id: &str,
+        kind: RequirementTaskKind,
+        status: RequirementTaskStatus,
+    ) -> RequirementExecutionTask {
+        task_with_dependencies(id, kind, status, Vec::new(), None)
+    }
+
+    fn task_with_dependencies(
+        id: &str,
+        kind: RequirementTaskKind,
+        status: RequirementTaskStatus,
+        depends_on: Vec<&str>,
+        review_for: Option<&str>,
+    ) -> RequirementExecutionTask {
+        RequirementExecutionTask {
+            id: id.to_owned(),
+            title: id.to_owned(),
+            description: id.to_owned(),
+            depends_on: depends_on.into_iter().map(str::to_owned).collect(),
+            kind,
+            model_tier: RequirementModelTier::Medium,
+            timeout_seconds: 60,
+            pi_session_file: None,
+            branch_name: None,
+            worktree_path: None,
+            commit_sha: None,
+            review_for: review_for.map(str::to_owned),
+            review_angle: None,
+            review_status: RequirementReviewStatus::Pending,
+            attempt: 0,
+            last_review_feedback: None,
+            pull_request_url: None,
+            merged_into: None,
+            cleanup_summary: None,
+            execution_warning: None,
+            trace: None,
+            status,
+            target_files: Vec::new(),
+            result_summary: None,
+            error: None,
+        }
     }
 }

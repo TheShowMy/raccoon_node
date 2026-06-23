@@ -169,6 +169,35 @@ describe("RequirementTaskNode", () => {
     expect(screen.getByRole("button", { name: "重跑" })).toBeInTheDocument();
   });
 
+  it("marks group, code, and review nodes with task status classes", () => {
+    const { container, unmount } = renderNode({
+      nodeRole: "group",
+      nodeTask: task({ status: "pending" }),
+    });
+
+    expect(container.querySelector(".task-node--group")).toHaveClass(
+      "task-node--status-pending",
+    );
+    unmount();
+
+    const code = renderNode({
+      nodeRole: "code",
+      nodeTask: task({ status: "running" }),
+    });
+    expect(code.container.querySelector(".task-node--code")).toHaveClass(
+      "task-node--status-running",
+    );
+    code.unmount();
+
+    const review = renderNode({
+      nodeRole: "review_sub_agent",
+      nodeTask: task({ status: "completed" }),
+    });
+    expect(
+      review.container.querySelector(".task-node--review_sub_agent"),
+    ).toHaveClass("task-node--status-completed");
+  });
+
   it("shows execution warning on node and detail dialog", () => {
     renderNode({
       nodeRole: "code",
