@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  ChevronDown,
+  ChevronRight,
   CircleDot,
   Code2,
   Eye,
@@ -48,8 +50,13 @@ export default function RequirementTaskNode({
   const nodeRole = data.nodeRole ?? "external";
   const [detailOpen, setDetailOpen] = useState(false);
   if (nodeRole === "group") {
+    const CollapseIcon = data.collapsed ? ChevronRight : ChevronDown;
     return (
-      <div className="task-node task-node--group">
+      <div
+        className={`task-node task-node--group ${
+          data.collapsed ? "task-node--collapsed" : ""
+        }`}
+      >
         <div className="task-node__head">
           <span className="node-icon">
             <CircleDot size={18} />
@@ -62,6 +69,17 @@ export default function RequirementTaskNode({
               {taskStatusText[task.status]}
             </span>
           </div>
+          <button
+            type="button"
+            className="task-node__collapse nowheel nodrag"
+            onClick={() =>
+              data.onToggleCollapsed?.(data.requirementId, task.id)
+            }
+            aria-label={data.collapsed ? "展开任务组" : "折叠任务组"}
+            aria-expanded={!data.collapsed}
+          >
+            <CollapseIcon size={15} />
+          </button>
         </div>
       </div>
     );

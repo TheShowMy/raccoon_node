@@ -390,6 +390,8 @@ export type StartNodeData =
       reviews: RequirementExecutionTask[];
       streamEvents: StreamEvent[];
       busy: boolean;
+      collapsed?: boolean;
+      onToggleCollapsed?: (requirementId: string, taskId: string) => void;
       onRetryFailedNode: (
         requirementId: string,
         taskId: string,
