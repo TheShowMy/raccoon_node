@@ -683,6 +683,17 @@ impl JsonStore {
             Ok(output) => {
                 let task_kind = plan.tasks[task_index].kind;
                 let task_title = plan.tasks[task_index].title.clone();
+                let effective_review_status = match task_kind {
+                    RequirementTaskKind::ReviewSummary
+                        if has_rejected_review_sub_agent(plan, task_index) =>
+                    {
+                        Some(RequirementReviewStatus::Rejected)
+                    }
+                    RequirementTaskKind::Review
+                    | RequirementTaskKind::ReviewSubAgent
+                    | RequirementTaskKind::ReviewSummary => output.review_status,
+                    _ => None,
+                };
                 let mut review_update = None;
                 {
                     let task = &mut plan.tasks[task_index];
@@ -693,6 +704,20 @@ impl JsonStore {
                     task.branch_name = output.branch_name.clone().or(task.branch_name.take());
                     task.worktree_path = output.worktree_path.clone().or(task.worktree_path.take());
                     task.commit_sha = output.commit_sha.clone().or(task.commit_sha.take());
+                    task.pull_request_url = output
+                        .pull_request_url
+                        .clone()
+                        .or(task.pull_request_url.take());
+                    task.merged_into = output.merged_into.clone().or(task.merged_into.take());
+                    task.cleanup_summary = output
+                        .cleanup_summary
+                        .clone()
+                        .or(task.cleanup_summary.take());
+                    task.execution_warning = output
+                        .execution_warning
+                        .clone()
+                        .or(task.execution_warning.take());
+                    task.trace = output.trace.clone().or(task.trace.take());
                     task.attempt = task.attempt.saturating_add(1);
                     task.result_summary = Some(output.result_summary.clone());
                     task.error = None;
@@ -700,9 +725,8 @@ impl JsonStore {
                         RequirementTaskKind::Implementation => {
                             task.status = RequirementTaskStatus::AwaitingReview;
                         }
-                        RequirementTaskKind::Review => {
-                            let review_status = output
-                                .review_status
+                        RequirementTaskKind::Review | RequirementTaskKind::ReviewSubAgent => {
+                            let review_status = effective_review_status
                                 .unwrap_or(RequirementReviewStatus::Rejected);
                             task.review_status = review_status;
                             task.last_review_feedback = output.review_feedback.clone();
@@ -715,11 +739,12 @@ impl JsonStore {
                                 }
                                 RequirementReviewStatus::Pending => RequirementTaskStatus::Pending,
                             };
-                            review_update = Some(review_status);
+                            if task_kind == RequirementTaskKind::Review {
+                                review_update = Some(review_status);
+                            }
                         }
-                        RequirementTaskKind::MergeReview => {
-                            task.review_status = output
-                                .review_status
+                        RequirementTaskKind::ReviewSummary | RequirementTaskKind::MergeReview => {
+                            task.review_status = effective_review_status
                                 .unwrap_or(RequirementReviewStatus::Approved);
                             task.last_review_feedback = output.review_feedback.clone();
                             task.status = if task.review_status == RequirementReviewStatus::Approved
@@ -728,6 +753,11 @@ impl JsonStore {
                             } else {
                                 RequirementTaskStatus::Rejected
                             };
+                            review_update = Some(task.review_status);
+                        }
+                        RequirementTaskKind::BranchMerge => {
+                            task.review_status = RequirementReviewStatus::Approved;
+                            task.status = RequirementTaskStatus::Completed;
                         }
                     }
                 }
@@ -735,7 +765,7 @@ impl JsonStore {
                     RequirementTaskKind::Implementation => {
                         reset_review_for(plan, task_id);
                     }
-                    RequirementTaskKind::Review => {
+                    RequirementTaskKind::Review | RequirementTaskKind::ReviewSummary => {
                         match review_update.unwrap_or(RequirementReviewStatus::Rejected) {
                             RequirementReviewStatus::Approved => {
                                 approve_reviewed_task(
@@ -756,7 +786,9 @@ impl JsonStore {
                             }
                         }
                     }
-                    RequirementTaskKind::MergeReview => {}
+                    RequirementTaskKind::ReviewSubAgent
+                    | RequirementTaskKind::BranchMerge
+                    | RequirementTaskKind::MergeReview => {}
                 }
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
@@ -843,6 +875,7 @@ impl JsonStore {
             RequirementTaskStatus::Pending
         };
         task.error = None;
+        task.execution_warning = None;
         requirement.status = RequirementStatus::Running;
         requirement.error = None;
         requirement.updated_at = Utc::now();
@@ -868,6 +901,7 @@ impl JsonStore {
                 task.status = RequirementTaskStatus::Pending;
                 task.review_status = RequirementReviewStatus::Pending;
                 task.error = None;
+                task.execution_warning = None;
                 task.result_summary = None;
             }
         }
@@ -895,12 +929,31 @@ impl JsonStore {
             .iter_mut()
             .find(|task| task.id == task_id)
             .ok_or_else(|| AppError::bad_request("执行任务不存在"))?;
-        if task.kind != RequirementTaskKind::Review {
+        if !matches!(
+            task.kind,
+            RequirementTaskKind::Review
+                | RequirementTaskKind::ReviewSubAgent
+                | RequirementTaskKind::ReviewSummary
+        ) {
             return Err(AppError::bad_request("只能重跑审核节点"));
         }
+        let rerun_kind = task.kind;
+        let review_for = task.review_for.clone();
         task.status = RequirementTaskStatus::Pending;
         task.review_status = RequirementReviewStatus::Pending;
         task.error = None;
+        task.execution_warning = None;
+        if rerun_kind == RequirementTaskKind::ReviewSubAgent {
+            for candidate in &mut plan.tasks {
+                if candidate.kind == RequirementTaskKind::ReviewSummary
+                    && candidate.review_for == review_for
+                {
+                    candidate.status = RequirementTaskStatus::Pending;
+                    candidate.review_status = RequirementReviewStatus::Pending;
+                    candidate.error = None;
+                }
+            }
+        }
         requirement.status = RequirementStatus::Running;
         requirement.error = None;
         requirement.updated_at = Utc::now();
@@ -963,7 +1016,10 @@ fn runnable_task_indexes(plan: &RequirementExecutionPlan) -> Result<Vec<usize>, 
         if !runnable_status {
             continue;
         }
-        if task.kind == RequirementTaskKind::Review {
+        if matches!(
+            task.kind,
+            RequirementTaskKind::Review | RequirementTaskKind::ReviewSubAgent
+        ) {
             let Some(review_for) = task.review_for.as_deref() else {
                 continue;
             };
@@ -972,6 +1028,12 @@ fn runnable_task_indexes(plan: &RequirementExecutionPlan) -> Result<Vec<usize>, 
                     && candidate.status == RequirementTaskStatus::AwaitingReview
             });
             if reviewed_ready {
+                indexes.push(index);
+            }
+            continue;
+        }
+        if task.kind == RequirementTaskKind::ReviewSummary {
+            if review_sub_agents_finished(plan, task) {
                 indexes.push(index);
             }
             continue;
@@ -1008,6 +1070,41 @@ fn dependencies_completed(
     })
 }
 
+fn review_sub_agents_finished(
+    plan: &RequirementExecutionPlan,
+    task: &crate::models::RequirementExecutionTask,
+) -> bool {
+    let Some(review_for) = task.review_for.as_deref() else {
+        return false;
+    };
+    let sub_agents = plan
+        .tasks
+        .iter()
+        .filter(|candidate| {
+            candidate.kind == RequirementTaskKind::ReviewSubAgent
+                && candidate.review_for.as_deref() == Some(review_for)
+        })
+        .collect::<Vec<_>>();
+    !sub_agents.is_empty()
+        && sub_agents.iter().all(|candidate| {
+            matches!(
+                candidate.status,
+                RequirementTaskStatus::Completed | RequirementTaskStatus::Rejected
+            )
+        })
+}
+
+fn has_rejected_review_sub_agent(plan: &RequirementExecutionPlan, task_index: usize) -> bool {
+    let Some(review_for) = plan.tasks[task_index].review_for.as_deref() else {
+        return false;
+    };
+    plan.tasks.iter().any(|task| {
+        task.kind == RequirementTaskKind::ReviewSubAgent
+            && task.review_for.as_deref() == Some(review_for)
+            && task.review_status == RequirementReviewStatus::Rejected
+    })
+}
+
 fn reset_review_for(plan: &mut RequirementExecutionPlan, task_id: &str) {
     for candidate in &mut plan.tasks {
         if candidate.review_for.as_deref() == Some(task_id) {
@@ -1029,18 +1126,25 @@ fn approve_reviewed_task(
         .find(|task| task.id == review_task_id)
         .and_then(|task| task.review_for.clone())
         .ok_or_else(|| AppError::bad_request("审核节点缺少 review_for"))?;
-    let all_reviews_approved = plan
+    let task_kind = plan
         .tasks
         .iter()
-        .filter(|task| {
-            task.kind == RequirementTaskKind::Review
-                && task.review_for.as_deref() == Some(&review_for)
-        })
-        .all(|task| {
-            task.id == review_task_id
-                || (task.status == RequirementTaskStatus::Completed
-                    && task.review_status == RequirementReviewStatus::Approved)
-        });
+        .find(|task| task.id == review_task_id)
+        .map(|task| task.kind)
+        .ok_or_else(|| AppError::bad_request("审核节点不存在"))?;
+    let all_reviews_approved = task_kind == RequirementTaskKind::ReviewSummary
+        || plan
+            .tasks
+            .iter()
+            .filter(|task| {
+                task.kind == RequirementTaskKind::Review
+                    && task.review_for.as_deref() == Some(&review_for)
+            })
+            .all(|task| {
+                task.id == review_task_id
+                    || (task.status == RequirementTaskStatus::Completed
+                        && task.review_status == RequirementReviewStatus::Approved)
+            });
 
     let reviewed = plan
         .tasks
@@ -1082,8 +1186,12 @@ fn reject_reviewed_task(
     plan.tasks[reviewed_index].last_review_feedback = feedback;
     plan.tasks[reviewed_index].status = reviewed_status;
     for task in &mut plan.tasks {
-        if task.kind == RequirementTaskKind::Review
-            && task.review_for.as_deref() == Some(review_for.as_str())
+        if matches!(
+            task.kind,
+            RequirementTaskKind::Review
+                | RequirementTaskKind::ReviewSubAgent
+                | RequirementTaskKind::ReviewSummary
+        ) && task.review_for.as_deref() == Some(review_for.as_str())
             && task.id != review_task_id
         {
             task.status = RequirementTaskStatus::Pending;

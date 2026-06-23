@@ -212,6 +212,11 @@ mod tests {
             review_status: RequirementReviewStatus::Pending,
             attempt: 0,
             last_review_feedback: None,
+            pull_request_url: None,
+            merged_into: None,
+            cleanup_summary: None,
+            execution_warning: None,
+            trace: None,
             status: RequirementTaskStatus::Pending,
             target_files: vec!["src".to_owned()],
             result_summary: None,
@@ -228,7 +233,22 @@ mod tests {
             commit_sha: None,
             review_status: Some(RequirementReviewStatus::Approved),
             review_feedback: Some("通过".to_owned()),
-            trace: None,
+            pull_request_url: None,
+            merged_into: None,
+            cleanup_summary: None,
+            execution_warning: None,
+            changed: Some(true),
+            no_op_reason: None,
+            trace: Some(json!({
+                "type": "pi_trace",
+                "version": 1,
+                "trace": {
+                    "thinking": "执行任务",
+                    "output": "",
+                    "tools": [],
+                    "statuses": []
+                }
+            })),
         }
     }
 
@@ -239,6 +259,24 @@ mod tests {
             provider: id.split('/').next().unwrap_or("test").to_owned(),
             reasoning: true,
         }
+    }
+
+    #[tokio::test]
+    async fn requirement_task_events_include_task_id() {
+        let (bus, mut receiver) = tokio::sync::broadcast::channel(4);
+        let emitter = RequirementEventEmitter {
+            requirement_id: "req-1".to_owned(),
+            task_id: None,
+            bus,
+        }
+        .for_task("task-1".to_owned());
+
+        emitter.emit("execution_task_started", "开始执行任务");
+
+        let event = receiver.recv().await.unwrap();
+        assert_eq!(event.requirement_id, "req-1");
+        assert_eq!(event.task_id.as_deref(), Some("task-1"));
+        assert_eq!(event.event, "execution_task_started");
     }
 
     #[tokio::test]
@@ -762,6 +800,9 @@ mod tests {
             completed.execution_plan.as_ref().unwrap().tasks[0].status,
             RequirementTaskStatus::Completed
         );
+        assert!(completed.execution_plan.as_ref().unwrap().tasks[0]
+            .trace
+            .is_some());
 
         let response = app
             .oneshot(

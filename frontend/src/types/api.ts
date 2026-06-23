@@ -59,7 +59,13 @@ export type RequirementTaskStatus =
   | "approved"
   | "rejected";
 
-export type RequirementTaskKind = "implementation" | "review" | "merge_review";
+export type RequirementTaskKind =
+  | "implementation"
+  | "review"
+  | "review_summary"
+  | "review_sub_agent"
+  | "branch_merge"
+  | "merge_review";
 
 export type RequirementReviewStatus = "pending" | "approved" | "rejected";
 
@@ -80,6 +86,11 @@ export type RequirementExecutionTask = {
   review_status: RequirementReviewStatus;
   attempt: number;
   last_review_feedback: string | null;
+  pull_request_url: string | null;
+  merged_into: string | null;
+  cleanup_summary: string | null;
+  execution_warning: string | null;
+  trace: TraceMetadata | null;
   status: RequirementTaskStatus;
   target_files: string[];
   result_summary: string | null;
@@ -199,6 +210,7 @@ export type DraftClarificationAnswer = {
 
 export type StreamEvent = {
   requirement_id: string;
+  task_id?: string;
   event: string;
   message: string;
   pi_type?: string;
@@ -322,6 +334,10 @@ export type StartNodeData =
       onBack: () => void;
     }
   | {
+      kind: "project-github";
+      project: Project;
+    }
+  | {
       kind: "requirement-list";
       title: string;
       description: string;
@@ -363,9 +379,16 @@ export type StartNodeData =
     }
   | {
       kind: "requirement-task";
+      nodeRole?:
+        | "group"
+        | "code"
+        | "review_summary"
+        | "review_sub_agent"
+        | "external";
       requirementId: string;
       task: RequirementExecutionTask;
       reviews: RequirementExecutionTask[];
+      streamEvents: StreamEvent[];
       busy: boolean;
       onRetryFailedNode: (
         requirementId: string,

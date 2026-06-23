@@ -205,7 +205,8 @@
       0 0 28px var(--glow-model);
   }
 
-  .node-card--project-back {
+  .node-card--project-back,
+  .node-card--project-github {
     @apply min-h-[88px] w-[246px] cursor-pointer;
     box-shadow:
       var(--shadow-card),
@@ -247,6 +248,19 @@
     box-shadow:
       var(--shadow-card),
       0 0 24px color-mix(in srgb, var(--accent-create) 16%, transparent);
+  }
+
+  .node-card--requirement-task:has(.task-node--code),
+  .node-card--requirement-task:has(.task-node--review_summary) {
+    @apply rounded-[14px] p-3;
+  }
+
+  .node-card--requirement-task:has(.task-node--review_sub_agent) {
+    @apply rounded-[12px] p-1.5;
+  }
+
+  .react-flow__node:has(.task-node--group) {
+    z-index: -1 !important;
   }
 
   .node-card--pending-delete {
@@ -767,8 +781,7 @@
   }
 
   .task-node__body {
-    @apply flex-1 overflow-y-auto pr-1;
-    max-height: 420px;
+    @apply flex-1 overflow-hidden pr-1;
   }
 
   .task-node__body p {
@@ -792,6 +805,10 @@
       var(--accent-danger) 92%,
       var(--text-strong)
     ) !important;
+  }
+
+  .task-node__warning {
+    color: var(--accent-warning) !important;
   }
 
   .dag-node__actions {
@@ -844,13 +861,68 @@
   }
 
   .task-node__actions {
-    @apply sticky bottom-0 mt-auto flex flex-wrap items-center gap-1 pt-2;
+    @apply mt-auto flex flex-wrap items-center gap-1 pt-2;
     background: linear-gradient(
       180deg,
       transparent,
       color-mix(in srgb, var(--card-bg) 92%, transparent) 22%,
       var(--card-bg)
     );
+  }
+
+  .task-node__summary {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  .task-node {
+    @apply flex h-full min-h-0 flex-col;
+  }
+
+  .task-node--group {
+    @apply p-0;
+  }
+
+  .task-node--group .task-node__head {
+    @apply rounded-[10px] border p-3;
+    border-color: color-mix(in srgb, var(--accent-create) 28%, transparent);
+    background: color-mix(in srgb, var(--panel-bg) 68%, transparent);
+  }
+
+  .task-node--code .node-icon {
+    color: var(--accent-create);
+  }
+
+  .task-node--review_summary .node-icon,
+  .task-node--review_sub_agent .node-icon {
+    color: var(--accent-model);
+  }
+
+  .task-node--external .node-icon {
+    color: var(--accent-warning);
+  }
+
+  .task-node--review_sub_agent .task-node__head {
+    @apply items-center gap-1.5;
+  }
+
+  .task-node--review_sub_agent .node-icon {
+    @apply h-[22px] w-[22px] rounded-[7px];
+  }
+
+  .task-node--review_sub_agent .node-icon svg {
+    @apply h-[13px] w-[13px];
+  }
+
+  .task-node--review_sub_agent .task-node__head strong {
+    @apply text-[11px] leading-tight;
+  }
+
+  .task-node--review_sub_agent .task-node__status {
+    @apply px-1.5 text-[9px] leading-none;
+  }
+
+  .task-node--review_sub_agent .task-node__body {
+    @apply hidden;
   }
 
   .task-node__mini-flow {
@@ -891,10 +963,12 @@
   }
 
   .task-node__mini-arrow {
-    @apply self-center justify-self-center;
-    width: 18px;
-    height: 2px;
-    background: color-mix(in srgb, var(--accent-model) 60%, transparent);
+    @apply self-center justify-self-center text-[18px] leading-none font-bold;
+    color: color-mix(in srgb, var(--accent-model) 74%, var(--text-soft));
+  }
+
+  .task-node__mini-arrow::before {
+    content: "↔";
   }
 
   .task-node__mini-action {
@@ -914,6 +988,166 @@
   .task-node__actions button:hover:not(:disabled) {
     border-color: var(--accent-model);
     color: var(--text-strong);
+  }
+
+  .task-detail-dialog {
+    position: fixed;
+    inset: 0;
+    width: min(840px, calc(100vw - 48px));
+    max-width: min(840px, calc(100vw - 48px));
+    height: fit-content;
+    max-height: calc(100vh - 48px);
+    margin: auto;
+    overflow: visible;
+    border: 0;
+    padding: 0;
+    background: transparent;
+  }
+
+  .task-detail-dialog::backdrop {
+    background: color-mix(in srgb, var(--canvas-bg) 62%, transparent);
+    backdrop-filter: blur(10px);
+  }
+
+  .task-detail-dialog__panel {
+    width: 100%;
+    max-height: calc(100vh - 48px);
+    overflow: hidden;
+    min-height: 0;
+    padding: 0;
+    transition: none;
+  }
+
+  .task-detail-dialog__panel:hover {
+    transform: none;
+  }
+
+  .task-detail-dialog__head {
+    @apply grid items-start gap-4 border-b p-5;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    border-color: var(--card-border);
+    background: var(--card-bg);
+  }
+
+  .task-detail-dialog__icon {
+    width: 42px;
+    height: 42px;
+  }
+
+  .task-detail-dialog__head > div {
+    @apply grid min-w-0 gap-1;
+  }
+
+  .task-detail-dialog__head strong {
+    @apply truncate text-lg font-bold;
+    color: var(--text-strong);
+  }
+
+  .task-detail-dialog__head span {
+    @apply text-sm font-semibold;
+    color: var(--text-soft);
+  }
+
+  .task-detail-dialog__status {
+    @apply mt-1 px-3 py-1 text-xs;
+  }
+
+  .task-detail-dialog__head button {
+    @apply inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border;
+    border-color: var(--card-border);
+    color: var(--text-soft);
+    background: var(--panel-bg);
+  }
+
+  .task-detail-dialog__body {
+    @apply grid gap-4 overflow-y-auto p-5;
+    max-height: calc(100vh - 132px);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task-detail-dialog__section {
+    @apply grid gap-3 rounded-[10px] border p-4;
+    align-content: start;
+    border-color: var(--card-border);
+    background: var(--panel-bg);
+  }
+
+  .task-detail-dialog__section--wide {
+    grid-column: 1 / -1;
+  }
+
+  .task-detail-dialog__section h3 {
+    @apply text-[15px] font-bold;
+    color: var(--text-strong);
+  }
+
+  .task-detail-dialog__text,
+  .task-detail-dialog__empty {
+    @apply break-words text-[15px] leading-relaxed;
+    color: var(--text-strong);
+  }
+
+  .task-detail-dialog__empty {
+    color: var(--text-soft);
+  }
+
+  .task-detail-dialog__flow {
+    @apply grid list-none gap-2 p-0;
+    margin: 0;
+  }
+
+  .task-detail-dialog__flow li {
+    @apply flex items-center justify-between gap-3 rounded-[8px] border px-3 py-2.5;
+    border-color: var(--card-border);
+    background: var(--card-bg);
+  }
+
+  .task-detail-dialog__flow strong {
+    @apply min-w-0 truncate text-sm font-bold;
+    color: var(--text-strong);
+  }
+
+  .task-detail-dialog__details {
+    @apply rounded-[10px] border;
+    border-color: var(--card-border);
+    background: var(--panel-bg);
+  }
+
+  .task-detail-dialog__details summary {
+    @apply cursor-pointer px-4 py-3 text-[15px] font-bold;
+    color: var(--text-strong);
+  }
+
+  .task-detail-dialog__info-list {
+    @apply grid gap-x-4 gap-y-2 border-t px-4 py-3;
+    grid-template-columns: 112px minmax(0, 1fr);
+    border-color: var(--card-border);
+  }
+
+  .task-detail-dialog__info-list dt {
+    @apply text-xs font-bold;
+    color: var(--text-soft);
+  }
+
+  .task-detail-dialog__info-list dd {
+    @apply m-0 whitespace-pre-wrap break-words text-sm leading-relaxed;
+    color: var(--text-strong);
+  }
+
+  .task-detail-dialog__info-list a {
+    color: var(--accent-model);
+  }
+
+  .task-detail-dialog__info-list .is-mono {
+    @apply font-mono;
+  }
+
+  .task-detail-dialog__info-list .is-danger {
+    color: var(--accent-danger);
+  }
+
+  .task-detail-dialog__info-list .is-warning {
+    color: var(--accent-warning);
   }
 
   .rq-workbench {
@@ -1645,6 +1879,31 @@
     .node-card--projects,
     .node-card--project-item {
       width: 280px;
+    }
+
+    .task-detail-dialog {
+      width: calc(100vw - 24px);
+      max-width: calc(100vw - 24px);
+      max-height: calc(100vh - 24px);
+    }
+
+    .task-detail-dialog__panel {
+      max-height: calc(100vh - 24px);
+    }
+
+    .task-detail-dialog__head {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      @apply p-4;
+    }
+
+    .task-detail-dialog__status {
+      grid-column: 2 / 3;
+      justify-self: start;
+    }
+
+    .task-detail-dialog__body,
+    .task-detail-dialog__section {
+      grid-template-columns: 1fr;
     }
   }
 }

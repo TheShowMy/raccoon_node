@@ -146,6 +146,16 @@ pub struct RequirementExecutionTask {
     pub attempt: u32,
     #[serde(default)]
     pub last_review_feedback: Option<String>,
+    #[serde(default)]
+    pub pull_request_url: Option<String>,
+    #[serde(default)]
+    pub merged_into: Option<String>,
+    #[serde(default)]
+    pub cleanup_summary: Option<String>,
+    #[serde(default)]
+    pub execution_warning: Option<String>,
+    #[serde(default)]
+    pub trace: Option<Value>,
     pub status: RequirementTaskStatus,
     #[serde(default)]
     pub target_files: Vec<String>,
@@ -163,6 +173,9 @@ pub enum RequirementTaskKind {
     #[default]
     Implementation,
     Review,
+    ReviewSummary,
+    ReviewSubAgent,
+    BranchMerge,
     MergeReview,
 }
 
@@ -467,6 +480,12 @@ pub struct RequirementTaskExecutionOutput {
     pub commit_sha: Option<String>,
     pub review_status: Option<RequirementReviewStatus>,
     pub review_feedback: Option<String>,
+    pub pull_request_url: Option<String>,
+    pub merged_into: Option<String>,
+    pub cleanup_summary: Option<String>,
+    pub execution_warning: Option<String>,
+    pub changed: Option<bool>,
+    pub no_op_reason: Option<String>,
     pub trace: Option<Value>,
 }
 
@@ -475,6 +494,8 @@ pub type RequirementEventBus = broadcast::Sender<RequirementEvent>;
 #[derive(Debug, Clone, Serialize)]
 pub struct RequirementEvent {
     pub requirement_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     pub event: String,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -486,13 +507,23 @@ pub struct RequirementEvent {
 #[derive(Debug, Clone)]
 pub struct RequirementEventEmitter {
     pub requirement_id: String,
+    pub task_id: Option<String>,
     pub bus: broadcast::Sender<RequirementEvent>,
 }
 
 impl RequirementEventEmitter {
+    pub fn for_task(&self, task_id: String) -> Self {
+        Self {
+            requirement_id: self.requirement_id.clone(),
+            task_id: Some(task_id),
+            bus: self.bus.clone(),
+        }
+    }
+
     pub fn emit(&self, event: &str, message: &str) {
         let _ = self.bus.send(RequirementEvent {
             requirement_id: self.requirement_id.clone(),
+            task_id: self.task_id.clone(),
             event: event.to_owned(),
             message: message.to_owned(),
             pi_type: None,
@@ -509,6 +540,7 @@ impl RequirementEventEmitter {
         let message = crate::requirement_analysis::summarize_pi_event(&pi_type, &payload);
         let _ = self.bus.send(RequirementEvent {
             requirement_id: self.requirement_id.clone(),
+            task_id: self.task_id.clone(),
             event: "pi_event".to_owned(),
             message,
             pi_type: Some(pi_type),

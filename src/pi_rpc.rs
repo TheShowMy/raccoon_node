@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     io::ErrorKind,
     path::{Path, PathBuf},
     process::Stdio,
@@ -185,7 +185,18 @@ impl ModelProvider for PiRpcModelProvider {
                 input.task.worktree_path =
                     worktree_path.map(|path| path.to_string_lossy().to_string());
             }
-            client.execute_requirement_task(input, events).await
+            let mut output = client
+                .execute_requirement_task(input.clone(), events)
+                .await?;
+            if input.task.kind == RequirementTaskKind::MergeReview
+                && output.review_status == Some(RequirementReviewStatus::Approved)
+            {
+                let publish = publish_merge_review(&self.data_root, &input, &output).await?;
+                output.pull_request_url = Some(publish.pull_request_url);
+                output.merged_into = Some(publish.merged_into);
+                output.cleanup_summary = Some(publish.cleanup_summary);
+            }
+            Ok(output)
         })
     }
 }
@@ -406,9 +417,11 @@ impl PiRpcClient {
         output.worktree_path = input.task.worktree_path.clone();
         if matches!(
             input.task.kind,
-            RequirementTaskKind::Implementation | RequirementTaskKind::MergeReview
+            RequirementTaskKind::Implementation
+                | RequirementTaskKind::BranchMerge
+                | RequirementTaskKind::MergeReview
         ) {
-            output.commit_sha = Some(commit_task_changes(&input.task).await?);
+            output.commit_sha = Some(commit_task_changes(&input.task, &mut output).await?);
         }
         Ok(output)
     }
@@ -659,7 +672,9 @@ async fn prepare_task_workspace(
     input: &RequirementTaskExecutionInput,
 ) -> Result<(PathBuf, Option<String>, Option<PathBuf>), AppError> {
     match input.task.kind {
-        RequirementTaskKind::Review => {
+        RequirementTaskKind::Review
+        | RequirementTaskKind::ReviewSubAgent
+        | RequirementTaskKind::ReviewSummary => {
             let review_for = input
                 .task
                 .review_for
@@ -685,7 +700,9 @@ async fn prepare_task_workspace(
             }
             Ok((worktree, None, None))
         }
-        RequirementTaskKind::Implementation | RequirementTaskKind::MergeReview => {
+        RequirementTaskKind::Implementation
+        | RequirementTaskKind::BranchMerge
+        | RequirementTaskKind::MergeReview => {
             let repo = resolve_project_working_dir(data_root, &input.project.local_path)?;
             let branch = input
                 .task
@@ -758,7 +775,7 @@ async fn merge_dependencies(
     input: &RequirementTaskExecutionInput,
 ) -> Result<(), AppError> {
     let dependency_commits = match input.task.kind {
-        RequirementTaskKind::Implementation => input
+        RequirementTaskKind::Implementation | RequirementTaskKind::BranchMerge => input
             .task
             .depends_on
             .iter()
@@ -772,16 +789,21 @@ async fn merge_dependencies(
             })
             .collect::<Vec<_>>(),
         RequirementTaskKind::MergeReview => input
-            .plan
-            .tasks
+            .task
+            .depends_on
             .iter()
-            .filter(|task| {
-                task.kind == RequirementTaskKind::Implementation
-                    && task.review_status == RequirementReviewStatus::Approved
+            .filter_map(|dependency| {
+                input
+                    .plan
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == *dependency)
+                    .and_then(|task| task.commit_sha.clone())
             })
-            .filter_map(|task| task.commit_sha.clone())
             .collect::<Vec<_>>(),
-        RequirementTaskKind::Review => Vec::new(),
+        RequirementTaskKind::Review
+        | RequirementTaskKind::ReviewSubAgent
+        | RequirementTaskKind::ReviewSummary => Vec::new(),
     };
 
     for commit in dependency_commits {
@@ -792,6 +814,7 @@ async fn merge_dependencies(
 
 async fn commit_task_changes(
     task: &crate::models::RequirementExecutionTask,
+    output: &mut RequirementTaskExecutionOutput,
 ) -> Result<String, AppError> {
     let worktree = task
         .worktree_path
@@ -804,11 +827,224 @@ async fn commit_task_changes(
         let message = format!("raccoon_node: {}", task.title);
         git(&worktree, &["commit", "-m", &message]).await?;
     } else if task.kind == RequirementTaskKind::Implementation {
-        return Err(AppError::internal("实现节点没有产生可提交改动"));
+        let no_op_reason = output
+            .no_op_reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty());
+        if output.changed == Some(false) {
+            if let Some(no_op_reason) = no_op_reason {
+                output.execution_warning = Some(format!(
+                    "未产生新提交：{no_op_reason}。按 no-op 完成并进入审核。"
+                ));
+            } else {
+                return Err(AppError::internal(
+                    "实现节点未产生提交，且缺少 no_op_reason",
+                ));
+            }
+        } else {
+            return Err(AppError::internal("实现节点没有产生可提交改动"));
+        }
     }
     git(&worktree, &["rev-parse", "HEAD"])
         .await
         .map(|sha| sha.trim().to_owned())
+}
+
+struct PublishResult {
+    pull_request_url: String,
+    merged_into: String,
+    cleanup_summary: String,
+}
+
+async fn publish_merge_review(
+    data_root: &Path,
+    input: &RequirementTaskExecutionInput,
+    output: &RequirementTaskExecutionOutput,
+) -> Result<PublishResult, AppError> {
+    let repo = resolve_project_working_dir(data_root, &input.project.local_path)?;
+    let branch = output
+        .branch_name
+        .as_deref()
+        .ok_or_else(|| AppError::internal("最终合并节点缺少分支名"))?;
+    let commit = output
+        .commit_sha
+        .as_deref()
+        .ok_or_else(|| AppError::internal("最终合并节点缺少提交"))?;
+    let base_branch = default_branch(&repo).await?;
+
+    git(&repo, &["push", "-u", "origin", branch]).await?;
+    let pr_url = ensure_pull_request(&repo, &base_branch, branch, input).await?;
+    if !pull_request_is_merged(&repo, &pr_url).await {
+        let merge_args = build_pr_merge_args(&pr_url, commit);
+        run_gh(
+            &repo,
+            &merge_args.iter().map(String::as_str).collect::<Vec<_>>(),
+        )
+        .await?;
+    }
+    let cleanup_summary = cleanup_requirement_branches(data_root, &repo, input).await;
+
+    Ok(PublishResult {
+        pull_request_url: pr_url,
+        merged_into: base_branch,
+        cleanup_summary,
+    })
+}
+
+async fn default_branch(repo: &Path) -> Result<String, AppError> {
+    let output = git(
+        repo,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .await
+    .unwrap_or_default();
+    Ok(parse_default_branch(&output))
+}
+
+fn parse_default_branch(output: &str) -> String {
+    let branch = output
+        .trim()
+        .strip_prefix("origin/")
+        .unwrap_or(output.trim())
+        .trim();
+    if branch.is_empty() {
+        "main".to_owned()
+    } else {
+        branch.to_owned()
+    }
+}
+
+async fn ensure_pull_request(
+    repo: &Path,
+    base_branch: &str,
+    branch: &str,
+    input: &RequirementTaskExecutionInput,
+) -> Result<String, AppError> {
+    if let Ok(url) = run_gh(
+        repo,
+        &["pr", "view", branch, "--json", "url", "--jq", ".url"],
+    )
+    .await
+    {
+        let url = url.trim();
+        if !url.is_empty() {
+            return Ok(url.to_owned());
+        }
+    }
+
+    let title = format!("raccoon_node: {}", input.requirement.title);
+    let body = format!(
+        "自动合并需求：{}\n\n{}",
+        input.requirement.title,
+        input
+            .requirement
+            .draft
+            .as_ref()
+            .map(|draft| draft.summary.as_str())
+            .unwrap_or("无摘要")
+    );
+    let args = [
+        "pr",
+        "create",
+        "--base",
+        base_branch,
+        "--head",
+        branch,
+        "--title",
+        &title,
+        "--body",
+        &body,
+    ];
+    let url = run_gh(repo, &args).await?;
+    let url = url.trim();
+    if url.is_empty() {
+        return Err(AppError::internal("gh pr create 未返回 PR 地址"));
+    }
+    Ok(url.to_owned())
+}
+
+async fn pull_request_is_merged(repo: &Path, pr_url: &str) -> bool {
+    run_gh(
+        repo,
+        &["pr", "view", pr_url, "--json", "state", "--jq", ".state"],
+    )
+    .await
+    .is_ok_and(|state| state.trim() == "MERGED")
+}
+
+fn build_pr_merge_args(pr_url: &str, commit: &str) -> Vec<String> {
+    vec![
+        "pr".to_owned(),
+        "merge".to_owned(),
+        pr_url.to_owned(),
+        "--merge".to_owned(),
+        "--match-head-commit".to_owned(),
+        commit.to_owned(),
+    ]
+}
+
+async fn cleanup_requirement_branches(
+    data_root: &Path,
+    repo: &Path,
+    input: &RequirementTaskExecutionInput,
+) -> String {
+    let branches = generated_branch_names(
+        input
+            .plan
+            .tasks
+            .iter()
+            .chain(std::iter::once(&input.task))
+            .filter_map(|task| task.branch_name.as_deref()),
+    );
+    let worktrees = input
+        .plan
+        .tasks
+        .iter()
+        .chain(std::iter::once(&input.task))
+        .filter_map(|task| task.worktree_path.as_deref())
+        .map(PathBuf::from)
+        .collect::<BTreeSet<_>>();
+
+    let mut removed_worktrees = 0;
+    for worktree in worktrees {
+        if ensure_child_path(data_root, &worktree).is_ok() && worktree.exists() {
+            let Ok(worktree_str) = path_str(&worktree) else {
+                continue;
+            };
+            if git(repo, &["worktree", "remove", "--force", worktree_str])
+                .await
+                .is_ok()
+            {
+                removed_worktrees += 1;
+            }
+        }
+    }
+
+    let mut removed_local = 0;
+    let mut removed_remote = 0;
+    for branch in branches {
+        if git(repo, &["branch", "-D", &branch]).await.is_ok() {
+            removed_local += 1;
+        }
+        if git(repo, &["push", "origin", "--delete", &branch])
+            .await
+            .is_ok()
+        {
+            removed_remote += 1;
+        }
+    }
+
+    format!(
+        "已清理 worktree {removed_worktrees} 个、本地分支 {removed_local} 个、远端分支 {removed_remote} 个"
+    )
+}
+
+fn generated_branch_names<'a>(branches: impl Iterator<Item = &'a str>) -> BTreeSet<String> {
+    branches
+        .filter(|branch| branch.starts_with("rn/"))
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 async fn git(dir: &Path, args: &[&str]) -> Result<String, AppError> {
@@ -824,6 +1060,23 @@ async fn git(dir: &Path, args: &[&str]) -> Result<String, AppError> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     Err(AppError::internal(format!(
         "git {} 失败：{}",
+        args.join(" "),
+        stderr.trim()
+    )))
+}
+
+async fn run_gh(dir: &Path, args: &[&str]) -> Result<String, AppError> {
+    let output = Command::new("gh")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .await?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(AppError::internal(format!(
+        "gh {} 失败：{}",
         args.join(" "),
         stderr.trim()
     )))
@@ -870,6 +1123,145 @@ impl Drop for PiRpcClient {
     fn drop(&mut self) {
         if let Ok(mut child) = self.child.try_lock() {
             let _ = child.start_kill();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_pr_merge_args, commit_task_changes, generated_branch_names, parse_default_branch,
+    };
+    use crate::models::{
+        RequirementModelTier, RequirementReviewStatus, RequirementTaskExecutionOutput,
+        RequirementTaskKind, RequirementTaskStatus,
+    };
+    use serde_json::json;
+    use std::path::Path;
+
+    #[test]
+    fn parse_default_branch_falls_back_to_main() {
+        assert_eq!(parse_default_branch("origin/main\n"), "main");
+        assert_eq!(parse_default_branch("origin/trunk\n"), "trunk");
+        assert_eq!(parse_default_branch(""), "main");
+    }
+
+    #[test]
+    fn pr_merge_args_lock_head_commit_without_deleting_branch() {
+        assert_eq!(
+            build_pr_merge_args("https://github.com/acme/repo/pull/1", "abc123"),
+            vec![
+                "pr",
+                "merge",
+                "https://github.com/acme/repo/pull/1",
+                "--merge",
+                "--match-head-commit",
+                "abc123",
+            ]
+        );
+    }
+
+    #[test]
+    fn generated_branch_names_only_keeps_rn_branches() {
+        let branches = generated_branch_names(["rn/req/task", "main", "feature/x"].into_iter());
+        assert_eq!(
+            branches.into_iter().collect::<Vec<_>>(),
+            vec!["rn/req/task"]
+        );
+    }
+
+    #[tokio::test]
+    async fn implementation_no_diff_can_complete_with_no_op_reason() {
+        let temp = tempfile::tempdir().unwrap();
+        init_repo(temp.path()).await;
+        let task = test_task(temp.path());
+        let mut output = test_output(Some(false), Some("前置节点已完整实现"));
+
+        let commit = commit_task_changes(&task, &mut output).await.unwrap();
+
+        assert!(!commit.is_empty());
+        assert_eq!(
+            output.execution_warning.as_deref(),
+            Some("未产生新提交：前置节点已完整实现。按 no-op 完成并进入审核。")
+        );
+    }
+
+    #[tokio::test]
+    async fn implementation_no_diff_without_no_op_reason_still_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        init_repo(temp.path()).await;
+        let task = test_task(temp.path());
+        let mut output = test_output(None, None);
+
+        let error = commit_task_changes(&task, &mut output).await.unwrap_err();
+
+        assert!(error.to_string().contains("没有产生可提交改动"));
+    }
+
+    async fn init_repo(path: &Path) {
+        super::git(path, &["init"]).await.unwrap();
+        super::git(path, &["config", "user.email", "test@example.com"])
+            .await
+            .unwrap();
+        super::git(path, &["config", "user.name", "Test"])
+            .await
+            .unwrap();
+        tokio::fs::write(path.join("README.md"), "test\n")
+            .await
+            .unwrap();
+        super::git(path, &["add", "README.md"]).await.unwrap();
+        super::git(path, &["commit", "-m", "init"]).await.unwrap();
+    }
+
+    fn test_task(path: &Path) -> crate::models::RequirementExecutionTask {
+        crate::models::RequirementExecutionTask {
+            id: "task-1".to_owned(),
+            title: "实现功能".to_owned(),
+            description: "只做当前功能".to_owned(),
+            depends_on: Vec::new(),
+            kind: RequirementTaskKind::Implementation,
+            model_tier: RequirementModelTier::Medium,
+            timeout_seconds: 60,
+            pi_session_file: None,
+            branch_name: None,
+            worktree_path: Some(path.to_string_lossy().to_string()),
+            commit_sha: None,
+            review_for: None,
+            review_angle: None,
+            review_status: RequirementReviewStatus::Pending,
+            attempt: 0,
+            last_review_feedback: None,
+            pull_request_url: None,
+            merged_into: None,
+            cleanup_summary: None,
+            execution_warning: None,
+            trace: None,
+            status: RequirementTaskStatus::Running,
+            target_files: Vec::new(),
+            result_summary: None,
+            error: None,
+        }
+    }
+
+    fn test_output(
+        changed: Option<bool>,
+        no_op_reason: Option<&str>,
+    ) -> RequirementTaskExecutionOutput {
+        RequirementTaskExecutionOutput {
+            result_summary: "完成".to_owned(),
+            pi_session_file: None,
+            branch_name: None,
+            worktree_path: None,
+            commit_sha: None,
+            review_status: None,
+            review_feedback: None,
+            pull_request_url: None,
+            merged_into: None,
+            cleanup_summary: None,
+            execution_warning: None,
+            changed,
+            no_op_reason: no_op_reason.map(str::to_owned),
+            trace: Some(json!({ "type": "pi_trace" })),
         }
     }
 }

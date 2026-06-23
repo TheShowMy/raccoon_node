@@ -103,20 +103,10 @@ function getTaskLayout(
 ) {
   const baseX = 700;
   const baseY = 3.5;
-  const columnGap = 460;
+  const columnGap = 720;
   const rowGap = 40;
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
-  const implementationTasks = tasks.filter(
-    (task) => task.kind === "implementation",
-  );
-  const mergeTask = tasks.find((task) => task.kind === "merge_review");
-  const reviewTasksByTarget = new Map<string, typeof tasks>();
-  for (const reviewTask of tasks) {
-    if (reviewTask.kind !== "review" || !reviewTask.review_for) continue;
-    const reviews = reviewTasksByTarget.get(reviewTask.review_for) ?? [];
-    reviews.push(reviewTask);
-    reviewTasksByTarget.set(reviewTask.review_for, reviews);
-  }
+  const externalTasks = tasks.filter(isExternalDagTask);
   const layerCache = new Map<string, number>();
 
   function resolveLayer(taskId: string, visiting = new Set<string>()): number {
@@ -125,7 +115,7 @@ function getTaskLayout(
     const task = taskMap.get(taskId);
     if (
       !task ||
-      task.kind !== "implementation" ||
+      !isExternalDagTask(task) ||
       visiting.has(taskId) ||
       task.depends_on.length === 0
     ) {
@@ -134,14 +124,14 @@ function getTaskLayout(
     }
 
     visiting.add(taskId);
-    const implementationDependencies = task.depends_on.filter(
-      (dependency) => taskMap.get(dependency)?.kind === "implementation",
+    const externalDependencies = task.depends_on.filter((dependency) =>
+      isExternalDagTask(taskMap.get(dependency)),
     );
     const layer =
-      implementationDependencies.length === 0
+      externalDependencies.length === 0
         ? 0
         : Math.max(
-            ...implementationDependencies.map((dependency) =>
+            ...externalDependencies.map((dependency) =>
               resolveLayer(dependency, new Set(visiting)),
             ),
           ) + 1;
@@ -149,8 +139,8 @@ function getTaskLayout(
     return layer;
   }
 
-  const layerTasks = new Map<number, typeof implementationTasks>();
-  for (const task of implementationTasks) {
+  const layerTasks = new Map<number, typeof externalTasks>();
+  for (const task of externalTasks) {
     const layer = resolveLayer(task.id);
     const list = layerTasks.get(layer) ?? [];
     list.push(task);
@@ -166,39 +156,17 @@ function getTaskLayout(
         x: baseX + layer * columnGap,
         y: currentY,
       });
-      const reviews = reviewTasksByTarget.get(task.id) ?? [];
-      const height = getTaskNodeHeight(reviews.length, false);
+      const height = getTaskNodeHeight(task);
       currentY += height + rowGap;
     }
   }
 
-  if (mergeTask) {
-    const lastLayer = Math.max(0, ...Array.from(layerTasks.keys()));
-    const lastLayerTasks = layerTasks.get(lastLayer) ?? [];
-    let lastLayerHeight = 0;
-    for (const task of lastLayerTasks) {
-      const reviews = reviewTasksByTarget.get(task.id) ?? [];
-      lastLayerHeight += getTaskNodeHeight(reviews.length, false) + rowGap;
-    }
-    lastLayerHeight = Math.max(0, lastLayerHeight - rowGap);
-
-    const mergeHeight = getTaskNodeHeight(0, true);
-    const mergeY = baseY + Math.max(0, (lastLayerHeight - mergeHeight) * 0.5);
-    positions.set(mergeTask.id, {
-      x: baseX + (lastLayer + 1) * columnGap,
-      y: mergeY,
-    });
-  }
-
-  for (const task of [
-    ...implementationTasks,
-    ...(mergeTask ? [mergeTask] : []),
-  ]) {
+  for (const task of externalTasks) {
     if (!positions.has(task.id)) {
       const row = positions.size;
       positions.set(task.id, {
         x: baseX,
-        y: baseY + row * (getTaskNodeHeight(0, false) + rowGap),
+        y: baseY + row * (getTaskNodeHeight(task) + rowGap),
       });
     }
   }
@@ -206,9 +174,28 @@ function getTaskLayout(
   return positions;
 }
 
-function getTaskNodeHeight(reviewCount: number, isMergeReview: boolean) {
-  if (isMergeReview) return 460;
-  return 360 + Math.max(0, reviewCount) * 140;
+function isExternalDagTask(
+  task: NonNullable<Requirement["execution_plan"]>["tasks"][number] | undefined,
+) {
+  return (
+    task?.kind === "implementation" ||
+    task?.kind === "branch_merge" ||
+    task?.kind === "merge_review"
+  );
+}
+
+function getTaskNodeHeight(
+  task: NonNullable<Requirement["execution_plan"]>["tasks"][number],
+) {
+  return task.kind === "implementation" ? 300 : 220;
+}
+
+function externalNodeId(
+  task: NonNullable<Requirement["execution_plan"]>["tasks"][number],
+) {
+  return task.kind === "implementation"
+    ? `requirement-task-group-${task.id}`
+    : `requirement-task-${task.id}`;
 }
 
 function FitViewOnGraphChange({
@@ -284,6 +271,7 @@ export default function App() {
 
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    document.documentElement.dataset.theme = theme;
   }, [theme]);
 
   const loadStart = useCallback(async () => {
@@ -817,21 +805,41 @@ export default function App() {
     const selectedTasks = selectedDagRequirement?.execution_plan?.tasks ?? [];
     const reviewTasksByTarget = new Map<string, typeof selectedTasks>();
     for (const reviewTask of selectedTasks) {
-      if (reviewTask.kind !== "review" || !reviewTask.review_for) continue;
+      if (
+        (reviewTask.kind !== "review" &&
+          reviewTask.kind !== "review_summary" &&
+          reviewTask.kind !== "review_sub_agent") ||
+        !reviewTask.review_for
+      ) {
+        continue;
+      }
       const reviews = reviewTasksByTarget.get(reviewTask.review_for) ?? [];
       reviews.push(reviewTask);
       reviewTasksByTarget.set(reviewTask.review_for, reviews);
     }
-    const visibleExecutionTasks = selectedTasks.filter(
-      (task) => task.kind === "implementation" || task.kind === "merge_review",
+    const implementationTasks = selectedTasks.filter(
+      (task) => task.kind === "implementation",
+    );
+    const standaloneExecutionTasks = selectedTasks.filter(
+      (task) => task.kind === "branch_merge" || task.kind === "merge_review",
     );
     const dagFocused = Boolean(selectedDagRequirement);
+    const projectControlX = dagFocused ? -420 : -328;
 
     return [
       {
+        id: "project-github",
+        type: "startNode",
+        position: { x: projectControlX, y: -84 },
+        data: {
+          kind: "project-github",
+          project,
+        },
+      },
+      {
         id: "project-back",
         type: "startNode",
-        position: dagFocused ? { x: -420, y: 20 } : { x: -328, y: 20 },
+        position: { x: projectControlX, y: 20 },
         data: {
           kind: "project-back",
           project,
@@ -915,31 +923,152 @@ export default function App() {
                 onClose: closeDag,
               },
             },
-            ...visibleExecutionTasks.map((task) => {
+            ...implementationTasks.flatMap((task) => {
               const reviews = reviewTasksByTarget.get(task.id) ?? [];
-              return {
-                id: `requirement-task-${task.id}`,
-                type: "startNode" as const,
-                position: taskLayout.get(task.id) ?? { x: 720, y: 60 },
-                style: {
-                  width: 380,
-                  height: getTaskNodeHeight(
-                    reviews.length,
-                    task.kind === "merge_review",
-                  ),
+              const summary = reviews.find(
+                (review) => review.kind === "review_summary",
+              );
+              const subAgents = reviews.filter(
+                (review) =>
+                  review.kind === "review_sub_agent" ||
+                  review.kind === "review",
+              );
+              const groupId = `requirement-task-group-${task.id}`;
+              return [
+                {
+                  id: groupId,
+                  type: "startNode" as const,
+                  position: taskLayout.get(task.id) ?? { x: 720, y: 60 },
+                  style: {
+                    width: 590,
+                    height: getTaskNodeHeight(task),
+                  },
+                  data: {
+                    kind: "requirement-task" as const,
+                    nodeRole: "group" as const,
+                    requirementId: selectedDagRequirement.id,
+                    task,
+                    reviews,
+                    streamEvents:
+                      selectedDagRequirement.id === observedRequirementId
+                        ? requirementStreamEvents
+                        : [],
+                    busy: requirementActionBusyId === selectedDagRequirement.id,
+                    onRetryFailedNode: retryFailedNodeCallback,
+                    onRetryFromNode: retryFromNodeCallback,
+                    onRerunReview: rerunReviewCallback,
+                  },
                 },
-                data: {
-                  kind: "requirement-task" as const,
-                  requirementId: selectedDagRequirement.id,
-                  task,
-                  reviews,
-                  busy: requirementActionBusyId === selectedDagRequirement.id,
-                  onRetryFailedNode: retryFailedNodeCallback,
-                  onRetryFromNode: retryFromNodeCallback,
-                  onRerunReview: rerunReviewCallback,
+                {
+                  id: `requirement-task-${task.id}`,
+                  type: "startNode" as const,
+                  parentId: groupId,
+                  extent: "parent" as const,
+                  position: { x: 20, y: 108 },
+                  style: {
+                    width: 142,
+                    height: 142,
+                  },
+                  data: {
+                    kind: "requirement-task" as const,
+                    nodeRole: "code" as const,
+                    requirementId: selectedDagRequirement.id,
+                    task,
+                    reviews,
+                    streamEvents:
+                      selectedDagRequirement.id === observedRequirementId
+                        ? requirementStreamEvents
+                        : [],
+                    busy: requirementActionBusyId === selectedDagRequirement.id,
+                    onRetryFailedNode: retryFailedNodeCallback,
+                    onRetryFromNode: retryFromNodeCallback,
+                    onRerunReview: rerunReviewCallback,
+                  },
                 },
-              };
+                ...(summary
+                  ? [
+                      {
+                        id: `requirement-task-${summary.id}`,
+                        type: "startNode" as const,
+                        parentId: groupId,
+                        extent: "parent" as const,
+                        position: { x: 198, y: 108 },
+                        style: {
+                          width: 142,
+                          height: 142,
+                        },
+                        data: {
+                          kind: "requirement-task" as const,
+                          nodeRole: "review_summary" as const,
+                          requirementId: selectedDagRequirement.id,
+                          task: summary,
+                          reviews: subAgents,
+                          streamEvents:
+                            selectedDagRequirement.id === observedRequirementId
+                              ? requirementStreamEvents
+                              : [],
+                          busy:
+                            requirementActionBusyId ===
+                            selectedDagRequirement.id,
+                          onRetryFailedNode: retryFailedNodeCallback,
+                          onRetryFromNode: retryFromNodeCallback,
+                          onRerunReview: rerunReviewCallback,
+                        },
+                      },
+                    ]
+                  : []),
+                ...subAgents.map((review, index) => ({
+                  id: `requirement-task-${review.id}`,
+                  type: "startNode" as const,
+                  parentId: groupId,
+                  extent: "parent" as const,
+                  position: { x: 400, y: 82 + index * 66 },
+                  style: {
+                    width: 140,
+                    height: 52,
+                  },
+                  data: {
+                    kind: "requirement-task" as const,
+                    nodeRole: "review_sub_agent" as const,
+                    requirementId: selectedDagRequirement.id,
+                    task: review,
+                    reviews: [],
+                    streamEvents:
+                      selectedDagRequirement.id === observedRequirementId
+                        ? requirementStreamEvents
+                        : [],
+                    busy: requirementActionBusyId === selectedDagRequirement.id,
+                    onRetryFailedNode: retryFailedNodeCallback,
+                    onRetryFromNode: retryFromNodeCallback,
+                    onRerunReview: rerunReviewCallback,
+                  },
+                })),
+              ];
             }),
+            ...standaloneExecutionTasks.map((task) => ({
+              id: `requirement-task-${task.id}`,
+              type: "startNode" as const,
+              position: taskLayout.get(task.id) ?? { x: 720, y: 60 },
+              style: {
+                width: 380,
+                height: getTaskNodeHeight(task),
+              },
+              data: {
+                kind: "requirement-task" as const,
+                nodeRole: "external" as const,
+                requirementId: selectedDagRequirement.id,
+                task,
+                reviews: [],
+                streamEvents:
+                  selectedDagRequirement.id === observedRequirementId
+                    ? requirementStreamEvents
+                    : [],
+                busy: requirementActionBusyId === selectedDagRequirement.id,
+                onRetryFailedNode: retryFailedNodeCallback,
+                onRetryFromNode: retryFromNodeCallback,
+                onRerunReview: rerunReviewCallback,
+              },
+            })),
           ]
         : []),
     ];
@@ -958,6 +1087,7 @@ export default function App() {
     requirementError,
     requirementInput,
     requirementStreamEvents,
+    observedRequirementId,
     rerunReviewCallback,
     retryFailedNodeCallback,
     retryFromNodeCallback,
@@ -1180,22 +1310,19 @@ export default function App() {
 
       const tasks = selectedDagRequirement.execution_plan?.tasks ?? [];
       const taskById = new Map(tasks.map((task) => [task.id, task]));
-      const implementationTasks = tasks.filter(
-        (task) => task.kind === "implementation",
-      );
-      const mergeTask = tasks.find((task) => task.kind === "merge_review");
+      const externalTasks = tasks.filter(isExternalDagTask);
 
-      for (const task of implementationTasks) {
-        const implementationDependencies = task.depends_on.filter(
-          (dependency) => taskById.get(dependency)?.kind === "implementation",
+      for (const task of externalTasks) {
+        const externalDependencies = task.depends_on.filter((dependency) =>
+          isExternalDagTask(taskById.get(dependency)),
         );
 
-        if (implementationDependencies.length === 0) {
+        if (externalDependencies.length === 0) {
           flowEdges.push({
             id: `requirement-dag-to-task-${task.id}`,
             source: "requirement-dag",
             sourceHandle: "requirement-dag-entry",
-            target: `requirement-task-${task.id}`,
+            target: externalNodeId(task),
             targetHandle: "requirement-task-left",
             type: "smoothstep",
             animated: task.status === "running",
@@ -1206,12 +1333,14 @@ export default function App() {
           });
         }
 
-        for (const dependency of implementationDependencies) {
+        for (const dependency of externalDependencies) {
+          const dependencyTask = taskById.get(dependency);
+          if (!dependencyTask) continue;
           flowEdges.push({
             id: `requirement-task-${dependency}-to-${task.id}`,
-            source: `requirement-task-${dependency}`,
+            source: externalNodeId(dependencyTask),
             sourceHandle: "requirement-task-right",
-            target: `requirement-task-${task.id}`,
+            target: externalNodeId(task),
             targetHandle: "requirement-task-left",
             type: "smoothstep",
             animated: task.status === "running",
@@ -1223,25 +1352,61 @@ export default function App() {
         }
       }
 
-      if (mergeTask) {
-        const lastImplementationLayer = implementationTasks.filter(
-          (task) =>
-            !implementationTasks.some((candidate) =>
-              candidate.depends_on.includes(task.id),
-            ),
+      const implementationTasks = tasks.filter(
+        (task) => task.kind === "implementation",
+      );
+      for (const task of implementationTasks) {
+        const reviews = tasks.filter((review) => review.review_for === task.id);
+        const summary = reviews.find(
+          (review) => review.kind === "review_summary",
         );
-        for (const task of lastImplementationLayer) {
+        const subAgents = reviews.filter(
+          (review) =>
+            review.kind === "review_sub_agent" || review.kind === "review",
+        );
+        if (!summary) continue;
+        flowEdges.push({
+          id: `requirement-task-${task.id}-to-${summary.id}`,
+          source: `requirement-task-${task.id}`,
+          sourceHandle: "requirement-task-right",
+          target: `requirement-task-${summary.id}`,
+          targetHandle: "requirement-task-left",
+          type: "straight",
+          animated: summary.status === "running",
+          markerStart: {
+            type: MarkerType.ArrowClosed,
+            color: "rgba(20, 184, 166, 0.62)",
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: "rgba(20, 184, 166, 0.62)",
+          },
+          style: {
+            stroke: "rgba(20, 184, 166, 0.62)",
+            strokeWidth: 1.4,
+          },
+        });
+        for (const review of subAgents) {
           flowEdges.push({
-            id: `requirement-task-${task.id}-to-${mergeTask.id}`,
-            source: `requirement-task-${task.id}`,
+            id: `requirement-task-${summary.id}-to-${review.id}`,
+            source: `requirement-task-${summary.id}`,
             sourceHandle: "requirement-task-right",
-            target: `requirement-task-${mergeTask.id}`,
+            target: `requirement-task-${review.id}`,
             targetHandle: "requirement-task-left",
-            type: "smoothstep",
-            animated: mergeTask.status === "running",
+            type: "straight",
+            animated:
+              review.status === "running" || summary.status === "running",
+            markerStart: {
+              type: MarkerType.ArrowClosed,
+              color: "rgba(99, 102, 241, 0.58)",
+            },
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: "rgba(99, 102, 241, 0.58)",
+            },
             style: {
-              stroke: "rgba(249, 115, 22, 0.58)",
-              strokeWidth: 2,
+              stroke: "rgba(99, 102, 241, 0.58)",
+              strokeWidth: 1.3,
             },
           });
         }

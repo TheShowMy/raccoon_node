@@ -292,6 +292,7 @@ fn spawn_requirement_analysis(
     tokio::spawn(async move {
         let emitter = RequirementEventEmitter {
             requirement_id: requirement_id.clone(),
+            task_id: None,
             bus: state.requirement_events.clone(),
         };
         emitter.emit("coordinator_started", "Coordinator 开始分析需求。");
@@ -341,6 +342,7 @@ fn spawn_requirement_execution_plan(
     tokio::spawn(async move {
         let emitter = RequirementEventEmitter {
             requirement_id: requirement_id.clone(),
+            task_id: None,
             bus: state.requirement_events.clone(),
         };
         emitter.emit("execution_planning_started", "开始拆分执行 DAG。");
@@ -377,6 +379,7 @@ fn spawn_requirement_execution(state: AppState, requirement_id: String) {
     tokio::spawn(async move {
         let emitter = RequirementEventEmitter {
             requirement_id: requirement_id.clone(),
+            task_id: None,
             bus: state.requirement_events.clone(),
         };
         emitter.emit("execution_started", "开始按 DAG 执行任务。");
@@ -409,7 +412,7 @@ fn spawn_requirement_execution(state: AppState, requirement_id: String) {
                 let task_id = input.task.id.clone();
                 let task_title = input.task.title.clone();
                 let state = state.clone();
-                let emitter = emitter.clone();
+                let emitter = emitter.for_task(task_id.clone());
                 let requirement_id = requirement_id.clone();
                 emitter.emit(
                     "execution_task_started",

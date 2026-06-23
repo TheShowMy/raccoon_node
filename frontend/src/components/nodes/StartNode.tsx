@@ -9,10 +9,12 @@ import ModelConfigNode from "./ModelConfigNode";
 import StyleSettingsNode from "./StyleSettingsNode";
 import SummaryCard from "./SummaryCard";
 import ProjectBackNode from "./ProjectBackNode";
+import ProjectGithubNode from "./ProjectGithubNode";
 import RequirementListNode from "./RequirementListNode";
 import RequirementChatNode from "./RequirementChatNode";
 import RequirementDagNode from "./RequirementDagNode";
 import RequirementTaskNode from "./RequirementTaskNode";
+import { githubUrlFromGitUrl } from "../../utils/format";
 
 const nodeTypeMap: Record<string, React.FC<any>> = {
   create: CreateProjectNode,
@@ -23,6 +25,7 @@ const nodeTypeMap: Record<string, React.FC<any>> = {
   "style-settings": StyleSettingsNode,
   summary: SummaryCard,
   "project-back": ProjectBackNode,
+  "project-github": ProjectGithubNode,
   "requirement-list": RequirementListNode,
   "requirement-chat": RequirementChatNode,
   "requirement-dag": RequirementDagNode,
@@ -33,12 +36,18 @@ export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const isPendingDelete =
     data.kind === "project-item" &&
     data.pendingDeleteProjectId === data.project.id;
+  const projectGithubUrl =
+    data.kind === "project-github"
+      ? githubUrlFromGitUrl(data.project.git_url)
+      : null;
   const clickableAction =
     data.kind === "summary"
       ? data.onAction
       : data.kind === "project-back"
         ? data.onBack
-        : undefined;
+        : projectGithubUrl
+          ? () => window.open(projectGithubUrl, "_blank", "noopener,noreferrer")
+          : undefined;
   const hasFlowLeftHandle = data.kind === "create" || data.kind === "projects";
   const hasModelSourceHandle = data.kind === "summary" && data.icon === "model";
   const hasModelTargetHandle = data.kind === "model-config";

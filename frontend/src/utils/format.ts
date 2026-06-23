@@ -47,6 +47,14 @@ export function shortenGitUrl(value: string) {
   return value.replace(/^git@([^:]+):/, "$1/").replace(/^https?:\/\//, "");
 }
 
+export function githubUrlFromGitUrl(value: string) {
+  const match =
+    /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(
+      value.trim(),
+    );
+  return match ? `https://github.com/${match[1]}` : null;
+}
+
 export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   low: { model_id: null, thinking_level: "low" },
   medium: { model_id: null, thinking_level: "medium" },
