@@ -248,6 +248,11 @@
     box-shadow:
       var(--shadow-card),
       0 0 24px color-mix(in srgb, var(--accent-create) 16%, transparent);
+    transition:
+      background-color 180ms ease,
+      border-color 180ms ease,
+      box-shadow 180ms ease,
+      opacity 180ms ease;
   }
 
   .node-card--requirement-task:has(.task-node--code),
@@ -257,10 +262,6 @@
 
   .node-card--requirement-task:has(.task-node--review_sub_agent) {
     @apply rounded-[12px] p-1.5;
-  }
-
-  .react-flow__node:has(.task-node--group) {
-    z-index: -1 !important;
   }
 
   .node-card--pending-delete {
@@ -705,15 +706,12 @@
 
   .requirement-draft {
     @apply grid gap-2.5;
+    border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
   }
 
   .requirement-draft__eyebrow {
     @apply mb-2 flex items-center gap-1.5 text-[11px] font-bold;
     color: var(--accent-model);
-  }
-
-  .requirement-draft {
-    border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
   }
 
   .requirement-draft strong {
@@ -886,6 +884,21 @@
     @apply rounded-[10px] border p-3;
     border-color: color-mix(in srgb, var(--accent-create) 28%, transparent);
     background: color-mix(in srgb, var(--panel-bg) 68%, transparent);
+  }
+
+  .task-node--collapsed .task-node__head {
+    @apply h-full items-center;
+  }
+
+  .task-node__collapse {
+    @apply ml-auto inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border transition;
+    border-color: color-mix(in srgb, var(--accent-create) 32%, transparent);
+    background: color-mix(in srgb, var(--accent-create) 10%, transparent);
+    color: var(--accent-create);
+  }
+
+  .task-node__collapse:hover {
+    background: color-mix(in srgb, var(--accent-create) 18%, transparent);
   }
 
   .task-node--code .node-icon {
@@ -1767,6 +1780,12 @@
 }
 
 @layer utilities {
+  .react-flow__node:has(.node-card--requirement-task) {
+    transition:
+      transform 220ms ease,
+      opacity 180ms ease;
+  }
+
   .react-flow__node-startNode {
     visibility: visible !important;
   }
@@ -1862,6 +1881,33 @@
     stroke: currentColor;
   }
 
+  .react-flow__minimap {
+    overflow: hidden;
+    border: 1px solid var(--card-border-strong);
+    border-radius: 12px;
+    background: var(--card-bg);
+    box-shadow: var(--shadow-card);
+  }
+
+  .react-flow__minimap-mask {
+    fill: color-mix(in srgb, var(--accent-model) 14%, transparent);
+    stroke: color-mix(in srgb, var(--accent-model) 58%, transparent);
+    stroke-width: 3;
+  }
+
+  .react-flow__minimap-node {
+    fill: color-mix(in srgb, var(--accent-create) 42%, var(--card-bg));
+    stroke: color-mix(in srgb, var(--accent-create) 62%, transparent);
+  }
+
+  [data-theme="dark"] .react-flow__minimap {
+    border-color: rgba(226, 232, 240, 0.24);
+    background: rgba(15, 23, 42, 0.98);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 12px 34px rgba(0, 0, 0, 0.42);
+  }
+
   .react-flow__attribution {
     display: none;
   }
@@ -1873,6 +1919,11 @@
 
     .canvas-shell {
       @apply mx-3 mb-3 min-h-[660px] rounded-[14px];
+    }
+
+    .react-flow__minimap {
+      width: 160px;
+      height: 112px;
     }
 
     .node-card,

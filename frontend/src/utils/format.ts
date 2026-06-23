@@ -182,7 +182,10 @@ export function buildBubbleStreamFromEvents(
 
       const last = bubbles.at(-1);
       if (last?.type === "thinking") {
-        last.content += delta;
+        bubbles[bubbles.length - 1] = {
+          ...last,
+          content: last.content + delta,
+        };
       } else {
         bubbles.push({
           id: `thinking-${seq++}`,
@@ -218,22 +221,29 @@ export function buildBubbleStreamFromEvents(
       event.pi_type === "tool_execution_end"
     ) {
       const toolCallId = String(payload?.toolCallId ?? payload?.tool_call_id);
-      const bubble = bubbles.find(
+      const index = bubbles.findIndex(
         (item) => item.id === toolCallId && item.type === "tool",
       );
-      if (!bubble) continue;
+      if (index === -1) continue;
+      const bubble = bubbles[index];
       const output = extractToolOutput(payload);
-      if (output) bubble.content = output;
-      if (event.pi_type === "tool_execution_end") {
-        bubble.status =
-          payload?.isError || payload?.is_error ? "error" : "done";
-      }
+      const nextContent = output ? output : bubble.content;
+      const nextStatus =
+        event.pi_type === "tool_execution_end"
+          ? payload?.isError || payload?.is_error
+            ? "error"
+            : "done"
+          : bubble.status;
+      bubbles[index] = { ...bubble, content: nextContent, status: nextStatus };
       continue;
     }
 
     if (event.pi_type === "agent_end" || event.pi_type === "turn_end") {
-      for (const bubble of bubbles) {
-        if (bubble.status === "running") bubble.status = "done";
+      for (let i = 0; i < bubbles.length; i++) {
+        const bubble = bubbles[i];
+        if (bubble.status === "running") {
+          bubbles[i] = { ...bubble, status: "done" };
+        }
       }
       bubbles.push({
         id: `end-${seq++}`,

@@ -1,36 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import type { StartNodeData } from "../../types/api";
-import CreateProjectNode from "./CreateProjectNode";
-import ProjectListNode from "./ProjectListNode";
-import ProjectItemNode from "./ProjectItemNode";
-import DeleteConfirmNode from "./DeleteConfirmNode";
-import ModelConfigNode from "./ModelConfigNode";
-import StyleSettingsNode from "./StyleSettingsNode";
-import SummaryCard from "./SummaryCard";
-import ProjectBackNode from "./ProjectBackNode";
-import ProjectGithubNode from "./ProjectGithubNode";
-import RequirementListNode from "./RequirementListNode";
-import RequirementChatNode from "./RequirementChatNode";
-import RequirementDagNode from "./RequirementDagNode";
-import RequirementTaskNode from "./RequirementTaskNode";
+import { renderNodeContent } from "../../nodes/renderNodeContent";
 import { githubUrlFromGitUrl } from "../../utils/format";
-
-const nodeTypeMap: Record<string, React.FC<any>> = {
-  create: CreateProjectNode,
-  projects: ProjectListNode,
-  "project-item": ProjectItemNode,
-  "delete-confirm": DeleteConfirmNode,
-  "model-config": ModelConfigNode,
-  "style-settings": StyleSettingsNode,
-  summary: SummaryCard,
-  "project-back": ProjectBackNode,
-  "project-github": ProjectGithubNode,
-  "requirement-list": RequirementListNode,
-  "requirement-chat": RequirementChatNode,
-  "requirement-dag": RequirementDagNode,
-  "requirement-task": RequirementTaskNode,
-};
 
 export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const isPendingDelete =
@@ -62,8 +34,6 @@ export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const hasRequirementDagRightHandle = false;
   const hasRequirementTaskLeftHandle = data.kind === "requirement-task";
   const hasRequirementTaskRightHandle = data.kind === "requirement-task";
-
-  const ContentComponent = nodeTypeMap[data.kind];
 
   return (
     <div
@@ -137,7 +107,7 @@ export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
           className="node-link-handle node-link-handle--requirement"
         />
       ) : null}
-      {ContentComponent ? <ContentComponent data={data} /> : null}
+      {renderNodeContent(data)}
       {hasDeleteRightHandle ? (
         <Handle
           id="delete-right"

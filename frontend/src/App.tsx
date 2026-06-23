@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import {
   Background,
   Controls,
   Edge,
   MarkerType,
+  MiniMap,
   Node,
   ReactFlow,
   ReactFlowProvider,
@@ -12,191 +13,18 @@ import {
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
 
-import type {
-  ThemeMode,
-  StartData,
-  ProjectCanvasData,
-  StreamEvent,
-  DraftClarificationAnswer,
-  Requirement,
-  RequirementConversation,
-  RequirementClarification,
-  ModelSettings,
-  ModelTierKey,
-  ModelTierSetting,
-  StartNodeData,
-} from "./types/api";
-
-import {
-  fetchStart,
-  createProject as apiCreateProject,
-  deleteProject as apiDeleteProject,
-  getProjectCanvas,
-  createRequirement,
-  appendRequirementMessage,
-  getRequirementConversation,
-  submitRequirementClarifications,
-  confirmRequirement,
-  planRequirementExecution,
-  startRequirementExecution,
-  retryFailedNode,
-  retryFromNode,
-  rerunReview,
-  getModelSettings,
-  saveModelSettings,
-  buildClarificationAnswerPayload,
-} from "./api/client";
-
-import {
-  readError,
-  DEFAULT_MODEL_SETTINGS,
-  readStoredTheme,
-  clamp,
-  getProjectListHeight,
-} from "./utils/format";
+import type { StartNodeData } from "./types/api";
 
 import StartNode from "./components/nodes/StartNode";
-import {
-  PROJECT_LIST_WIDTH,
-  PROJECT_ITEM_WIDTH,
-  PROJECT_ITEM_HEIGHT,
-  PROJECT_ITEM_TOP,
-  PROJECT_ITEM_GAP,
-  PROJECT_LIST_Y,
-  DELETE_CONFIRM_MIN_Y,
-  DELETE_CONFIRM_MAX_Y,
-  THEME_STORAGE_KEY,
-} from "./constants";
+import { buildRequirementDagEdges } from "./canvas/edges";
+import { buildStartNodes } from "./canvas/buildStartNodes";
+import { buildProjectNodes } from "./canvas/buildProjectNodes";
+import { useStartData } from "./hooks/useStartData";
+import { useProjectCanvas } from "./hooks/useProjectCanvas";
+import { useRequirementFlow } from "./hooks/useRequirementFlow";
+import { useModelSettings } from "./hooks/useModelSettings";
 
 const nodeTypes = { startNode: StartNode };
-
-function projectIdFromPathname(pathname: string) {
-  const match = /^\/projects\/([^/]+)\/?$/.exec(pathname);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
-function projectCanvasPath(projectId: string) {
-  return `/projects/${encodeURIComponent(projectId)}`;
-}
-
-function writeBrowserPath(path: string, mode: "push" | "replace") {
-  if (window.location.pathname === path) return;
-  const method = mode === "push" ? "pushState" : "replaceState";
-  window.history[method]({}, "", path);
-}
-
-const emptyStartData: StartData = {
-  projects: [],
-  settings_summary: {
-    title: "样式设置",
-    description: "暗色主题",
-  },
-  model_summary: {
-    title: "模型设置",
-    description: "默认模型待配置",
-  },
-  model_settings: DEFAULT_MODEL_SETTINGS,
-};
-
-function getTaskLayout(
-  tasks: NonNullable<Requirement["execution_plan"]>["tasks"],
-) {
-  const baseX = 700;
-  const baseY = 3.5;
-  const columnGap = 720;
-  const rowGap = 40;
-  const taskMap = new Map(tasks.map((task) => [task.id, task]));
-  const externalTasks = tasks.filter(isExternalDagTask);
-  const layerCache = new Map<string, number>();
-
-  function resolveLayer(taskId: string, visiting = new Set<string>()): number {
-    const cached = layerCache.get(taskId);
-    if (cached !== undefined) return cached;
-    const task = taskMap.get(taskId);
-    if (
-      !task ||
-      !isExternalDagTask(task) ||
-      visiting.has(taskId) ||
-      task.depends_on.length === 0
-    ) {
-      layerCache.set(taskId, 0);
-      return 0;
-    }
-
-    visiting.add(taskId);
-    const externalDependencies = task.depends_on.filter((dependency) =>
-      isExternalDagTask(taskMap.get(dependency)),
-    );
-    const layer =
-      externalDependencies.length === 0
-        ? 0
-        : Math.max(
-            ...externalDependencies.map((dependency) =>
-              resolveLayer(dependency, new Set(visiting)),
-            ),
-          ) + 1;
-    layerCache.set(taskId, layer);
-    return layer;
-  }
-
-  const layerTasks = new Map<number, typeof externalTasks>();
-  for (const task of externalTasks) {
-    const layer = resolveLayer(task.id);
-    const list = layerTasks.get(layer) ?? [];
-    list.push(task);
-    layerTasks.set(layer, list);
-  }
-
-  const positions = new Map<string, { x: number; y: number }>();
-
-  for (const [layer, layerTaskList] of layerTasks) {
-    let currentY = baseY;
-    for (const task of layerTaskList) {
-      positions.set(task.id, {
-        x: baseX + layer * columnGap,
-        y: currentY,
-      });
-      const height = getTaskNodeHeight(task);
-      currentY += height + rowGap;
-    }
-  }
-
-  for (const task of externalTasks) {
-    if (!positions.has(task.id)) {
-      const row = positions.size;
-      positions.set(task.id, {
-        x: baseX,
-        y: baseY + row * (getTaskNodeHeight(task) + rowGap),
-      });
-    }
-  }
-
-  return positions;
-}
-
-function isExternalDagTask(
-  task: NonNullable<Requirement["execution_plan"]>["tasks"][number] | undefined,
-) {
-  return (
-    task?.kind === "implementation" ||
-    task?.kind === "branch_merge" ||
-    task?.kind === "merge_review"
-  );
-}
-
-function getTaskNodeHeight(
-  task: NonNullable<Requirement["execution_plan"]>["tasks"][number],
-) {
-  return task.kind === "implementation" ? 300 : 220;
-}
-
-function externalNodeId(
-  task: NonNullable<Requirement["execution_plan"]>["tasks"][number],
-) {
-  return task.kind === "implementation"
-    ? `requirement-task-group-${task.id}`
-    : `requirement-task-${task.id}`;
-}
 
 function FitViewOnGraphChange({
   nodeCount,
@@ -207,7 +35,7 @@ function FitViewOnGraphChange({
 }) {
   const { fitView } = useReactFlow();
 
-  useEffect(() => {
+  React.useEffect(() => {
     const timer = window.setTimeout(() => {
       void fitView({ padding: 0.08, duration: 260 });
     }, 80);
@@ -218,1047 +46,176 @@ function FitViewOnGraphChange({
   return null;
 }
 
+function minimapNodeColor(node: Node<StartNodeData>): string {
+  switch (node.data.kind) {
+    case "create":
+      return "#3b82f6";
+    case "projects":
+      return "#14b8a6";
+    case "project-item":
+      return "#0ea5e9";
+    case "requirement-chat":
+      return "#f97316";
+    case "requirement-list":
+      return node.data.tone === "done" ? "#22c55e" : "#f59e0b";
+    case "requirement-dag":
+      return "#a855f7";
+    case "requirement-task":
+      return "#6366f1";
+    case "model-config":
+    case "summary":
+      return "#f97316";
+    case "delete-confirm":
+      return "#fb7185";
+    default:
+      return "#94a3b8";
+  }
+}
+
 export default function App() {
-  const initialProjectId = projectIdFromPathname(window.location.pathname);
-  const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme());
-  const [startData, setStartData] = useState<StartData>(emptyStartData);
-  const [currentCanvas, setCurrentCanvas] = useState<"start" | "project">(
-    initialProjectId ? "project" : "start",
+  const start = useStartData();
+  const project = useProjectCanvas(
+    start.selectedProjectId,
+    start.currentCanvas,
+    start.setError,
+    start.setCurrentCanvas,
+    start.setSelectedProjectId,
   );
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-    initialProjectId,
+  const requirement = useRequirementFlow(
+    start.selectedProjectId,
+    project.activeRequirementId,
+    project.observedRequirementId,
+    project.setProjectCanvas,
+    project.loadProjectCanvas,
   );
-  const [projectCanvas, setProjectCanvas] = useState<ProjectCanvasData | null>(
-    null,
-  );
-  const [selectedDagRequirementId, setSelectedDagRequirementId] = useState<
-    string | null
-  >(null);
-  const [requirementActionBusyId, setRequirementActionBusyId] = useState<
-    string | null
-  >(null);
-  const [requirementInput, setRequirementInput] = useState("");
-  const [requirementBusy, setRequirementBusy] = useState(false);
-  const [requirementError, setRequirementError] = useState<string | null>(null);
-  const [requirementStreamEvents, setRequirementStreamEvents] = useState<
-    StreamEvent[]
-  >([]);
-  const [requirementConversation, setRequirementConversation] =
-    useState<RequirementConversation | null>(null);
-  const [dismissedPromptRequirementId, setDismissedPromptRequirementId] =
-    useState<string | null>(null);
-  const [clarificationAnswers, setClarificationAnswers] = useState<
-    Record<string, DraftClarificationAnswer>
-  >({});
-  const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [pendingDeleteProject, setPendingDeleteProject] = useState<
-    import("./types/api").Project | null
-  >(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
-  const [models, setModels] = useState<import("./types/api").PiModel[]>([]);
-  const [draftModelSettings, setDraftModelSettings] = useState<ModelSettings>(
-    DEFAULT_MODEL_SETTINGS,
-  );
-  const [modelRpcStatus, setModelRpcStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle");
-  const [modelError, setModelError] = useState<string | null>(null);
-  const [savingModels, setSavingModels] = useState(false);
+  const models = useModelSettings(start.loadStart);
 
-  useEffect(() => {
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
-
-  const loadStart = useCallback(async () => {
-    const data = await fetchStart();
-    setStartData(data);
-  }, []);
-
-  useEffect(() => {
-    loadStart()
-      .catch((reason: unknown) => setError(readError(reason)))
-      .finally(() => setLoading(false));
-  }, [loadStart]);
-
-  const loadProjectCanvas = useCallback(async (projectId: string) => {
-    const data = await getProjectCanvas(projectId);
-    setProjectCanvas(data);
-    return data;
-  }, []);
-
-  const loadRequirementConversation = useCallback(
-    async (requirementId: string) => {
-      const data = await getRequirementConversation(requirementId);
-      setRequirementConversation(data);
-      return data;
-    },
-    [],
+  const startNodes = useMemo(
+    () =>
+      buildStartNodes({
+        startData: start.startData,
+        theme: start.theme,
+        creating: start.creating,
+        error: start.error,
+        pendingDeleteProject: start.pendingDeleteProject,
+        deletingId: start.deletingId,
+        deleteError: start.deleteError,
+        modelSettingsOpen: models.modelSettingsOpen,
+        draftModelSettings: models.draftModelSettings,
+        models: models.models,
+        modelRpcStatus: models.modelRpcStatus,
+        modelError: models.modelError,
+        savingModels: models.savingModels,
+        setTheme: start.setTheme,
+        createProject: start.createProject,
+        requestDeleteProject: start.requestDeleteProject,
+        cancelDeleteProject: start.cancelDeleteProject,
+        confirmDeleteProject: start.confirmDeleteProject,
+        setModelSettingsOpen: models.setModelSettingsOpen,
+        toggleModelSettings: models.toggleModelSettings,
+        updateModelTier: models.updateModelTier,
+        saveModelSettings: models.saveModelSettings,
+        openProjectCanvas: start.openProjectCanvas,
+      }),
+    [
+      start.startData,
+      start.theme,
+      start.creating,
+      start.error,
+      start.pendingDeleteProject,
+      start.deletingId,
+      start.deleteError,
+      start.setTheme,
+      start.createProject,
+      start.requestDeleteProject,
+      start.cancelDeleteProject,
+      start.confirmDeleteProject,
+      start.openProjectCanvas,
+      models.modelSettingsOpen,
+      models.draftModelSettings,
+      models.models,
+      models.modelRpcStatus,
+      models.modelError,
+      models.savingModels,
+      models.setModelSettingsOpen,
+      models.toggleModelSettings,
+      models.updateModelTier,
+      models.saveModelSettings,
+    ],
   );
 
-  const clearProjectCanvasState = useCallback(() => {
-    setProjectCanvas(null);
-    setRequirementInput("");
-    setRequirementError(null);
-    setRequirementStreamEvents([]);
-    setRequirementConversation(null);
-    setDismissedPromptRequirementId(null);
-    setClarificationAnswers({});
-    setSelectedDagRequirementId(null);
-    setRequirementActionBusyId(null);
-  }, []);
-
-  const openProjectCanvas = useCallback(
-    (project: import("./types/api").Project) => {
-      writeBrowserPath(projectCanvasPath(project.id), "push");
-      setCurrentCanvas("project");
-      setSelectedProjectId(project.id);
-      setError(null);
-      clearProjectCanvasState();
-    },
-    [clearProjectCanvasState],
+  const projectNodes = useMemo(
+    () =>
+      buildProjectNodes({
+        projectCanvas: project.projectCanvas,
+        selectedProjectId: start.selectedProjectId,
+        startProjects: start.startData.projects,
+        selectedDagRequirement: project.selectedDagRequirement,
+        selectedDagRequirementId: project.selectedDagRequirementId,
+        observedRequirementId: project.observedRequirementId,
+        collapsedTaskGroups: project.collapsedTaskGroups,
+        requirementActionBusyId: project.requirementActionBusyId,
+        requirementConversation: requirement.requirementConversation,
+        requirementInput: requirement.requirementInput,
+        requirementBusy: requirement.requirementBusy,
+        requirementError: requirement.requirementError,
+        requirementStreamEvents: requirement.requirementStreamEvents,
+        clarificationAnswers: requirement.clarificationAnswers,
+        dismissedPromptRequirementId: requirement.dismissedPromptRequirementId,
+        backToStartCanvas: start.backToStartCanvas,
+        closeDag: project.closeDag,
+        selectDagRequirement: project.selectDagRequirement,
+        planRequirement: project.planRequirement,
+        startExecution: project.startExecution,
+        retryFailedNode: project.retryFailedNode,
+        retryFromNode: project.retryFromNode,
+        rerunReview: project.rerunReview,
+        setRequirementInput: requirement.setRequirementInput,
+        sendRequirementMessage: requirement.sendRequirementMessage,
+        updateClarificationAnswer: requirement.updateClarificationAnswer,
+        submitClarifications: requirement.submitClarifications,
+        confirmRequirement: requirement.confirmRequirement,
+        continueEditingRequirement: requirement.continueEditingRequirement,
+        toggleTaskGroupCollapsed: project.toggleTaskGroupCollapsed,
+      }),
+    [
+      project.projectCanvas,
+      project.selectedDagRequirement,
+      project.selectedDagRequirementId,
+      project.observedRequirementId,
+      project.collapsedTaskGroups,
+      project.requirementActionBusyId,
+      project.closeDag,
+      project.selectDagRequirement,
+      project.planRequirement,
+      project.startExecution,
+      project.retryFailedNode,
+      project.retryFromNode,
+      project.rerunReview,
+      project.toggleTaskGroupCollapsed,
+      start.selectedProjectId,
+      start.startData.projects,
+      start.backToStartCanvas,
+      requirement.requirementConversation,
+      requirement.requirementInput,
+      requirement.requirementBusy,
+      requirement.requirementError,
+      requirement.requirementStreamEvents,
+      requirement.clarificationAnswers,
+      requirement.dismissedPromptRequirementId,
+      requirement.setRequirementInput,
+      requirement.sendRequirementMessage,
+      requirement.updateClarificationAnswer,
+      requirement.submitClarifications,
+      requirement.confirmRequirement,
+      requirement.continueEditingRequirement,
+    ],
   );
 
-  const backToStartCanvas = useCallback(() => {
-    writeBrowserPath("/", "push");
-    setCurrentCanvas("start");
-    setSelectedProjectId(null);
-    clearProjectCanvasState();
-    void loadStart();
-  }, [clearProjectCanvasState, loadStart]);
-
-  useEffect(() => {
-    if (currentCanvas !== "project" || !selectedProjectId) {
-      return;
-    }
-
-    let cancelled = false;
-    setRequirementError(null);
-    void loadProjectCanvas(selectedProjectId)
-      .then(() => {
-        if (!cancelled) {
-          setError(null);
-        }
-      })
-      .catch((reason) => {
-        if (cancelled) return;
-        setError(readError(reason));
-        writeBrowserPath("/", "replace");
-        setCurrentCanvas("start");
-        setSelectedProjectId(null);
-        clearProjectCanvasState();
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    clearProjectCanvasState,
-    currentCanvas,
-    loadProjectCanvas,
-    selectedProjectId,
-  ]);
-
-  useEffect(() => {
-    const handlePopState = () => {
-      const projectId = projectIdFromPathname(window.location.pathname);
-      if (projectId) {
-        setCurrentCanvas("project");
-        setSelectedProjectId(projectId);
-        clearProjectCanvasState();
-        return;
-      }
-
-      setCurrentCanvas("start");
-      setSelectedProjectId(null);
-      clearProjectCanvasState();
-      void loadStart();
-    };
-
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, [clearProjectCanvasState, loadStart]);
-
-  const allProjectRequirements = useMemo(() => {
-    const requirements = [
-      ...(projectCanvas?.active_requirement
-        ? [projectCanvas.active_requirement]
-        : []),
-      ...(projectCanvas?.queued_requirements ?? []),
-      ...(projectCanvas?.completed_requirements ?? []),
-    ];
-    return requirements.filter(
-      (requirement, index, list) =>
-        list.findIndex((item) => item.id === requirement.id) === index,
-    );
-  }, [projectCanvas]);
-
-  const activeRequirementId = projectCanvas?.active_requirement?.id ?? null;
-  const selectedDagRequirement =
-    allProjectRequirements.find(
-      (requirement) => requirement.id === selectedDagRequirementId,
-    ) ?? null;
-  const observedRequirementId = selectedDagRequirementId ?? activeRequirementId;
-
-  useEffect(() => {
-    setRequirementStreamEvents([]);
-    setClarificationAnswers({});
-    setDismissedPromptRequirementId(null);
-    if (activeRequirementId) {
-      void loadRequirementConversation(activeRequirementId).catch((reason) =>
-        setRequirementError(readError(reason)),
-      );
-      return;
-    }
-    setRequirementConversation(null);
-  }, [activeRequirementId, loadRequirementConversation]);
-
-  useEffect(() => {
-    if (
-      selectedDagRequirementId &&
-      projectCanvas &&
-      !allProjectRequirements.some(
-        (requirement) => requirement.id === selectedDagRequirementId,
-      )
-    ) {
-      setSelectedDagRequirementId(null);
-    }
-  }, [allProjectRequirements, projectCanvas, selectedDagRequirementId]);
-
-  useEffect(() => {
-    if (!observedRequirementId || !selectedProjectId) {
-      return;
-    }
-
-    const source = new EventSource(
-      `/api/requirements/${encodeURIComponent(observedRequirementId)}/events`,
-    );
-
-    const handleEvent = (event: MessageEvent<string>) => {
-      try {
-        const parsed = JSON.parse(event.data) as StreamEvent;
-        if (parsed.requirement_id === activeRequirementId) {
-          setRequirementStreamEvents((current) => [...current, parsed]);
-        }
-
-        const transient =
-          parsed.event === "coordinator_started" ||
-          parsed.event === "coordinator_progress" ||
-          parsed.event === "pi_event";
-        if (!transient) {
-          void Promise.all([
-            loadProjectCanvas(selectedProjectId),
-            loadRequirementConversation(parsed.requirement_id),
-          ]).catch((reason) => setRequirementError(readError(reason)));
-        }
-      } catch {
-        // ignore parse errors
-      }
-    };
-
-    source.onmessage = handleEvent;
-    for (const eventName of [
-      "coordinator_started",
-      "coordinator_progress",
-      "pi_event",
-      "clarifications_ready",
-      "draft_ready",
-      "analysis_failed",
-      "execution_planning_started",
-      "execution_plan_ready",
-      "execution_plan_failed",
-      "execution_started",
-      "execution_task_started",
-      "execution_task_completed",
-      "execution_completed",
-      "execution_failed",
-    ]) {
-      source.addEventListener(eventName, handleEvent);
-    }
-
-    return () => source.close();
-  }, [
-    activeRequirementId,
-    loadRequirementConversation,
-    loadProjectCanvas,
-    observedRequirementId,
-    selectedProjectId,
-  ]);
-
-  const loadModelSettings = useCallback(async () => {
-    setModelRpcStatus("loading");
-    setModelError(null);
-
-    try {
-      const data = await getModelSettings();
-      setModels(data.models);
-      setDraftModelSettings(data.settings);
-      setModelRpcStatus(data.rpc_status);
-      setModelError(data.rpc_error);
-    } catch (reason) {
-      setModels([]);
-      setModelRpcStatus("error");
-      setModelError(readError(reason));
-    }
-  }, []);
-
-  const toggleModelSettings = useCallback(() => {
-    setModelSettingsOpen((open) => {
-      if (open) {
-        return false;
-      }
-
-      void loadModelSettings();
-      return true;
-    });
-  }, [loadModelSettings]);
-
-  const updateModelTier = useCallback(
-    (tier: ModelTierKey, setting: ModelTierSetting) => {
-      setDraftModelSettings((current) => ({
-        ...current,
-        [tier]: setting,
-      }));
-    },
-    [],
-  );
-
-  const saveModelSettingsCallback = useCallback(async () => {
-    setSavingModels(true);
-    setModelError(null);
-
-    try {
-      const data = await saveModelSettings(draftModelSettings);
-      setModels(data.models);
-      setDraftModelSettings(data.settings);
-      setModelRpcStatus(data.rpc_status);
-      setModelError(data.rpc_error);
-      await loadStart();
-      setModelSettingsOpen(false);
-    } catch (reason) {
-      setModelError(readError(reason));
-    } finally {
-      setSavingModels(false);
-    }
-  }, [draftModelSettings, loadStart]);
-
-  const createProject = useCallback(
-    async (name: string, gitUrl: string) => {
-      setCreating(true);
-      setError(null);
-
-      try {
-        await apiCreateProject(name, gitUrl);
-        await loadStart();
-      } catch (reason) {
-        setError(readError(reason));
-      } finally {
-        setCreating(false);
-      }
-    },
-    [loadStart],
-  );
-
-  const requestDeleteProject = useCallback(
-    (project: import("./types/api").Project) => {
-      setPendingDeleteProject(project);
-      setDeleteError(null);
-    },
-    [],
-  );
-
-  const cancelDeleteProject = useCallback(() => {
-    setPendingDeleteProject(null);
-    setDeleteError(null);
-  }, []);
-
-  const confirmDeleteProject = useCallback(
-    async (project: import("./types/api").Project) => {
-      setDeletingId(project.id);
-      setDeleteError(null);
-
-      try {
-        await apiDeleteProject(project.id);
-        await loadStart();
-        setPendingDeleteProject(null);
-      } catch (reason) {
-        setDeleteError(readError(reason));
-      } finally {
-        setDeletingId(null);
-      }
-    },
-    [loadStart],
-  );
-
-  const sendRequirementMessage = useCallback(async () => {
-    const message = requirementInput.trim();
-    if (!message || !selectedProjectId) {
-      return;
-    }
-
-    setRequirementBusy(true);
-    setRequirementError(null);
-    try {
-      const active = projectCanvas?.active_requirement;
-      const data = active
-        ? await appendRequirementMessage(active.id, message)
-        : await createRequirement(selectedProjectId, message);
-      setRequirementStreamEvents([]);
-      setClarificationAnswers({});
-      setDismissedPromptRequirementId(null);
-      setProjectCanvas(data);
-      if (data.active_requirement) {
-        void loadRequirementConversation(data.active_requirement.id).catch(
-          (reason) => setRequirementError(readError(reason)),
-        );
-      } else {
-        setRequirementConversation(null);
-      }
-      setRequirementInput("");
-    } catch (reason) {
-      setRequirementError(readError(reason));
-    } finally {
-      setRequirementBusy(false);
-    }
-  }, [
-    loadRequirementConversation,
-    projectCanvas,
-    requirementInput,
-    selectedProjectId,
-  ]);
-
-  const updateClarificationAnswer = useCallback(
-    (
-      clarification: RequirementClarification,
-      answer: DraftClarificationAnswer,
-    ) => {
-      setClarificationAnswers((current) => ({
-        ...current,
-        [clarification.id]: answer,
-      }));
-    },
-    [],
-  );
-
-  const submitClarifications = useCallback(
-    async (requirement: Requirement) => {
-      setRequirementBusy(true);
-      setRequirementError(null);
-      try {
-        const answers = requirement.clarifications.map((clarification) =>
-          buildClarificationAnswerPayload(
-            clarification,
-            clarificationAnswers[clarification.id] ?? {
-              selectedOptions: clarification.answer?.selected_options ?? [],
-              customText: clarification.answer?.custom_text ?? "",
-            },
-          ),
-        );
-        const data = await submitRequirementClarifications(
-          requirement.id,
-          answers,
-        );
-        setRequirementStreamEvents([]);
-        setClarificationAnswers({});
-        setDismissedPromptRequirementId(null);
-        setProjectCanvas(data);
-        if (data.active_requirement) {
-          void loadRequirementConversation(data.active_requirement.id).catch(
-            (reason) => setRequirementError(readError(reason)),
-          );
-        }
-      } catch (reason) {
-        setRequirementError(readError(reason));
-      } finally {
-        setRequirementBusy(false);
-      }
-    },
-    [clarificationAnswers, loadRequirementConversation],
-  );
-
-  const confirmRequirementCallback = useCallback(
-    async (requirement: Requirement) => {
-      setRequirementBusy(true);
-      setRequirementError(null);
-      try {
-        const data = await confirmRequirement(requirement.id);
-        setDismissedPromptRequirementId(null);
-        setProjectCanvas(data);
-        if (data.active_requirement) {
-          void loadRequirementConversation(data.active_requirement.id).catch(
-            (reason) => setRequirementError(readError(reason)),
-          );
-        } else {
-          setRequirementConversation(null);
-        }
-      } catch (reason) {
-        setRequirementError(readError(reason));
-      } finally {
-        setRequirementBusy(false);
-      }
-    },
-    [loadRequirementConversation],
-  );
-
-  const continueEditingRequirement = useCallback((requirement: Requirement) => {
-    setDismissedPromptRequirementId(requirement.id);
-  }, []);
-
-  const selectDagRequirement = useCallback((requirement: Requirement) => {
-    setSelectedDagRequirementId(requirement.id);
-  }, []);
-
-  const closeDag = useCallback(() => {
-    setSelectedDagRequirementId(null);
-  }, []);
-
-  const planRequirementCallback = useCallback(
-    async (requirement: Requirement) => {
-      setSelectedDagRequirementId(requirement.id);
-      setRequirementActionBusyId(requirement.id);
-      setRequirementError(null);
-      try {
-        const data = await planRequirementExecution(requirement.id);
-        setProjectCanvas(data);
-      } catch (reason) {
-        setRequirementError(readError(reason));
-      } finally {
-        setRequirementActionBusyId(null);
-      }
-    },
-    [],
-  );
-
-  const startRequirementExecutionCallback = useCallback(
-    async (requirement: Requirement) => {
-      setSelectedDagRequirementId(requirement.id);
-      setRequirementActionBusyId(requirement.id);
-      setRequirementError(null);
-      try {
-        const data = await startRequirementExecution(requirement.id);
-        setProjectCanvas(data);
-      } catch (reason) {
-        setRequirementError(readError(reason));
-      } finally {
-        setRequirementActionBusyId(null);
-      }
-    },
-    [],
-  );
-
-  const runTaskRecoveryAction = useCallback(
-    async (
-      requirementId: string,
-      taskId: string,
-      action: (
-        requirementId: string,
-        taskId: string,
-      ) => Promise<ProjectCanvasData>,
-    ) => {
-      setRequirementActionBusyId(requirementId);
-      setRequirementError(null);
-      try {
-        const data = await action(requirementId, taskId);
-        setProjectCanvas(data);
-      } catch (reason) {
-        setRequirementError(readError(reason));
-      } finally {
-        setRequirementActionBusyId(null);
-      }
-    },
-    [],
-  );
-
-  const retryFailedNodeCallback = useCallback(
-    (requirementId: string, taskId: string) =>
-      runTaskRecoveryAction(requirementId, taskId, retryFailedNode),
-    [runTaskRecoveryAction],
-  );
-
-  const retryFromNodeCallback = useCallback(
-    (requirementId: string, taskId: string) =>
-      runTaskRecoveryAction(requirementId, taskId, retryFromNode),
-    [runTaskRecoveryAction],
-  );
-
-  const rerunReviewCallback = useCallback(
-    (requirementId: string, taskId: string) =>
-      runTaskRecoveryAction(requirementId, taskId, rerunReview),
-    [runTaskRecoveryAction],
-  );
-
-  const projectNodes = useMemo<Node<StartNodeData>[]>(() => {
-    const fallbackProject = selectedProjectId
-      ? startData.projects.find((project) => project.id === selectedProjectId)
-      : null;
-    const project = projectCanvas?.project ?? fallbackProject;
-    if (!project) {
-      return [];
-    }
-    const taskLayout = getTaskLayout(
-      selectedDagRequirement?.execution_plan?.tasks ?? [],
-    );
-    const selectedTasks = selectedDagRequirement?.execution_plan?.tasks ?? [];
-    const reviewTasksByTarget = new Map<string, typeof selectedTasks>();
-    for (const reviewTask of selectedTasks) {
-      if (
-        (reviewTask.kind !== "review" &&
-          reviewTask.kind !== "review_summary" &&
-          reviewTask.kind !== "review_sub_agent") ||
-        !reviewTask.review_for
-      ) {
-        continue;
-      }
-      const reviews = reviewTasksByTarget.get(reviewTask.review_for) ?? [];
-      reviews.push(reviewTask);
-      reviewTasksByTarget.set(reviewTask.review_for, reviews);
-    }
-    const implementationTasks = selectedTasks.filter(
-      (task) => task.kind === "implementation",
-    );
-    const standaloneExecutionTasks = selectedTasks.filter(
-      (task) => task.kind === "branch_merge" || task.kind === "merge_review",
-    );
-    const dagFocused = Boolean(selectedDagRequirement);
-    const projectControlX = dagFocused ? -420 : -328;
-
-    return [
-      {
-        id: "project-github",
-        type: "startNode",
-        position: { x: projectControlX, y: -84 },
-        data: {
-          kind: "project-github",
-          project,
-        },
-      },
-      {
-        id: "project-back",
-        type: "startNode",
-        position: { x: projectControlX, y: 20 },
-        data: {
-          kind: "project-back",
-          project,
-          onBack: backToStartCanvas,
-        },
-      },
-      {
-        id: "completed-requirements",
-        type: "startNode",
-        position: dagFocused ? { x: -420, y: 140 } : { x: -350, y: 140 },
-        data: {
-          kind: "requirement-list",
-          title: "已完成需求",
-          description: `${projectCanvas?.completed_requirements.length ?? 0} 个`,
-          requirements: projectCanvas?.completed_requirements ?? [],
-          emptyText: "暂无已完成需求",
-          tone: "done",
-          selectedRequirementId: selectedDagRequirementId,
-          busyRequirementId: requirementActionBusyId,
-          onSelectRequirement: selectDagRequirement,
-          onPlanRequirement: planRequirementCallback,
-        },
-      },
-      ...(!dagFocused
-        ? [
-            {
-              id: "requirement-chat",
-              type: "startNode" as const,
-              position: { x: 0, y: 20 },
-              data: {
-                kind: "requirement-chat" as const,
-                project,
-                requirement: projectCanvas?.active_requirement ?? null,
-                conversation: requirementConversation,
-                promptDismissed:
-                  dismissedPromptRequirementId ===
-                  (projectCanvas?.active_requirement?.id ?? null),
-                input: requirementInput,
-                busy: requirementBusy,
-                error: requirementError,
-                streamEvents: requirementStreamEvents,
-                answers: clarificationAnswers,
-                onInputChange: setRequirementInput,
-                onSend: sendRequirementMessage,
-                onAnswerChange: updateClarificationAnswer,
-                onSubmitClarifications: submitClarifications,
-                onConfirm: confirmRequirementCallback,
-                onContinueEditing: continueEditingRequirement,
-              },
-            },
-          ]
-        : []),
-      {
-        id: "queued-requirements",
-        type: "startNode",
-        position: dagFocused ? { x: -100, y: 140 } : { x: 780, y: 140 },
-        data: {
-          kind: "requirement-list",
-          title: "待执行 / 执行中",
-          description: `${projectCanvas?.queued_requirements.length ?? 0} 个`,
-          requirements: projectCanvas?.queued_requirements ?? [],
-          emptyText: "确认需求后会进入这里",
-          tone: "pending",
-          selectedRequirementId: selectedDagRequirementId,
-          busyRequirementId: requirementActionBusyId,
-          onSelectRequirement: selectDagRequirement,
-          onPlanRequirement: planRequirementCallback,
-        },
-      },
-      ...(selectedDagRequirement
-        ? [
-            {
-              id: "requirement-dag",
-              type: "startNode" as const,
-              position: { x: 280, y: 80 },
-              data: {
-                kind: "requirement-dag" as const,
-                requirement: selectedDagRequirement,
-                busy: requirementActionBusyId === selectedDagRequirement.id,
-                onStartExecution: startRequirementExecutionCallback,
-                onClose: closeDag,
-              },
-            },
-            ...implementationTasks.flatMap((task) => {
-              const reviews = reviewTasksByTarget.get(task.id) ?? [];
-              const summary = reviews.find(
-                (review) => review.kind === "review_summary",
-              );
-              const subAgents = reviews.filter(
-                (review) =>
-                  review.kind === "review_sub_agent" ||
-                  review.kind === "review",
-              );
-              const groupId = `requirement-task-group-${task.id}`;
-              return [
-                {
-                  id: groupId,
-                  type: "startNode" as const,
-                  position: taskLayout.get(task.id) ?? { x: 720, y: 60 },
-                  style: {
-                    width: 590,
-                    height: getTaskNodeHeight(task),
-                  },
-                  data: {
-                    kind: "requirement-task" as const,
-                    nodeRole: "group" as const,
-                    requirementId: selectedDagRequirement.id,
-                    task,
-                    reviews,
-                    streamEvents:
-                      selectedDagRequirement.id === observedRequirementId
-                        ? requirementStreamEvents
-                        : [],
-                    busy: requirementActionBusyId === selectedDagRequirement.id,
-                    onRetryFailedNode: retryFailedNodeCallback,
-                    onRetryFromNode: retryFromNodeCallback,
-                    onRerunReview: rerunReviewCallback,
-                  },
-                },
-                {
-                  id: `requirement-task-${task.id}`,
-                  type: "startNode" as const,
-                  parentId: groupId,
-                  extent: "parent" as const,
-                  position: { x: 20, y: 108 },
-                  style: {
-                    width: 142,
-                    height: 142,
-                  },
-                  data: {
-                    kind: "requirement-task" as const,
-                    nodeRole: "code" as const,
-                    requirementId: selectedDagRequirement.id,
-                    task,
-                    reviews,
-                    streamEvents:
-                      selectedDagRequirement.id === observedRequirementId
-                        ? requirementStreamEvents
-                        : [],
-                    busy: requirementActionBusyId === selectedDagRequirement.id,
-                    onRetryFailedNode: retryFailedNodeCallback,
-                    onRetryFromNode: retryFromNodeCallback,
-                    onRerunReview: rerunReviewCallback,
-                  },
-                },
-                ...(summary
-                  ? [
-                      {
-                        id: `requirement-task-${summary.id}`,
-                        type: "startNode" as const,
-                        parentId: groupId,
-                        extent: "parent" as const,
-                        position: { x: 198, y: 108 },
-                        style: {
-                          width: 142,
-                          height: 142,
-                        },
-                        data: {
-                          kind: "requirement-task" as const,
-                          nodeRole: "review_summary" as const,
-                          requirementId: selectedDagRequirement.id,
-                          task: summary,
-                          reviews: subAgents,
-                          streamEvents:
-                            selectedDagRequirement.id === observedRequirementId
-                              ? requirementStreamEvents
-                              : [],
-                          busy:
-                            requirementActionBusyId ===
-                            selectedDagRequirement.id,
-                          onRetryFailedNode: retryFailedNodeCallback,
-                          onRetryFromNode: retryFromNodeCallback,
-                          onRerunReview: rerunReviewCallback,
-                        },
-                      },
-                    ]
-                  : []),
-                ...subAgents.map((review, index) => ({
-                  id: `requirement-task-${review.id}`,
-                  type: "startNode" as const,
-                  parentId: groupId,
-                  extent: "parent" as const,
-                  position: { x: 400, y: 82 + index * 66 },
-                  style: {
-                    width: 140,
-                    height: 52,
-                  },
-                  data: {
-                    kind: "requirement-task" as const,
-                    nodeRole: "review_sub_agent" as const,
-                    requirementId: selectedDagRequirement.id,
-                    task: review,
-                    reviews: [],
-                    streamEvents:
-                      selectedDagRequirement.id === observedRequirementId
-                        ? requirementStreamEvents
-                        : [],
-                    busy: requirementActionBusyId === selectedDagRequirement.id,
-                    onRetryFailedNode: retryFailedNodeCallback,
-                    onRetryFromNode: retryFromNodeCallback,
-                    onRerunReview: rerunReviewCallback,
-                  },
-                })),
-              ];
-            }),
-            ...standaloneExecutionTasks.map((task) => ({
-              id: `requirement-task-${task.id}`,
-              type: "startNode" as const,
-              position: taskLayout.get(task.id) ?? { x: 720, y: 60 },
-              style: {
-                width: 380,
-                height: getTaskNodeHeight(task),
-              },
-              data: {
-                kind: "requirement-task" as const,
-                nodeRole: "external" as const,
-                requirementId: selectedDagRequirement.id,
-                task,
-                reviews: [],
-                streamEvents:
-                  selectedDagRequirement.id === observedRequirementId
-                    ? requirementStreamEvents
-                    : [],
-                busy: requirementActionBusyId === selectedDagRequirement.id,
-                onRetryFailedNode: retryFailedNodeCallback,
-                onRetryFromNode: retryFromNodeCallback,
-                onRerunReview: rerunReviewCallback,
-              },
-            })),
-          ]
-        : []),
-    ];
-  }, [
-    backToStartCanvas,
-    closeDag,
-    confirmRequirementCallback,
-    continueEditingRequirement,
-    clarificationAnswers,
-    dismissedPromptRequirementId,
-    planRequirementCallback,
-    projectCanvas,
-    requirementConversation,
-    requirementActionBusyId,
-    requirementBusy,
-    requirementError,
-    requirementInput,
-    requirementStreamEvents,
-    observedRequirementId,
-    rerunReviewCallback,
-    retryFailedNodeCallback,
-    retryFromNodeCallback,
-    selectedDagRequirement,
-    selectedDagRequirementId,
-    selectedProjectId,
-    selectDagRequirement,
-    sendRequirementMessage,
-    startRequirementExecutionCallback,
-    startData.projects,
-    submitClarifications,
-    updateClarificationAnswer,
-  ]);
-
-  const startNodes = useMemo<Node<StartNodeData>[]>(() => {
-    const projectListHeight = getProjectListHeight(startData.projects.length);
-
-    const baseNodes: Node<StartNodeData>[] = [
-      {
-        id: "style-settings",
-        type: "startNode",
-        position: { x: 80, y: 80 },
-        data: {
-          kind: "style-settings",
-          theme,
-          onThemeChange: setTheme,
-        },
-      },
-      {
-        id: "model-settings",
-        type: "startNode",
-        position: { x: 80, y: 245 },
-        data: {
-          kind: "summary",
-          icon: "model",
-          title: startData.model_summary.title,
-          description: startData.model_summary.description,
-          onAction: toggleModelSettings,
-        },
-      },
-      {
-        id: "create-project",
-        type: "startNode",
-        position: { x: 390, y: 80 },
-        data: {
-          kind: "create",
-          onCreate: createProject,
-          busy: creating,
-          error,
-        },
-      },
-      {
-        id: "project-list",
-        type: "startNode",
-        position: { x: 390, y: PROJECT_LIST_Y },
-        style: {
-          width: PROJECT_LIST_WIDTH,
-          height: projectListHeight,
-        },
-        data: {
-          kind: "projects",
-          projectCount: startData.projects.length,
-        },
-      },
-    ];
-
-    startData.projects.forEach((project, index) => {
-      baseNodes.push({
-        id: `project-item-${project.id}`,
-        type: "startNode",
-        parentId: "project-list",
-        extent: "parent",
-        position: {
-          x: 36,
-          y:
-            PROJECT_ITEM_TOP + index * (PROJECT_ITEM_HEIGHT + PROJECT_ITEM_GAP),
-        },
-        style: {
-          width: PROJECT_ITEM_WIDTH,
-          height: PROJECT_ITEM_HEIGHT,
-        },
-        data: {
-          kind: "project-item",
-          project,
-          deletingId,
-          pendingDeleteProjectId: pendingDeleteProject?.id ?? null,
-          onOpenProject: openProjectCanvas,
-          onDeleteRequest: requestDeleteProject,
-        },
-      });
-    });
-
-    if (pendingDeleteProject) {
-      const projectIndex = startData.projects.findIndex(
-        (project) => project.id === pendingDeleteProject.id,
-      );
-
-      baseNodes.push({
-        id: `delete-confirm-${pendingDeleteProject.id}`,
-        type: "startNode",
-        position: {
-          x: 860,
-          y: clamp(
-            PROJECT_LIST_Y +
-              PROJECT_ITEM_TOP +
-              Math.max(projectIndex, 0) *
-                (PROJECT_ITEM_HEIGHT + PROJECT_ITEM_GAP),
-            DELETE_CONFIRM_MIN_Y,
-            DELETE_CONFIRM_MAX_Y,
-          ),
-        },
-        data: {
-          kind: "delete-confirm",
-          project: pendingDeleteProject,
-          deleting: deletingId === pendingDeleteProject.id,
-          error: deleteError,
-          onCancel: cancelDeleteProject,
-          onConfirm: confirmDeleteProject,
-        },
-      });
-    }
-
-    if (modelSettingsOpen) {
-      baseNodes.push({
-        id: "model-config",
-        type: "startNode",
-        position: { x: -320, y: 80 },
-        data: {
-          kind: "model-config",
-          settings: draftModelSettings,
-          models,
-          rpcStatus: modelRpcStatus,
-          error: modelError,
-          saving: savingModels,
-          onChange: updateModelTier,
-          onClose: () => setModelSettingsOpen(false),
-          onSave: saveModelSettingsCallback,
-        },
-      });
-    }
-
-    return baseNodes;
-  }, [
-    cancelDeleteProject,
-    confirmDeleteProject,
-    createProject,
-    creating,
-    deleteError,
-    deletingId,
-    draftModelSettings,
-    error,
-    modelError,
-    modelRpcStatus,
-    modelSettingsOpen,
-    models,
-    pendingDeleteProject,
-    openProjectCanvas,
-    requestDeleteProject,
-    saveModelSettingsCallback,
-    savingModels,
-    setModelSettingsOpen,
-    startData,
-    theme,
-    toggleModelSettings,
-    updateModelTier,
-  ]);
-
-  const nodes = currentCanvas === "project" ? projectNodes : startNodes;
+  const nodes = start.currentCanvas === "project" ? projectNodes : startNodes;
 
   const projectEdges = useMemo<Edge[]>(() => {
-    const flowEdges: Edge[] = selectedDagRequirement
+    const flowEdges: Edge[] = project.selectedDagRequirement
       ? []
       : [
           {
@@ -1289,132 +246,17 @@ export default function App() {
           },
         ];
 
-    if (selectedDagRequirement) {
-      const sourceList =
-        selectedDagRequirement.status === "completed"
-          ? "completed-requirements"
-          : "queued-requirements";
-      flowEdges.push({
-        id: `${sourceList}-to-requirement-dag`,
-        source: sourceList,
-        sourceHandle: "requirement-list-right",
-        target: "requirement-dag",
-        targetHandle: "requirement-dag-left",
-        type: "smoothstep",
-        animated: true,
-        style: {
-          stroke: "rgba(249, 115, 22, 0.68)",
-          strokeWidth: 2,
-        },
-      });
-
-      const tasks = selectedDagRequirement.execution_plan?.tasks ?? [];
-      const taskById = new Map(tasks.map((task) => [task.id, task]));
-      const externalTasks = tasks.filter(isExternalDagTask);
-
-      for (const task of externalTasks) {
-        const externalDependencies = task.depends_on.filter((dependency) =>
-          isExternalDagTask(taskById.get(dependency)),
-        );
-
-        if (externalDependencies.length === 0) {
-          flowEdges.push({
-            id: `requirement-dag-to-task-${task.id}`,
-            source: "requirement-dag",
-            sourceHandle: "requirement-dag-entry",
-            target: externalNodeId(task),
-            targetHandle: "requirement-task-left",
-            type: "smoothstep",
-            animated: task.status === "running",
-            style: {
-              stroke: "rgba(249, 115, 22, 0.64)",
-              strokeWidth: 2,
-            },
-          });
-        }
-
-        for (const dependency of externalDependencies) {
-          const dependencyTask = taskById.get(dependency);
-          if (!dependencyTask) continue;
-          flowEdges.push({
-            id: `requirement-task-${dependency}-to-${task.id}`,
-            source: externalNodeId(dependencyTask),
-            sourceHandle: "requirement-task-right",
-            target: externalNodeId(task),
-            targetHandle: "requirement-task-left",
-            type: "smoothstep",
-            animated: task.status === "running",
-            style: {
-              stroke: "rgba(20, 184, 166, 0.62)",
-              strokeWidth: 2,
-            },
-          });
-        }
-      }
-
-      const implementationTasks = tasks.filter(
-        (task) => task.kind === "implementation",
+    if (project.selectedDagRequirement) {
+      flowEdges.push(
+        ...buildRequirementDagEdges(
+          project.selectedDagRequirement,
+          project.collapsedTaskGroups,
+        ),
       );
-      for (const task of implementationTasks) {
-        const reviews = tasks.filter((review) => review.review_for === task.id);
-        const summary = reviews.find(
-          (review) => review.kind === "review_summary",
-        );
-        const subAgents = reviews.filter(
-          (review) =>
-            review.kind === "review_sub_agent" || review.kind === "review",
-        );
-        if (!summary) continue;
-        flowEdges.push({
-          id: `requirement-task-${task.id}-to-${summary.id}`,
-          source: `requirement-task-${task.id}`,
-          sourceHandle: "requirement-task-right",
-          target: `requirement-task-${summary.id}`,
-          targetHandle: "requirement-task-left",
-          type: "straight",
-          animated: summary.status === "running",
-          markerStart: {
-            type: MarkerType.ArrowClosed,
-            color: "rgba(20, 184, 166, 0.62)",
-          },
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            color: "rgba(20, 184, 166, 0.62)",
-          },
-          style: {
-            stroke: "rgba(20, 184, 166, 0.62)",
-            strokeWidth: 1.4,
-          },
-        });
-        for (const review of subAgents) {
-          flowEdges.push({
-            id: `requirement-task-${summary.id}-to-${review.id}`,
-            source: `requirement-task-${summary.id}`,
-            sourceHandle: "requirement-task-right",
-            target: `requirement-task-${review.id}`,
-            targetHandle: "requirement-task-left",
-            type: "straight",
-            animated:
-              review.status === "running" || summary.status === "running",
-            markerStart: {
-              type: MarkerType.ArrowClosed,
-              color: "rgba(99, 102, 241, 0.58)",
-            },
-            markerEnd: {
-              type: MarkerType.ArrowClosed,
-              color: "rgba(99, 102, 241, 0.58)",
-            },
-            style: {
-              stroke: "rgba(99, 102, 241, 0.58)",
-              strokeWidth: 1.3,
-            },
-          });
-        }
-      }
     }
 
     return flowEdges;
-  }, [selectedDagRequirement]);
+  }, [project.selectedDagRequirement, project.collapsedTaskGroups]);
 
   const startEdges = useMemo<Edge[]>(() => {
     const flowEdges: Edge[] = [
@@ -1433,12 +275,12 @@ export default function App() {
       },
     ];
 
-    if (pendingDeleteProject) {
+    if (start.pendingDeleteProject) {
       flowEdges.push({
-        id: `project-item-delete-confirm-${pendingDeleteProject.id}`,
-        source: `project-item-${pendingDeleteProject.id}`,
+        id: `project-item-delete-confirm-${start.pendingDeleteProject.id}`,
+        source: `project-item-${start.pendingDeleteProject.id}`,
         sourceHandle: "delete-right",
-        target: `delete-confirm-${pendingDeleteProject.id}`,
+        target: `delete-confirm-${start.pendingDeleteProject.id}`,
         targetHandle: "delete-left",
         type: "smoothstep",
         animated: true,
@@ -1450,7 +292,7 @@ export default function App() {
       });
     }
 
-    if (modelSettingsOpen) {
+    if (models.modelSettingsOpen) {
       flowEdges.push({
         id: "model-settings-to-model-config",
         source: "model-settings",
@@ -1467,22 +309,22 @@ export default function App() {
     }
 
     return flowEdges;
-  }, [modelSettingsOpen, pendingDeleteProject]);
+  }, [start.pendingDeleteProject, models.modelSettingsOpen]);
 
-  const edges = currentCanvas === "project" ? projectEdges : startEdges;
+  const edges = start.currentCanvas === "project" ? projectEdges : startEdges;
 
   return (
-    <main className="app-shell" data-theme={theme}>
+    <main className="app-shell" data-theme={start.theme}>
       <section className="toolbar">
         <div>
           <h1>Raccoon Node</h1>
           <p>
-            {currentCanvas === "project" && projectCanvas
-              ? `${projectCanvas.project.name} / 项目画布`
+            {start.currentCanvas === "project" && project.projectCanvas
+              ? `${project.projectCanvas.project.name} / 项目画布`
               : "Start 画布"}
           </p>
         </div>
-        <div className="status-pill">{loading ? "加载中" : "已连接"}</div>
+        <div className="status-pill">{start.loading ? "加载中" : "已连接"}</div>
       </section>
       <section className="canvas-shell">
         <ReactFlowProvider>
@@ -1492,11 +334,14 @@ export default function App() {
             nodeTypes={nodeTypes}
             fitView
             fitViewOptions={{ padding: 0.08 }}
-            minZoom={0.12}
-            maxZoom={1.5}
+            minZoom={0.05}
+            maxZoom={2}
             nodesDraggable
             nodesConnectable={false}
             elementsSelectable
+            panOnScroll
+            panActivationKeyCode="Space"
+            selectionOnDrag
             defaultEdgeOptions={{
               type: "smoothstep",
               style: { strokeWidth: 2 },
@@ -1508,6 +353,14 @@ export default function App() {
             }}
           >
             <Background color="rgba(148, 163, 184, 0.18)" gap={24} />
+            <MiniMap
+              position="bottom-left"
+              pannable
+              zoomable
+              nodeColor={minimapNodeColor}
+              nodeStrokeWidth={2}
+              nodeStrokeColor="rgba(255, 255, 255, 0.5)"
+            />
             <Controls position="bottom-right" />
             <FitViewOnGraphChange
               nodeCount={nodes.length}
