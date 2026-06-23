@@ -42,10 +42,13 @@ JSON 格式：
 }}
 
 要求：
-- tasks 数量 2-8 个。
+- tasks 数量 1-8 个。
 - id 必须稳定、唯一，只能使用小写字母、数字、短横线和下划线。
 - depends_on 只能引用已有任务 id，不能形成环。
 - 每个任务必须是写代码实现任务，审核、分支合并和最终合并审核由系统自动补齐。
+- 禁止生成纯审核、纯校验、纯检查、纯原因分析任务。
+- check.js、残留字符串检查、代码质量检查只能作为实现任务的验证标准，不能单独成任务。
+- 简单命名、文案、单点修改优先生成 1 个实现任务。
 - target_files 不确定时可以使用目录级路径或空数组。
 - 每个任务必须能产生独立、可审查的 diff；如果两个功能天然必须一起实现，就合并成一个任务，不要硬拆。
 - description 必须明确写出：本任务只做什么、明确不做什么、完成后如何验证。
@@ -147,6 +150,7 @@ pub fn build_requirement_task_prompt(
 - 只允许实现“当前任务”描述中明确要求的内容。
 - 只能修改目标文件范围：{target_files_for_boundary}。
 - 禁止提前实现、补全或顺手优化后续未完成任务。
+- 当前任务必须自己完成描述中的改名/文案/代码修改，并运行或说明对应检查；不要把验证工作推给后续独立任务。
 - 如果发现当前任务能力已经由前置节点完整实现，请不要为了制造 diff 而改文件；必须返回 changed=false，并在 no_op_reason 写清验证依据。
 - 如果需要修改文件，changed 必须为 true，no_op_reason 必须为 null。
 
@@ -737,13 +741,25 @@ struct RawTaskOutput {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_requirement_task_prompt, parse_requirement_plan, parse_task_execution_output,
+        build_requirement_plan_prompt, build_requirement_task_prompt, parse_requirement_plan,
+        parse_task_execution_output,
     };
     use crate::models::{
         Requirement, RequirementDraft, RequirementExecutionPlan, RequirementExecutionTask,
         RequirementModelTier, RequirementReviewStatus, RequirementTaskKind, RequirementTaskStatus,
     };
     use chrono::Utc;
+
+    #[test]
+    fn planning_prompt_forbids_check_only_tasks() {
+        let requirement = test_requirement("重命名旧文案");
+        let prompt = build_requirement_plan_prompt(&requirement);
+
+        assert!(prompt.contains("tasks 数量 1-8 个"));
+        assert!(prompt.contains("禁止生成纯审核、纯校验、纯检查、纯原因分析任务"));
+        assert!(prompt.contains("check.js、残留字符串检查、代码质量检查只能作为实现任务的验证标准"));
+        assert!(prompt.contains("简单命名、文案、单点修改优先生成 1 个实现任务"));
+    }
 
     #[test]
     fn parse_requirement_plan_rejects_duplicate_ids() {
@@ -794,26 +810,7 @@ mod tests {
 
     #[test]
     fn implementation_prompt_contains_hard_boundary_and_no_op_contract() {
-        let requirement = Requirement {
-            id: "req-1".to_owned(),
-            project_id: "project-1".to_owned(),
-            title: "实现页面".to_owned(),
-            original_message: "实现页面".to_owned(),
-            status: crate::models::RequirementStatus::Running,
-            messages: Vec::new(),
-            clarification_round: 0,
-            clarifications: Vec::new(),
-            draft: Some(RequirementDraft {
-                title: "实现页面".to_owned(),
-                summary: "实现页面".to_owned(),
-                acceptance_criteria: vec!["可以打开".to_owned()],
-            }),
-            execution_plan: None,
-            pi_session_file: None,
-            error: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
+        let requirement = test_requirement("实现页面");
         let current = test_task("task-1", "创建骨架", Vec::new());
         let future = test_task("task-2", "实现搜索", vec!["task-1".to_owned()]);
         let plan = RequirementExecutionPlan {
@@ -826,7 +823,31 @@ mod tests {
         assert!(prompt.contains("\"no_op_reason\": null"));
         assert!(prompt.contains("严格任务边界"));
         assert!(prompt.contains("禁止提前实现、补全或顺手优化后续未完成任务"));
+        assert!(prompt.contains("不要把验证工作推给后续独立任务"));
         assert!(prompt.contains("实现搜索"));
+    }
+
+    fn test_requirement(title: &str) -> Requirement {
+        Requirement {
+            id: "req-1".to_owned(),
+            project_id: "project-1".to_owned(),
+            title: title.to_owned(),
+            original_message: title.to_owned(),
+            status: crate::models::RequirementStatus::Running,
+            messages: Vec::new(),
+            clarification_round: 0,
+            clarifications: Vec::new(),
+            draft: Some(RequirementDraft {
+                title: title.to_owned(),
+                summary: title.to_owned(),
+                acceptance_criteria: vec!["可以打开".to_owned()],
+            }),
+            execution_plan: None,
+            pi_session_file: None,
+            error: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
     }
 
     fn test_task(id: &str, title: &str, depends_on: Vec<String>) -> RequirementExecutionTask {
@@ -885,6 +906,48 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("形成了环"));
+    }
+
+    #[test]
+    fn parse_requirement_plan_keeps_review_group_for_single_task() {
+        let plan = parse_requirement_plan(
+            r#"{
+              "summary": "执行计划",
+              "tasks": [
+                {
+                  "id": "task-a",
+                  "title": "修改命名",
+                  "description": "完成命名修改，并运行 check.js 验证无旧字符串残留。",
+                  "depends_on": [],
+                  "target_files": []
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.tasks
+                .iter()
+                .filter(|task| task.kind == RequirementTaskKind::ReviewSubAgent)
+                .count(),
+            3
+        );
+        assert!(plan.tasks.iter().any(|task| {
+            task.kind == RequirementTaskKind::ReviewSummary
+                && task.review_for.as_deref() == Some("task-a")
+        }));
+        assert!(plan
+            .tasks
+            .iter()
+            .any(|task| task.kind == RequirementTaskKind::MergeReview));
+
+        let merge_review = plan
+            .tasks
+            .iter()
+            .find(|task| task.kind == RequirementTaskKind::MergeReview)
+            .unwrap();
+        assert_eq!(merge_review.depends_on, vec!["task-a"]);
     }
 
     #[test]

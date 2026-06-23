@@ -23,7 +23,8 @@ use crate::models::{
     RequirementTaskExecutionOutput, RequirementTaskKind, PI_RPC_REQUEST_ID,
 };
 use crate::requirement_analysis::{
-    build_pi_trace_metadata, build_requirement_prompt, parse_requirement_analysis,
+    assistant_text_from_pi_events, build_pi_trace_metadata, build_requirement_prompt,
+    parse_requirement_analysis,
 };
 use crate::requirement_execution::{
     build_requirement_plan_prompt, build_requirement_task_prompt, parse_requirement_plan,
@@ -332,6 +333,8 @@ impl PiRpcClient {
         let assistant_text = self
             .get_last_assistant_text()
             .await?
+            .filter(|text| !text.trim().is_empty())
+            .or_else(|| assistant_text_from_pi_events(&pi_events))
             .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
         let session_file = self.get_session_file().await?;
         Ok(parse_requirement_analysis(
@@ -361,6 +364,8 @@ impl PiRpcClient {
         let assistant_text = self
             .get_last_assistant_text()
             .await?
+            .filter(|text| !text.trim().is_empty())
+            .or_else(|| assistant_text_from_pi_events(&pi_events))
             .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
         parse_requirement_plan(&assistant_text)
     }
@@ -409,6 +414,8 @@ impl PiRpcClient {
         let assistant_text = self
             .get_last_assistant_text()
             .await?
+            .filter(|text| !text.trim().is_empty())
+            .or_else(|| assistant_text_from_pi_events(&pi_events))
             .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
         let mut output =
             parse_task_execution_output(&assistant_text, build_pi_trace_metadata(&pi_events))?;

@@ -6,64 +6,23 @@ use crate::models::{
     RequirementAnalysisOutput, RequirementAnalysisStatus, RequirementClarification,
     RequirementMessageRole, RequirementStatus,
 };
-use crate::utils::format_clarification_answer;
 
 const REQUIREMENT_PROMPT_TEMPLATE: &str = include_str!("../prompts/requirement_coordinator.txt");
 
 pub fn build_requirement_prompt(input: &RequirementAnalysisInput) -> String {
-    let mut history = String::new();
-    for message in &input.messages {
-        let role = match message.role {
-            RequirementMessageRole::User => "用户",
-            RequirementMessageRole::Assistant => "Coordinator",
-            RequirementMessageRole::System => "系统",
-            RequirementMessageRole::Trace => "过程记录",
-        };
-        if message.role == RequirementMessageRole::Trace {
-            continue;
-        }
-        let content = message.content.replace("###", "\\#\\#\\#");
-        history.push_str(&format!(
-            "{role}: ### BEGIN USER INPUT ###\n{content}\n### END USER INPUT ###\n"
-        ));
-    }
-
-    let clarifications = if input.clarifications.is_empty() {
-        "当前没有待澄清项。\n".to_owned()
-    } else {
-        let mut lines = String::new();
-        for item in &input.clarifications {
-            lines.push_str(&format!("- {}：{}\n", item.id, item.question));
-            if let Some(answer) = &item.answer {
-                lines.push_str(&format!(
-                    "  用户回答：{}\n",
-                    format_clarification_answer(item, answer)
-                ));
-            }
-        }
-        lines
-    };
-
-    let existing_draft = input
-        .draft
-        .as_ref()
-        .map(|draft| {
-            format!(
-                "当前确认草案：{}\n{}\n验收标准：{}\n",
-                draft.title,
-                draft.summary,
-                draft.acceptance_criteria.join("；")
-            )
-        })
-        .unwrap_or_else(|| "当前还没有确认草案。\n".to_owned());
+    let current_request = input
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == RequirementMessageRole::User)
+        .map(|message| message.content.replace("###", "\\#\\#\\#"))
+        .unwrap_or_default();
 
     REQUIREMENT_PROMPT_TEMPLATE
         .replace("{{PROJECT_NAME}}", &input.project.name)
         .replace("{{GIT_URL}}", &input.project.git_url)
         .replace("{{LOCAL_PATH}}", &input.project.local_path)
-        .replace("{{EXISTING_DRAFT}}", &existing_draft)
-        .replace("{{CLARIFICATIONS}}", &clarifications)
-        .replace("{{HISTORY}}", &history)
+        .replace("{{CURRENT_REQUEST}}", &current_request)
 }
 
 pub fn parse_requirement_analysis(
@@ -352,6 +311,19 @@ pub fn build_pi_trace_metadata(events: &[Value]) -> Option<Value> {
     }))
 }
 
+pub fn assistant_text_from_pi_events(events: &[Value]) -> Option<String> {
+    let text = events
+        .iter()
+        .filter_map(message_update_text_delta)
+        .collect::<String>();
+    let text = text.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_owned())
+    }
+}
+
 fn collect_message_update(event: &Value, thinking: &mut String) {
     let assistant_event = match event.get("assistantMessageEvent") {
         Some(Value::Object(_)) => &event["assistantMessageEvent"],
@@ -371,6 +343,28 @@ fn collect_message_update(event: &Value, thinking: &mut String) {
     }
     // text_delta contains the structured JSON response; it is parsed into the
     // assistant message and should not be duplicated in the trace output.
+}
+
+fn message_update_text_delta(event: &Value) -> Option<&str> {
+    let assistant_event = event.get("assistantMessageEvent")?;
+    let delta_type = assistant_event
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if delta_type == "thinking_delta" {
+        return None;
+    }
+    if !delta_type.is_empty()
+        && delta_type != "text_delta"
+        && delta_type != "content_delta"
+        && delta_type != "message_delta"
+    {
+        return None;
+    }
+    assistant_event
+        .get("delta")
+        .or_else(|| assistant_event.get("text"))
+        .and_then(Value::as_str)
 }
 
 fn upsert_trace_tool(tools: &mut Vec<Value>, event: &Value, pi_type: &str) {
@@ -481,5 +475,37 @@ mod tests {
         assert_eq!(output.clarifications.len(), 1);
         assert_eq!(output.clarifications[0].options.len(), 1);
         assert!(!output.clarifications[0].options[0].label.is_empty());
+    }
+
+    #[test]
+    fn assistant_text_falls_back_to_text_delta_events() {
+        let events = vec![
+            json!({
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "thinking_delta",
+                    "delta": "思考"
+                }
+            }),
+            json!({
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": "{\"status\":\"ready\","
+                }
+            }),
+            json!({
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "text_delta",
+                    "delta": "\"message\":\"ok\",\"clarifications\":[],\"draft\":null}"
+                }
+            }),
+        ];
+
+        assert_eq!(
+            assistant_text_from_pi_events(&events).as_deref(),
+            Some("{\"status\":\"ready\",\"message\":\"ok\",\"clarifications\":[],\"draft\":null}")
+        );
     }
 }
