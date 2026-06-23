@@ -19,6 +19,11 @@ import {
 } from "../constants";
 import { clamp, getProjectListHeight } from "../utils/format";
 
+const DELETE_CONFIRM_NODE_WIDTH = 300;
+const DELETE_CONFIRM_NODE_HEIGHT = 360;
+const MODEL_CONFIG_NODE_WIDTH = 360;
+const MODEL_CONFIG_NODE_HEIGHT = 480;
+
 export interface BuildStartNodesParams {
   startData: StartData;
   theme: ThemeMode;
@@ -168,8 +173,8 @@ export function buildStartNodes({
         return {
           id: `delete-confirm-${pendingDeleteProject.id}`,
           type: "startNode",
-          width: 252,
-          height: 134,
+          width: DELETE_CONFIRM_NODE_WIDTH,
+          height: DELETE_CONFIRM_NODE_HEIGHT,
           position: {
             x: 860,
             y: clamp(
@@ -180,6 +185,10 @@ export function buildStartNodes({
               DELETE_CONFIRM_MIN_Y,
               DELETE_CONFIRM_MAX_Y,
             ),
+          },
+          style: {
+            width: DELETE_CONFIRM_NODE_WIDTH,
+            height: DELETE_CONFIRM_NODE_HEIGHT,
           },
           data: {
             kind: "delete-confirm",
@@ -197,9 +206,13 @@ export function buildStartNodes({
     ? {
         id: "model-config",
         type: "startNode",
-        width: 252,
-        height: 360,
+        width: MODEL_CONFIG_NODE_WIDTH,
+        height: MODEL_CONFIG_NODE_HEIGHT,
         position: { x: -320, y: 80 },
+        style: {
+          width: MODEL_CONFIG_NODE_WIDTH,
+          height: MODEL_CONFIG_NODE_HEIGHT,
+        },
         data: {
           kind: "model-config",
           settings: draftModelSettings,
