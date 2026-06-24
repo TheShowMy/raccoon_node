@@ -274,10 +274,9 @@ mod tests {
         let (bus, mut receiver) = tokio::sync::broadcast::channel(4);
         let emitter = RequirementEventEmitter {
             requirement_id: "req-1".to_owned(),
-            task_id: None,
+            task_id: Some("task-1".to_owned()),
             bus,
-        }
-        .for_task("task-1".to_owned());
+        };
 
         emitter.emit("execution_task_started", "开始执行任务");
 

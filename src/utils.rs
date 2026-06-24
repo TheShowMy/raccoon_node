@@ -8,8 +8,8 @@ use chrono::Utc;
 
 use crate::error::AppError;
 use crate::models::{
-    AppData, ClarificationAnswer, ClarificationQuestionType, ModelSettings, ModelTierSetting,
-    PiModel, Requirement, RequirementClarification,
+    AppData, ClarificationAnswer, ClarificationQuestionType, ModelSettings, PiModel, Requirement,
+    RequirementClarification,
 };
 
 pub fn ensure_child_path(root: &Path, child: &Path) -> Result<(), AppError> {
@@ -267,28 +267,22 @@ pub fn validate_model_settings(
     settings: &ModelSettings,
     models: &[PiModel],
 ) -> Result<(), AppError> {
-    validate_tier_model("低", &settings.low, models)?;
-    validate_tier_model("中", &settings.medium, models)?;
-    validate_tier_model("高", &settings.high, models)?;
-    Ok(())
-}
-
-pub fn validate_tier_model(
-    tier_name: &str,
-    tier: &ModelTierSetting,
-    models: &[PiModel],
-) -> Result<(), AppError> {
-    let Some(model_id) = tier.model_id.as_deref() else {
-        return Err(AppError::bad_request(format!("{tier_name}档模型不能为空")));
-    };
-
-    if models.iter().any(|model| model.id == model_id) {
-        Ok(())
-    } else {
-        Err(AppError::bad_request(format!(
-            "{tier_name}档模型不存在于 Pi Agent 已配置模型列表"
-        )))
+    for (tier_name, tier) in [
+        ("低", &settings.low),
+        ("中", &settings.medium),
+        ("高", &settings.high),
+    ] {
+        let model_id = tier
+            .model_id
+            .as_deref()
+            .ok_or_else(|| AppError::bad_request(format!("{tier_name}档模型不能为空")))?;
+        if !models.iter().any(|model| model.id == model_id) {
+            return Err(AppError::bad_request(format!(
+                "{tier_name}档模型不存在于 Pi Agent 已配置模型列表"
+            )));
+        }
     }
+    Ok(())
 }
 
 pub fn clarification_has_answer(

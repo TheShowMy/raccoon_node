@@ -543,10 +543,9 @@ fn spawn_execution_tasks(
         let state = state.clone();
         let emitter = RequirementEventEmitter {
             requirement_id: requirement_id.to_owned(),
-            task_id: None,
+            task_id: Some(task_id.clone()),
             bus: state.requirement_events.clone(),
-        }
-        .for_task(task_id.clone());
+        };
         let requirement_id = requirement_id.to_owned();
         emitter.emit(
             "execution_task_started",
