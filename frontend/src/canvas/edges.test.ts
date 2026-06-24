@@ -57,19 +57,105 @@ function requirement(tasks: RequirementExecutionTask[]): Requirement {
 }
 
 describe("canvas DAG edges", () => {
+  it("builds display-only edges through the summary for all review nodes", () => {
+    const edges = buildRequirementDagEdges(
+      requirement([
+        task("impl", "implementation"),
+        task("review-a", "review_sub_agent", {
+          review_for: "impl",
+          depends_on: ["unrelated-a"],
+        }),
+        task("review-b", "review", {
+          review_for: "impl",
+          depends_on: [],
+        }),
+        task("review-c", "review_sub_agent", {
+          review_for: "impl",
+          depends_on: ["review-a"],
+        }),
+        task("summary", "review_summary", {
+          review_for: "impl",
+          depends_on: ["unrelated-summary"],
+        }),
+      ]),
+      new Set(),
+    );
+
+    const internalEdges = edges.filter((edge) =>
+      edge.id.startsWith("requirement-task-"),
+    );
+
+    expect(
+      internalEdges.map(({ source, target }) => ({ source, target })),
+    ).toEqual([
+      {
+        source: "requirement-task-impl",
+        target: "requirement-task-summary",
+      },
+      {
+        source: "requirement-task-summary",
+        target: "requirement-task-review-a",
+      },
+      {
+        source: "requirement-task-summary",
+        target: "requirement-task-review-b",
+      },
+      {
+        source: "requirement-task-summary",
+        target: "requirement-task-review-c",
+      },
+    ]);
+    expect(
+      internalEdges.every((edge) => edge.markerStart && edge.markerEnd),
+    ).toBe(true);
+  });
+
+  it("connects code to a summary that has no review nodes", () => {
+    const edges = buildRequirementDagEdges(
+      requirement([
+        task("impl", "implementation", {
+          depends_on: ["external-dependency"],
+        }),
+        task("summary", "review_summary", {
+          review_for: "impl",
+          depends_on: [],
+        }),
+      ]),
+      new Set(),
+    );
+
+    const internalEdges = edges.filter((edge) =>
+      edge.id.startsWith("requirement-task-"),
+    );
+
+    expect(internalEdges).toHaveLength(1);
+    expect(internalEdges[0]).toMatchObject({
+      source: "requirement-task-impl",
+      target: "requirement-task-summary",
+    });
+    expect(internalEdges[0].markerStart).toBeDefined();
+    expect(internalEdges[0].markerEnd).toBeDefined();
+  });
+
   it("skips implementation internal edges when its group is collapsed", () => {
     const edges = buildRequirementDagEdges(
       requirement([
         task("impl", "implementation"),
-        task("summary", "review_summary", { review_for: "impl" }),
-        task("review", "review_sub_agent", { review_for: "impl" }),
+        task("review", "review_sub_agent", {
+          review_for: "impl",
+          depends_on: ["impl"],
+        }),
+        task("summary", "review_summary", {
+          review_for: "impl",
+          depends_on: ["review"],
+        }),
       ]),
       new Set(["req:impl"]),
     );
 
-    expect(
-      edges.some((edge) => edge.id === "requirement-task-impl-to-summary"),
-    ).toBe(false);
+    expect(edges.some((edge) => edge.id.startsWith("requirement-task-"))).toBe(
+      false,
+    );
     expect(
       edges.some((edge) => edge.target === "requirement-task-group-impl"),
     ).toBe(true);

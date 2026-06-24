@@ -797,7 +797,11 @@
 
   .dag-node__body,
   .task-node__body {
-    @apply mt-4 grid min-h-0 gap-2;
+    @apply mt-4 min-h-0 gap-2;
+  }
+
+  .dag-node__body {
+    @apply grid;
   }
 
   .dag-node__body strong,
@@ -817,7 +821,7 @@
   }
 
   .task-node__body {
-    @apply flex-1 overflow-hidden pr-1;
+    @apply relative flex flex-1 flex-col overflow-hidden pr-1;
   }
 
   .task-node__body p {
@@ -897,7 +901,7 @@
   }
 
   .task-node__actions {
-    @apply mt-auto flex flex-wrap items-center gap-1 pt-2;
+    @apply absolute inset-x-0 bottom-0 flex shrink-0 flex-wrap items-center gap-1 pt-2;
     background: linear-gradient(
       180deg,
       transparent,
@@ -907,7 +911,7 @@
   }
 
   .task-node__summary {
-    @apply overflow-hidden text-ellipsis whitespace-nowrap;
+    @apply min-h-0 overflow-hidden text-ellipsis whitespace-nowrap;
   }
 
   .task-node {
@@ -1057,7 +1061,7 @@
   }
 
   .task-node__actions button {
-    @apply inline-flex cursor-pointer items-center gap-1 rounded-[8px] border px-2 py-1 text-[10px] font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
+    @apply inline-flex cursor-pointer items-center gap-1 rounded-[8px] border px-1.5 py-1 text-[10px] font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
     border-color: var(--card-border);
     color: var(--text-soft);
     background: color-mix(in srgb, var(--panel-bg) 74%, transparent);

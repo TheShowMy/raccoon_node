@@ -10,10 +10,16 @@ import type {
   StreamEvent,
 } from "../types/api";
 import { buildRequirementDagEdges } from "./edges";
-import { getTaskLayout, getTaskNodeHeight, type TaskPosition } from "./layout";
-
-const DAG_NODE_POSITION = { x: 1140, y: 80 };
-const DAG_TASK_X_OFFSET = 800;
+import {
+  DAG_NODE_POSITION,
+  DAG_NODE_SIZE,
+  getTaskGroupChildSize,
+  getTaskGroupLayout,
+  getTaskLayout,
+  getTaskNodeSize,
+  TASK_BASE_POSITION,
+  type TaskPosition,
+} from "./layout";
 
 function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
   return nodes.map((node) => {
@@ -42,7 +48,7 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       "project-github": { width: 252, height: 90 },
       "requirement-list": { width: 290, height: 640 },
       "requirement-chat": { width: 720, height: 760 },
-      "requirement-dag": { width: 360, height: 260 },
+      "requirement-dag": DAG_NODE_SIZE,
       "requirement-task": { width: 252, height: 134 },
     };
 
@@ -157,10 +163,9 @@ export function buildProjectNodes({
   );
   const taskPosition = (
     taskId: string,
-    fallback: TaskPosition = { x: 720, y: 60 },
+    fallback: TaskPosition = TASK_BASE_POSITION,
   ): TaskPosition => {
-    const position = taskLayout.get(taskId) ?? fallback;
-    return { ...position, x: position.x + DAG_TASK_X_OFFSET };
+    return taskLayout.get(taskId) ?? fallback;
   };
 
   return withDimensions([
@@ -269,14 +274,15 @@ export function buildProjectNodes({
             const collapsed = collapsedTaskGroups.has(
               `${selectedDagRequirement.id}:${task.id}`,
             );
+            const groupLayout = getTaskGroupLayout(task, reviews);
             return [
               {
                 id: groupId,
                 type: "startNode" as const,
                 position: taskPosition(task.id),
                 style: {
-                  width: 590,
-                  height: collapsed ? 82 : getTaskNodeHeight(task),
+                  width: groupLayout.width,
+                  height: collapsed ? 82 : groupLayout.height,
                 },
                 data: {
                   kind: "requirement-task" as const,
@@ -304,11 +310,11 @@ export function buildProjectNodes({
                       type: "startNode" as const,
                       parentId: groupId,
                       extent: "parent" as const,
-                      position: { x: 20, y: 108 },
-                      style: {
-                        width: 142,
-                        height: 142,
+                      position: groupLayout.positions.get(task.id) ?? {
+                        x: 20,
+                        y: 96,
                       },
+                      style: getTaskGroupChildSize(task),
                       data: {
                         kind: "requirement-task" as const,
                         nodeRole: "code" as const,
@@ -333,11 +339,11 @@ export function buildProjectNodes({
                             type: "startNode" as const,
                             parentId: groupId,
                             extent: "parent" as const,
-                            position: { x: 198, y: 108 },
-                            style: {
-                              width: 142,
-                              height: 142,
+                            position: groupLayout.positions.get(summary.id) ?? {
+                              x: 20,
+                              y: 96,
                             },
+                            style: getTaskGroupChildSize(summary),
                             data: {
                               kind: "requirement-task" as const,
                               nodeRole: "review_summary" as const,
@@ -359,16 +365,16 @@ export function buildProjectNodes({
                           },
                         ]
                       : []),
-                    ...subAgents.map((review, index) => ({
+                    ...subAgents.map((review) => ({
                       id: `requirement-task-${review.id}`,
                       type: "startNode" as const,
                       parentId: groupId,
                       extent: "parent" as const,
-                      position: { x: 400, y: 82 + index * 66 },
-                      style: {
-                        width: 140,
-                        height: 52,
+                      position: groupLayout.positions.get(review.id) ?? {
+                        x: 20,
+                        y: 96,
                       },
+                      style: getTaskGroupChildSize(review),
                       data: {
                         kind: "requirement-task" as const,
                         nodeRole: "review_sub_agent" as const,
@@ -389,30 +395,33 @@ export function buildProjectNodes({
                   ]),
             ];
           }),
-          ...standaloneExecutionTasks.map((task) => ({
-            id: `requirement-task-${task.id}`,
-            type: "startNode" as const,
-            position: taskPosition(task.id),
-            style: {
-              width: 380,
-              height: getTaskNodeHeight(task),
-            },
-            data: {
-              kind: "requirement-task" as const,
-              nodeRole: "external" as const,
-              requirementId: selectedDagRequirement.id,
-              task,
-              reviews: [],
-              streamEvents:
-                selectedDagRequirement.id === observedRequirementId
-                  ? requirementStreamEvents
-                  : [],
-              busy: requirementActionBusyId === selectedDagRequirement.id,
-              onRetryFailedNode: retryFailedNode,
-              onRetryFromNode: retryFromNode,
-              onRerunReview: rerunReview,
-            },
-          })),
+          ...standaloneExecutionTasks.map((task) => {
+            const size = getTaskNodeSize(task, selectedTasks);
+            return {
+              id: `requirement-task-${task.id}`,
+              type: "startNode" as const,
+              position: taskPosition(task.id),
+              style: {
+                width: size.width,
+                height: size.height,
+              },
+              data: {
+                kind: "requirement-task" as const,
+                nodeRole: "external" as const,
+                requirementId: selectedDagRequirement.id,
+                task,
+                reviews: [],
+                streamEvents:
+                  selectedDagRequirement.id === observedRequirementId
+                    ? requirementStreamEvents
+                    : [],
+                busy: requirementActionBusyId === selectedDagRequirement.id,
+                onRetryFailedNode: retryFailedNode,
+                onRetryFromNode: retryFromNode,
+                onRerunReview: rerunReview,
+              },
+            };
+          }),
         ]
       : []),
   ]);

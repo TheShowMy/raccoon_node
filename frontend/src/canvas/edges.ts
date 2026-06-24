@@ -73,7 +73,7 @@ export function buildRequirementDagEdges(
     if (collapsedTaskGroups.has(`${requirement.id}:${task.id}`)) continue;
     const reviews = tasks.filter((review) => review.review_for === task.id);
     const summary = reviews.find((review) => review.kind === "review_summary");
-    const subAgents = reviews.filter(
+    const reviewNodes = reviews.filter(
       (review) =>
         review.kind === "review_sub_agent" || review.kind === "review",
     );
@@ -99,7 +99,7 @@ export function buildRequirementDagEdges(
         strokeWidth: 1.4,
       },
     });
-    for (const review of subAgents) {
+    for (const review of reviewNodes) {
       flowEdges.push({
         id: `requirement-task-${summary.id}-to-${review.id}`,
         source: `requirement-task-${summary.id}`,

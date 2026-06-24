@@ -23,13 +23,17 @@ function project(): Project {
   };
 }
 
-function task(id: string): RequirementExecutionTask {
+function task(
+  id: string,
+  kind: RequirementExecutionTask["kind"] = "implementation",
+  extra: Partial<RequirementExecutionTask> = {},
+): RequirementExecutionTask {
   return {
     id,
     title: id,
     description: id,
     depends_on: [],
-    kind: "implementation",
+    kind,
     model_tier: "medium",
     timeout_seconds: 60,
     pi_session_file: null,
@@ -50,10 +54,13 @@ function task(id: string): RequirementExecutionTask {
     target_files: [],
     result_summary: null,
     error: null,
+    ...extra,
   };
 }
 
-function requirement(): Requirement {
+function requirement(
+  tasks: RequirementExecutionTask[] = [task("implementation")],
+): Requirement {
   return {
     id: "requirement",
     project_id: "project",
@@ -66,7 +73,7 @@ function requirement(): Requirement {
     draft: null,
     execution_plan: {
       summary: "Plan",
-      tasks: [task("implementation")],
+      tasks,
     },
     pi_session_file: null,
     error: null,
@@ -146,5 +153,102 @@ describe("buildProjectNodes", () => {
     expect(dag!.position.x).toBeGreaterThan(
       queuedList!.position.x + (queuedList!.width ?? 0),
     );
+  });
+
+  it("keeps the first task 130px to the right of the DAG", () => {
+    const selectedRequirement = requirement();
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [selectedRequirement],
+      completed_requirements: [],
+    };
+
+    const nodes = buildProjectNodes(params(canvas, selectedRequirement));
+    const dag = nodes.find((node) => node.id === "requirement-dag")!;
+    const firstTask = nodes.find(
+      (node) => node.id === "requirement-task-group-implementation",
+    )!;
+
+    expect(firstTask.position.x - (dag.position.x + (dag.width ?? 0))).toBe(
+      130,
+    );
+  });
+
+  it("uses dependency layout for task children and keeps them in the group", () => {
+    const implementation = task("implementation");
+    const subAgents = Array.from({ length: 5 }, (_, index) =>
+      task(`review-${index}`, "review_sub_agent", {
+        depends_on: ["implementation"],
+        review_for: "implementation",
+      }),
+    );
+    const summary = task("summary", "review_summary", {
+      depends_on: subAgents.map((review) => review.id),
+      review_for: "implementation",
+    });
+    const selectedRequirement = requirement([
+      implementation,
+      ...subAgents,
+      summary,
+    ]);
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [selectedRequirement],
+      completed_requirements: [],
+    };
+
+    const nodes = buildProjectNodes(params(canvas, selectedRequirement));
+    const group = nodes.find(
+      (node) => node.id === "requirement-task-group-implementation",
+    )!;
+    const code = nodes.find(
+      (node) => node.id === "requirement-task-implementation",
+    )!;
+    const firstReview = nodes.find(
+      (node) => node.id === "requirement-task-review-0",
+    )!;
+    const summaryNode = nodes.find(
+      (node) => node.id === "requirement-task-summary",
+    )!;
+
+    expect(code.position.x).toBeLessThan(summaryNode.position.x);
+    expect(summaryNode.position.x).toBeLessThan(firstReview.position.x);
+    expect({ width: code.width, height: code.height }).toEqual({
+      width: 142,
+      height: 142,
+    });
+    expect(group.height).toBeGreaterThan(300);
+    for (const child of nodes.filter((node) => node.parentId === group.id)) {
+      expect(child.position.x + (child.width ?? 0)).toBeLessThanOrEqual(
+        group.width ?? 0,
+      );
+      expect(child.position.y + (child.height ?? 0)).toBeLessThanOrEqual(
+        group.height ?? 0,
+      );
+    }
+  });
+
+  it("keeps collapsed groups at 82px without child nodes", () => {
+    const selectedRequirement = requirement();
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [selectedRequirement],
+      completed_requirements: [],
+    };
+    const collapsedParams = params(canvas, selectedRequirement);
+    collapsedParams.collapsedTaskGroups = new Set([
+      "requirement:implementation",
+    ]);
+
+    const nodes = buildProjectNodes(collapsedParams);
+    const group = nodes.find(
+      (node) => node.id === "requirement-task-group-implementation",
+    )!;
+
+    expect(group.height).toBe(82);
+    expect(nodes.some((node) => node.parentId === group.id)).toBe(false);
   });
 });
