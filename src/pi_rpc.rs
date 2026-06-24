@@ -890,6 +890,13 @@ async fn publish_merge_review(
         )
         .await?;
     }
+    git(&repo, &["fetch", "origin"]).await?;
+    git(&repo, &["checkout", &base_branch]).await?;
+    git(
+        &repo,
+        &["reset", "--hard", &format!("origin/{base_branch}")],
+    )
+    .await?;
     let cleanup_summary = cleanup_requirement_branches(data_root, &repo, input).await;
 
     Ok(PublishResult {
