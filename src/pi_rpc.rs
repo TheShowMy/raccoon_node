@@ -812,14 +812,44 @@ fn requirement_analysis_failure(
 }
 
 fn pi_response_failure_error(failure: PiResponseFailure) -> AppError {
+    let trace_summary = failure
+        .trace
+        .as_ref()
+        .map(trace_summary)
+        .unwrap_or_else(|| "none".to_owned());
+    tracing::error!(
+        error = %failure.message,
+        trace_summary = %trace_summary,
+        "Pi Agent RPC returned a failed run"
+    );
     if let Some(trace) = &failure.trace {
-        tracing::error!(
-            error = %failure.message,
-            trace = %trace,
-            "Pi Agent RPC returned a failed run"
-        );
+        tracing::debug!(error = %failure.message, trace = %trace, "Pi Agent RPC failed trace");
     }
     AppError::internal(failure.message)
+}
+
+fn trace_summary(trace: &Value) -> String {
+    let trace_obj = match trace.get("trace") {
+        Some(Value::Object(obj)) => obj,
+        _ => return "malformed".to_owned(),
+    };
+    let status_count = trace_obj
+        .get("statuses")
+        .and_then(Value::as_array)
+        .map(|statuses| statuses.len())
+        .unwrap_or(0);
+    let last_status = trace_obj
+        .get("statuses")
+        .and_then(Value::as_array)
+        .and_then(|statuses| statuses.last())
+        .and_then(|status| status.get("message").and_then(Value::as_str))
+        .unwrap_or("");
+    let truncated = if last_status.chars().count() > 80 {
+        format!("{}...", last_status.chars().take(80).collect::<String>())
+    } else {
+        last_status.to_owned()
+    };
+    format!("statuses={status_count} last=\"{truncated}\"")
 }
 
 async fn prepare_task_workspace(
