@@ -148,6 +148,7 @@ export function useStartData() {
     writeBrowserPath("/", "push");
     setCurrentCanvas("start");
     setSelectedProjectId(null);
+    setError(null);
     void loadStart().catch((reason) => setError(readError(reason)));
   }, [loadStart]);
 

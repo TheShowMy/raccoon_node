@@ -374,6 +374,7 @@ export type StartNodeData =
       kind: "requirement-dag";
       requirement: Requirement;
       busy: boolean;
+      actionError: string | null;
       onStartExecution: (requirement: Requirement) => Promise<void>;
       onClose: () => void;
     }

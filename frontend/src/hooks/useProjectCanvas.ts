@@ -4,9 +4,9 @@ import {
   getProjectCanvas,
   planRequirementExecution,
   startRequirementExecution,
-  retryFailedNode,
-  retryFromNode,
-  rerunReview,
+  retryFailedNode as apiRetryFailedNode,
+  retryFromNode as apiRetryFromNode,
+  rerunReview as apiRerunReview,
 } from "../api/client";
 import { readError } from "../utils/format";
 
@@ -29,6 +29,9 @@ export function useProjectCanvas(
   const [requirementActionBusyId, setRequirementActionBusyId] = useState<
     string | null
   >(null);
+  const [requirementActionError, setRequirementActionError] = useState<
+    string | null
+  >(null);
 
   const loadProjectCanvas = useCallback(async (projectId: string) => {
     const data = await getProjectCanvas(projectId);
@@ -41,6 +44,7 @@ export function useProjectCanvas(
       setProjectCanvas(null);
       setSelectedDagRequirementId(null);
       setRequirementActionBusyId(null);
+      setRequirementActionError(null);
       return;
     }
 
@@ -78,6 +82,7 @@ export function useProjectCanvas(
       setSelectedDagRequirementId(null);
       setCollapsedTaskGroups(new Set());
       setRequirementActionBusyId(null);
+      setRequirementActionError(null);
     }
   }, [currentCanvas]);
 
@@ -131,10 +136,12 @@ export function useProjectCanvas(
   }, [allProjectRequirements, projectCanvas, selectedDagRequirementId]);
 
   const selectDagRequirement = useCallback((requirement: Requirement) => {
+    setRequirementActionError(null);
     setSelectedDagRequirementId(requirement.id);
   }, []);
 
   const closeDag = useCallback(() => {
+    setRequirementActionError(null);
     setSelectedDagRequirementId(null);
   }, []);
 
@@ -180,33 +187,35 @@ export function useProjectCanvas(
       ) => Promise<ProjectCanvasData>,
     ) => {
       setRequirementActionBusyId(requirementId);
+      setRequirementActionError(null);
       try {
         const data = await action(requirementId, taskId);
         setProjectCanvas(data);
+        setSelectedDagRequirementId(requirementId);
       } catch (reason) {
-        setError(readError(reason));
+        setRequirementActionError(readError(reason));
       } finally {
         setRequirementActionBusyId(null);
       }
     },
-    [setError],
+    [],
   );
 
   const retryFailedNode = useCallback(
     (requirementId: string, taskId: string) =>
-      runTaskRecoveryAction(requirementId, taskId, retryFailedNode),
+      runTaskRecoveryAction(requirementId, taskId, apiRetryFailedNode),
     [runTaskRecoveryAction],
   );
 
   const retryFromNode = useCallback(
     (requirementId: string, taskId: string) =>
-      runTaskRecoveryAction(requirementId, taskId, retryFromNode),
+      runTaskRecoveryAction(requirementId, taskId, apiRetryFromNode),
     [runTaskRecoveryAction],
   );
 
   const rerunReview = useCallback(
     (requirementId: string, taskId: string) =>
-      runTaskRecoveryAction(requirementId, taskId, rerunReview),
+      runTaskRecoveryAction(requirementId, taskId, apiRerunReview),
     [runTaskRecoveryAction],
   );
 
@@ -223,6 +232,7 @@ export function useProjectCanvas(
     collapsedTaskGroups,
     toggleTaskGroupCollapsed,
     requirementActionBusyId,
+    requirementActionError,
     selectDagRequirement,
     closeDag,
     planRequirement,

@@ -42,8 +42,10 @@ export default function RequirementDagNode({
         {!plan && requirement.status !== "planning" ? (
           <p>请在右侧需求列表卡片中点击“生成 DAG”。</p>
         ) : null}
-        {requirement.error ? (
-          <small className="dag-node__error">{requirement.error}</small>
+        {data.actionError || requirement.error ? (
+          <small className="dag-node__error">
+            {data.actionError ?? requirement.error}
+          </small>
         ) : null}
       </div>
 

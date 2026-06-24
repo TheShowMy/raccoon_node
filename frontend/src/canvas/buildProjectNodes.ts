@@ -70,6 +70,7 @@ export interface BuildProjectNodesParams {
   observedRequirementId: string | null;
   collapsedTaskGroups: Set<string>;
   requirementActionBusyId: string | null;
+  requirementActionError: string | null;
   requirementConversation: RequirementConversation | null;
   requirementInput: string;
   requirementBusy: boolean;
@@ -106,6 +107,7 @@ export function buildProjectNodes({
   observedRequirementId,
   collapsedTaskGroups,
   requirementActionBusyId,
+  requirementActionError,
   requirementConversation,
   requirementInput,
   requirementBusy,
@@ -257,6 +259,7 @@ export function buildProjectNodes({
               kind: "requirement-dag" as const,
               requirement: selectedDagRequirement,
               busy: requirementActionBusyId === selectedDagRequirement.id,
+              actionError: requirementActionError,
               onStartExecution: startExecution,
               onClose: closeDag,
             },

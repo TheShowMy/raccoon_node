@@ -95,6 +95,7 @@ function params(
     observedRequirementId: null,
     collapsedTaskGroups: new Set(),
     requirementActionBusyId: null,
+    requirementActionError: null,
     requirementConversation: null,
     requirementInput: "",
     requirementBusy: false,
@@ -153,6 +154,27 @@ describe("buildProjectNodes", () => {
     expect(dag!.position.x).toBeGreaterThan(
       queuedList!.position.x + (queuedList!.width ?? 0),
     );
+  });
+
+  it("passes recovery errors to the selected DAG node", () => {
+    const selectedRequirement = requirement();
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [selectedRequirement],
+      completed_requirements: [],
+    };
+    const buildParams = params(canvas, selectedRequirement);
+    buildParams.requirementActionError = "恢复失败";
+
+    const dag = buildProjectNodes(buildParams).find(
+      (node) => node.id === "requirement-dag",
+    )!;
+
+    expect(dag.data).toMatchObject({
+      kind: "requirement-dag",
+      actionError: "恢复失败",
+    });
   });
 
   it("keeps the first task 130px to the right of the DAG", () => {
