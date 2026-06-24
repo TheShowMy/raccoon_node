@@ -281,10 +281,22 @@ pub fn parse_task_execution_output(
 ) -> Result<RequirementTaskExecutionOutput, AppError> {
     let value = extract_json_object(text)?;
     let raw: RawTaskOutput = serde_json::from_value(value)?;
-    let result_summary = raw.result_summary.trim().to_owned();
-    if result_summary.is_empty() {
-        return Err(AppError::internal("任务执行结果摘要为空"));
-    }
+    let no_op_reason = raw.no_op_reason.map(|reason| reason.trim().to_owned());
+    let result_summary = raw
+        .result_summary
+        .filter(|summary| !summary.trim().is_empty())
+        .map(|summary| summary.trim().to_owned())
+        .or_else(|| {
+            if raw.changed == Some(false) {
+                no_op_reason.clone()
+            } else {
+                None
+            }
+        });
+    let result_summary = match result_summary {
+        Some(summary) => summary,
+        None => return Err(AppError::internal("任务执行结果摘要为空")),
+    };
     Ok(RequirementTaskExecutionOutput {
         result_summary,
         pi_session_file: None,
@@ -304,7 +316,7 @@ pub fn parse_task_execution_output(
         cleanup_summary: None,
         execution_warning: None,
         changed: raw.changed,
-        no_op_reason: raw.no_op_reason.map(|reason| reason.trim().to_owned()),
+        no_op_reason,
         trace,
     })
 }
@@ -449,17 +461,32 @@ fn insert_branch_merges(
         .iter()
         .map(|task| task.id.clone())
         .collect::<HashSet<_>>();
+    let dependency_graph = implementation_tasks
+        .iter()
+        .map(|task| {
+            (
+                task.id.clone(),
+                task.depends_on.iter().cloned().collect::<HashSet<_>>(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
 
     for task in &mut implementation_tasks {
-        let mut merged_dependencies = task
+        let (implementation_dependencies, other_dependencies): (Vec<_>, Vec<_>) = task
             .depends_on
             .iter()
-            .filter(|dependency| implementation_ids.contains(*dependency))
             .cloned()
-            .collect::<Vec<_>>();
+            .partition(|dependency| implementation_ids.contains(dependency));
+
+        let mut merged_dependencies =
+            transitive_reduction(&implementation_dependencies, &dependency_graph);
         merged_dependencies.sort();
         merged_dependencies.dedup();
+
+        task.depends_on = other_dependencies;
         if merged_dependencies.len() <= 1 {
+            task.depends_on.extend(merged_dependencies);
+            task.depends_on.sort();
             continue;
         }
 
@@ -501,19 +528,45 @@ fn insert_branch_merges(
             merge_id
         };
 
-        task.depends_on = task
-            .depends_on
-            .iter()
-            .filter(|dependency| !merged_dependencies.contains(*dependency))
-            .cloned()
-            .chain(std::iter::once(merge_id))
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
+        task.depends_on.push(merge_id);
         task.depends_on.sort();
     }
 
     (implementation_tasks, branch_merges)
+}
+
+fn transitive_reduction(
+    dependencies: &[String],
+    graph: &HashMap<String, HashSet<String>>,
+) -> Vec<String> {
+    dependencies
+        .iter()
+        .filter(|dep| {
+            !dependencies
+                .iter()
+                .any(|other| *other != **dep && is_reachable(other, dep, graph))
+        })
+        .cloned()
+        .collect()
+}
+
+fn is_reachable(from: &str, to: &str, graph: &HashMap<String, HashSet<String>>) -> bool {
+    let mut visited = HashSet::new();
+    let mut stack = vec![from.to_owned()];
+    while let Some(current) = stack.pop() {
+        if current == to {
+            return true;
+        }
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        if let Some(deps) = graph.get(&current) {
+            for dep in deps {
+                stack.push(dep.clone());
+            }
+        }
+    }
+    false
 }
 
 fn final_merge_dependencies(
@@ -703,7 +756,8 @@ struct PlannedImplementationTask {
 
 #[derive(Debug, Deserialize)]
 struct RawTaskOutput {
-    result_summary: String,
+    #[serde(default)]
+    result_summary: Option<String>,
     #[serde(default)]
     approved: Option<bool>,
     #[serde(default)]
@@ -1064,5 +1118,69 @@ mod tests {
 
         let task_g = plan.tasks.iter().find(|task| task.id == "task-g").unwrap();
         assert_eq!(task_g.depends_on, vec!["branch-merge-1"]);
+    }
+
+    #[test]
+    fn parse_requirement_plan_removes_redundant_branch_merge_for_serial_chain() {
+        let plan = parse_requirement_plan(
+            r#"{
+              "summary": "执行计划",
+              "tasks": [
+                {
+                  "id": "task-1",
+                  "title": "任务一",
+                  "description": "完成任务一",
+                  "depends_on": [],
+                  "target_files": []
+                },
+                {
+                  "id": "task-2",
+                  "title": "任务二",
+                  "description": "完成任务二",
+                  "depends_on": ["task-1"],
+                  "target_files": []
+                },
+                {
+                  "id": "task-3",
+                  "title": "任务三",
+                  "description": "完成任务三",
+                  "depends_on": ["task-1", "task-2"],
+                  "target_files": []
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        assert!(!plan
+            .tasks
+            .iter()
+            .any(|task| task.kind == RequirementTaskKind::BranchMerge));
+
+        let task_3 = plan.tasks.iter().find(|task| task.id == "task-3").unwrap();
+        assert_eq!(task_3.depends_on, vec!["task-2"]);
+
+        let merge_review = plan
+            .tasks
+            .iter()
+            .find(|task| task.kind == RequirementTaskKind::MergeReview)
+            .unwrap();
+        assert_eq!(merge_review.depends_on, vec!["task-3"]);
+    }
+
+    #[test]
+    fn parse_task_execution_output_falls_back_to_no_op_reason_when_summary_missing() {
+        let output = parse_task_execution_output(
+            r#"{
+              "changed": false,
+              "no_op_reason": "前置节点已完整实现"
+            }"#,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(output.changed, Some(false));
+        assert_eq!(output.result_summary, "前置节点已完整实现");
+        assert_eq!(output.no_op_reason.as_deref(), Some("前置节点已完整实现"));
     }
 }
