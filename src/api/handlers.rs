@@ -193,11 +193,15 @@ pub async fn start_requirement_execution(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    let project_id = {
+    let (project_id, initial_inputs) = {
         let mut store = state.store.write().await;
-        store.start_requirement_execution(&requirement_id).await?
+        let project_id = store.start_requirement_execution(&requirement_id).await?;
+        let initial_inputs = store
+            .prepare_runnable_execution_tasks(&requirement_id)
+            .await?;
+        (project_id, initial_inputs)
     };
-    spawn_requirement_execution(state.clone(), requirement_id);
+    spawn_requirement_execution(state.clone(), requirement_id, Some(initial_inputs));
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -210,7 +214,7 @@ pub async fn retry_failed_node(
         let mut store = state.store.write().await;
         store.retry_failed_node(&requirement_id, &task_id).await?
     };
-    spawn_requirement_execution(state.clone(), requirement_id);
+    spawn_requirement_execution(state.clone(), requirement_id, None);
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -223,7 +227,7 @@ pub async fn retry_from_node(
         let mut store = state.store.write().await;
         store.retry_from_node(&requirement_id, &task_id).await?
     };
-    spawn_requirement_execution(state.clone(), requirement_id);
+    spawn_requirement_execution(state.clone(), requirement_id, None);
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -236,7 +240,7 @@ pub async fn rerun_review(
         let mut store = state.store.write().await;
         store.rerun_review(&requirement_id, &task_id).await?
     };
-    spawn_requirement_execution(state.clone(), requirement_id);
+    spawn_requirement_execution(state.clone(), requirement_id, None);
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -377,7 +381,11 @@ fn spawn_requirement_execution_plan(
     });
 }
 
-fn spawn_requirement_execution(state: AppState, requirement_id: String) {
+fn spawn_requirement_execution(
+    state: AppState,
+    requirement_id: String,
+    initial_inputs: Option<Vec<RequirementTaskExecutionInput>>,
+) {
     tokio::spawn(async move {
         let emitter = RequirementEventEmitter {
             requirement_id: requirement_id.clone(),
@@ -386,9 +394,12 @@ fn spawn_requirement_execution(state: AppState, requirement_id: String) {
         };
         emitter.emit("execution_started", "开始按 DAG 执行任务。");
         let mut running_tasks = JoinSet::new();
+        let mut initial_inputs = initial_inputs;
 
         loop {
-            let inputs = {
+            let inputs = if let Some(inputs) = initial_inputs.take() {
+                inputs
+            } else {
                 let mut store = state.store.write().await;
                 match store
                     .prepare_runnable_execution_tasks(&requirement_id)

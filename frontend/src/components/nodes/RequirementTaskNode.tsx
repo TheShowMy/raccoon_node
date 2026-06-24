@@ -7,6 +7,7 @@ import {
   Code2,
   Eye,
   GitMerge,
+  Loader2,
   RotateCcw,
   ShieldCheck,
   X,
@@ -60,7 +61,11 @@ export default function RequirementTaskNode({
       >
         <div className="task-node__head">
           <span className="node-icon">
-            <CircleDot size={18} />
+            {task.status === "running" ? (
+              <Loader2 size={18} className="spin-icon" />
+            ) : (
+              <CircleDot size={18} />
+            )}
           </span>
           <div>
             <strong>{task.title}</strong>
@@ -98,7 +103,11 @@ export default function RequirementTaskNode({
       <div className={`task-node task-node--${nodeRole} ${statusClass}`}>
         <div className="task-node__head">
           <span className="node-icon">
-            <Icon size={18} />
+            {task.status === "running" ? (
+              <Loader2 size={18} className="spin-icon" />
+            ) : (
+              <Icon size={18} />
+            )}
           </span>
           <div>
             <strong>

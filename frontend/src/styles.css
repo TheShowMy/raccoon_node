@@ -262,7 +262,14 @@
       0 0 18px color-mix(in srgb, var(--text-soft) 10%, transparent);
   }
 
-  .node-card--requirement-task:has(.task-node--status-running),
+  .node-card--requirement-task:has(.task-node--status-running) {
+    border-color: color-mix(in srgb, var(--accent-warning) 70%, transparent);
+    box-shadow:
+      var(--shadow-hover),
+      0 0 30px color-mix(in srgb, var(--accent-warning) 30%, transparent);
+    animation: task-running-pulse 1.5s ease-in-out infinite;
+  }
+
   .node-card--requirement-task:has(.task-node--status-fixing) {
     border-color: color-mix(in srgb, var(--accent-warning) 54%, transparent);
     box-shadow:
@@ -895,6 +902,11 @@
     color: var(--accent-warning);
   }
 
+  .task-node__status--running {
+    background: color-mix(in srgb, var(--accent-warning) 22%, transparent);
+    color: var(--accent-warning);
+  }
+
   .task-node__status--failed {
     background: color-mix(in srgb, var(--accent-danger) 16%, transparent);
     color: var(--accent-danger);
@@ -932,7 +944,12 @@
     border-color: color-mix(in srgb, var(--text-soft) 28%, transparent);
   }
 
-  .task-node--status-running.task-node--group .task-node__head,
+  .task-node--status-running.task-node--group .task-node__head {
+    border-color: color-mix(in srgb, var(--accent-warning) 70%, transparent);
+    background: color-mix(in srgb, var(--accent-warning) 12%, var(--panel-bg));
+    animation: task-running-pulse 1.5s ease-in-out infinite;
+  }
+
   .task-node--status-fixing.task-node--group .task-node__head {
     border-color: color-mix(in srgb, var(--accent-warning) 56%, transparent);
     background: color-mix(in srgb, var(--accent-warning) 10%, var(--panel-bg));
@@ -2025,5 +2042,19 @@
     .task-detail-dialog__section {
       grid-template-columns: 1fr;
     }
+  }
+}
+
+@keyframes task-running-pulse {
+  0%,
+  100% {
+    box-shadow:
+      var(--shadow-hover),
+      0 0 20px color-mix(in srgb, var(--accent-warning) 18%, transparent);
+  }
+  50% {
+    box-shadow:
+      var(--shadow-hover),
+      0 0 40px color-mix(in srgb, var(--accent-warning) 36%, transparent);
   }
 }
