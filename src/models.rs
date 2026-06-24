@@ -541,14 +541,6 @@ pub struct RequirementEventEmitter {
 }
 
 impl RequirementEventEmitter {
-    pub fn for_task(&self, task_id: String) -> Self {
-        Self {
-            requirement_id: self.requirement_id.clone(),
-            task_id: Some(task_id),
-            bus: self.bus.clone(),
-        }
-    }
-
     pub fn emit(&self, event: &str, message: &str) {
         let _ = self.bus.send(RequirementEvent {
             requirement_id: self.requirement_id.clone(),

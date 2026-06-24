@@ -84,40 +84,38 @@ pub fn parse_requirement_plan(text: &str) -> Result<RequirementExecutionPlan, Ap
         .tasks
         .into_iter()
         .enumerate()
-        .map(|(index, task)| PlannedImplementationTask {
-            task: RequirementExecutionTask {
-                id: normalize_task_id(&task.id, index),
-                title: task.title.trim().to_owned(),
-                description: task.description.trim().to_owned(),
-                depends_on: task.depends_on,
-                kind: RequirementTaskKind::Implementation,
-                model_tier: effective_model_tier(RequirementTaskKind::Implementation),
-                timeout_seconds: 45 * 60,
-                pi_session_file: None,
-                branch_name: None,
-                worktree_path: None,
-                commit_sha: None,
-                review_for: None,
-                review_angle: None,
-                review_status: RequirementReviewStatus::Pending,
-                attempt: 0,
-                execution_failure_count: 0,
-                review_rejection_count: 0,
-                recovery_stage: RequirementRecoveryStage::None,
-                failure_summary: None,
-                recovery_guidance: None,
-                high_tier_execution_used: false,
-                last_review_feedback: None,
-                pull_request_url: None,
-                merged_into: None,
-                cleanup_summary: None,
-                execution_warning: None,
-                trace: None,
-                status: RequirementTaskStatus::Pending,
-                target_files: task.target_files,
-                result_summary: None,
-                error: None,
-            },
+        .map(|(index, task)| RequirementExecutionTask {
+            id: normalize_task_id(&task.id, index),
+            title: task.title.trim().to_owned(),
+            description: task.description.trim().to_owned(),
+            depends_on: task.depends_on,
+            kind: RequirementTaskKind::Implementation,
+            model_tier: effective_model_tier(RequirementTaskKind::Implementation),
+            timeout_seconds: 45 * 60,
+            pi_session_file: None,
+            branch_name: None,
+            worktree_path: None,
+            commit_sha: None,
+            review_for: None,
+            review_angle: None,
+            review_status: RequirementReviewStatus::Pending,
+            attempt: 0,
+            execution_failure_count: 0,
+            review_rejection_count: 0,
+            recovery_stage: RequirementRecoveryStage::None,
+            failure_summary: None,
+            recovery_guidance: None,
+            high_tier_execution_used: false,
+            last_review_feedback: None,
+            pull_request_url: None,
+            merged_into: None,
+            cleanup_summary: None,
+            execution_warning: None,
+            trace: None,
+            status: RequirementTaskStatus::Pending,
+            target_files: task.target_files,
+            result_summary: None,
+            error: None,
         })
         .collect::<Vec<_>>();
 
@@ -440,14 +438,9 @@ fn future_implementation_tasks_for_prompt(
 }
 
 fn expand_execution_tasks(
-    implementation_tasks: Vec<PlannedImplementationTask>,
+    implementation_tasks: Vec<RequirementExecutionTask>,
 ) -> Vec<RequirementExecutionTask> {
-    let (implementation_tasks, branch_merge_tasks) = insert_branch_merges(
-        implementation_tasks
-            .into_iter()
-            .map(|item| item.task)
-            .collect(),
-    );
+    let (implementation_tasks, branch_merge_tasks) = insert_branch_merges(implementation_tasks);
     let final_dependencies = final_merge_dependencies(&implementation_tasks, &branch_merge_tasks);
     let mut tasks = Vec::with_capacity(implementation_tasks.len() * (REVIEW_ANGLES.len() + 2) + 2);
     for task in implementation_tasks {
@@ -866,10 +859,6 @@ struct RawTask {
     depends_on: Vec<String>,
     #[serde(default)]
     target_files: Vec<String>,
-}
-
-struct PlannedImplementationTask {
-    task: RequirementExecutionTask,
 }
 
 #[derive(Debug, Deserialize)]

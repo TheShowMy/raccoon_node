@@ -312,13 +312,8 @@ impl PiRpcClient {
     }
 
     pub async fn get_available_models(&self) -> Result<Vec<PiModel>, AppError> {
-        let request_id = format!(
-            "raccoon-node-{}",
-            PI_RPC_REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        );
         let response = self
             .send_command(json!({
-                "id": request_id,
                 "type": "get_available_models"
             }))
             .await?;
@@ -542,7 +537,7 @@ impl PiRpcClient {
     }
 
     async fn set_model(&self, provider: &str, model_id: &str) -> Result<(), AppError> {
-        self.send_command_with_auto_id(json!({
+        self.send_command(json!({
             "type": "set_model",
             "provider": provider,
             "modelId": model_id
@@ -552,7 +547,7 @@ impl PiRpcClient {
     }
 
     async fn set_thinking_level(&self, level: &str) -> Result<(), AppError> {
-        self.send_command_with_auto_id(json!({
+        self.send_command(json!({
             "type": "set_thinking_level",
             "level": level
         }))
@@ -561,8 +556,7 @@ impl PiRpcClient {
     }
 
     async fn new_session(&self) -> Result<(), AppError> {
-        self.send_command_with_auto_id(json!({ "type": "new_session" }))
-            .await?;
+        self.send_command(json!({ "type": "new_session" })).await?;
         Ok(())
     }
 
@@ -583,7 +577,7 @@ impl PiRpcClient {
     }
 
     async fn switch_session(&self, session_path: &str) -> Result<(), AppError> {
-        self.send_command_with_auto_id(json!({
+        self.send_command(json!({
             "type": "switch_session",
             "sessionPath": session_path
         }))
@@ -592,7 +586,7 @@ impl PiRpcClient {
     }
 
     async fn prompt(&self, message: &str) -> Result<(), AppError> {
-        self.send_command_with_auto_id(json!({
+        self.send_command(json!({
             "type": "prompt",
             "message": message
         }))
@@ -648,7 +642,7 @@ impl PiRpcClient {
 
     async fn get_last_assistant_text(&self) -> Result<Option<String>, AppError> {
         let response = self
-            .send_command_with_auto_id(json!({ "type": "get_last_assistant_text" }))
+            .send_command(json!({ "type": "get_last_assistant_text" }))
             .await?;
         Ok(response
             .get("data")
@@ -658,9 +652,7 @@ impl PiRpcClient {
     }
 
     async fn get_session_file(&self) -> Result<Option<String>, AppError> {
-        let response = self
-            .send_command_with_auto_id(json!({ "type": "get_state" }))
-            .await?;
+        let response = self.send_command(json!({ "type": "get_state" })).await?;
         Ok(response
             .get("data")
             .and_then(|data| data.get("sessionFile"))
@@ -670,7 +662,7 @@ impl PiRpcClient {
 
     async fn get_session_stats(&self) -> Result<Value, AppError> {
         let response = self
-            .send_command_with_auto_id(json!({ "type": "get_session_stats" }))
+            .send_command(json!({ "type": "get_session_stats" }))
             .await?;
         Ok(response.get("data").cloned().unwrap_or(Value::Null))
     }
@@ -746,21 +738,12 @@ impl PiRpcClient {
         self.validate_session_working_dir().await
     }
 
-    async fn send_command_with_auto_id(&self, mut command: Value) -> Result<Value, AppError> {
+    async fn send_command(&self, mut command: Value) -> Result<Value, AppError> {
         let request_id = format!(
             "raccoon-node-{}",
             PI_RPC_REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
-        command["id"] = json!(request_id);
-        self.send_command(command).await
-    }
-
-    async fn send_command(&self, command: Value) -> Result<Value, AppError> {
-        let request_id = command
-            .get("id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| AppError::internal("Pi RPC 请求缺少 id"))?
-            .to_owned();
+        command["id"] = json!(&request_id);
 
         let _guard = self.io_lock.lock().await;
         {
