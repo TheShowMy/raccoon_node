@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const buildDir = path.join(root, "build");
-const binaryName = process.platform === "win32" ? "raccoon_node.exe" : "raccoon_node";
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const isWindows = process.platform === "win32";
+const binaryName = isWindows ? "raccoon_node.exe" : "raccoon_node";
+const npmCli = process.env.npm_execpath;
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -36,7 +37,11 @@ await rm(buildDir, { recursive: true, force: true });
 await mkdir(path.join(buildDir, "bin"), { recursive: true });
 await mkdir(path.join(buildDir, "data"), { recursive: true });
 
-run(npmCommand, ["--prefix", "frontend", "run", "build"]);
+if (!npmCli) {
+  throw new Error("请通过 npm run build 执行构建");
+}
+
+run(process.execPath, [npmCli, "--prefix", "frontend", "run", "build"]);
 run("cargo", ["build", "--release"]);
 
 await cp(path.join(root, "target", "release", binaryName), path.join(buildDir, "bin", binaryName));
@@ -67,6 +72,17 @@ if (await pathExists(sourceData)) {
   );
 }
 
+const runCommand = isWindows ? `.\\bin\\${binaryName}` : `./bin/${binaryName}`;
+const environmentExample = isWindows
+  ? [
+      "```powershell",
+      '$env:RACCOON_HOST = "0.0.0.0"',
+      '$env:RACCOON_PORT = "3001"',
+      runCommand,
+      "```",
+    ]
+  : ["```sh", `RACCOON_HOST=0.0.0.0 RACCOON_PORT=3001 ${runCommand}`, "```"];
+
 await writeFile(
   path.join(buildDir, "README.md"),
   [
@@ -74,21 +90,17 @@ await writeFile(
     "",
     "运行方式：",
     "",
-    "```sh",
-    `./bin/${binaryName}`,
+    isWindows ? "```powershell" : "```sh",
+    runCommand,
     "```",
     "",
     "默认监听地址：127.0.0.1:3001",
     "",
     "本机访问：http://127.0.0.1:3001",
     "",
-    "如需监听所有接口：RACCOON_HOST=0.0.0.0",
-    "",
     "可选环境变量：",
     "",
-    "```sh",
-    "RACCOON_HOST=0.0.0.0 RACCOON_PORT=3001 ./bin/" + binaryName,
-    "```",
+    ...environmentExample,
     "",
     "生产数据文件：`data/app.json`",
     ""

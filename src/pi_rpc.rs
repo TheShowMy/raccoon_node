@@ -16,8 +16,8 @@ use tokio::{
 
 use crate::error::AppError;
 use crate::models::{
-    ModelProvider, ModelProviderFuture, ModelSettings, ModelTierSetting, PiModel,
-    RequirementAnalysisFuture, RequirementAnalysisInput, RequirementAnalysisOutput,
+    ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings, ModelTierSetting,
+    PiModel, RequirementAnalysisFuture, RequirementAnalysisInput, RequirementAnalysisOutput,
     RequirementEventEmitter, RequirementModelTier, RequirementPlanFuture, RequirementPlanInput,
     RequirementReviewStatus, RequirementTaskExecutionFuture, RequirementTaskExecutionInput,
     RequirementTaskExecutionOutput, RequirementTaskKind, PI_RPC_REQUEST_ID,
@@ -29,7 +29,7 @@ use crate::requirement_execution::{
     build_recovery_guidance_prompt, build_requirement_plan_prompt, build_requirement_task_prompt,
     parse_recovery_guidance, parse_requirement_plan, parse_task_execution_output,
 };
-use crate::utils::ensure_child_path;
+use crate::utils::{ensure_child_path, normalize_local_path};
 
 const MAX_PROJECT_CLIENTS: usize = 5;
 
@@ -121,10 +121,10 @@ pub(crate) fn resolve_project_working_dir(
     for candidate in candidates {
         if ensure_child_path(data_root, &candidate).is_ok() {
             if candidate.exists() {
-                return Ok(candidate);
+                return normalize_local_path(&candidate);
             }
             if first_valid.is_none() {
-                first_valid = Some(candidate);
+                first_valid = Some(normalize_local_path(&candidate)?);
             }
         }
     }
@@ -203,6 +203,22 @@ impl ModelProvider for PiRpcModelProvider {
             Ok(output)
         })
     }
+
+    fn release_project(&self, project_id: &str) -> ModelProviderActionFuture<'_> {
+        let project_id = project_id.to_owned();
+        Box::pin(async move {
+            let client = self
+                .project_clients
+                .lock()
+                .await
+                .remove(&project_id)
+                .map(|(client, _)| client);
+            if let Some(client) = client {
+                client.shutdown().await;
+            }
+            Ok(())
+        })
+    }
 }
 
 pub struct PiRpcClient {
@@ -211,11 +227,14 @@ pub struct PiRpcClient {
     pub stdout: Mutex<BufReader<ChildStdout>>,
     pub child: Mutex<Child>,
     pub session_dir: PathBuf,
+    pub working_dir: PathBuf,
 }
 
 impl PiRpcClient {
     pub async fn start(session_dir: &Path, working_dir: &Path) -> Result<Self, AppError> {
-        tokio::fs::create_dir_all(session_dir).await?;
+        let session_dir = normalize_local_path(session_dir)?;
+        let working_dir = normalize_local_path(working_dir)?;
+        tokio::fs::create_dir_all(&session_dir).await?;
 
         let candidates: Vec<&str> = if cfg!(target_os = "windows") {
             vec!["pi.cmd", "pi.exe", "pi"]
@@ -225,7 +244,7 @@ impl PiRpcClient {
 
         let mut last_error = None;
         for program in &candidates {
-            match Self::start_with_program(program, session_dir, working_dir).await {
+            match Self::start_with_program(program, &session_dir, &working_dir).await {
                 Ok(client) => {
                     tracing::info!("started Pi Agent RPC using {}", program);
                     return Ok(client);
@@ -286,6 +305,7 @@ impl PiRpcClient {
             stdout: Mutex::new(BufReader::new(stdout)),
             child: Mutex::new(child),
             session_dir: session_dir.to_path_buf(),
+            working_dir: working_dir.to_path_buf(),
         };
         client.drain_startup_noise().await?;
         Ok(client)
@@ -548,10 +568,9 @@ impl PiRpcClient {
 
     async fn restore_or_new_session(&self, session_file: Option<&str>) -> Result<bool, AppError> {
         if let Some(session_file) = session_file {
-            let session_path = Path::new(session_file);
-            ensure_child_path(&self.session_dir, session_path)?;
-            if tokio::fs::try_exists(session_path).await? {
-                self.switch_session(session_file).await?;
+            let session_path = self.resolve_session_path(session_file)?;
+            if tokio::fs::try_exists(&session_path).await? {
+                self.switch_session(path_str(&session_path)?).await?;
                 return Ok(true);
             }
             tracing::warn!(
@@ -578,6 +597,52 @@ impl PiRpcClient {
             "message": message
         }))
         .await?;
+        Ok(())
+    }
+
+    fn resolve_session_path(&self, session_file: &str) -> Result<PathBuf, AppError> {
+        let path = Path::new(session_file);
+        let resolved = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.session_dir.join(path)
+        };
+        let resolved = normalize_local_path(&resolved)?;
+        ensure_child_path(&self.session_dir, &resolved)?;
+        Ok(resolved)
+    }
+
+    async fn validate_session_working_dir(&self) -> Result<(), AppError> {
+        let session_file = self
+            .get_session_file()
+            .await?
+            .ok_or_else(|| AppError::internal("Pi Agent 未返回会话文件"))?;
+        let session_path = self.resolve_session_path(&session_file)?;
+        let mut first_line = String::new();
+        for _ in 0..20 {
+            match tokio::fs::File::open(&session_path).await {
+                Ok(file) => {
+                    let mut reader = BufReader::new(file);
+                    reader.read_line(&mut first_line).await?;
+                    break;
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if first_line.is_empty() {
+            return Err(AppError::internal("Pi Agent 会话文件未及时创建"));
+        }
+        let actual = parse_session_header_cwd(&first_line)?;
+        if !same_path(&actual, &self.working_dir) {
+            return Err(AppError::internal(format!(
+                "Pi Agent 工作目录错误：期望 {}，实际 {}",
+                self.working_dir.display(),
+                actual.display()
+            )));
+        }
         Ok(())
     }
 
@@ -647,35 +712,38 @@ impl PiRpcClient {
     where
         F: FnMut(Value) + Send,
     {
-        let _guard = self.io_lock.lock().await;
-        let mut stdout = self.stdout.lock().await;
-        let mut line = String::new();
-        let wait = async {
-            loop {
-                line.clear();
-                let read = stdout.read_line(&mut line).await?;
-                if read == 0 {
-                    return Err(AppError::internal("Pi Agent RPC 已退出"));
-                }
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                let value: Value = serde_json::from_str(trimmed)?;
-                if value.get("type") == Some(&json!("response")) {
-                    continue;
-                }
+        {
+            let _guard = self.io_lock.lock().await;
+            let mut stdout = self.stdout.lock().await;
+            let mut line = String::new();
+            let wait = async {
+                loop {
+                    line.clear();
+                    let read = stdout.read_line(&mut line).await?;
+                    if read == 0 {
+                        return Err(AppError::internal("Pi Agent RPC 已退出"));
+                    }
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    let value: Value = serde_json::from_str(trimmed)?;
+                    if value.get("type") == Some(&json!("response")) {
+                        continue;
+                    }
 
-                let terminal = is_terminal_agent_end(&value);
-                on_event(value);
-                if terminal {
-                    return Ok(());
+                    let terminal = is_terminal_agent_end(&value);
+                    on_event(value);
+                    if terminal {
+                        return Ok(());
+                    }
                 }
-            }
-        };
-        tokio::time::timeout(timeout, wait)
-            .await
-            .map_err(|_| AppError::internal("等待 Pi Agent 需求分析超时"))?
+            };
+            tokio::time::timeout(timeout, wait)
+                .await
+                .map_err(|_| AppError::internal("等待 Pi Agent 需求分析超时"))??;
+        }
+        self.validate_session_working_dir().await
     }
 
     async fn send_command_with_auto_id(&self, mut command: Value) -> Result<Value, AppError> {
@@ -753,6 +821,12 @@ impl PiRpcClient {
             }
         }
         Ok(())
+    }
+
+    async fn shutdown(&self) {
+        let mut child = self.child.lock().await;
+        let _ = child.start_kill();
+        let _ = child.wait().await;
     }
 }
 
@@ -876,6 +950,7 @@ async fn prepare_task_workspace(
                 .as_deref()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(&input.project.local_path));
+            let worktree = normalize_local_path(&worktree)?;
             ensure_child_path(data_root, &worktree)?;
             if !worktree.exists() {
                 return Err(AppError::internal("恢复审核失败：目标 worktree 不存在"));
@@ -902,6 +977,7 @@ async fn prepare_task_workspace(
                 .unwrap_or_else(|| {
                     task_worktree_path(data_root, &input.project.id, &input.task.id)
                 });
+            let worktree = normalize_local_path(&worktree)?;
             ensure_child_path(data_root, &worktree)?;
 
             let existed = worktree.join(".git").exists();
@@ -1240,9 +1316,10 @@ fn generated_branch_names<'a>(branches: impl Iterator<Item = &'a str>) -> BTreeS
 }
 
 async fn git(dir: &Path, args: &[&str]) -> Result<String, AppError> {
+    let dir = normalize_local_path(dir)?;
     let output = Command::new("git")
         .arg("-C")
-        .arg(dir)
+        .arg(&dir)
         .args(args)
         .output()
         .await?;
@@ -1258,9 +1335,10 @@ async fn git(dir: &Path, args: &[&str]) -> Result<String, AppError> {
 }
 
 async fn run_gh(dir: &Path, args: &[&str]) -> Result<String, AppError> {
+    let dir = normalize_local_path(dir)?;
     let output = Command::new("gh")
         .args(args)
-        .current_dir(dir)
+        .current_dir(&dir)
         .output()
         .await?;
     if output.status.success() {
@@ -1283,7 +1361,39 @@ fn task_worktree_path(data_root: &Path, project_id: &str, task_id: &str) -> Path
         .join("projects")
         .join(project_id)
         .join("worktrees")
-        .join(slug(task_id))
+        .join(safe_worktree_name(task_id))
+}
+
+fn safe_worktree_name(value: &str) -> String {
+    const MAX_LEN: usize = 80;
+    let mut name = slug(value);
+    if is_windows_reserved_name(&name) {
+        name.insert(0, '_');
+    }
+    if name.len() <= MAX_LEN {
+        return name;
+    }
+    let hash = value.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    });
+    format!("{}-{hash:08x}", &name[..MAX_LEN - 17])
+}
+
+fn is_windows_reserved_name(value: &str) -> bool {
+    let value = value.trim_end_matches(['.', ' ']).to_ascii_lowercase();
+    matches!(value.as_str(), "con" | "prn" | "aux" | "nul")
+        || matches!(
+            value
+                .strip_prefix("com")
+                .and_then(|value| value.parse::<u8>().ok()),
+            Some(1..=9)
+        )
+        || matches!(
+            value
+                .strip_prefix("lpt")
+                .and_then(|value| value.parse::<u8>().ok()),
+            Some(1..=9)
+        )
 }
 
 fn slug(value: &str) -> String {
@@ -1311,6 +1421,42 @@ fn path_str(path: &Path) -> Result<&str, AppError> {
         .ok_or_else(|| AppError::internal("路径不是有效 UTF-8"))
 }
 
+fn same_path(left: &Path, right: &Path) -> bool {
+    let left = std::fs::canonicalize(left)
+        .ok()
+        .and_then(|path| normalize_local_path(&path).ok())
+        .unwrap_or_else(|| left.to_path_buf());
+    let right = std::fs::canonicalize(right)
+        .ok()
+        .and_then(|path| normalize_local_path(&path).ok())
+        .unwrap_or_else(|| right.to_path_buf());
+    if cfg!(windows) {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
+}
+
+fn parse_session_header_cwd(line: &str) -> Result<PathBuf, AppError> {
+    if line.len() > 8192 {
+        return Err(AppError::internal("Pi Agent 会话头过长"));
+    }
+    let header: Value = serde_json::from_str(line.trim())?;
+    if header.get("type").and_then(Value::as_str) != Some("session") {
+        return Err(AppError::internal("Pi Agent 会话首行类型错误"));
+    }
+    let cwd = header
+        .get("cwd")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::internal("Pi Agent 会话缺少 cwd"))?;
+    let cwd = normalize_local_path(Path::new(cwd))?;
+    if !cwd.is_absolute() {
+        return Err(AppError::internal("Pi Agent 会话 cwd 不是绝对路径"));
+    }
+    Ok(cwd)
+}
+
 impl Drop for PiRpcClient {
     fn drop(&mut self) {
         if let Ok(mut child) = self.child.try_lock() {
@@ -1324,7 +1470,7 @@ mod tests {
     use super::{
         attach_session_usage, build_pr_merge_args, commit_task_changes,
         dependency_commits_for_task, generated_branch_names, is_terminal_agent_end,
-        parse_default_branch,
+        parse_default_branch, parse_session_header_cwd, safe_worktree_name,
     };
     use crate::models::{
         RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
@@ -1338,6 +1484,27 @@ mod tests {
         assert_eq!(parse_default_branch("origin/main\n"), "main");
         assert_eq!(parse_default_branch("origin/trunk\n"), "trunk");
         assert_eq!(parse_default_branch(""), "main");
+    }
+
+    #[test]
+    fn session_header_requires_absolute_cwd() {
+        assert!(parse_session_header_cwd(r#"{"type":"session","cwd":"relative"}"#).is_err());
+        assert!(parse_session_header_cwd(r#"{"type":"message","cwd":"/tmp"}"#).is_err());
+        let cwd = std::env::current_dir().unwrap();
+        let header = json!({ "type": "session", "cwd": cwd }).to_string();
+        assert_eq!(
+            parse_session_header_cwd(&header).unwrap(),
+            std::env::current_dir().unwrap()
+        );
+    }
+
+    #[test]
+    fn worktree_names_avoid_windows_reserved_names_and_long_components() {
+        assert_eq!(safe_worktree_name("CON"), "_con");
+        assert_eq!(safe_worktree_name("com1"), "_com1");
+        let long = safe_worktree_name(&"a".repeat(300));
+        assert!(long.len() <= 80);
+        assert_ne!(long, safe_worktree_name(&"b".repeat(300)));
     }
 
     #[test]

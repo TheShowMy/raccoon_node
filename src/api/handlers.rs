@@ -86,6 +86,19 @@ pub async fn delete_project(
     AxumPath(id): AxumPath<String>,
 ) -> Result<StatusCode, AppError> {
     let mut store = state.store.write().await;
+    if store.data.requirements.iter().any(|requirement| {
+        requirement.project_id == id
+            && matches!(
+                requirement.status,
+                RequirementStatus::Analyzing
+                    | RequirementStatus::Planning
+                    | RequirementStatus::Queued
+                    | RequirementStatus::Running
+            )
+    }) {
+        return Err(AppError::bad_request("项目仍有任务运行，暂时无法删除"));
+    }
+    state.model_provider.release_project(&id).await?;
     store.delete_project(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

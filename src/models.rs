@@ -436,6 +436,8 @@ pub type RequirementPlanFuture<'a> =
     Pin<Box<dyn Future<Output = Result<RequirementExecutionPlan, AppError>> + Send + 'a>>;
 pub type RequirementTaskExecutionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<RequirementTaskExecutionOutput, AppError>> + Send + 'a>>;
+pub type ModelProviderActionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + 'a>>;
 
 pub trait ModelProvider: Send + Sync {
     fn available_models(&self) -> ModelProviderFuture<'_>;
@@ -454,6 +456,9 @@ pub trait ModelProvider: Send + Sync {
         input: RequirementTaskExecutionInput,
         events: Option<RequirementEventEmitter>,
     ) -> RequirementTaskExecutionFuture<'_>;
+    fn release_project(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 #[derive(Debug, Clone)]

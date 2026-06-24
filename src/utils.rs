@@ -13,9 +13,9 @@ use crate::models::{
 };
 
 pub fn ensure_child_path(root: &Path, child: &Path) -> Result<(), AppError> {
-    let root_canonical = strip_unc_prefix(
-        std::fs::canonicalize(root).map_err(|_| AppError::bad_request("无法解析根目录"))?,
-    );
+    let root_canonical = normalize_local_path(
+        &std::fs::canonicalize(root).map_err(|_| AppError::bad_request("无法解析根目录"))?,
+    )?;
 
     let resolved = if child.is_absolute() {
         child.to_path_buf()
@@ -25,7 +25,7 @@ pub fn ensure_child_path(root: &Path, child: &Path) -> Result<(), AppError> {
 
     // For existing paths, canonicalize gives the most robust check.
     if let Ok(child_canonical) = std::fs::canonicalize(&resolved) {
-        if !strip_unc_prefix(child_canonical).starts_with(&root_canonical) {
+        if !normalize_local_path(&child_canonical)?.starts_with(&root_canonical) {
             return Err(AppError::bad_request("路径必须位于数据目录内"));
         }
         return Ok(());
@@ -36,7 +36,7 @@ pub fn ensure_child_path(root: &Path, child: &Path) -> Result<(), AppError> {
     // directories live under `/var` which symlinks to `/private/var`, so we
     // also attempt to canonicalize the longest existing prefix and append the
     // remaining tail relative to the canonical root.
-    let normalized = strip_unc_prefix(normalize_path(&resolved));
+    let normalized = normalize_local_path(&normalize_path(&resolved))?;
     if normalized.starts_with(&root_canonical) {
         return Ok(());
     }
@@ -58,7 +58,7 @@ fn resolve_under_root(_root_canonical: &Path, child: &Path) -> Option<PathBuf> {
 
     loop {
         if let Ok(canonical) = std::fs::canonicalize(&existing) {
-            let mut result = strip_unc_prefix(canonical);
+            let mut result = normalize_local_path(&canonical).ok()?;
             for component in tail.into_iter().rev() {
                 result.push(component);
             }
@@ -93,19 +93,41 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     result
 }
 
+pub fn normalize_local_path(path: &Path) -> Result<PathBuf, AppError> {
+    normalize_local_path_impl(path)
+        .map_err(|message| AppError::bad_request(format!("不支持的路径：{message}")))
+}
+
 #[cfg(windows)]
-pub fn strip_unc_prefix(path: PathBuf) -> PathBuf {
-    let s = path.to_string_lossy();
-    if let Some(stripped) = s.strip_prefix(r"\\?\") {
-        PathBuf::from(stripped)
-    } else {
-        path
+fn normalize_local_path_impl(path: &Path) -> Result<PathBuf, &'static str> {
+    normalize_windows_path_value(&path.to_string_lossy())
+}
+
+#[cfg(any(windows, test))]
+fn normalize_windows_path_value(value: &str) -> Result<PathBuf, &'static str> {
+    if value.starts_with(r"\\?\UNC\") {
+        return Err("Windows 仅支持本地磁盘路径，不支持 UNC 网络路径");
     }
+    if let Some(stripped) = value.strip_prefix(r"\\?\") {
+        let bytes = stripped.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'\\' | b'/')
+        {
+            return Ok(PathBuf::from(stripped));
+        }
+        return Err("Windows 扩展路径不是本地磁盘绝对路径");
+    }
+    if value.starts_with(r"\\") || value.starts_with("//") {
+        return Err("Windows 仅支持本地磁盘路径，不支持 UNC 网络路径");
+    }
+    Ok(PathBuf::from(value))
 }
 
 #[cfg(not(windows))]
-pub fn strip_unc_prefix(path: PathBuf) -> PathBuf {
-    path
+fn normalize_local_path_impl(path: &Path) -> Result<PathBuf, &'static str> {
+    Ok(path.to_path_buf())
 }
 
 pub fn slugify(value: &str) -> String {
@@ -153,7 +175,9 @@ pub fn sort_requirements_desc(requirements: &mut [Requirement]) {
 
 pub fn data_root_from_file(path: &Path) -> Result<PathBuf, AppError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::canonicalize(parent).map_err(|_| AppError::bad_request("无法解析数据目录"))
+    let canonical =
+        std::fs::canonicalize(parent).map_err(|_| AppError::bad_request("无法解析数据目录"))?;
+    normalize_local_path(&canonical)
 }
 
 pub fn public_dir_path() -> PathBuf {
@@ -295,10 +319,11 @@ pub async fn remove_dir_if_exists(path: &Path) -> Result<(), AppError> {
 }
 
 pub async fn clone_git_repo(git_url: &str, repo_dir: &Path) -> Result<(), AppError> {
+    let repo_dir = normalize_local_path(repo_dir)?;
     let output = tokio::process::Command::new("git")
         .arg("clone")
         .arg(git_url)
-        .arg(repo_dir)
+        .arg(&repo_dir)
         .output()
         .await?;
 
@@ -373,5 +398,33 @@ pub fn format_clarification_answer(
         "未填写".to_owned()
     } else {
         parts.join("；")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_windows_path_value;
+    use std::path::PathBuf;
+
+    #[test]
+    fn windows_extended_local_path_becomes_drive_path() {
+        assert_eq!(
+            normalize_windows_path_value(r"\\?\C:\repo").unwrap(),
+            PathBuf::from(r"C:\repo")
+        );
+    }
+
+    #[test]
+    fn windows_drive_path_is_unchanged() {
+        assert_eq!(
+            normalize_windows_path_value(r"D:\repo").unwrap(),
+            PathBuf::from(r"D:\repo")
+        );
+    }
+
+    #[test]
+    fn windows_unc_paths_are_rejected() {
+        assert!(normalize_windows_path_value(r"\\server\share\repo").is_err());
+        assert!(normalize_windows_path_value(r"\\?\UNC\server\share\repo").is_err());
     }
 }

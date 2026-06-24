@@ -20,7 +20,8 @@
 需要 Node.js >= 20 与 Rust 1.86（参见 `rust-toolchain.toml`）。
 
 ```sh
-npm install
+npm ci
+npm --prefix frontend ci
 npm run dev
 ```
 
@@ -28,8 +29,26 @@ npm run dev
 
 ## 构建
 
+macOS / Linux：
+
 ```sh
 npm run build
+./build/bin/raccoon_node
+```
+
+Windows PowerShell：
+
+```powershell
+npm run build
+.\build\bin\raccoon_node.exe
+```
+
+如需监听所有网络接口：
+
+```powershell
+$env:RACCOON_HOST = "0.0.0.0"
+$env:RACCOON_PORT = "3001"
+.\build\bin\raccoon_node.exe
 ```
 
 输出目录为 `build/`，包含二进制、前端静态资源与默认数据文件。

@@ -19,8 +19,9 @@ use crate::models::{
 use crate::requirement_execution::effective_model_tier;
 use crate::utils::{
     build_clarification_answer_summary, clarification_has_answer, clone_git_repo,
-    data_root_from_file, derive_requirement_title, ensure_child_path, remove_dir_if_exists,
-    slugify, sort_requirements_desc, validate_git_url, validate_model_settings, write_json,
+    data_root_from_file, derive_requirement_title, ensure_child_path, normalize_local_path,
+    remove_dir_if_exists, slugify, sort_requirements_desc, validate_git_url,
+    validate_model_settings, write_json,
 };
 
 const MAX_REVIEW_REJECTIONS: u32 = 5;
@@ -59,6 +60,7 @@ impl JsonStore {
 
         let content = tokio::fs::read_to_string(&path).await?;
         let mut data: AppData = serde_json::from_str(&content)?;
+        let paths_changed = normalize_stored_paths(&mut data)?;
         for requirement in &mut data.requirements {
             if requirement.status == RequirementStatus::Completed {
                 continue;
@@ -76,6 +78,9 @@ impl JsonStore {
             }
         }
         let data_root = data_root_from_file(&path)?;
+        if paths_changed {
+            write_json(&path, &data).await?;
+        }
         Ok(Self {
             path,
             data_root,
@@ -1282,6 +1287,40 @@ impl JsonStore {
         ensure_child_path(&self.data_root, &project_dir)?;
         Ok(project_dir)
     }
+}
+
+fn normalize_stored_paths(data: &mut AppData) -> Result<bool, AppError> {
+    let mut changed = false;
+    for project in &mut data.projects {
+        changed |= normalize_stored_path(&mut project.local_path)?;
+    }
+    for requirement in &mut data.requirements {
+        if let Some(path) = requirement.pi_session_file.as_mut() {
+            changed |= normalize_stored_path(path)?;
+        }
+        if let Some(plan) = requirement.execution_plan.as_mut() {
+            for task in &mut plan.tasks {
+                if let Some(path) = task.pi_session_file.as_mut() {
+                    changed |= normalize_stored_path(path)?;
+                }
+                if let Some(path) = task.worktree_path.as_mut() {
+                    changed |= normalize_stored_path(path)?;
+                }
+            }
+        }
+    }
+    Ok(changed)
+}
+
+fn normalize_stored_path(path: &mut String) -> Result<bool, AppError> {
+    let normalized = normalize_local_path(Path::new(path))?
+        .to_string_lossy()
+        .to_string();
+    if normalized == *path {
+        return Ok(false);
+    }
+    *path = normalized;
+    Ok(true)
 }
 
 fn runnable_task_indexes(plan: &RequirementExecutionPlan) -> Result<Vec<usize>, AppError> {
