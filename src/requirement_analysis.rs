@@ -282,7 +282,20 @@ pub fn build_pi_trace_metadata(events: &[Value]) -> Option<Value> {
             .and_then(Value::as_str)
             .unwrap_or_default();
         match pi_type {
-            "message_update" => collect_message_update(event, &mut thinking),
+            "message_update" => {
+                collect_message_update(event, &mut thinking);
+                if event
+                    .get("assistantMessageEvent")
+                    .and_then(|assistant_event| assistant_event.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("error")
+                {
+                    statuses.push(json!({
+                        "type": "assistant_message_error",
+                        "message": assistant_message_event_error(event),
+                    }));
+                }
+            }
             "tool_execution_start" | "tool_execution_update" | "tool_execution_end" => {
                 upsert_trace_tool(&mut tools, event, pi_type)
             }
@@ -311,7 +324,38 @@ pub fn build_pi_trace_metadata(events: &[Value]) -> Option<Value> {
     }))
 }
 
-pub fn assistant_text_from_pi_events(events: &[Value]) -> Option<String> {
+#[derive(Debug)]
+pub struct PiResponseExtraction {
+    pub assistant_text: String,
+    pub trace: Option<Value>,
+}
+
+#[derive(Debug)]
+pub struct PiResponseFailure {
+    pub message: String,
+    pub trace: Option<Value>,
+}
+
+pub fn extract_pi_response(
+    events: &[Value],
+    last_assistant_text: Option<String>,
+) -> Result<PiResponseExtraction, PiResponseFailure> {
+    let trace = build_pi_trace_metadata(events);
+    if let Some(message) = pi_failure_message(events) {
+        return Err(PiResponseFailure { message, trace });
+    }
+
+    let assistant_text = last_assistant_text
+        .filter(|text| !text.trim().is_empty())
+        .or_else(|| assistant_text_from_pi_events(events))
+        .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
+    Ok(PiResponseExtraction {
+        assistant_text,
+        trace,
+    })
+}
+
+fn assistant_text_from_pi_events(events: &[Value]) -> Option<String> {
     let text = events
         .iter()
         .filter_map(message_update_text_delta)
@@ -321,6 +365,111 @@ pub fn assistant_text_from_pi_events(events: &[Value]) -> Option<String> {
         None
     } else {
         Some(text.to_owned())
+    }
+}
+
+fn pi_failure_message(events: &[Value]) -> Option<String> {
+    if let Some(event) = events
+        .iter()
+        .rev()
+        .find(|event| event.get("type").and_then(Value::as_str) == Some("extension_error"))
+    {
+        return Some(format!(
+            "Pi Agent 扩展执行失败：{}",
+            value_error_text(event.get("error")).unwrap_or_else(|| "未知扩展错误".to_owned())
+        ));
+    }
+
+    if let Some(event) = events.iter().rev().find(|event| {
+        event.get("type").and_then(Value::as_str) == Some("auto_retry_end")
+            && event.get("success").and_then(Value::as_bool) == Some(false)
+    }) {
+        return Some(format!(
+            "Pi Agent 自动重试最终失败：{}",
+            event
+                .get("finalError")
+                .or_else(|| event.get("final_error"))
+                .and_then(Value::as_str)
+                .unwrap_or("未知错误")
+        ));
+    }
+
+    if let Some(agent_end) = events
+        .iter()
+        .rev()
+        .find(|event| event.get("type").and_then(Value::as_str) == Some("agent_end"))
+    {
+        if let Some(message) = agent_end
+            .get("messages")
+            .and_then(Value::as_array)
+            .and_then(|messages| messages.iter().rev().find_map(assistant_message_failure))
+        {
+            return Some(message);
+        }
+        // 最终 agent_end 成功时，之前的流错误可能已被自动重试恢复。
+        return None;
+    }
+
+    events.iter().rev().find_map(|event| {
+        let assistant_event = event.get("assistantMessageEvent")?;
+        if assistant_event.get("type").and_then(Value::as_str) != Some("error") {
+            return None;
+        }
+        Some(assistant_message_event_error(event))
+    })
+}
+
+fn assistant_message_event_error(event: &Value) -> String {
+    let assistant_event = event.get("assistantMessageEvent");
+    let error = assistant_event.and_then(|event| event.get("error"));
+    let reason = assistant_event
+        .and_then(|event| event.get("reason"))
+        .and_then(Value::as_str)
+        .unwrap_or("error");
+    let detail = error
+        .and_then(|value| value.get("errorMessage"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| value_error_text(error))
+        .unwrap_or_else(|| "未知错误".to_owned());
+    format!("Pi Agent 消息生成失败（{reason}）：{detail}")
+}
+
+fn assistant_message_failure(message: &Value) -> Option<String> {
+    if message.get("role").and_then(Value::as_str) != Some("assistant") {
+        return None;
+    }
+    let stop_reason = message
+        .get("stopReason")
+        .or_else(|| message.get("stop_reason"))
+        .and_then(Value::as_str);
+    let error_message = message
+        .get("errorMessage")
+        .or_else(|| message.get("error_message"))
+        .and_then(Value::as_str);
+    let terminated =
+        error_message.is_some_and(|message| message.to_ascii_lowercase().contains("terminated"));
+    if !matches!(stop_reason, Some("error" | "aborted")) && !terminated {
+        return None;
+    }
+
+    let reason = stop_reason.unwrap_or("error");
+    Some(format!(
+        "Pi Agent 执行失败（{reason}）：{}",
+        error_message.unwrap_or("未知错误")
+    ))
+}
+
+fn value_error_text(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(text) => Some(text.clone()),
+        Value::Object(object) => object
+            .get("message")
+            .or_else(|| object.get("errorMessage"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| Some(Value::Object(object.clone()).to_string())),
+        value => Some(value.to_string()),
     }
 }
 
@@ -442,7 +591,11 @@ fn extract_tool_text(event: &Value) -> Option<String> {
 pub fn summarize_pi_event(pi_type: &str, payload: &Value) -> String {
     match pi_type {
         "agent_start" => "Pi Agent 开始处理。".to_owned(),
-        "agent_end" => "Pi Agent 处理完成。".to_owned(),
+        "agent_end" => payload
+            .get("messages")
+            .and_then(Value::as_array)
+            .and_then(|messages| messages.iter().rev().find_map(assistant_message_failure))
+            .unwrap_or_else(|| "Pi Agent 处理完成。".to_owned()),
         "turn_start" => "开始新一轮推理。".to_owned(),
         "turn_end" => "本轮推理完成。".to_owned(),
         "message_start" => "开始生成消息。".to_owned(),
@@ -458,7 +611,27 @@ pub fn summarize_pi_event(pi_type: &str, payload: &Value) -> String {
         ),
         "tool_execution_update" => "工具执行中。".to_owned(),
         "tool_execution_end" => "工具执行完成。".to_owned(),
-        "extension_error" => "扩展执行出错。".to_owned(),
+        "auto_retry_start" => format!(
+            "Pi Agent 将自动重试：{}",
+            payload
+                .get("errorMessage")
+                .and_then(Value::as_str)
+                .unwrap_or("未知错误")
+        ),
+        "auto_retry_end" if payload.get("success").and_then(Value::as_bool) == Some(false) => {
+            format!(
+                "Pi Agent 自动重试最终失败：{}",
+                payload
+                    .get("finalError")
+                    .and_then(Value::as_str)
+                    .unwrap_or("未知错误")
+            )
+        }
+        "auto_retry_end" => "Pi Agent 自动重试成功。".to_owned(),
+        "extension_error" => format!(
+            "Pi Agent 扩展执行失败：{}",
+            value_error_text(payload.get("error")).unwrap_or_else(|| "未知错误".to_owned())
+        ),
         _ => format!("Pi Agent 事件：{pi_type}"),
     }
 }
@@ -504,8 +677,103 @@ mod tests {
         ];
 
         assert_eq!(
-            assistant_text_from_pi_events(&events).as_deref(),
-            Some("{\"status\":\"ready\",\"message\":\"ok\",\"clarifications\":[],\"draft\":null}")
+            extract_pi_response(&events, None).unwrap().assistant_text,
+            "{\"status\":\"ready\",\"message\":\"ok\",\"clarifications\":[],\"draft\":null}"
         );
+    }
+
+    #[test]
+    fn recognizes_official_pi_failure_events_before_business_json() {
+        let cases = [
+            vec![json!({
+                "type": "agent_end",
+                "messages": [{
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "provider failed"
+                }]
+            })],
+            vec![json!({
+                "type": "agent_end",
+                "messages": [{
+                    "role": "assistant",
+                    "stopReason": "aborted",
+                    "errorMessage": "cancelled"
+                }]
+            })],
+            vec![json!({
+                "type": "agent_end",
+                "messages": [{
+                    "role": "assistant",
+                    "stopReason": "stop",
+                    "errorMessage": "stream terminated"
+                }]
+            })],
+            vec![json!({
+                "type": "auto_retry_end",
+                "success": false,
+                "attempt": 3,
+                "finalError": "still unavailable"
+            })],
+            vec![json!({
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "error",
+                    "reason": "error",
+                    "error": {
+                        "role": "assistant",
+                        "stopReason": "error",
+                        "errorMessage": "stream failed"
+                    }
+                }
+            })],
+            vec![json!({
+                "type": "extension_error",
+                "extensionPath": "extension.ts",
+                "event": "tool_call",
+                "error": "extension failed"
+            })],
+        ];
+
+        for events in cases {
+            let failure =
+                extract_pi_response(&events, Some(r#"{"status":"ready"}"#.to_owned())).unwrap_err();
+            assert!(!failure.message.is_empty());
+            assert!(failure.trace.is_some());
+        }
+    }
+
+    #[test]
+    fn final_successful_agent_end_clears_retried_stream_error() {
+        let events = vec![
+            json!({
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "error",
+                    "reason": "error",
+                    "error": {
+                        "role": "assistant",
+                        "stopReason": "error",
+                        "errorMessage": "temporarily unavailable"
+                    }
+                }
+            }),
+            json!({
+                "type": "auto_retry_end",
+                "success": true,
+                "attempt": 1
+            }),
+            json!({
+                "type": "agent_end",
+                "messages": [{
+                    "role": "assistant",
+                    "stopReason": "stop"
+                }]
+            }),
+        ];
+
+        let response = extract_pi_response(&events, Some("{}".to_owned())).unwrap();
+        assert_eq!(response.assistant_text, "{}");
+        assert!(response.trace.is_some());
     }
 }

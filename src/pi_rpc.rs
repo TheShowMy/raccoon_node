@@ -23,12 +23,11 @@ use crate::models::{
     RequirementTaskExecutionOutput, RequirementTaskKind, PI_RPC_REQUEST_ID,
 };
 use crate::requirement_analysis::{
-    assistant_text_from_pi_events, build_pi_trace_metadata, build_requirement_prompt,
-    parse_requirement_analysis,
+    build_requirement_prompt, extract_pi_response, parse_requirement_analysis, PiResponseFailure,
 };
 use crate::requirement_execution::{
-    build_requirement_plan_prompt, build_requirement_task_prompt, parse_requirement_plan,
-    parse_task_execution_output,
+    build_recovery_guidance_prompt, build_requirement_plan_prompt, build_requirement_task_prompt,
+    parse_recovery_guidance, parse_requirement_plan, parse_task_execution_output,
 };
 use crate::utils::ensure_child_path;
 
@@ -186,9 +185,13 @@ impl ModelProvider for PiRpcModelProvider {
                 input.task.worktree_path =
                     worktree_path.map(|path| path.to_string_lossy().to_string());
             }
-            let mut output = client
-                .execute_requirement_task(input.clone(), events)
-                .await?;
+            let mut output = match client.execute_requirement_task(input.clone(), events).await {
+                Ok(output) => output,
+                Err(error) => {
+                    let session_file = client.get_session_file().await.ok().flatten();
+                    return Err(AppError::task_execution(error.to_string(), session_file));
+                }
+            };
             if input.task.kind == RequirementTaskKind::MergeReview
                 && output.review_status == Some(RequirementReviewStatus::Approved)
             {
@@ -312,13 +315,9 @@ impl PiRpcClient {
         input: RequirementAnalysisInput,
         events: Option<RequirementEventEmitter>,
     ) -> Result<RequirementAnalysisOutput, AppError> {
-        if let Some(session_file) = input.pi_session_file.as_deref() {
-            let session_path = Path::new(session_file);
-            ensure_child_path(&self.session_dir, session_path)?;
-            self.switch_session(session_file).await?;
-        } else {
-            self.new_session().await?;
-        }
+        let session_reused = self
+            .restore_or_new_session(input.pi_session_file.as_deref())
+            .await?;
         self.prepare_high_model(&input.model_settings).await?;
         self.prompt(&build_requirement_prompt(&input)).await?;
         let mut pi_events = Vec::new();
@@ -330,18 +329,26 @@ impl PiRpcClient {
         })
         .await?;
 
-        let assistant_text = self
-            .get_last_assistant_text()
-            .await?
-            .filter(|text| !text.trim().is_empty())
-            .or_else(|| assistant_text_from_pi_events(&pi_events))
-            .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
+        let response = self.extract_pi_response(&pi_events).await;
         let session_file = self.get_session_file().await?;
-        Ok(parse_requirement_analysis(
-            &assistant_text,
-            session_file,
-            build_pi_trace_metadata(&pi_events),
-        ))
+        match response {
+            Ok(mut response) => {
+                response.trace = self
+                    .attach_session_usage(response.trace, session_reused)
+                    .await;
+                Ok(parse_requirement_analysis(
+                    &response.assistant_text,
+                    session_file,
+                    response.trace,
+                ))
+            }
+            Err(mut failure) => {
+                failure.trace = self
+                    .attach_session_usage(failure.trace, session_reused)
+                    .await;
+                Ok(requirement_analysis_failure(failure, session_file))
+            }
+        }
     }
 
     pub async fn plan_requirement_execution(
@@ -361,13 +368,12 @@ impl PiRpcClient {
             pi_events.push(event);
         })
         .await?;
-        let assistant_text = self
-            .get_last_assistant_text()
-            .await?
-            .filter(|text| !text.trim().is_empty())
-            .or_else(|| assistant_text_from_pi_events(&pi_events))
-            .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
-        parse_requirement_plan(&assistant_text)
+        let mut response = self
+            .extract_pi_response(&pi_events)
+            .await
+            .map_err(pi_response_failure_error)?;
+        response.trace = self.attach_session_usage(response.trace, false).await;
+        parse_requirement_plan(&response.assistant_text)
     }
 
     pub async fn execute_requirement_task(
@@ -375,17 +381,53 @@ impl PiRpcClient {
         input: RequirementTaskExecutionInput,
         events: Option<RequirementEventEmitter>,
     ) -> Result<RequirementTaskExecutionOutput, AppError> {
-        if input.task.status == crate::models::RequirementTaskStatus::Fixing {
-            if let Some(session_file) = input.task.pi_session_file.as_deref() {
-                let session_path = Path::new(session_file);
-                ensure_child_path(&self.session_dir, session_path)?;
-                self.switch_session(session_file).await?;
-            } else {
-                self.new_session().await?;
-            }
-        } else {
-            self.new_session().await?;
+        let session_reused = self
+            .restore_or_new_session(input.task.pi_session_file.as_deref())
+            .await?;
+        if input.task.recovery_stage == crate::models::RequirementRecoveryStage::GuidedRetry
+            && input.task.recovery_guidance.is_none()
+        {
+            self.prepare_high_model(&input.model_settings).await?;
+            self.prompt(&build_recovery_guidance_prompt(&input.task))
+                .await?;
+            let mut guidance_events = Vec::new();
+            self.wait_for_agent_end_with_events(
+                Duration::from_secs(input.task.timeout_seconds.min(600)),
+                |event| {
+                    if let Some(emitter) = &events {
+                        emitter.emit_pi_event(event.clone());
+                    }
+                    guidance_events.push(event);
+                },
+            )
+            .await?;
+            let mut response = self
+                .extract_pi_response(&guidance_events)
+                .await
+                .map_err(pi_response_failure_error)?;
+            response.trace = self
+                .attach_session_usage(response.trace, session_reused)
+                .await;
+            let guidance = parse_recovery_guidance(&response.assistant_text)?;
+            return Ok(RequirementTaskExecutionOutput {
+                result_summary: "高档模型恢复方案已生成。".to_owned(),
+                pi_session_file: self.get_session_file().await?,
+                branch_name: input.task.branch_name.clone(),
+                worktree_path: input.task.worktree_path.clone(),
+                commit_sha: None,
+                review_status: None,
+                review_feedback: None,
+                pull_request_url: None,
+                merged_into: None,
+                cleanup_summary: None,
+                execution_warning: None,
+                changed: None,
+                no_op_reason: None,
+                recovery_guidance: Some(guidance),
+                trace: response.trace,
+            });
         }
+
         self.prepare_model_tier(&input.model_settings, input.task.model_tier)
             .await?;
         self.prompt(&build_requirement_task_prompt(
@@ -411,14 +453,15 @@ impl PiRpcClient {
                 input.task.title
             ))
         })?;
-        let assistant_text = self
-            .get_last_assistant_text()
-            .await?
-            .filter(|text| !text.trim().is_empty())
-            .or_else(|| assistant_text_from_pi_events(&pi_events))
-            .unwrap_or_else(|| "Pi Agent 没有返回文本。".to_owned());
-        let mut output =
-            parse_task_execution_output(&assistant_text, build_pi_trace_metadata(&pi_events))?;
+        let mut response = self
+            .extract_pi_response(&pi_events)
+            .await
+            .map_err(pi_response_failure_error)?;
+        response.trace = self
+            .attach_session_usage(response.trace, session_reused)
+            .await;
+        let mut output = parse_task_execution_output(&response.assistant_text, response.trace)?;
+        output.recovery_guidance = input.task.recovery_guidance.clone();
         output.pi_session_file = self.get_session_file().await?;
         output.branch_name = input.task.branch_name.clone();
         output.worktree_path = input.task.worktree_path.clone();
@@ -503,6 +546,23 @@ impl PiRpcClient {
         Ok(())
     }
 
+    async fn restore_or_new_session(&self, session_file: Option<&str>) -> Result<bool, AppError> {
+        if let Some(session_file) = session_file {
+            let session_path = Path::new(session_file);
+            ensure_child_path(&self.session_dir, session_path)?;
+            if tokio::fs::try_exists(session_path).await? {
+                self.switch_session(session_file).await?;
+                return Ok(true);
+            }
+            tracing::warn!(
+                session_file,
+                "Pi Agent 会话文件不存在，将使用现有任务摘要创建新会话"
+            );
+        }
+        self.new_session().await?;
+        Ok(false)
+    }
+
     async fn switch_session(&self, session_path: &str) -> Result<(), AppError> {
         self.send_command_with_auto_id(json!({
             "type": "switch_session",
@@ -543,6 +603,42 @@ impl PiRpcClient {
             .map(str::to_owned))
     }
 
+    async fn get_session_stats(&self) -> Result<Value, AppError> {
+        let response = self
+            .send_command_with_auto_id(json!({ "type": "get_session_stats" }))
+            .await?;
+        Ok(response.get("data").cloned().unwrap_or(Value::Null))
+    }
+
+    async fn attach_session_usage(
+        &self,
+        trace: Option<Value>,
+        session_reused: bool,
+    ) -> Option<Value> {
+        let stats = match self.get_session_stats().await {
+            Ok(stats) => stats,
+            Err(error) => {
+                tracing::warn!("读取 Pi Agent 会话统计失败：{error}");
+                return trace;
+            }
+        };
+        attach_session_usage(trace, &stats, session_reused)
+    }
+
+    async fn extract_pi_response(
+        &self,
+        events: &[Value],
+    ) -> Result<crate::requirement_analysis::PiResponseExtraction, PiResponseFailure> {
+        let last_assistant_text =
+            self.get_last_assistant_text()
+                .await
+                .map_err(|error| PiResponseFailure {
+                    message: error.to_string(),
+                    trace: crate::requirement_analysis::build_pi_trace_metadata(events),
+                })?;
+        extract_pi_response(events, last_assistant_text)
+    }
+
     async fn wait_for_agent_end_with_events<F>(
         &self,
         timeout: Duration,
@@ -555,7 +651,6 @@ impl PiRpcClient {
         let mut stdout = self.stdout.lock().await;
         let mut line = String::new();
         let wait = async {
-            let mut saw_tool_execution_this_turn = false;
             loop {
                 line.clear();
                 let read = stdout.read_line(&mut line).await?;
@@ -571,24 +666,11 @@ impl PiRpcClient {
                     continue;
                 }
 
-                let event_type = value
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                match event_type {
-                    "turn_start" | "agent_start" => saw_tool_execution_this_turn = false,
-                    "tool_execution_start" => saw_tool_execution_this_turn = true,
-                    "agent_end" => {
-                        on_event(value);
-                        return Ok(());
-                    }
-                    "turn_end" if !saw_tool_execution_this_turn => {
-                        on_event(value);
-                        return Ok(());
-                    }
-                    _ => {}
-                }
+                let terminal = is_terminal_agent_end(&value);
                 on_event(value);
+                if terminal {
+                    return Ok(());
+                }
             }
         };
         tokio::time::timeout(timeout, wait)
@@ -672,6 +754,72 @@ impl PiRpcClient {
         }
         Ok(())
     }
+}
+
+fn is_terminal_agent_end(event: &Value) -> bool {
+    event.get("type").and_then(Value::as_str) == Some("agent_end")
+        && event.get("willRetry").and_then(Value::as_bool) != Some(true)
+}
+
+fn attach_session_usage(
+    mut trace: Option<Value>,
+    stats: &Value,
+    session_reused: bool,
+) -> Option<Value> {
+    let trace_data = trace.as_mut()?.get_mut("trace")?.as_object_mut()?;
+    let tokens = stats.get("tokens").unwrap_or(&Value::Null);
+    let context = stats.get("contextUsage").unwrap_or(&Value::Null);
+    let input = tokens.get("input").and_then(Value::as_u64).unwrap_or(0);
+    let output = tokens.get("output").and_then(Value::as_u64).unwrap_or(0);
+    let cache_read = tokens.get("cacheRead").and_then(Value::as_u64).unwrap_or(0);
+    let cache_write = tokens
+        .get("cacheWrite")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    trace_data.insert(
+        "usage".to_owned(),
+        json!({
+            "sessionReused": session_reused,
+            "callCount": stats.get("assistantMessages").and_then(Value::as_u64).unwrap_or(0),
+            "input": input,
+            "output": output,
+            "cacheRead": cache_read,
+            "cacheWrite": cache_write,
+            "context": {
+                "tokens": context.get("tokens").and_then(Value::as_u64).unwrap_or(0),
+                "window": context.get("contextWindow").and_then(Value::as_u64).unwrap_or(0),
+                "percent": context.get("percent").and_then(Value::as_f64).unwrap_or(0.0),
+            },
+        }),
+    );
+    trace
+}
+
+fn requirement_analysis_failure(
+    failure: PiResponseFailure,
+    pi_session_file: Option<String>,
+) -> RequirementAnalysisOutput {
+    RequirementAnalysisOutput {
+        status: crate::models::RequirementStatus::Failed,
+        assistant_message: failure.message.clone(),
+        progress: String::new(),
+        clarifications: Vec::new(),
+        draft: None,
+        pi_session_file,
+        error: Some(failure.message),
+        trace: failure.trace,
+    }
+}
+
+fn pi_response_failure_error(failure: PiResponseFailure) -> AppError {
+    if let Some(trace) = &failure.trace {
+        tracing::error!(
+            error = %failure.message,
+            trace = %trace,
+            "Pi Agent RPC returned a failed run"
+        );
+    }
+    AppError::internal(failure.message)
 }
 
 async fn prepare_task_workspace(
@@ -1144,8 +1292,9 @@ impl Drop for PiRpcClient {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_pr_merge_args, commit_task_changes, dependency_commits_for_task,
-        generated_branch_names, parse_default_branch,
+        attach_session_usage, build_pr_merge_args, commit_task_changes,
+        dependency_commits_for_task, generated_branch_names, is_terminal_agent_end,
+        parse_default_branch,
     };
     use crate::models::{
         RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
@@ -1183,6 +1332,58 @@ mod tests {
             branches.into_iter().collect::<Vec<_>>(),
             vec!["rn/req/task"]
         );
+    }
+
+    #[test]
+    fn wait_only_finishes_on_final_agent_end() {
+        assert!(!is_terminal_agent_end(&json!({ "type": "turn_end" })));
+        assert!(!is_terminal_agent_end(&json!({
+            "type": "agent_end",
+            "willRetry": true
+        })));
+        assert!(is_terminal_agent_end(&json!({
+            "type": "agent_end",
+            "willRetry": false
+        })));
+        assert!(is_terminal_agent_end(&json!({ "type": "agent_end" })));
+    }
+
+    #[test]
+    fn session_stats_are_normalized_into_trace_usage() {
+        let trace = Some(json!({
+            "type": "pi_trace",
+            "version": 1,
+            "trace": {
+                "thinking": "",
+                "output": "",
+                "tools": [],
+                "statuses": []
+            }
+        }));
+        let trace = attach_session_usage(
+            trace,
+            &json!({
+                "assistantMessages": 3,
+                "tokens": {
+                    "input": 1500,
+                    "output": 320,
+                    "cacheRead": 1000,
+                    "cacheWrite": 240
+                },
+                "contextUsage": {
+                    "tokens": 12000,
+                    "contextWindow": 128000,
+                    "percent": 9.4
+                }
+            }),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(trace["trace"]["usage"]["sessionReused"], true);
+        assert_eq!(trace["trace"]["usage"]["callCount"], 3);
+        assert_eq!(trace["trace"]["usage"]["cacheRead"], 1000);
+        assert_eq!(trace["trace"]["usage"]["context"]["window"], 128000);
     }
 
     #[test]
@@ -1267,6 +1468,12 @@ mod tests {
             review_angle: None,
             review_status: RequirementReviewStatus::Pending,
             attempt: 0,
+            execution_failure_count: 0,
+            review_rejection_count: 0,
+            recovery_stage: crate::models::RequirementRecoveryStage::None,
+            failure_summary: None,
+            recovery_guidance: None,
+            high_tier_execution_used: false,
             last_review_feedback: None,
             pull_request_url: None,
             merged_into: None,
@@ -1298,6 +1505,7 @@ mod tests {
             execution_warning: None,
             changed,
             no_op_reason: no_op_reason.map(str::to_owned),
+            recovery_guidance: None,
             trace: Some(json!({ "type": "pi_trace" })),
         }
     }

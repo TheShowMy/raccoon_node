@@ -69,6 +69,13 @@ export type RequirementTaskKind =
 
 export type RequirementReviewStatus = "pending" | "approved" | "rejected";
 
+export type RequirementRecoveryStage =
+  | "none"
+  | "auto_retry"
+  | "guided_retry"
+  | "high_tier_execution"
+  | "exhausted";
+
 export type RequirementExecutionTask = {
   id: string;
   title: string;
@@ -85,6 +92,12 @@ export type RequirementExecutionTask = {
   review_angle: string | null;
   review_status: RequirementReviewStatus;
   attempt: number;
+  execution_failure_count: number;
+  review_rejection_count: number;
+  recovery_stage: RequirementRecoveryStage;
+  failure_summary: string | null;
+  recovery_guidance: string | null;
+  high_tier_execution_used: boolean;
   last_review_feedback: string | null;
   pull_request_url: string | null;
   merged_into: string | null;
@@ -230,6 +243,21 @@ export type TraceData = {
   output: string;
   tools: TraceTool[];
   statuses: Array<{ type: string; message: string }>;
+  usage?: TraceUsage;
+};
+
+export type TraceUsage = {
+  sessionReused: boolean;
+  callCount: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  context: {
+    tokens: number;
+    window: number;
+    percent: number;
+  };
 };
 
 export type TraceMetadata = {

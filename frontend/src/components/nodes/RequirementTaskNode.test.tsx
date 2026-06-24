@@ -24,6 +24,12 @@ function task(
     review_angle: null,
     review_status: "pending",
     attempt: 1,
+    execution_failure_count: 0,
+    review_rejection_count: 0,
+    recovery_stage: "none",
+    failure_summary: null,
+    recovery_guidance: null,
+    high_tier_execution_used: false,
     last_review_feedback: null,
     pull_request_url: "https://github.com/acme/repo/pull/1",
     merged_into: "main",
@@ -212,6 +218,99 @@ describe("RequirementTaskNode", () => {
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
     expect(screen.getByText("执行提示")).toBeInTheDocument();
     expect(screen.getAllByText(/前置节点已实现/).length).toBeGreaterThan(0);
+  });
+
+  it("shows recovery state on the group and recovery details in the dialog", () => {
+    const recoveringTask = task({
+      status: "failed",
+      error: "执行命令超时",
+      execution_failure_count: 2,
+      review_rejection_count: 1,
+      recovery_stage: "high_tier_execution",
+      failure_summary: "连续两次执行未完成",
+      recovery_guidance: "切换高档模型后重新执行",
+      high_tier_execution_used: true,
+    });
+    const group = renderNode({
+      nodeRole: "group",
+      nodeTask: recoveringTask,
+    });
+
+    expect(screen.getByText("高档模型接管")).toBeInTheDocument();
+    group.unmount();
+
+    renderNode({ nodeRole: "code", nodeTask: recoveringTask });
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(screen.getByText("恢复信息")).toBeInTheDocument();
+    expect(screen.getByText("执行命令超时")).toBeInTheDocument();
+    expect(screen.getByText("连续两次执行未完成")).toBeInTheDocument();
+    expect(screen.getByText("切换高档模型后重新执行")).toBeInTheDocument();
+    expect(screen.getByText("高档（恢复升级）")).toBeInTheDocument();
+    expect(screen.getByText("执行失败次数").nextSibling).toHaveTextContent("2");
+    expect(screen.getByText("审核拒绝次数").nextSibling).toHaveTextContent("1");
+  });
+
+  it("shows trace usage while keeping old traces without usage clean", () => {
+    const oldTrace = renderNode();
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+    expect(screen.queryByText("会话统计")).toBeNull();
+    oldTrace.unmount();
+
+    renderNode({
+      nodeTask: task({
+        trace: {
+          type: "pi_trace",
+          version: 1,
+          trace: {
+            thinking: "带统计的历史执行",
+            output: "",
+            tools: [],
+            statuses: [],
+            usage: {
+              sessionReused: true,
+              callCount: 3,
+              input: 1500,
+              output: 320,
+              cacheRead: 1000,
+              cacheWrite: 240,
+              context: {
+                tokens: 12000,
+                window: 128000,
+                percent: 9.375,
+              },
+            },
+          },
+        },
+      }),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(screen.getByText("会话统计")).toBeInTheDocument();
+    expect(screen.getByText("会话是否复用").nextSibling).toHaveTextContent(
+      "是",
+    );
+    expect(screen.getByText("累计调用数").nextSibling).toHaveTextContent(
+      "3 次",
+    );
+    expect(screen.getByText("input").nextSibling).toHaveTextContent("1,500");
+    expect(screen.getByText("output").nextSibling).toHaveTextContent("320");
+    expect(screen.getByText("cacheRead").nextSibling).toHaveTextContent(
+      "1,000",
+    );
+    expect(screen.getByText("cacheWrite").nextSibling).toHaveTextContent("240");
+    expect(screen.getByText("缓存命中率").nextSibling).toHaveTextContent(
+      "40.0%",
+    );
+    expect(screen.getByText("context tokens").nextSibling).toHaveTextContent(
+      "12,000",
+    );
+    expect(screen.getByText("context window").nextSibling).toHaveTextContent(
+      "128,000",
+    );
+    expect(screen.getByText("context percent").nextSibling).toHaveTextContent(
+      "9.4%",
+    );
   });
 
   it("shows live pi events for the current task before historical trace", () => {

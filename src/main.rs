@@ -71,9 +71,10 @@ mod tests {
         RequirementClarification, RequirementConversationItem, RequirementConversationPrompt,
         RequirementDraft, RequirementEventEmitter, RequirementExecutionPlan,
         RequirementExecutionTask, RequirementMessage, RequirementMessageRole, RequirementModelTier,
-        RequirementPlanFuture, RequirementPlanInput, RequirementReviewStatus, RequirementStatus,
-        RequirementTaskExecutionFuture, RequirementTaskExecutionInput,
-        RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus, ThinkingLevel,
+        RequirementPlanFuture, RequirementPlanInput, RequirementRecoveryStage,
+        RequirementReviewStatus, RequirementStatus, RequirementTaskExecutionFuture,
+        RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
+        RequirementTaskStatus, ThinkingLevel,
     };
     use crate::requirement_analysis::{build_requirement_prompt, parse_requirement_analysis};
     use crate::store::JsonStore;
@@ -211,6 +212,12 @@ mod tests {
             review_angle: review_for.map(|_| "综合审核".to_owned()),
             review_status: RequirementReviewStatus::Pending,
             attempt: 0,
+            execution_failure_count: 0,
+            review_rejection_count: 0,
+            recovery_stage: RequirementRecoveryStage::None,
+            failure_summary: None,
+            recovery_guidance: None,
+            high_tier_execution_used: false,
             last_review_feedback: None,
             pull_request_url: None,
             merged_into: None,
@@ -239,6 +246,7 @@ mod tests {
             execution_warning: None,
             changed: Some(true),
             no_op_reason: None,
+            recovery_guidance: None,
             trace: Some(json!({
                 "type": "pi_trace",
                 "version": 1,

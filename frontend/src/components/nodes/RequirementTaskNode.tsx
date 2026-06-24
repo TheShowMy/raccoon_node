@@ -12,11 +12,17 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import type { RequirementExecutionTask, StartNodeData } from "../../types/api";
+import type {
+  RequirementExecutionTask,
+  RequirementRecoveryStage,
+  StartNodeData,
+  TraceUsage,
+} from "../../types/api";
 import TraceBubble from "../ui/TraceBubble";
 import {
   buildBubbleStreamFromEvents,
   buildBubbleStreamFromTrace,
+  tierLabels,
   traceFromMetadata,
 } from "../../utils/format";
 
@@ -69,11 +75,18 @@ export default function RequirementTaskNode({
           </span>
           <div>
             <strong>{task.title}</strong>
-            <span
-              className={`task-node__status task-node__status--${task.status}`}
-            >
-              {taskStatusText[task.status]}
-            </span>
+            <div className="task-node__status-list">
+              <span
+                className={`task-node__status task-node__status--${task.status}`}
+              >
+                {taskStatusText[task.status]}
+              </span>
+              {task.recovery_stage !== "none" ? (
+                <span className="task-node__recovery-status">
+                  {recoveryStageText(task)}
+                </span>
+              ) : null}
+            </div>
           </div>
           <button
             type="button"
@@ -306,6 +319,33 @@ function TaskDetailDialog({
               <p className="task-detail-dialog__empty">暂无执行过程</p>
             )}
           </section>
+          {historicalTrace?.usage ? (
+            <TaskUsage usage={historicalTrace.usage} />
+          ) : null}
+          <section className="task-detail-dialog__section task-detail-dialog__section--wide">
+            <h3>恢复信息</h3>
+            <dl className="task-detail-dialog__info-list task-detail-dialog__info-list--embedded">
+              <DetailItem label="失败原因" value={task.error} danger />
+              <DetailItem label="失败摘要" value={task.failure_summary} />
+              <DetailItem
+                label="执行失败次数"
+                value={String(task.execution_failure_count)}
+              />
+              <DetailItem
+                label="审核拒绝次数"
+                value={String(task.review_rejection_count)}
+              />
+              <DetailItem
+                label="恢复方案"
+                value={task.recovery_guidance}
+                warning
+              />
+              <DetailItem
+                label="当前有效档位"
+                value={effectiveTierText(task)}
+              />
+            </dl>
+          </section>
           <details className="task-detail-dialog__details">
             <summary>基础信息</summary>
             <dl className="task-detail-dialog__info-list">
@@ -315,7 +355,6 @@ function TaskDetailDialog({
                 value={task.execution_warning}
                 warning
               />
-              <DetailItem label="错误" value={task.error} danger />
               <DetailItem label="分支" value={task.branch_name} />
               <DetailItem label="Worktree" value={task.worktree_path} mono />
               <DetailItem label="提交" value={task.commit_sha} mono />
@@ -337,6 +376,63 @@ function TaskDetailDialog({
       </div>
     </dialog>,
     document.body,
+  );
+}
+
+function TaskUsage({ usage }: { usage: TraceUsage }) {
+  const number = new Intl.NumberFormat("zh-CN");
+  const cacheTotal = usage.input + usage.cacheRead;
+  const cacheHitRate =
+    cacheTotal > 0
+      ? `${((usage.cacheRead / cacheTotal) * 100).toFixed(1)}%`
+      : "0.0%";
+
+  return (
+    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
+      <h3>会话统计</h3>
+      <dl className="task-detail-dialog__usage">
+        <div>
+          <dt>会话是否复用</dt>
+          <dd>{usage.sessionReused ? "是" : "否"}</dd>
+        </div>
+        <div>
+          <dt>累计调用数</dt>
+          <dd>{number.format(usage.callCount)} 次</dd>
+        </div>
+        <div>
+          <dt>input</dt>
+          <dd>{number.format(usage.input)}</dd>
+        </div>
+        <div>
+          <dt>output</dt>
+          <dd>{number.format(usage.output)}</dd>
+        </div>
+        <div>
+          <dt>cacheRead</dt>
+          <dd>{number.format(usage.cacheRead)}</dd>
+        </div>
+        <div>
+          <dt>cacheWrite</dt>
+          <dd>{number.format(usage.cacheWrite)}</dd>
+        </div>
+        <div>
+          <dt>缓存命中率</dt>
+          <dd>{cacheHitRate}</dd>
+        </div>
+        <div>
+          <dt>context tokens</dt>
+          <dd>{number.format(usage.context.tokens)}</dd>
+        </div>
+        <div>
+          <dt>context window</dt>
+          <dd>{number.format(usage.context.window)}</dd>
+        </div>
+        <div>
+          <dt>context percent</dt>
+          <dd>{usage.context.percent.toFixed(1)}%</dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 
@@ -398,4 +494,20 @@ function DetailItem({
 
 function isRecoverable(status: RequirementExecutionTask["status"]) {
   return status === "failed" || status === "rejected";
+}
+
+function recoveryStageText(task: RequirementExecutionTask) {
+  const labels: Record<RequirementRecoveryStage, string> = {
+    none: "",
+    auto_retry: `自动重试 ${Math.min(task.execution_failure_count, 2)}/2`,
+    guided_retry: task.recovery_guidance ? "按恢复方案重试" : "高档指导中",
+    high_tier_execution: "高档模型接管",
+    exhausted: "重试已停止",
+  };
+  return labels[task.recovery_stage];
+}
+
+function effectiveTierText(task: RequirementExecutionTask) {
+  const tier = task.high_tier_execution_used ? "high" : task.model_tier;
+  return `${tierLabels[tier]}档${task.high_tier_execution_used ? "（恢复升级）" : ""}`;
 }

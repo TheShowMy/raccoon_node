@@ -1,4 +1,8 @@
-use std::path::PathBuf;
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime},
+};
 
 use chrono::Utc;
 
@@ -8,17 +12,27 @@ use crate::models::{
     Requirement, RequirementAnalysisInput, RequirementAnalysisOutput, RequirementConversationItem,
     RequirementConversationPrompt, RequirementConversationResponse, RequirementExecutionPlan,
     RequirementMessage, RequirementMessageRole, RequirementNoticeLevel, RequirementPlanInput,
-    RequirementProcessStatus, RequirementReviewStatus, RequirementStatus,
+    RequirementProcessStatus, RequirementRecoveryStage, RequirementReviewStatus, RequirementStatus,
     RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
     RequirementTaskStatus,
 };
+use crate::requirement_execution::effective_model_tier;
 use crate::utils::{
     build_clarification_answer_summary, clarification_has_answer, clone_git_repo,
     data_root_from_file, derive_requirement_title, ensure_child_path, remove_dir_if_exists,
     slugify, sort_requirements_desc, validate_git_url, validate_model_settings, write_json,
 };
 
-const MAX_REVIEW_ATTEMPTS: u32 = 3;
+const MAX_REVIEW_REJECTIONS: u32 = 5;
+const MAX_EXECUTION_FAILURES: u32 = 4;
+const PI_SESSION_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const RESTART_INTERRUPTION: &str = "应用重启中断";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskExecutionDisposition {
+    Continue,
+    FinalFailure,
+}
 
 pub struct JsonStore {
     pub path: PathBuf,
@@ -44,7 +58,23 @@ impl JsonStore {
         }
 
         let content = tokio::fs::read_to_string(&path).await?;
-        let data = serde_json::from_str(&content)?;
+        let mut data: AppData = serde_json::from_str(&content)?;
+        for requirement in &mut data.requirements {
+            if requirement.status == RequirementStatus::Completed {
+                continue;
+            }
+            if let Some(plan) = requirement.execution_plan.as_mut() {
+                for task in &mut plan.tasks {
+                    let tier = if task.recovery_stage == RequirementRecoveryStage::HighTierExecution
+                    {
+                        crate::models::RequirementModelTier::High
+                    } else {
+                        effective_model_tier(task.kind)
+                    };
+                    task.model_tier = tier;
+                }
+            }
+        }
         let data_root = data_root_from_file(&path)?;
         Ok(Self {
             path,
@@ -607,6 +637,154 @@ impl JsonStore {
         Ok(project_id)
     }
 
+    pub async fn recover_interrupted_requirements(&mut self) -> Result<Vec<String>, AppError> {
+        let now = Utc::now();
+        let mut changed = false;
+        let mut requirement_ids = Vec::new();
+
+        for requirement in &mut self.data.requirements {
+            if requirement.status != RequirementStatus::Running {
+                continue;
+            }
+
+            let mut interrupted_tasks = Vec::new();
+            let mut final_failure = false;
+            if let Some(plan) = requirement.execution_plan.as_mut() {
+                for task in &mut plan.tasks {
+                    if task.status != RequirementTaskStatus::Running {
+                        continue;
+                    }
+
+                    let recoverable = register_execution_failure(
+                        task,
+                        RESTART_INTERRUPTION,
+                        RESTART_INTERRUPTION,
+                        true,
+                    );
+                    interrupted_tasks.push((task.title.clone(), recoverable));
+                    final_failure |= !recoverable;
+                    changed = true;
+                }
+            }
+
+            if !interrupted_tasks.is_empty() {
+                requirement.updated_at = now;
+                for (task_title, recoverable) in interrupted_tasks {
+                    requirement.messages.push(RequirementMessage {
+                        role: RequirementMessageRole::System,
+                        content: if recoverable {
+                            format!(
+                                "任务「{task_title}」因{RESTART_INTERRUPTION}，将按恢复策略重试。"
+                            )
+                        } else {
+                            format!(
+                                "任务「{task_title}」因{RESTART_INTERRUPTION}，恢复次数已耗尽。"
+                            )
+                        },
+                        metadata: None,
+                        created_at: now,
+                    });
+                }
+                if final_failure {
+                    requirement.status = RequirementStatus::Failed;
+                    requirement.error = Some(format!("{RESTART_INTERRUPTION}，任务恢复次数已耗尽"));
+                } else {
+                    requirement.error = None;
+                }
+            }
+
+            if requirement.status == RequirementStatus::Running {
+                requirement_ids.push(requirement.id.clone());
+            }
+        }
+
+        if changed {
+            write_json(&self.path, &self.data).await?;
+        }
+        Ok(requirement_ids)
+    }
+
+    pub async fn cleanup_stale_pi_sessions(&self) {
+        let cutoff = SystemTime::now()
+            .checked_sub(PI_SESSION_RETENTION)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        self.cleanup_unreferenced_pi_sessions_before(cutoff).await;
+    }
+
+    async fn cleanup_unreferenced_pi_sessions_before(&self, cutoff: SystemTime) {
+        let session_dir = self.data_root.join("pi-sessions");
+        let mut entries = match tokio::fs::read_dir(&session_dir).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                tracing::warn!(
+                    path = %session_dir.display(),
+                    error = %error,
+                    "failed to scan stale Pi session files"
+                );
+                return;
+            }
+        };
+        let referenced = referenced_pi_session_paths(&self.data, &session_dir);
+
+        loop {
+            let entry = match entries.next_entry().await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::warn!(
+                        path = %session_dir.display(),
+                        error = %error,
+                        "failed to read Pi session directory entry"
+                    );
+                    break;
+                }
+            };
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("jsonl") {
+                continue;
+            }
+            if let Err(error) = ensure_child_path(&session_dir, &path) {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %error,
+                    "refused to clean Pi session outside session directory"
+                );
+                continue;
+            }
+            let normalized_path = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            if referenced.contains(&normalized_path) {
+                continue;
+            }
+
+            let metadata = match entry.metadata().await {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %error,
+                        "failed to inspect Pi session file"
+                    );
+                    continue;
+                }
+            };
+            if !metadata.is_file()
+                || metadata
+                    .modified()
+                    .map_or(true, |modified| modified >= cutoff)
+            {
+                continue;
+            }
+            if let Err(error) = tokio::fs::remove_file(&path).await {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %error,
+                    "failed to remove stale Pi session file"
+                );
+            }
+        }
+    }
+
     pub async fn prepare_runnable_execution_tasks(
         &mut self,
         requirement_id: &str,
@@ -640,8 +818,16 @@ impl JsonStore {
             .as_mut()
             .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
         for task_index in &task_indexes {
-            plan.tasks[*task_index].status = RequirementTaskStatus::Running;
-            plan.tasks[*task_index].error = None;
+            let task = &mut plan.tasks[*task_index];
+            task.model_tier = if task.recovery_stage == RequirementRecoveryStage::HighTierExecution
+            {
+                task.high_tier_execution_used = true;
+                crate::models::RequirementModelTier::High
+            } else {
+                effective_model_tier(task.kind)
+            };
+            task.status = RequirementTaskStatus::Running;
+            task.error = None;
         }
         requirement.updated_at = now;
         let plan = plan.clone();
@@ -665,7 +851,7 @@ impl JsonStore {
         requirement_id: &str,
         task_id: &str,
         output: Result<RequirementTaskExecutionOutput, AppError>,
-    ) -> Result<(), AppError> {
+    ) -> Result<TaskExecutionDisposition, AppError> {
         let index = self.requirement_index(requirement_id)?;
         let now = Utc::now();
         let requirement = &mut self.data.requirements[index];
@@ -681,6 +867,40 @@ impl JsonStore {
 
         match output {
             Ok(output) => {
+                if output.recovery_guidance.is_some()
+                    && plan.tasks[task_index].recovery_stage
+                        == RequirementRecoveryStage::GuidedRetry
+                    && plan.tasks[task_index].recovery_guidance.is_none()
+                {
+                    let task = &mut plan.tasks[task_index];
+                    task.pi_session_file = output
+                        .pi_session_file
+                        .clone()
+                        .or(task.pi_session_file.take());
+                    task.recovery_guidance = output.recovery_guidance;
+                    task.trace = output.trace;
+                    task.failure_summary = task
+                        .failure_summary
+                        .take()
+                        .or_else(|| Some("已生成高档模型恢复方案".to_owned()));
+                    task.status = if task.kind == RequirementTaskKind::Implementation {
+                        RequirementTaskStatus::Fixing
+                    } else {
+                        RequirementTaskStatus::Pending
+                    };
+                    task.error = None;
+                    requirement.status = RequirementStatus::Running;
+                    requirement.error = None;
+                    requirement.updated_at = now;
+                    requirement.messages.push(RequirementMessage {
+                        role: RequirementMessageRole::System,
+                        content: format!("任务「{}」已生成高档模型恢复方案。", task.title),
+                        metadata: None,
+                        created_at: now,
+                    });
+                    write_json(&self.path, &self.data).await?;
+                    return Ok(TaskExecutionDisposition::Continue);
+                }
                 let task_kind = plan.tasks[task_index].kind;
                 let task_title = plan.tasks[task_index].title.clone();
                 let effective_review_status = match task_kind {
@@ -691,7 +911,8 @@ impl JsonStore {
                     }
                     RequirementTaskKind::Review
                     | RequirementTaskKind::ReviewSubAgent
-                    | RequirementTaskKind::ReviewSummary => output.review_status,
+                    | RequirementTaskKind::ReviewSummary
+                    | RequirementTaskKind::MergeReview => output.review_status,
                     _ => None,
                 };
                 let mut review_update = None;
@@ -719,6 +940,13 @@ impl JsonStore {
                         .or(task.execution_warning.take());
                     task.trace = output.trace.clone().or(task.trace.take());
                     task.attempt = task.attempt.saturating_add(1);
+                    task.execution_failure_count = 0;
+                    task.failure_summary = None;
+                    task.recovery_stage = RequirementRecoveryStage::None;
+                    task.recovery_guidance = output
+                        .recovery_guidance
+                        .clone()
+                        .or(task.recovery_guidance.take());
                     task.result_summary = Some(output.result_summary.clone());
                     task.error = None;
                     match task_kind {
@@ -832,21 +1060,44 @@ impl JsonStore {
             }
             Err(error) => {
                 let task_title = plan.tasks[task_index].title.clone();
-                plan.tasks[task_index].status = RequirementTaskStatus::Failed;
-                plan.tasks[task_index].error = Some(error.to_string());
-                requirement.status = RequirementStatus::Failed;
-                requirement.error = Some(format!("任务「{}」执行失败：{error}", task_title));
+                let retryable = is_retryable_execution_error(&error);
+                let task = &mut plan.tasks[task_index];
+                if let Some(session_file) = error.pi_session_file() {
+                    task.pi_session_file = Some(session_file.to_owned());
+                }
+                if register_execution_failure(
+                    task,
+                    &short_failure_summary(&error),
+                    &error.to_string(),
+                    retryable,
+                ) {
+                    requirement.status = RequirementStatus::Running;
+                    requirement.error = None;
+                } else {
+                    requirement.status = RequirementStatus::Failed;
+                    requirement.error = Some(format!("任务「{}」执行失败：{error}", task_title));
+                }
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::System,
-                    content: format!("任务「{}」执行失败：{error}", task_title),
+                    content: if requirement.status == RequirementStatus::Running {
+                        format!("任务「{}」执行失败，将按恢复策略重试：{error}", task_title)
+                    } else {
+                        format!("任务「{}」执行失败：{error}", task_title)
+                    },
                     metadata: None,
                     created_at: now,
                 });
             }
         }
         write_json(&self.path, &self.data).await?;
-        Ok(())
+        Ok(
+            if self.data.requirements[index].status == RequirementStatus::Failed {
+                TaskExecutionDisposition::FinalFailure
+            } else {
+                TaskExecutionDisposition::Continue
+            },
+        )
     }
 
     pub async fn retry_failed_node(
@@ -861,6 +1112,7 @@ impl JsonStore {
             .execution_plan
             .as_mut()
             .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
+        ensure_no_running_tasks(plan)?;
         let task = plan
             .tasks
             .iter_mut()
@@ -876,6 +1128,7 @@ impl JsonStore {
         };
         task.error = None;
         task.execution_warning = None;
+        reset_recovery_state(task);
         requirement.status = RequirementStatus::Running;
         requirement.error = None;
         requirement.updated_at = Utc::now();
@@ -895,6 +1148,7 @@ impl JsonStore {
             .execution_plan
             .as_mut()
             .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
+        ensure_no_running_tasks(plan)?;
         let affected = downstream_task_ids(plan, task_id)?;
         for task in &mut plan.tasks {
             if task.id == task_id || affected.iter().any(|id| id == &task.id) {
@@ -903,6 +1157,7 @@ impl JsonStore {
                 task.error = None;
                 task.execution_warning = None;
                 task.result_summary = None;
+                reset_recovery_state(task);
             }
         }
         requirement.status = RequirementStatus::Running;
@@ -924,6 +1179,7 @@ impl JsonStore {
             .execution_plan
             .as_mut()
             .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
+        ensure_no_running_tasks(plan)?;
         let task = plan
             .tasks
             .iter_mut()
@@ -943,6 +1199,7 @@ impl JsonStore {
         task.review_status = RequirementReviewStatus::Pending;
         task.error = None;
         task.execution_warning = None;
+        reset_recovery_state(task);
         if rerun_kind == RequirementTaskKind::ReviewSubAgent {
             for candidate in &mut plan.tasks {
                 if candidate.kind == RequirementTaskKind::ReviewSummary
@@ -951,6 +1208,7 @@ impl JsonStore {
                     candidate.status = RequirementTaskStatus::Pending;
                     candidate.review_status = RequirementReviewStatus::Pending;
                     candidate.error = None;
+                    reset_recovery_state(candidate);
                 }
             }
         }
@@ -980,6 +1238,26 @@ impl JsonStore {
         });
         write_json(&self.path, &self.data).await?;
         Ok(())
+    }
+
+    pub fn requirement_status(&self, requirement_id: &str) -> Result<RequirementStatus, AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        Ok(self.data.requirements[index].status)
+    }
+
+    pub async fn reset_running_execution_tasks(
+        &mut self,
+        requirement_id: &str,
+    ) -> Result<(), AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        if let Some(plan) = self.data.requirements[index].execution_plan.as_mut() {
+            for task in &mut plan.tasks {
+                if task.status == RequirementTaskStatus::Running {
+                    task.status = RequirementTaskStatus::Pending;
+                }
+            }
+        }
+        write_json(&self.path, &self.data).await
     }
 
     fn requirement_index(&self, requirement_id: &str) -> Result<usize, AppError> {
@@ -1185,14 +1463,28 @@ fn reject_reviewed_task(
         .iter()
         .position(|task| task.id == review_for)
         .ok_or_else(|| AppError::bad_request("审核目标不存在"))?;
-    let reviewed_status = if plan.tasks[reviewed_index].attempt >= MAX_REVIEW_ATTEMPTS {
-        RequirementTaskStatus::Failed
-    } else {
-        RequirementTaskStatus::Fixing
-    };
-    plan.tasks[reviewed_index].review_status = RequirementReviewStatus::Rejected;
-    plan.tasks[reviewed_index].last_review_feedback = feedback;
-    plan.tasks[reviewed_index].status = reviewed_status;
+    let reviewed = &mut plan.tasks[reviewed_index];
+    reviewed.review_rejection_count = reviewed.review_rejection_count.saturating_add(1);
+    reviewed.review_status = RequirementReviewStatus::Rejected;
+    reviewed.last_review_feedback = feedback;
+    match reviewed.review_rejection_count {
+        count if count < MAX_REVIEW_REJECTIONS => {
+            reviewed.status = RequirementTaskStatus::Fixing;
+            reviewed.recovery_stage = RequirementRecoveryStage::None;
+        }
+        MAX_REVIEW_REJECTIONS => {
+            reviewed.status = RequirementTaskStatus::Fixing;
+            reviewed.recovery_stage = RequirementRecoveryStage::GuidedRetry;
+        }
+        count if count == MAX_REVIEW_REJECTIONS + 1 => {
+            reviewed.status = RequirementTaskStatus::Fixing;
+            reviewed.recovery_stage = RequirementRecoveryStage::HighTierExecution;
+        }
+        _ => {
+            reviewed.status = RequirementTaskStatus::Failed;
+            reviewed.recovery_stage = RequirementRecoveryStage::Exhausted;
+        }
+    }
     for task in &mut plan.tasks {
         if matches!(
             task.kind,
@@ -1237,6 +1529,118 @@ fn downstream_task_ids(
         }
     }
     Ok(affected)
+}
+
+fn reset_recovery_state(task: &mut crate::models::RequirementExecutionTask) {
+    task.execution_failure_count = 0;
+    task.review_rejection_count = 0;
+    task.recovery_stage = RequirementRecoveryStage::None;
+    task.failure_summary = None;
+    task.recovery_guidance = None;
+    task.high_tier_execution_used = false;
+}
+
+fn register_execution_failure(
+    task: &mut crate::models::RequirementExecutionTask,
+    summary: &str,
+    error: &str,
+    retryable: bool,
+) -> bool {
+    task.execution_failure_count = task.execution_failure_count.saturating_add(1);
+    task.failure_summary = Some(summary.to_owned());
+    task.error = Some(error.to_owned());
+    if let Some(stage) = next_execution_recovery_stage(task.execution_failure_count, retryable) {
+        task.recovery_stage = stage;
+        task.status = if task.kind == RequirementTaskKind::Implementation {
+            RequirementTaskStatus::Fixing
+        } else {
+            RequirementTaskStatus::Pending
+        };
+        true
+    } else {
+        task.status = RequirementTaskStatus::Failed;
+        task.recovery_stage = RequirementRecoveryStage::Exhausted;
+        false
+    }
+}
+
+fn referenced_pi_session_paths(data: &AppData, session_dir: &Path) -> HashSet<PathBuf> {
+    data.requirements
+        .iter()
+        .flat_map(|requirement| {
+            requirement.pi_session_file.iter().chain(
+                requirement
+                    .execution_plan
+                    .iter()
+                    .flat_map(|plan| plan.tasks.iter())
+                    .filter_map(|task| task.pi_session_file.as_ref()),
+            )
+        })
+        .filter_map(|session_file| {
+            let path = PathBuf::from(session_file);
+            let resolved = if path.is_absolute() {
+                path
+            } else {
+                session_dir.join(path)
+            };
+            if ensure_child_path(session_dir, &resolved).is_err() {
+                return None;
+            }
+            Some(std::fs::canonicalize(&resolved).unwrap_or(resolved))
+        })
+        .collect()
+}
+
+fn ensure_no_running_tasks(plan: &RequirementExecutionPlan) -> Result<(), AppError> {
+    if plan
+        .tasks
+        .iter()
+        .any(|task| task.status == RequirementTaskStatus::Running)
+    {
+        return Err(AppError::bad_request(
+            "需求正在执行，请等待当前任务结束后再恢复",
+        ));
+    }
+    Ok(())
+}
+
+fn short_failure_summary(error: &AppError) -> String {
+    error.to_string().chars().take(240).collect()
+}
+
+fn is_retryable_execution_error(error: &AppError) -> bool {
+    match error {
+        AppError::BadRequest(_) | AppError::NotFound(_) => false,
+        AppError::Io(_) | AppError::Json(_) => true,
+        AppError::Internal(message) | AppError::TaskExecution { message, .. } => ![
+            "请先在模型设置",
+            "模型不存在",
+            "路径必须",
+            "路径越界",
+            "worktree 不存在",
+            "aborted",
+            "已中止",
+            "分支",
+            "提交",
+            "commit",
+        ]
+        .iter()
+        .any(|marker| message.contains(marker)),
+    }
+}
+
+fn next_execution_recovery_stage(
+    failure_count: u32,
+    retryable: bool,
+) -> Option<RequirementRecoveryStage> {
+    if !retryable || failure_count > MAX_EXECUTION_FAILURES {
+        return None;
+    }
+    Some(match failure_count {
+        1 | 2 => RequirementRecoveryStage::AutoRetry,
+        3 => RequirementRecoveryStage::GuidedRetry,
+        _ => RequirementRecoveryStage::HighTierExecution,
+    })
 }
 
 fn build_requirement_conversation(requirement: Requirement) -> RequirementConversationResponse {
@@ -1331,10 +1735,18 @@ fn build_requirement_conversation(requirement: Requirement) -> RequirementConver
 
 #[cfg(test)]
 mod tests {
-    use super::runnable_task_indexes;
+    use std::time::{Duration, SystemTime};
+
+    use chrono::Utc;
+
+    use super::{
+        next_execution_recovery_stage, reject_reviewed_task, runnable_task_indexes, JsonStore,
+        RESTART_INTERRUPTION,
+    };
     use crate::models::{
-        RequirementExecutionPlan, RequirementExecutionTask, RequirementModelTier,
-        RequirementReviewStatus, RequirementTaskKind, RequirementTaskStatus,
+        Requirement, RequirementExecutionPlan, RequirementExecutionTask, RequirementMessage,
+        RequirementMessageRole, RequirementModelTier, RequirementRecoveryStage,
+        RequirementReviewStatus, RequirementStatus, RequirementTaskKind, RequirementTaskStatus,
     };
 
     #[test]
@@ -1388,6 +1800,205 @@ mod tests {
         assert_eq!(runnable_task_indexes(&plan).unwrap(), vec![2]);
     }
 
+    #[test]
+    fn review_rejections_escalate_after_five_rounds() {
+        let mut plan = RequirementExecutionPlan {
+            summary: "plan".to_owned(),
+            tasks: vec![
+                task(
+                    "implementation",
+                    RequirementTaskKind::Implementation,
+                    RequirementTaskStatus::AwaitingReview,
+                ),
+                task_with_dependencies(
+                    "summary",
+                    RequirementTaskKind::ReviewSummary,
+                    RequirementTaskStatus::Rejected,
+                    vec!["implementation"],
+                    Some("implementation"),
+                ),
+            ],
+        };
+
+        for count in 1..=7 {
+            reject_reviewed_task(&mut plan, "summary", Some(format!("第 {count} 轮"))).unwrap();
+            let implementation = &plan.tasks[0];
+            assert_eq!(implementation.review_rejection_count, count);
+            assert_eq!(
+                implementation.recovery_stage,
+                match count {
+                    1..=4 => RequirementRecoveryStage::None,
+                    5 => RequirementRecoveryStage::GuidedRetry,
+                    6 => RequirementRecoveryStage::HighTierExecution,
+                    _ => RequirementRecoveryStage::Exhausted,
+                }
+            );
+        }
+        assert_eq!(plan.tasks[0].status, RequirementTaskStatus::Failed);
+    }
+
+    #[test]
+    fn execution_failures_have_a_finite_escalation_path() {
+        assert_eq!(
+            next_execution_recovery_stage(1, true),
+            Some(RequirementRecoveryStage::AutoRetry)
+        );
+        assert_eq!(
+            next_execution_recovery_stage(2, true),
+            Some(RequirementRecoveryStage::AutoRetry)
+        );
+        assert_eq!(
+            next_execution_recovery_stage(3, true),
+            Some(RequirementRecoveryStage::GuidedRetry)
+        );
+        assert_eq!(
+            next_execution_recovery_stage(4, true),
+            Some(RequirementRecoveryStage::HighTierExecution)
+        );
+        assert_eq!(next_execution_recovery_stage(5, true), None);
+        assert_eq!(next_execution_recovery_stage(1, false), None);
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_persists_interrupted_tasks_and_returns_all_running_requirements() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("data/app.json");
+        let mut store = JsonStore::open(path.clone()).await.unwrap();
+        let mut interrupted = requirement("interrupted");
+        interrupted.execution_plan = Some(RequirementExecutionPlan {
+            summary: "plan".to_owned(),
+            tasks: vec![
+                task(
+                    "implementation",
+                    RequirementTaskKind::Implementation,
+                    RequirementTaskStatus::Running,
+                ),
+                task(
+                    "merge",
+                    RequirementTaskKind::BranchMerge,
+                    RequirementTaskStatus::Running,
+                ),
+            ],
+        });
+        let mut waiting = requirement("waiting");
+        waiting.execution_plan = Some(RequirementExecutionPlan {
+            summary: "plan".to_owned(),
+            tasks: vec![task(
+                "pending",
+                RequirementTaskKind::Implementation,
+                RequirementTaskStatus::Pending,
+            )],
+        });
+        store.data.requirements = vec![interrupted, waiting];
+        crate::utils::write_json(&store.path, &store.data)
+            .await
+            .unwrap();
+
+        let requirement_ids = store.recover_interrupted_requirements().await.unwrap();
+
+        assert_eq!(requirement_ids, vec!["interrupted", "waiting"]);
+        let task = &store.data.requirements[0]
+            .execution_plan
+            .as_ref()
+            .unwrap()
+            .tasks[0];
+        assert_eq!(task.status, RequirementTaskStatus::Fixing);
+        assert_eq!(task.execution_failure_count, 1);
+        assert_eq!(task.recovery_stage, RequirementRecoveryStage::AutoRetry);
+        assert_eq!(task.failure_summary.as_deref(), Some(RESTART_INTERRUPTION));
+        assert_eq!(task.error.as_deref(), Some(RESTART_INTERRUPTION));
+        assert_eq!(
+            store.data.requirements[0]
+                .execution_plan
+                .as_ref()
+                .unwrap()
+                .tasks[1]
+                .status,
+            RequirementTaskStatus::Pending
+        );
+
+        let reopened = JsonStore::open(path).await.unwrap();
+        assert_eq!(
+            reopened.data.requirements[0]
+                .execution_plan
+                .as_ref()
+                .unwrap()
+                .tasks[0]
+                .status,
+            RequirementTaskStatus::Fixing
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_pi_session_cleanup_keeps_requirement_and_task_references() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+            .await
+            .unwrap();
+        let session_dir = store.data_root.join("pi-sessions");
+        tokio::fs::create_dir_all(&session_dir).await.unwrap();
+        let requirement_session = session_dir.join("requirement.jsonl");
+        let task_session = session_dir.join("task.jsonl");
+        let stale_session = session_dir.join("stale.jsonl");
+        let ignored_file = session_dir.join("ignored.txt");
+        for path in [
+            &requirement_session,
+            &task_session,
+            &stale_session,
+            &ignored_file,
+        ] {
+            tokio::fs::write(path, b"session").await.unwrap();
+        }
+
+        let mut active = requirement("active");
+        active.pi_session_file = Some(requirement_session.to_string_lossy().to_string());
+        let mut active_task = task(
+            "task",
+            RequirementTaskKind::Implementation,
+            RequirementTaskStatus::Pending,
+        );
+        active_task.pi_session_file = Some(task_session.to_string_lossy().to_string());
+        active.execution_plan = Some(RequirementExecutionPlan {
+            summary: "plan".to_owned(),
+            tasks: vec![active_task],
+        });
+        store.data.requirements.push(active);
+
+        store
+            .cleanup_unreferenced_pi_sessions_before(SystemTime::now() + Duration::from_secs(60))
+            .await;
+
+        assert!(requirement_session.exists());
+        assert!(task_session.exists());
+        assert!(!stale_session.exists());
+        assert!(ignored_file.exists());
+    }
+
+    fn requirement(id: &str) -> Requirement {
+        let now = Utc::now();
+        Requirement {
+            id: id.to_owned(),
+            project_id: "project".to_owned(),
+            title: id.to_owned(),
+            original_message: id.to_owned(),
+            status: RequirementStatus::Running,
+            messages: vec![RequirementMessage {
+                role: RequirementMessageRole::User,
+                content: id.to_owned(),
+                metadata: None,
+                created_at: now,
+            }],
+            clarification_round: 0,
+            clarifications: Vec::new(),
+            draft: None,
+            execution_plan: None,
+            pi_session_file: None,
+            error: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     fn task(
         id: &str,
         kind: RequirementTaskKind,
@@ -1419,6 +2030,12 @@ mod tests {
             review_angle: None,
             review_status: RequirementReviewStatus::Pending,
             attempt: 0,
+            execution_failure_count: 0,
+            review_rejection_count: 0,
+            recovery_stage: RequirementRecoveryStage::None,
+            failure_summary: None,
+            recovery_guidance: None,
+            high_tier_execution_used: false,
             last_review_feedback: None,
             pull_request_url: None,
             merged_into: None,

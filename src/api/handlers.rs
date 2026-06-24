@@ -14,7 +14,44 @@ use crate::models::{
     RequirementEventEmitter, RequirementMessageRequest, RequirementStatus,
     RequirementTaskExecutionInput, RpcStatus,
 };
+use crate::store::TaskExecutionDisposition;
 use crate::AppState;
+
+static ACTIVE_EXECUTIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+struct ExecutionGuard(String);
+
+impl ExecutionGuard {
+    fn acquire(requirement_id: &str) -> Option<Self> {
+        // ponytail: a process-wide lock is enough for this local single-process app.
+        let mut active = ACTIVE_EXECUTIONS
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .expect("execution lock poisoned");
+        active
+            .insert(requirement_id.to_owned())
+            .then(|| Self(requirement_id.to_owned()))
+    }
+}
+
+impl Drop for ExecutionGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = ACTIVE_EXECUTIONS
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+        {
+            active.remove(&self.0);
+        }
+    }
+}
+
+fn execution_is_active(requirement_id: &str) -> bool {
+    ACTIVE_EXECUTIONS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .expect("execution lock poisoned")
+        .contains(requirement_id)
+}
 
 pub async fn get_start(State(state): State<AppState>) -> Json<AppData> {
     let store = state.store.read().await;
@@ -210,6 +247,9 @@ pub async fn retry_failed_node(
     State(state): State<AppState>,
     AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    if execution_is_active(&requirement_id) {
+        return Err(AppError::bad_request("需求正在执行，请稍后再重试"));
+    }
     let project_id = {
         let mut store = state.store.write().await;
         store.retry_failed_node(&requirement_id, &task_id).await?
@@ -223,6 +263,9 @@ pub async fn retry_from_node(
     State(state): State<AppState>,
     AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    if execution_is_active(&requirement_id) {
+        return Err(AppError::bad_request("需求正在执行，请稍后再恢复"));
+    }
     let project_id = {
         let mut store = state.store.write().await;
         store.retry_from_node(&requirement_id, &task_id).await?
@@ -236,6 +279,9 @@ pub async fn rerun_review(
     State(state): State<AppState>,
     AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    if execution_is_active(&requirement_id) {
+        return Err(AppError::bad_request("需求正在执行，请稍后再重跑审核"));
+    }
     let project_id = {
         let mut store = state.store.write().await;
         store.rerun_review(&requirement_id, &task_id).await?
@@ -381,12 +427,31 @@ fn spawn_requirement_execution_plan(
     });
 }
 
+pub(crate) fn spawn_startup_requirement_scheduler(state: AppState, requirement_ids: Vec<String>) {
+    if requirement_ids.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        tracing::info!(
+            requirement_count = requirement_ids.len(),
+            "starting recovered requirement scheduler"
+        );
+        for requirement_id in requirement_ids {
+            spawn_requirement_execution(state.clone(), requirement_id, None);
+        }
+    });
+}
+
 fn spawn_requirement_execution(
     state: AppState,
     requirement_id: String,
     initial_inputs: Option<Vec<RequirementTaskExecutionInput>>,
 ) {
+    let Some(execution_guard) = ExecutionGuard::acquire(&requirement_id) else {
+        return;
+    };
     tokio::spawn(async move {
+        let _execution_guard = execution_guard;
         let emitter = RequirementEventEmitter {
             requirement_id: requirement_id.clone(),
             task_id: None,
@@ -419,13 +484,34 @@ fn spawn_requirement_execution(
             spawn_execution_tasks(&mut running_tasks, inputs, state.clone(), &requirement_id);
 
             if running_tasks.is_empty() {
-                emitter.emit("execution_completed", "需求执行完成。");
+                let status = {
+                    let store = state.store.read().await;
+                    store.requirement_status(&requirement_id)
+                };
+                match status {
+                    Ok(RequirementStatus::Completed) => {
+                        emitter.emit("execution_completed", "需求执行完成。")
+                    }
+                    Ok(RequirementStatus::Failed) => {
+                        emitter.emit("execution_failed", "需求执行失败。")
+                    }
+                    Ok(_) | Err(_) => {
+                        emitter.emit("execution_failed", "执行 DAG 没有可继续执行的任务。")
+                    }
+                }
                 return;
             }
 
             match running_tasks.join_next().await {
-                Some(Ok(true)) => {}
-                Some(Ok(false)) | Some(Err(_)) => return,
+                Some(Ok(TaskExecutionDisposition::Continue)) => {}
+                Some(Ok(TaskExecutionDisposition::FinalFailure)) | Some(Err(_)) => {
+                    running_tasks.abort_all();
+                    while running_tasks.join_next().await.is_some() {}
+                    let mut store = state.store.write().await;
+                    let _ = store.reset_running_execution_tasks(&requirement_id).await;
+                    emitter.emit("execution_failed", "需求执行失败。");
+                    return;
+                }
                 None => {}
             }
         }
@@ -433,7 +519,7 @@ fn spawn_requirement_execution(
 }
 
 fn spawn_execution_tasks(
-    running_tasks: &mut JoinSet<bool>,
+    running_tasks: &mut JoinSet<TaskExecutionDisposition>,
     inputs: Vec<RequirementTaskExecutionInput>,
     state: AppState,
     requirement_id: &str,
@@ -459,23 +545,37 @@ fn spawn_execution_tasks(
                 .execute_requirement_task(input, Some(emitter.clone()))
                 .await;
             let succeeded = output.is_ok();
+            let guidance_generated = output
+                .as_ref()
+                .ok()
+                .is_some_and(|output| output.recovery_guidance.is_some());
+            let disposition;
             {
                 let mut store = state.store.write().await;
-                if let Err(error) = store
+                disposition = match store
                     .apply_task_execution_result(&requirement_id, &task_id, output)
                     .await
                 {
-                    emitter.emit("execution_failed", &format!("保存任务结果失败：{error}"));
-                    return false;
-                }
+                    Ok(disposition) => disposition,
+                    Err(error) => {
+                        emitter.emit("execution_failed", &format!("保存任务结果失败：{error}"));
+                        return TaskExecutionDisposition::FinalFailure;
+                    }
+                };
             }
 
-            if succeeded {
+            if guidance_generated {
+                emitter.emit("execution_task_guided", "高档模型恢复方案已生成。");
+            } else if succeeded {
                 emitter.emit("execution_task_completed", "任务执行完成。");
+            } else if disposition == TaskExecutionDisposition::Continue {
+                emitter.emit("execution_task_retrying", "任务执行失败，已安排自动恢复。");
             } else {
                 emitter.emit("execution_failed", "任务执行失败。");
             }
-            succeeded
+            disposition
         });
     }
 }
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};

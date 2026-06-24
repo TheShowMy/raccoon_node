@@ -6,11 +6,25 @@ use serde_json::Value;
 use crate::error::AppError;
 use crate::models::{
     Requirement, RequirementDraft, RequirementExecutionPlan, RequirementExecutionTask,
-    RequirementModelTier, RequirementReviewStatus, RequirementTaskExecutionOutput,
-    RequirementTaskKind, RequirementTaskStatus,
+    RequirementModelTier, RequirementRecoveryStage, RequirementReviewStatus,
+    RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
 };
 
 const REVIEW_ANGLES: [&str; 3] = ["正确性", "边界与安全", "代码质量与测试"];
+
+pub fn effective_model_tier(kind: RequirementTaskKind) -> RequirementModelTier {
+    match kind {
+        RequirementTaskKind::Implementation | RequirementTaskKind::ReviewSummary => {
+            RequirementModelTier::Low
+        }
+        RequirementTaskKind::Review | RequirementTaskKind::ReviewSubAgent => {
+            RequirementModelTier::Medium
+        }
+        RequirementTaskKind::BranchMerge | RequirementTaskKind::MergeReview => {
+            RequirementModelTier::High
+        }
+    }
+}
 
 pub fn build_requirement_plan_prompt(requirement: &Requirement) -> String {
     let draft = requirement
@@ -77,7 +91,7 @@ pub fn parse_requirement_plan(text: &str) -> Result<RequirementExecutionPlan, Ap
                 description: task.description.trim().to_owned(),
                 depends_on: task.depends_on,
                 kind: RequirementTaskKind::Implementation,
-                model_tier: RequirementModelTier::Medium,
+                model_tier: effective_model_tier(RequirementTaskKind::Implementation),
                 timeout_seconds: 45 * 60,
                 pi_session_file: None,
                 branch_name: None,
@@ -87,6 +101,12 @@ pub fn parse_requirement_plan(text: &str) -> Result<RequirementExecutionPlan, Ap
                 review_angle: None,
                 review_status: RequirementReviewStatus::Pending,
                 attempt: 0,
+                execution_failure_count: 0,
+                review_rejection_count: 0,
+                recovery_stage: RequirementRecoveryStage::None,
+                failure_summary: None,
+                recovery_guidance: None,
+                high_tier_execution_used: false,
                 last_review_feedback: None,
                 pull_request_url: None,
                 merged_into: None,
@@ -138,6 +158,7 @@ pub fn build_requirement_task_prompt(
         .collect::<Vec<_>>()
         .join("\n");
     let future_tasks = future_implementation_tasks_for_prompt(plan, task);
+    let failure_context = execution_failure_context(task);
 
     let (role, json_contract, extra) = match task.kind {
         RequirementTaskKind::Implementation => (
@@ -158,7 +179,8 @@ pub fn build_requirement_task_prompt(
 
 ## 后续未完成实现任务（禁止提前实现）
 {future_tasks}
-{fix_feedback}"#,
+{fix_feedback}
+{recovery_guidance}"#,
                 target_files_for_boundary = if task.target_files.is_empty() {
                     "未限定，但仍不得修改与当前任务无关的文件".to_owned()
                 } else {
@@ -172,7 +194,14 @@ pub fn build_requirement_task_prompt(
                     )
                 } else {
                     String::new()
-                }
+                },
+                recovery_guidance = task
+                    .recovery_guidance
+                    .as_deref()
+                    .map(|guidance| format!(
+                        "\n## 高档模型恢复方案\n{guidance}\n\n必须按方案处理，并仍遵守当前任务边界。"
+                    ))
+                    .unwrap_or_default(),
             ),
         ),
         RequirementTaskKind::Review => (
@@ -254,6 +283,7 @@ JSON 格式：
 - 审核目标：{review_for}
 - 审核角度：{review_angle}
 {extra}
+{failure_context}
 "#,
         role = role,
         json_contract = json_contract,
@@ -264,6 +294,7 @@ JSON 格式：
         review_for = task.review_for.as_deref().unwrap_or("无"),
         review_angle = task.review_angle.as_deref().unwrap_or("无"),
         extra = extra,
+        failure_context = failure_context,
         target_files = if task.target_files.is_empty() {
             "未限定".to_owned()
         } else {
@@ -275,6 +306,66 @@ JSON 格式：
             completed
         }
     )
+}
+
+fn execution_failure_context(task: &RequirementExecutionTask) -> String {
+    if task.execution_failure_count == 0 {
+        return String::new();
+    }
+    format!(
+        "\n## 上一轮执行失败\n原因：{}\n摘要：{}\n已有结果：{}\n\n请在当前会话和工作区基础上继续，不要重复已完成工作。",
+        task.error.as_deref().unwrap_or("未知"),
+        task.failure_summary.as_deref().unwrap_or("无"),
+        task.result_summary.as_deref().unwrap_or("无"),
+    )
+}
+
+pub fn build_recovery_guidance_prompt(task: &RequirementExecutionTask) -> String {
+    format!(
+        r#"你是任务恢复指导 Agent。只分析，不修改代码。
+
+请根据任务边界、失败原因和审核反馈生成最小可执行恢复方案。
+只输出 JSON，不要 Markdown：
+{{
+  "root_cause": "根因判断",
+  "strategy": "处理策略",
+  "steps": ["执行步骤"],
+  "verification": ["验证步骤"]
+}}
+
+任务：{}
+描述：{}
+目标文件：{}
+失败原因：{}
+失败摘要：{}
+审核反馈：{}
+"#,
+        task.title,
+        task.description,
+        if task.target_files.is_empty() {
+            "未限定".to_owned()
+        } else {
+            task.target_files.join("、")
+        },
+        task.error.as_deref().unwrap_or("无"),
+        task.failure_summary.as_deref().unwrap_or("无"),
+        task.last_review_feedback.as_deref().unwrap_or("无"),
+    )
+}
+
+pub fn parse_recovery_guidance(text: &str) -> Result<String, AppError> {
+    let value = extract_json_object(text)?;
+    let raw: RawRecoveryGuidance = serde_json::from_value(value)?;
+    if raw.root_cause.trim().is_empty() || raw.strategy.trim().is_empty() {
+        return Err(AppError::internal("高档模型恢复方案缺少根因或策略"));
+    }
+    Ok(format!(
+        "根因：{}\n策略：{}\n步骤：{}\n验证：{}",
+        raw.root_cause.trim(),
+        raw.strategy.trim(),
+        raw.steps.join("；"),
+        raw.verification.join("；")
+    ))
 }
 
 pub fn parse_task_execution_output(
@@ -319,6 +410,7 @@ pub fn parse_task_execution_output(
         execution_warning: None,
         changed: raw.changed,
         no_op_reason,
+        recovery_guidance: None,
         trace,
     })
 }
@@ -371,7 +463,7 @@ fn expand_execution_tasks(
                 ),
                 depends_on: vec![task.id.clone()],
                 kind: RequirementTaskKind::ReviewSubAgent,
-                model_tier: RequirementModelTier::High,
+                model_tier: effective_model_tier(RequirementTaskKind::ReviewSubAgent),
                 timeout_seconds: 20 * 60,
                 pi_session_file: None,
                 branch_name: None,
@@ -381,6 +473,12 @@ fn expand_execution_tasks(
                 review_angle: Some((*angle).to_owned()),
                 review_status: RequirementReviewStatus::Pending,
                 attempt: 0,
+                execution_failure_count: 0,
+                review_rejection_count: 0,
+                recovery_stage: RequirementRecoveryStage::None,
+                failure_summary: None,
+                recovery_guidance: None,
+                high_tier_execution_used: false,
                 last_review_feedback: None,
                 pull_request_url: None,
                 merged_into: None,
@@ -401,7 +499,7 @@ fn expand_execution_tasks(
                 .map(|index| format!("review-sub-{}-{}", task.id, index))
                 .collect(),
             kind: RequirementTaskKind::ReviewSummary,
-            model_tier: RequirementModelTier::High,
+            model_tier: effective_model_tier(RequirementTaskKind::ReviewSummary),
             timeout_seconds: 20 * 60,
             pi_session_file: None,
             branch_name: None,
@@ -411,6 +509,12 @@ fn expand_execution_tasks(
             review_angle: Some("审核汇总".to_owned()),
             review_status: RequirementReviewStatus::Pending,
             attempt: 0,
+            execution_failure_count: 0,
+            review_rejection_count: 0,
+            recovery_stage: RequirementRecoveryStage::None,
+            failure_summary: None,
+            recovery_guidance: None,
+            high_tier_execution_used: false,
             last_review_feedback: None,
             pull_request_url: None,
             merged_into: None,
@@ -440,6 +544,12 @@ fn expand_execution_tasks(
         review_angle: None,
         review_status: RequirementReviewStatus::Pending,
         attempt: 0,
+        execution_failure_count: 0,
+        review_rejection_count: 0,
+        recovery_stage: RequirementRecoveryStage::None,
+        failure_summary: None,
+        recovery_guidance: None,
+        high_tier_execution_used: false,
         last_review_feedback: None,
         pull_request_url: None,
         merged_into: None,
@@ -516,6 +626,12 @@ fn insert_branch_merges(
                 review_angle: None,
                 review_status: RequirementReviewStatus::Pending,
                 attempt: 0,
+                execution_failure_count: 0,
+                review_rejection_count: 0,
+                recovery_stage: RequirementRecoveryStage::None,
+                failure_summary: None,
+                recovery_guidance: None,
+                high_tier_execution_used: false,
                 last_review_feedback: None,
                 pull_request_url: None,
                 merged_into: None,
@@ -770,15 +886,26 @@ struct RawTaskOutput {
     no_op_reason: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawRecoveryGuidance {
+    root_cause: String,
+    strategy: String,
+    #[serde(default)]
+    steps: Vec<String>,
+    #[serde(default)]
+    verification: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        build_requirement_plan_prompt, build_requirement_task_prompt, parse_requirement_plan,
-        parse_task_execution_output,
+        build_requirement_plan_prompt, build_requirement_task_prompt, effective_model_tier,
+        parse_recovery_guidance, parse_requirement_plan, parse_task_execution_output,
     };
     use crate::models::{
         Requirement, RequirementDraft, RequirementExecutionPlan, RequirementExecutionTask,
-        RequirementModelTier, RequirementReviewStatus, RequirementTaskKind, RequirementTaskStatus,
+        RequirementModelTier, RequirementRecoveryStage, RequirementReviewStatus,
+        RequirementTaskKind, RequirementTaskStatus,
     };
     use chrono::Utc;
 
@@ -843,6 +970,42 @@ mod tests {
     }
 
     #[test]
+    fn task_kinds_use_expected_model_tiers() {
+        assert_eq!(
+            effective_model_tier(RequirementTaskKind::Implementation),
+            RequirementModelTier::Low
+        );
+        assert_eq!(
+            effective_model_tier(RequirementTaskKind::ReviewSummary),
+            RequirementModelTier::Low
+        );
+        assert_eq!(
+            effective_model_tier(RequirementTaskKind::ReviewSubAgent),
+            RequirementModelTier::Medium
+        );
+        assert_eq!(
+            effective_model_tier(RequirementTaskKind::MergeReview),
+            RequirementModelTier::High
+        );
+    }
+
+    #[test]
+    fn recovery_guidance_is_normalized_for_task_prompt() {
+        let guidance = parse_recovery_guidance(
+            r#"{
+              "root_cause": "边界条件遗漏",
+              "strategy": "补齐校验",
+              "steps": ["修改校验", "补测试"],
+              "verification": ["运行 npm run check"]
+            }"#,
+        )
+        .unwrap();
+
+        assert!(guidance.contains("根因：边界条件遗漏"));
+        assert!(guidance.contains("修改校验；补测试"));
+    }
+
+    #[test]
     fn implementation_prompt_contains_hard_boundary_and_no_op_contract() {
         let requirement = test_requirement("实现页面");
         let current = test_task("task-1", "创建骨架", Vec::new());
@@ -901,6 +1064,12 @@ mod tests {
             review_angle: None,
             review_status: RequirementReviewStatus::Pending,
             attempt: 0,
+            execution_failure_count: 0,
+            review_rejection_count: 0,
+            recovery_stage: RequirementRecoveryStage::None,
+            failure_summary: None,
+            recovery_guidance: None,
+            high_tier_execution_used: false,
             last_review_feedback: None,
             pull_request_url: None,
             merged_into: None,

@@ -145,6 +145,18 @@ pub struct RequirementExecutionTask {
     #[serde(default)]
     pub attempt: u32,
     #[serde(default)]
+    pub execution_failure_count: u32,
+    #[serde(default)]
+    pub review_rejection_count: u32,
+    #[serde(default)]
+    pub recovery_stage: RequirementRecoveryStage,
+    #[serde(default)]
+    pub failure_summary: Option<String>,
+    #[serde(default)]
+    pub recovery_guidance: Option<String>,
+    #[serde(default)]
+    pub high_tier_execution_used: bool,
+    #[serde(default)]
     pub last_review_feedback: Option<String>,
     #[serde(default)]
     pub pull_request_url: Option<String>,
@@ -186,6 +198,17 @@ pub enum RequirementModelTier {
     #[default]
     Medium,
     High,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementRecoveryStage {
+    #[default]
+    None,
+    AutoRetry,
+    GuidedRetry,
+    HighTierExecution,
+    Exhausted,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -486,6 +509,7 @@ pub struct RequirementTaskExecutionOutput {
     pub execution_warning: Option<String>,
     pub changed: Option<bool>,
     pub no_op_reason: Option<String>,
+    pub recovery_guidance: Option<String>,
     pub trace: Option<Value>,
 }
 

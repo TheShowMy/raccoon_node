@@ -10,6 +10,10 @@ pub enum AppError {
     BadRequest(String),
     NotFound(String),
     Internal(String),
+    TaskExecution {
+        message: String,
+        pi_session_file: Option<String>,
+    },
     Io(std::io::Error),
     Json(serde_json::Error),
 }
@@ -26,6 +30,23 @@ impl AppError {
     pub fn internal(message: impl Into<String>) -> Self {
         Self::Internal(message.into())
     }
+
+    pub fn task_execution(message: impl Into<String>, pi_session_file: Option<String>) -> Self {
+        Self::TaskExecution {
+            message: message.into(),
+            pi_session_file,
+        }
+    }
+
+    pub fn pi_session_file(&self) -> Option<&str> {
+        match self {
+            Self::TaskExecution {
+                pi_session_file: Some(path),
+                ..
+            } => Some(path),
+            _ => None,
+        }
+    }
 }
 
 impl IntoResponse for AppError {
@@ -35,6 +56,10 @@ impl IntoResponse for AppError {
             Self::NotFound(message) => (StatusCode::NOT_FOUND, message),
             Self::Internal(message) => {
                 tracing::error!("internal error: {}", message);
+                (StatusCode::INTERNAL_SERVER_ERROR, "内部错误".to_owned())
+            }
+            Self::TaskExecution { message, .. } => {
+                tracing::error!("task execution error: {}", message);
                 (StatusCode::INTERNAL_SERVER_ERROR, "内部错误".to_owned())
             }
             Self::Io(error) => {
@@ -54,9 +79,10 @@ impl IntoResponse for AppError {
 impl std::fmt::Display for AppError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::BadRequest(message) | Self::NotFound(message) | Self::Internal(message) => {
-                formatter.write_str(message)
-            }
+            Self::BadRequest(message)
+            | Self::NotFound(message)
+            | Self::Internal(message)
+            | Self::TaskExecution { message, .. } => formatter.write_str(message),
             Self::Io(error) => write!(formatter, "{error}"),
             Self::Json(error) => write!(formatter, "{error}"),
         }
