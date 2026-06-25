@@ -56,10 +56,22 @@ JSON 格式：
 }}
 
 要求：
-- tasks 数量 1-8 个。
+- tasks 数量 1-10 个。
 - id 必须稳定、唯一，只能使用小写字母、数字、短横线和下划线。
 - depends_on 只能引用已有任务 id，不能形成环。
 - 每个任务必须是写代码实现任务，审核、分支合并和最终合并审核由系统自动补齐。
+- 同一阶段可并行的任务必须使用完全相同的 depends_on。
+- 并行阶段之后的任务必须等待该阶段全部任务完成，禁止只依赖其中一个并行任务形成单分支串行链。
+- 会修改相同文件的任务禁止并行；应合并为一个任务，确需拆分时必须明确串行依赖。
+- DAG 必须按“阶段”拆分：串行阶段完成后可以进入一个并行阶段；并行阶段的所有任务全部完成并由系统自动合并后，才能进入下一阶段。
+- 禁止生成 `task-a`、`task-b` 并行，但后续 `task-c` 只依赖 `task-a` 的结构；`task-c` 必须同时依赖该并行阶段的全部任务。
+- 例如目标结构为 `task-1 → task-2 → [task-3, task-4, task-5] → 系统合并 → task-6 → [task-7, task-8] → 系统合并 → [task-9, task-10] → 系统合并 → 最终审核` 时：
+  - task-1 的 depends_on 为 []，task-2 的 depends_on 为 ["task-1"]。
+  - task-3、task-4、task-5 的 depends_on 必须完全相同，均为 ["task-2"]。
+  - task-6 的 depends_on 必须为 ["task-3", "task-4", "task-5"]。
+  - task-7、task-8 的 depends_on 必须完全相同，均为 ["task-6"]。
+  - task-9、task-10 的 depends_on 必须完全相同，均为 ["task-7", "task-8"]。
+  - 不要在 tasks 中生成合并任务；系统会在每个并行阶段后自动插入分支合并节点，并在最后执行最终审核和提交 PR。
 - 禁止生成纯审核、纯校验、纯检查、纯原因分析任务。
 - check.js、残留字符串检查、代码质量检查只能作为实现任务的验证标准，不能单独成任务。
 - 简单命名、文案、单点修改优先生成 1 个实现任务。
@@ -440,8 +452,18 @@ fn future_implementation_tasks_for_prompt(
 fn expand_execution_tasks(
     implementation_tasks: Vec<RequirementExecutionTask>,
 ) -> Vec<RequirementExecutionTask> {
-    let (implementation_tasks, branch_merge_tasks) = insert_branch_merges(implementation_tasks);
-    let final_dependencies = final_merge_dependencies(&implementation_tasks, &branch_merge_tasks);
+    let (implementation_tasks, mut branch_merge_tasks) = insert_branch_merges(implementation_tasks);
+    let mut final_dependencies =
+        final_merge_dependencies(&implementation_tasks, &branch_merge_tasks);
+    if final_dependencies.len() > 1 {
+        let merge_id = format!("branch-merge-{}", branch_merge_tasks.len() + 1);
+        branch_merge_tasks.push(branch_merge_task(
+            merge_id.clone(),
+            final_dependencies,
+            "合并所有末端并行任务分支，交由最终合并审核。".to_owned(),
+        ));
+        final_dependencies = vec![merge_id];
+    }
     let mut tasks = Vec::with_capacity(implementation_tasks.len() * (REVIEW_ANGLES.len() + 2) + 2);
     for task in implementation_tasks {
         tasks.push(task.clone());
@@ -561,7 +583,6 @@ fn insert_branch_merges(
     mut implementation_tasks: Vec<RequirementExecutionTask>,
 ) -> (Vec<RequirementExecutionTask>, Vec<RequirementExecutionTask>) {
     let mut branch_merges = Vec::new();
-    let mut merge_by_dependencies = HashMap::<Vec<String>, String>::new();
     let implementation_ids = implementation_tasks
         .iter()
         .map(|task| task.id.clone())
@@ -577,73 +598,131 @@ fn insert_branch_merges(
         .collect::<HashMap<_, _>>();
 
     for task in &mut implementation_tasks {
-        let (implementation_dependencies, other_dependencies): (Vec<_>, Vec<_>) = task
+        let (implementation_dependencies, mut other_dependencies): (Vec<_>, Vec<_>) = task
             .depends_on
             .iter()
             .cloned()
             .partition(|dependency| implementation_ids.contains(dependency));
-
-        let mut merged_dependencies =
-            transitive_reduction(&implementation_dependencies, &dependency_graph);
-        merged_dependencies.sort();
-        merged_dependencies.dedup();
-
+        other_dependencies.extend(transitive_reduction(
+            &implementation_dependencies,
+            &dependency_graph,
+        ));
         task.depends_on = other_dependencies;
-        if merged_dependencies.len() <= 1 {
-            task.depends_on.extend(merged_dependencies);
-            task.depends_on.sort();
+        task.depends_on.sort();
+        task.depends_on.dedup();
+    }
+
+    for layer in implementation_layers(&implementation_tasks) {
+        if layer.len() <= 1 {
             continue;
         }
-
-        let merge_id = if let Some(merge_id) = merge_by_dependencies.get(&merged_dependencies) {
-            merge_id.clone()
-        } else {
-            let merge_id = format!("branch-merge-{}", branch_merges.len() + 1);
-            merge_by_dependencies.insert(merged_dependencies.clone(), merge_id.clone());
-            branch_merges.push(RequirementExecutionTask {
-                id: merge_id.clone(),
-                title: format!("分支合并 {}", branch_merges.len() + 1),
-                description: format!(
-                    "合并 {} 个前置任务分支，作为后续任务主分支继续。",
-                    merged_dependencies.len()
+        let merge_id = format!("branch-merge-{}", branch_merges.len() + 1);
+        let layer_set = layer.iter().cloned().collect::<HashSet<_>>();
+        let mut used = false;
+        for task in &mut implementation_tasks {
+            if layer_set.contains(&task.id)
+                || !task
+                    .depends_on
+                    .iter()
+                    .any(|dependency| layer_set.contains(dependency))
+            {
+                continue;
+            }
+            task.depends_on
+                .retain(|dependency| !layer_set.contains(dependency));
+            task.depends_on.push(merge_id.clone());
+            task.depends_on.sort();
+            task.depends_on.dedup();
+            used = true;
+        }
+        if used {
+            branch_merges.push(branch_merge_task(
+                merge_id,
+                layer.clone(),
+                format!(
+                    "合并 {} 个同阶段并行任务分支，后续任务从合并结果继续。",
+                    layer.len()
                 ),
-                depends_on: merged_dependencies.clone(),
-                kind: RequirementTaskKind::BranchMerge,
-                model_tier: RequirementModelTier::High,
-                timeout_seconds: 30 * 60,
-                pi_session_file: None,
-                branch_name: None,
-                worktree_path: None,
-                commit_sha: None,
-                review_for: None,
-                review_angle: None,
-                review_status: RequirementReviewStatus::Pending,
-                attempt: 0,
-                execution_failure_count: 0,
-                review_rejection_count: 0,
-                recovery_stage: RequirementRecoveryStage::None,
-                failure_summary: None,
-                recovery_guidance: None,
-                high_tier_execution_used: false,
-                last_review_feedback: None,
-                pull_request_url: None,
-                merged_into: None,
-                cleanup_summary: None,
-                execution_warning: None,
-                trace: None,
-                status: RequirementTaskStatus::Pending,
-                target_files: Vec::new(),
-                result_summary: None,
-                error: None,
-            });
-            merge_id
-        };
-
-        task.depends_on.push(merge_id);
-        task.depends_on.sort();
+            ));
+        }
     }
 
     (implementation_tasks, branch_merges)
+}
+
+fn implementation_layers(tasks: &[RequirementExecutionTask]) -> Vec<Vec<String>> {
+    let task_ids = tasks
+        .iter()
+        .map(|task| task.id.clone())
+        .collect::<HashSet<_>>();
+    let mut remaining = task_ids.clone();
+    let mut completed = HashSet::new();
+    let mut layers = Vec::new();
+
+    while !remaining.is_empty() {
+        let mut layer = tasks
+            .iter()
+            .filter(|task| remaining.contains(&task.id))
+            .filter(|task| {
+                task.depends_on
+                    .iter()
+                    .filter(|dependency| task_ids.contains(*dependency))
+                    .all(|dependency| completed.contains(dependency))
+            })
+            .map(|task| task.id.clone())
+            .collect::<Vec<_>>();
+        if layer.is_empty() {
+            break;
+        }
+        layer.sort();
+        for task_id in &layer {
+            remaining.remove(task_id);
+            completed.insert(task_id.clone());
+        }
+        layers.push(layer);
+    }
+
+    layers
+}
+
+fn branch_merge_task(
+    id: String,
+    depends_on: Vec<String>,
+    description: String,
+) -> RequirementExecutionTask {
+    RequirementExecutionTask {
+        title: format!("分支合并 {}", id.trim_start_matches("branch-merge-")),
+        id,
+        description,
+        depends_on,
+        kind: RequirementTaskKind::BranchMerge,
+        model_tier: RequirementModelTier::High,
+        timeout_seconds: 30 * 60,
+        pi_session_file: None,
+        branch_name: None,
+        worktree_path: None,
+        commit_sha: None,
+        review_for: None,
+        review_angle: None,
+        review_status: RequirementReviewStatus::Pending,
+        attempt: 0,
+        execution_failure_count: 0,
+        review_rejection_count: 0,
+        recovery_stage: RequirementRecoveryStage::None,
+        failure_summary: None,
+        recovery_guidance: None,
+        high_tier_execution_used: false,
+        last_review_feedback: None,
+        pull_request_url: None,
+        merged_into: None,
+        cleanup_summary: None,
+        execution_warning: None,
+        trace: None,
+        status: RequirementTaskStatus::Pending,
+        target_files: Vec::new(),
+        result_summary: None,
+        error: None,
+    }
 }
 
 fn transitive_reduction(
@@ -903,12 +982,17 @@ mod tests {
         let requirement = test_requirement("重命名旧文案");
         let prompt = build_requirement_plan_prompt(&requirement);
 
-        assert!(prompt.contains("tasks 数量 1-8 个"));
+        assert!(prompt.contains("tasks 数量 1-10 个"));
         assert!(prompt.contains("禁止生成纯审核、纯校验、纯检查、纯原因分析任务"));
         assert!(prompt.contains("check.js、残留字符串检查、代码质量检查只能作为实现任务的验证标准"));
         assert!(prompt.contains("简单命名、文案、单点修改优先生成 1 个实现任务"));
         assert!(prompt.contains("target_files 只应列出当前任务会实际修改的文件"));
         assert!(prompt.contains("description 不要重复前置任务已经保证的验收标准"));
+        assert!(prompt.contains("并行阶段之后的任务必须等待该阶段全部任务完成"));
+        assert!(prompt.contains("会修改相同文件的任务禁止并行"));
+        assert!(prompt.contains("DAG 必须按“阶段”拆分"));
+        assert!(prompt.contains("task-6 的 depends_on 必须为 [\"task-3\", \"task-4\", \"task-5\"]"));
+        assert!(prompt.contains("不要在 tasks 中生成合并任务"));
     }
 
     #[test]
@@ -1197,7 +1281,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_requirement_plan_inserts_branch_merge_only_for_fan_in() {
+    fn parse_requirement_plan_adds_barriers_between_parallel_stages() {
         let plan = parse_requirement_plan(
             r#"{
               "summary": "执行计划",
@@ -1256,30 +1340,30 @@ mod tests {
         )
         .unwrap();
 
-        assert!(plan
-            .tasks
-            .iter()
-            .filter(|task| task.kind == RequirementTaskKind::BranchMerge)
-            .all(|task| task.depends_on != vec!["task-a", "task-b"]));
-
-        for task_id in ["task-c", "task-d", "task-e", "task-f"] {
-            let task = plan.tasks.iter().find(|task| task.id == task_id).unwrap();
-            assert_eq!(task.depends_on, vec!["task-b"]);
-        }
-
-        let merge = plan
+        let first_merge = plan
             .tasks
             .iter()
             .find(|task| task.id == "branch-merge-1")
             .unwrap();
-        assert_eq!(merge.kind, RequirementTaskKind::BranchMerge);
+        assert_eq!(first_merge.depends_on, vec!["task-a", "task-b"]);
+
+        for task_id in ["task-c", "task-d", "task-e", "task-f"] {
+            let task = plan.tasks.iter().find(|task| task.id == task_id).unwrap();
+            assert_eq!(task.depends_on, vec!["branch-merge-1"]);
+        }
+
+        let second_merge = plan
+            .tasks
+            .iter()
+            .find(|task| task.id == "branch-merge-2")
+            .unwrap();
         assert_eq!(
-            merge.depends_on,
+            second_merge.depends_on,
             vec!["task-c", "task-d", "task-e", "task-f"]
         );
 
         let task_g = plan.tasks.iter().find(|task| task.id == "task-g").unwrap();
-        assert_eq!(task_g.depends_on, vec!["branch-merge-1"]);
+        assert_eq!(task_g.depends_on, vec!["branch-merge-2"]);
     }
 
     #[test]
@@ -1328,6 +1412,63 @@ mod tests {
             .find(|task| task.kind == RequirementTaskKind::MergeReview)
             .unwrap();
         assert_eq!(merge_review.depends_on, vec!["task-3"]);
+    }
+
+    #[test]
+    fn parse_requirement_plan_blocks_parallel_member_from_starting_serial_chain() {
+        let plan = parse_requirement_plan(
+            r#"{
+              "summary": "执行计划",
+              "tasks": [
+                {
+                  "id": "task-1",
+                  "title": "独立任务一",
+                  "description": "完成独立任务一",
+                  "depends_on": [],
+                  "target_files": []
+                },
+                {
+                  "id": "task-2",
+                  "title": "独立任务二",
+                  "description": "完成独立任务二",
+                  "depends_on": [],
+                  "target_files": []
+                },
+                {
+                  "id": "task-3",
+                  "title": "后续任务一",
+                  "description": "完成后续任务一",
+                  "depends_on": ["task-2"],
+                  "target_files": []
+                },
+                {
+                  "id": "task-4",
+                  "title": "后续任务二",
+                  "description": "完成后续任务二",
+                  "depends_on": ["task-3"],
+                  "target_files": []
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        let merge = plan
+            .tasks
+            .iter()
+            .find(|task| task.kind == RequirementTaskKind::BranchMerge)
+            .unwrap();
+        assert_eq!(merge.depends_on, vec!["task-1", "task-2"]);
+
+        let task_3 = plan.tasks.iter().find(|task| task.id == "task-3").unwrap();
+        assert_eq!(task_3.depends_on, vec![merge.id.clone()]);
+
+        let merge_review = plan
+            .tasks
+            .iter()
+            .find(|task| task.kind == RequirementTaskKind::MergeReview)
+            .unwrap();
+        assert_eq!(merge_review.depends_on, vec!["task-4"]);
     }
 
     #[test]

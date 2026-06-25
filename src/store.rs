@@ -648,6 +648,20 @@ impl JsonStore {
         let mut requirement_ids = Vec::new();
 
         for requirement in &mut self.data.requirements {
+            if requirement.status == RequirementStatus::Planning {
+                requirement.status = RequirementStatus::Failed;
+                requirement.error = Some(format!("{RESTART_INTERRUPTION}，请重新生成执行 DAG"));
+                requirement.updated_at = now;
+                requirement.messages.push(RequirementMessage {
+                    role: RequirementMessageRole::System,
+                    content: format!("执行 DAG 生成因{RESTART_INTERRUPTION}，请重新生成。"),
+                    metadata: None,
+                    created_at: now,
+                });
+                changed = true;
+                continue;
+            }
+
             if requirement.status != RequirementStatus::Running {
                 continue;
             }
@@ -1928,7 +1942,10 @@ mod tests {
                 RequirementTaskStatus::Pending,
             )],
         });
-        store.data.requirements = vec![interrupted, waiting];
+        let mut planning = requirement("planning");
+        planning.status = RequirementStatus::Planning;
+        planning.execution_plan = None;
+        store.data.requirements = vec![interrupted, waiting, planning];
         crate::utils::write_json(&store.path, &store.data)
             .await
             .unwrap();
@@ -1955,6 +1972,11 @@ mod tests {
                 .status,
             RequirementTaskStatus::Pending
         );
+        assert_eq!(store.data.requirements[2].status, RequirementStatus::Failed);
+        assert!(store.data.requirements[2]
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("请重新生成执行 DAG")));
 
         let reopened = JsonStore::open(path).await.unwrap();
         assert_eq!(
@@ -1965,6 +1987,10 @@ mod tests {
                 .tasks[0]
                 .status,
             RequirementTaskStatus::Fixing
+        );
+        assert_eq!(
+            reopened.data.requirements[2].status,
+            RequirementStatus::Failed
         );
     }
 
