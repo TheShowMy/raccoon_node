@@ -217,6 +217,7 @@ export function useRequirementFlow(
         const transient =
           parsed.event === "coordinator_started" ||
           parsed.event === "coordinator_progress" ||
+          parsed.event === "coordinator_time_warning" ||
           parsed.event === "pi_event";
         if (!transient) {
           void Promise.all([
@@ -237,6 +238,8 @@ export function useRequirementFlow(
       "clarifications_ready",
       "draft_ready",
       "analysis_failed",
+      "analysis_cancelled",
+      "coordinator_time_warning",
       "execution_planning_started",
       "execution_plan_ready",
       "execution_plan_failed",

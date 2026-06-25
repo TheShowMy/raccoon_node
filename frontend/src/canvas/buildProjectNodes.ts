@@ -96,6 +96,7 @@ export interface BuildProjectNodesParams {
   confirmRequirement: (requirement: Requirement) => Promise<void>;
   continueEditingRequirement: (requirement: Requirement) => void;
   toggleTaskGroupCollapsed: (requirementId: string, taskId: string) => void;
+  cancelRequirementAnalysis: (requirementId: string) => Promise<void>;
 }
 
 export function buildProjectNodes({
@@ -130,6 +131,7 @@ export function buildProjectNodes({
   confirmRequirement,
   continueEditingRequirement,
   toggleTaskGroupCollapsed,
+  cancelRequirementAnalysis,
 }: BuildProjectNodesParams): Node<StartNodeData>[] {
   const fallbackProject = selectedProjectId
     ? startProjects.find((project) => project.id === selectedProjectId)
@@ -230,6 +232,10 @@ export function buildProjectNodes({
         onSubmitClarifications: submitClarifications,
         onConfirm: confirmRequirement,
         onContinueEditing: continueEditingRequirement,
+        onCancel: () =>
+          cancelRequirementAnalysis(
+            projectCanvas?.active_requirement?.id ?? "",
+          ),
       },
     },
     {

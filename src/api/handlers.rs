@@ -349,6 +349,26 @@ pub async fn put_model_settings(
     }))
 }
 
+pub async fn cancel_requirement_analysis(
+    State(state): State<AppState>,
+    AxumPath(requirement_id): AxumPath<String>,
+) -> Result<Json<crate::models::ProjectCanvasResponse>, AppError> {
+    // Find the project_id for this requirement.
+    let project_id = {
+        let store = state.store.read().await;
+        let index = store
+            .requirement_index(&requirement_id)
+            .map_err(|_| AppError::not_found("需求不存在"))?;
+        store.data.requirements[index].project_id.clone()
+    };
+    state
+        .model_provider
+        .cancel_requirement_analysis(&project_id)
+        .await?;
+    let store = state.store.read().await;
+    Ok(Json(store.project_canvas(&project_id)?))
+}
+
 fn spawn_requirement_analysis(
     state: AppState,
     requirement_id: String,
@@ -381,7 +401,14 @@ fn spawn_requirement_analysis(
                     _ => ("coordinator_progress", "需求分析已更新。"),
                 }
             }
-            Err(_) => ("analysis_failed", "需求分析失败。"),
+            Err(error) => {
+                let error_text = error.to_string();
+                if error_text.contains("已被用户取消") {
+                    ("analysis_cancelled", "分析已被取消")
+                } else {
+                    ("analysis_failed", "需求分析失败。")
+                }
+            }
         };
 
         {

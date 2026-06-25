@@ -425,6 +425,7 @@ pub struct ModelSettingsResponse {
 #[serde(rename_all = "lowercase")]
 pub enum RpcStatus {
     Ready,
+    Reconnecting,
     Error,
 }
 
@@ -457,6 +458,10 @@ pub trait ModelProvider: Send + Sync {
         events: Option<RequirementEventEmitter>,
     ) -> RequirementTaskExecutionFuture<'_>;
     fn release_project(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
+    /// Cancel a running requirement analysis for the given project.
+    fn cancel_requirement_analysis(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })
     }
 }

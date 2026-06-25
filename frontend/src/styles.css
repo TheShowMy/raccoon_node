@@ -2099,3 +2099,24 @@
       0 0 40px color-mix(in srgb, var(--accent-warning) 36%, transparent);
   }
 }
+
+/* === Cancel analysis button === */
+.rq-notice--warn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rq-notice--warn .rq-btn--danger {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: var(--accent-danger, #ef4444);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+.rq-notice--warn .rq-btn--danger:hover {
+  opacity: 0.85;
+}

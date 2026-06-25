@@ -301,7 +301,7 @@ export type PiModel = {
 export type ModelSettingsResponse = {
   models: PiModel[];
   settings: ModelSettings;
-  rpc_status: "ready" | "error";
+  rpc_status: "ready" | "reconnecting" | "error";
   rpc_error: string | null;
 };
 
@@ -336,7 +336,7 @@ export type StartNodeData =
       kind: "model-config";
       settings: ModelSettings;
       models: PiModel[];
-      rpcStatus: "idle" | "loading" | "ready" | "error";
+      rpcStatus: "idle" | "loading" | "ready" | "reconnecting" | "error";
       error: string | null;
       saving: boolean;
       onChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
@@ -397,6 +397,7 @@ export type StartNodeData =
       onSubmitClarifications: (requirement: Requirement) => Promise<void>;
       onConfirm: (requirement: Requirement) => Promise<void>;
       onContinueEditing: (requirement: Requirement) => void;
+      onCancel: () => void;
     }
   | {
       kind: "requirement-dag";

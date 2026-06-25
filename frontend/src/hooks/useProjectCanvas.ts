@@ -7,6 +7,7 @@ import {
   retryFailedNode as apiRetryFailedNode,
   retryFromNode as apiRetryFromNode,
   rerunReview as apiRerunReview,
+  cancelRequirementAnalysis as apiCancelRequirementAnalysis,
 } from "../api/client";
 import { readError } from "../utils/format";
 
@@ -219,6 +220,19 @@ export function useProjectCanvas(
     [runTaskRecoveryAction],
   );
 
+  const cancelRequirementAnalysis = useCallback(
+    async (requirementId: string) => {
+      try {
+        const data = await apiCancelRequirementAnalysis(requirementId);
+        setProjectCanvas(data);
+        setSelectedDagRequirementId(requirementId);
+      } catch (reason) {
+        setRequirementActionError(readError(reason));
+      }
+    },
+    [],
+  );
+
   return {
     projectCanvas,
     setProjectCanvas,
@@ -240,5 +254,6 @@ export function useProjectCanvas(
     retryFailedNode,
     retryFromNode,
     rerunReview,
+    cancelRequirementAnalysis,
   };
 }

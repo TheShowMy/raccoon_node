@@ -83,6 +83,7 @@ describe("RequirementConversationWorkbench", () => {
         onSubmitClarifications={vi.fn()}
         onConfirm={vi.fn()}
         onContinueEditing={vi.fn()}
+        onCancel={vi.fn()}
       />,
     );
 

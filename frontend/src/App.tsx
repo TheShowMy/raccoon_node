@@ -286,6 +286,7 @@ export default function App() {
         confirmRequirement: requirement.confirmRequirement,
         continueEditingRequirement: requirement.continueEditingRequirement,
         toggleTaskGroupCollapsed: project.toggleTaskGroupCollapsed,
+        cancelRequirementAnalysis: project.cancelRequirementAnalysis,
       }),
     [
       project.projectCanvas,

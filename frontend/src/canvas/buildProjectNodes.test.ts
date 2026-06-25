@@ -124,6 +124,7 @@ function params(
     confirmRequirement: async () => {},
     continueEditingRequirement: () => {},
     toggleTaskGroupCollapsed: () => {},
+    cancelRequirementAnalysis: async () => {},
   };
 }
 

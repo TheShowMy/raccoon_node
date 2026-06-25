@@ -2,6 +2,7 @@ use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub mod api;
+pub mod db;
 pub mod error;
 pub mod models;
 pub mod pi_rpc;

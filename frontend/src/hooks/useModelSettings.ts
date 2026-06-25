@@ -16,7 +16,7 @@ export function useModelSettings(onSaved: () => Promise<void>) {
     DEFAULT_MODEL_SETTINGS,
   );
   const [modelRpcStatus, setModelRpcStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
+    "idle" | "loading" | "ready" | "reconnecting" | "error"
   >("idle");
   const [modelError, setModelError] = useState<string | null>(null);
   const [savingModels, setSavingModels] = useState(false);

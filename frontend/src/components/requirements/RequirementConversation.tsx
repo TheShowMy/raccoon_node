@@ -54,6 +54,7 @@ type Props = {
   onSubmitClarifications: (requirement: Requirement) => Promise<void>;
   onConfirm: (requirement: Requirement) => Promise<void>;
   onContinueEditing: (requirement: Requirement) => void;
+  onCancel: () => void;
 };
 
 export default function RequirementConversationWorkbench({
@@ -73,6 +74,7 @@ export default function RequirementConversationWorkbench({
   onSubmitClarifications,
   onConfirm,
   onContinueEditing,
+  onCancel,
 }: Props) {
   const running =
     conversation?.running ??
@@ -123,6 +125,7 @@ export default function RequirementConversationWorkbench({
           running={running}
           streamEvents={streamEvents}
           error={error ?? conversation?.error ?? null}
+          onCancel={onCancel}
         />
 
         {prompt && requirement ? (
@@ -166,11 +169,13 @@ function RequirementTranscript({
   running,
   streamEvents,
   error,
+  onCancel,
 }: {
   conversation: RequirementConversation | null;
   running: boolean;
   streamEvents: StreamEvent[];
   error: string | null;
+  onCancel: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const liveBubbles = useMemo(
@@ -206,6 +211,18 @@ function RequirementTranscript({
           {transientEvents.length > 0 ? (
             <div className="rq-notice rq-notice--info">
               {transientEvents.at(-1)?.message}
+            </div>
+          ) : null}
+          {streamEvents.some((e) => e.event === "coordinator_time_warning") ? (
+            <div className="rq-notice rq-notice--warn" role="alert">
+              <span>分析耗时较长，是否继续等待？</span>
+              <button
+                className="rq-btn rq-btn--danger"
+                type="button"
+                onClick={onCancel}
+              >
+                停止分析
+              </button>
             </div>
           ) : null}
           {liveBubbles.length > 0 || running ? (

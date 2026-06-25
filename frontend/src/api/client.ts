@@ -207,6 +207,22 @@ export function retryFromNode(
   return postTaskAction(requirementId, taskId, "retry-from", "从节点恢复失败");
 }
 
+export async function cancelRequirementAnalysis(
+  requirementId: string,
+): Promise<ProjectCanvasData> {
+  const response = await fetch(
+    `/api/requirements/${encodeURIComponent(requirementId)}/cancel`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "取消失败");
+  }
+  return response.json();
+}
+
 export function rerunReview(
   requirementId: string,
   taskId: string,

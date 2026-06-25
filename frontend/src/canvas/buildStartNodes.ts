@@ -35,7 +35,7 @@ export interface BuildStartNodesParams {
   modelSettingsOpen: boolean;
   draftModelSettings: ModelSettings;
   models: PiModel[];
-  modelRpcStatus: "idle" | "loading" | "ready" | "error";
+  modelRpcStatus: "idle" | "loading" | "ready" | "reconnecting" | "error";
   modelError: string | null;
   savingModels: boolean;
   setTheme: (theme: ThemeMode) => void;

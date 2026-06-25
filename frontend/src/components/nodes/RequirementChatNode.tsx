@@ -28,6 +28,7 @@ export default function RequirementChatNode({
       onSubmitClarifications={data.onSubmitClarifications}
       onConfirm={data.onConfirm}
       onContinueEditing={data.onContinueEditing}
+      onCancel={data.onCancel}
     />
   );
 }

@@ -13,11 +13,12 @@ use tower_http::{
 pub mod handlers;
 
 use crate::api::handlers::{
-    append_requirement_message, confirm_requirement, create_project, create_requirement,
-    delete_project, get_model_settings, get_project_canvas, get_requirement_conversation,
-    get_start, plan_requirement_execution, put_model_settings, requirement_events, rerun_review,
-    retry_failed_node, retry_from_node, spawn_startup_requirement_scheduler,
-    start_requirement_execution, submit_requirement_clarifications,
+    append_requirement_message, cancel_requirement_analysis, confirm_requirement, create_project,
+    create_requirement, delete_project, get_model_settings, get_project_canvas,
+    get_requirement_conversation, get_start, plan_requirement_execution, put_model_settings,
+    requirement_events, rerun_review, retry_failed_node, retry_from_node,
+    spawn_startup_requirement_scheduler, start_requirement_execution,
+    submit_requirement_clarifications,
 };
 use crate::pi_rpc::PiRpcModelProvider;
 use crate::store::JsonStore;
@@ -98,6 +99,10 @@ fn build_app_with_startup_requirements(
         .route(
             "/requirements/{id}/tasks/{task_id}/rerun-review",
             post(rerun_review),
+        )
+        .route(
+            "/requirements/{id}/cancel",
+            post(cancel_requirement_analysis),
         )
         .route(
             "/settings/models",

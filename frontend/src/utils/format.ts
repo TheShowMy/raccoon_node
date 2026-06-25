@@ -62,7 +62,7 @@ export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
 };
 
 export function modelStatusText(
-  status: "idle" | "loading" | "ready" | "error",
+  status: "idle" | "loading" | "ready" | "reconnecting" | "error",
 ) {
   if (status === "loading") {
     return "正在读取 Pi Agent 模型";
@@ -72,6 +72,9 @@ export function modelStatusText(
   }
   if (status === "error") {
     return "Pi Agent RPC 异常";
+  }
+  if (status === "reconnecting") {
+    return "Pi Agent 重新连接中...";
   }
   return "等待加载";
 }
