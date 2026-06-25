@@ -192,6 +192,28 @@ export type ProjectCanvasData = {
   completed_requirements: Requirement[];
 };
 
+export type ProjectChatMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+  created_at: string;
+};
+
+export type ProjectChatResponse = {
+  project_id: string;
+  messages: ProjectChatMessage[];
+  running: boolean;
+  error: string | null;
+  updated_at: string;
+};
+
+export type ProjectChatEvent = {
+  project_id: string;
+  event: string;
+  message: string;
+  pi_type?: string;
+  payload?: unknown;
+};
+
 export type ClarificationQuestionType =
   | "single_choice"
   | "multi_choice"
@@ -388,9 +410,16 @@ export type StartNodeData =
       busy: boolean;
       error: string | null;
       streamEvents: StreamEvent[];
+      projectChat: ProjectChatResponse | null;
+      projectChatInput: string;
+      projectChatBusy: boolean;
+      projectChatError: string | null;
+      projectChatEvents: ProjectChatEvent[];
       answers: Record<string, DraftClarificationAnswer>;
       onInputChange: (value: string) => void;
       onSend: () => Promise<void>;
+      onProjectChatInputChange: (value: string) => void;
+      onProjectChatSend: () => Promise<void>;
       onAnswerChange: (
         clarification: RequirementClarification,
         answer: DraftClarificationAnswer,

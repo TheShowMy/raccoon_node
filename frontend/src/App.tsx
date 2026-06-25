@@ -26,6 +26,7 @@ import {
 import { useStartData } from "./hooks/useStartData";
 import { useProjectCanvas } from "./hooks/useProjectCanvas";
 import { useRequirementFlow } from "./hooks/useRequirementFlow";
+import { useProjectChat } from "./hooks/useProjectChat";
 import { useModelSettings } from "./hooks/useModelSettings";
 import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsContext";
 
@@ -202,6 +203,7 @@ export default function App() {
     project.loadProjectCanvas,
     project.setSelectedDagRequirementId,
   );
+  const projectChat = useProjectChat(start.selectedProjectId);
   const models = useModelSettings(start.loadStart);
 
   const startNodes = useMemo(
@@ -309,10 +311,17 @@ export default function App() {
         requirementBusy: requirement.requirementBusy,
         requirementError: requirement.requirementError,
         requirementStreamEvents: requirement.requirementStreamEvents,
+        projectChat: projectChat.projectChat,
+        projectChatInput: projectChat.projectChatInput,
+        projectChatBusy: projectChat.projectChatBusy,
+        projectChatError: projectChat.projectChatError,
+        projectChatEvents: projectChat.projectChatEvents,
         clarificationAnswers: requirement.clarificationAnswers,
         dismissedPromptRequirementId: requirement.dismissedPromptRequirementId,
         setRequirementInput: requirement.setRequirementInput,
         sendRequirementMessage: requirement.sendRequirementMessage,
+        setProjectChatInput: projectChat.setProjectChatInput,
+        sendProjectChatMessage: projectChat.sendProjectChat,
         updateClarificationAnswer: requirement.updateClarificationAnswer,
         submitClarifications: requirement.submitClarifications,
         confirmRequirement: requirement.confirmRequirement,
@@ -329,10 +338,17 @@ export default function App() {
       requirement.requirementBusy,
       requirement.requirementError,
       requirement.requirementStreamEvents,
+      projectChat.projectChat,
+      projectChat.projectChatInput,
+      projectChat.projectChatBusy,
+      projectChat.projectChatError,
+      projectChat.projectChatEvents,
       requirement.clarificationAnswers,
       requirement.dismissedPromptRequirementId,
       requirement.setRequirementInput,
       requirement.sendRequirementMessage,
+      projectChat.setProjectChatInput,
+      projectChat.sendProjectChat,
       requirement.updateClarificationAnswer,
       requirement.submitClarifications,
       requirement.confirmRequirement,

@@ -14,6 +14,8 @@ pub struct AppData {
     pub projects: Vec<Project>,
     #[serde(default)]
     pub requirements: Vec<Requirement>,
+    #[serde(default)]
+    pub project_chats: Vec<ProjectChat>,
     pub settings_summary: SummaryNode,
     pub model_summary: SummaryNode,
     #[serde(default)]
@@ -25,6 +27,7 @@ impl Default for AppData {
         Self {
             projects: Vec::new(),
             requirements: Vec::new(),
+            project_chats: Vec::new(),
             settings_summary: SummaryNode {
                 title: "设置".to_owned(),
                 description: "基础设置待配置".to_owned(),
@@ -36,6 +39,44 @@ impl Default for AppData {
             model_settings: ModelSettings::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectChat {
+    pub project_id: String,
+    #[serde(default)]
+    pub messages: Vec<ProjectChatMessage>,
+    #[serde(default)]
+    pub running: bool,
+    pub error: Option<String>,
+    #[serde(skip_serializing)]
+    pub pi_session_file: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectChatMessage {
+    pub role: ProjectChatMessageRole,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectChatMessageRole {
+    User,
+    Assistant,
+    System,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ProjectChatResponse {
+    pub project_id: String,
+    pub messages: Vec<ProjectChatMessage>,
+    pub running: bool,
+    pub error: Option<String>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -439,6 +480,8 @@ pub type RequirementPlanFuture<'a> =
     Pin<Box<dyn Future<Output = Result<RequirementExecutionPlan, AppError>> + Send + 'a>>;
 pub type RequirementTaskExecutionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<RequirementTaskExecutionOutput, AppError>> + Send + 'a>>;
+pub type ProjectChatFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<ProjectChatOutput, AppError>> + Send + 'a>>;
 pub type ModelProviderActionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + 'a>>;
 
@@ -459,6 +502,13 @@ pub trait ModelProvider: Send + Sync {
         input: RequirementTaskExecutionInput,
         events: Option<RequirementEventEmitter>,
     ) -> RequirementTaskExecutionFuture<'_>;
+    fn ask_project_chat(
+        &self,
+        _input: ProjectChatInput,
+        _events: Option<ProjectChatEventEmitter>,
+    ) -> ProjectChatFuture<'_> {
+        Box::pin(async { Err(AppError::internal("项目问答暂不可用")) })
+    }
     fn release_project(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })
     }
@@ -466,6 +516,20 @@ pub trait ModelProvider: Send + Sync {
     fn cancel_requirement_analysis(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectChatInput {
+    pub project: Project,
+    pub messages: Vec<ProjectChatMessage>,
+    pub model_settings: ModelSettings,
+    pub pi_session_file: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectChatOutput {
+    pub assistant_message: String,
+    pub pi_session_file: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -526,6 +590,7 @@ pub struct RequirementTaskExecutionOutput {
 }
 
 pub type RequirementEventBus = broadcast::Sender<RequirementEvent>;
+pub type ProjectChatEventBus = broadcast::Sender<ProjectChatEvent>;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequirementEvent {
@@ -538,6 +603,51 @@ pub struct RequirementEvent {
     pub pi_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectChatEvent {
+    pub project_id: String,
+    pub event: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pi_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectChatEventEmitter {
+    pub project_id: String,
+    pub bus: broadcast::Sender<ProjectChatEvent>,
+}
+
+impl ProjectChatEventEmitter {
+    pub fn emit(&self, event: &str, message: &str) {
+        let _ = self.bus.send(ProjectChatEvent {
+            project_id: self.project_id.clone(),
+            event: event.to_owned(),
+            message: message.to_owned(),
+            pi_type: None,
+            payload: None,
+        });
+    }
+
+    pub fn emit_pi_event(&self, payload: Value) {
+        let pi_type = payload
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned();
+        let message = crate::requirement_analysis::summarize_pi_event(&pi_type, &payload);
+        let _ = self.bus.send(ProjectChatEvent {
+            project_id: self.project_id.clone(),
+            event: "pi_event".to_owned(),
+            message,
+            pi_type: Some(pi_type),
+            payload: Some(payload),
+        });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -626,6 +736,11 @@ pub struct CreateProjectRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct RequirementMessageRequest {
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProjectChatMessageRequest {
     pub message: String,
 }
 

@@ -6,6 +6,8 @@ import type {
   Requirement,
   RequirementConversation,
   RequirementExecutionTask,
+  ProjectChatEvent,
+  ProjectChatResponse,
   StartNodeData,
   StreamEvent,
 } from "../types/api";
@@ -44,8 +46,8 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       "model-config": { width: 252, height: 360 },
       "style-settings": { width: 252, height: 134 },
       summary: { width: 252, height: 134 },
-      "project-back": { width: 252, height: 90 },
-      "project-github": { width: 252, height: 90 },
+      "project-back": { width: 140, height: 56 },
+      "project-github": { width: 140, height: 56 },
       "requirement-list": { width: 290, height: 640 },
       "requirement-chat": { width: 720, height: 760 },
       "requirement-dag": DAG_NODE_SIZE,
@@ -89,10 +91,17 @@ export interface BuildProjectChatNodeParams {
   requirementBusy: boolean;
   requirementError: string | null;
   requirementStreamEvents: StreamEvent[];
+  projectChat: ProjectChatResponse | null;
+  projectChatInput: string;
+  projectChatBusy: boolean;
+  projectChatError: string | null;
+  projectChatEvents: ProjectChatEvent[];
   clarificationAnswers: Record<string, DraftClarificationAnswer>;
   dismissedPromptRequirementId: string | null;
   setRequirementInput: (value: string) => void;
   sendRequirementMessage: () => Promise<void>;
+  setProjectChatInput: (value: string) => void;
+  sendProjectChatMessage: () => Promise<void>;
   updateClarificationAnswer: (
     clarification: import("../types/api").RequirementClarification,
     answer: DraftClarificationAnswer,
@@ -162,22 +171,22 @@ export function buildProjectNodes({
 
   return withDimensions([
     {
-      id: "project-github",
-      type: "startNode",
-      position: { x: -328, y: -84 },
-      data: {
-        kind: "project-github",
-        project,
-      },
-    },
-    {
       id: "project-back",
       type: "startNode",
-      position: { x: -328, y: 20 },
+      position: { x: -350, y: 20 },
       data: {
         kind: "project-back",
         project,
         onBack: backToStartCanvas,
+      },
+    },
+    {
+      id: "project-github",
+      type: "startNode",
+      position: { x: -200, y: 20 },
+      data: {
+        kind: "project-github",
+        project,
       },
     },
     {
@@ -381,10 +390,17 @@ export function buildProjectChatNode({
   requirementBusy,
   requirementError,
   requirementStreamEvents,
+  projectChat,
+  projectChatInput,
+  projectChatBusy,
+  projectChatError,
+  projectChatEvents,
   clarificationAnswers,
   dismissedPromptRequirementId,
   setRequirementInput,
   sendRequirementMessage,
+  setProjectChatInput,
+  sendProjectChatMessage,
   updateClarificationAnswer,
   submitClarifications,
   confirmRequirement,
@@ -414,9 +430,16 @@ export function buildProjectChatNode({
         busy: requirementBusy,
         error: requirementError,
         streamEvents: requirementStreamEvents,
+        projectChat,
+        projectChatInput,
+        projectChatBusy,
+        projectChatError,
+        projectChatEvents,
         answers: clarificationAnswers,
         onInputChange: setRequirementInput,
         onSend: sendRequirementMessage,
+        onProjectChatInputChange: setProjectChatInput,
+        onProjectChatSend: sendProjectChatMessage,
         onAnswerChange: updateClarificationAnswer,
         onSubmitClarifications: submitClarifications,
         onConfirm: confirmRequirement,

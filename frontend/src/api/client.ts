@@ -7,6 +7,7 @@ import {
   type RequirementConversation,
   type DraftClarificationAnswer,
   type RequirementClarification,
+  type ProjectChatResponse,
 } from "../types/api";
 
 export async function fetchStart(): Promise<{
@@ -63,6 +64,42 @@ export async function getProjectCanvas(
       message?: string;
     } | null;
     throw new Error(body?.message ?? "读取项目画布失败");
+  }
+  return response.json();
+}
+
+export async function getProjectChat(
+  projectId: string,
+): Promise<ProjectChatResponse> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/chat`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取项目问答失败");
+  }
+  return response.json();
+}
+
+export async function sendProjectChatMessage(
+  projectId: string,
+  message: string,
+): Promise<ProjectChatResponse> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/chat/messages`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "发送项目问答失败");
   }
   return response.json();
 }

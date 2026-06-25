@@ -134,10 +134,17 @@ describe("buildProjectNodes", () => {
       requirementBusy: false,
       requirementError: null,
       requirementStreamEvents: [],
+      projectChat: null,
+      projectChatInput: "",
+      projectChatBusy: false,
+      projectChatError: null,
+      projectChatEvents: [],
       clarificationAnswers: {},
       dismissedPromptRequirementId: null,
       setRequirementInput: () => {},
       sendRequirementMessage: async () => {},
+      setProjectChatInput: () => {},
+      sendProjectChatMessage: async () => {},
       updateClarificationAnswer: () => {},
       submitClarifications: async () => {},
       confirmRequirement: async () => {},
@@ -159,6 +166,26 @@ describe("buildProjectNodes", () => {
     expect(second.find((node) => node.id === "requirement-chat")).not.toBe(
       first.find((node) => node.id === "requirement-chat"),
     );
+  });
+
+  it("places compact project actions side by side with back on the left", () => {
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [],
+      completed_requirements: [],
+    };
+
+    const nodes = buildProjectNodes(params(canvas, null));
+    const back = nodes.find((node) => node.id === "project-back")!;
+    const github = nodes.find((node) => node.id === "project-github")!;
+
+    expect(back.position).toEqual({ x: -350, y: 20 });
+    expect(github.position).toEqual({ x: -168, y: 20 });
+    expect(back.width).toBe(166);
+    expect(github.width).toBe(166);
+    expect(back.height).toBe(90);
+    expect(github.height).toBe(90);
   });
 
   it("places the DAG entry to the right of the project requirement list", () => {

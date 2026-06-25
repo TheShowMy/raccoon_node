@@ -207,7 +207,7 @@
 
   .node-card--project-back,
   .node-card--project-github {
-    @apply min-h-[88px] w-[246px] cursor-pointer;
+    @apply h-[90px] w-[166px] cursor-pointer;
     box-shadow:
       var(--shadow-card),
       0 0 28px var(--glow-projects);
@@ -230,10 +230,68 @@
   }
 
   .node-card--requirement-chat {
-    @apply flex h-[760px] w-[720px] flex-col overflow-hidden;
+    @apply h-[760px] w-[720px] overflow-visible border-0 bg-transparent p-0 backdrop-blur-none;
+    box-shadow: none;
+  }
+
+  .node-card--requirement-chat:hover {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .chat-card-stack {
+    @apply relative h-full w-full;
+  }
+
+  .chat-stack-card {
+    @apply absolute top-0 left-0 flex h-[742px] w-[696px] flex-col overflow-hidden rounded-[18px] border p-4 backdrop-blur;
+    border-color: var(--card-border);
+    background: var(--card-bg);
     box-shadow:
       var(--shadow-card),
       0 0 32px var(--glow-model);
+    opacity: 0.76;
+    transform: translate(24px, 18px) scale(0.985);
+    transform-origin: top left;
+    transition:
+      transform 220ms ease,
+      opacity 220ms ease,
+      z-index 0ms linear 110ms;
+    z-index: 1;
+  }
+
+  .chat-stack-card.is-active {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+    transition:
+      transform 220ms ease,
+      opacity 220ms ease,
+      z-index 0ms;
+    z-index: 2;
+  }
+
+  .chat-stack-card__switch {
+    @apply absolute inset-0 z-10 cursor-pointer border-0 bg-transparent p-0 text-[10px] font-bold;
+    color: var(--text-soft);
+  }
+
+  .chat-stack-card.is-active .chat-stack-card__switch {
+    @apply pointer-events-none;
+  }
+
+  .chat-stack-card__switch span {
+    @apply absolute top-1/2 right-1 -translate-y-1/2;
+    writing-mode: vertical-rl;
+  }
+
+  .chat-stack-card__body {
+    @apply flex min-h-0 flex-1 flex-col;
+  }
+
+  .chat-stack-card:not(.is-active) .chat-stack-card__body {
+    @apply pointer-events-none;
   }
 
   .node-card--requirement-dag {
@@ -1428,6 +1486,20 @@
     background: color-mix(in srgb, var(--accent-model) 6%, transparent);
   }
 
+  .rq-message--system {
+    @apply mx-auto max-w-[92%];
+  }
+
+  .rq-message--system .rq-message__avatar {
+    border-color: color-mix(in srgb, var(--accent-danger) 30%, transparent);
+    color: var(--accent-danger);
+  }
+
+  .rq-message--system .rq-message__body p {
+    border-color: color-mix(in srgb, var(--accent-danger) 24%, transparent);
+    background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
+  }
+
   .rq-message--user .rq-message__body p {
     @apply rounded-tr-[4px];
     border-color: color-mix(in srgb, var(--accent-create) 34%, transparent);
@@ -1504,6 +1576,39 @@
     @apply m-0 max-h-[180px] overflow-auto text-[11px] leading-relaxed whitespace-pre-wrap;
     color: var(--text-soft);
     overflow-wrap: anywhere;
+  }
+
+  .project-chat-events {
+    @apply grid gap-2 rounded-[14px] border p-3;
+    border-color: color-mix(in srgb, var(--accent-projects) 28%, transparent);
+    background: color-mix(in srgb, var(--accent-projects) 6%, transparent);
+  }
+
+  .project-chat-events > strong {
+    @apply text-xs;
+    color: var(--accent-projects);
+  }
+
+  .project-chat-event {
+    @apply grid gap-1 rounded-[10px] border px-3 py-2;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
+  }
+
+  .project-chat-event span {
+    @apply text-[10px] font-bold;
+    color: var(--text-muted);
+  }
+
+  .project-chat-event p,
+  .project-chat-event pre {
+    @apply m-0 text-[11px] leading-relaxed whitespace-pre-wrap;
+    color: var(--text-soft);
+    overflow-wrap: anywhere;
+  }
+
+  .project-chat-event pre {
+    @apply max-h-[160px] overflow-auto;
   }
 
   .rq-prompt-layer {
@@ -2119,4 +2224,15 @@
 }
 .rq-notice--warn .rq-btn--danger:hover {
   opacity: 0.85;
+}
+
+/* === Compact project-back / project-github === */
+.node-card--project-back.compact,
+.node-card--project-github.compact {
+  width: 140px !important;
+  height: 56px !important;
+  min-height: 0 !important;
+  padding: 4px 8px;
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
 }

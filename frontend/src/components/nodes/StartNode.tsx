@@ -39,7 +39,11 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
     <div
       className={`node-card node-card--${data.kind} ${
         isPendingDelete ? "node-card--pending-delete" : ""
-      } ${clickableAction ? "node-card--clickable" : ""}`}
+      } ${clickableAction ? "node-card--clickable" : ""} ${
+        data.kind === "project-back" || data.kind === "project-github"
+          ? "compact"
+          : ""
+      }`}
       role={clickableAction ? "button" : undefined}
       tabIndex={clickableAction ? 0 : undefined}
       onClick={clickableAction}

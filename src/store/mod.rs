@@ -135,6 +135,7 @@ impl JsonStore {
             AppData {
                 projects,
                 requirements,
+                project_chats: Vec::new(),
                 settings_summary,
                 model_summary,
                 model_settings,
