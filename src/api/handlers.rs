@@ -9,10 +9,10 @@ use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
 use crate::error::AppError;
 use crate::models::{
-    AppData, ClarificationAnswerRequest, ModelSettings, ModelSettingsResponse, Project,
+    ClarificationAnswerRequest, ModelSettings, ModelSettingsResponse, Project,
     ProjectCanvasResponse, RequirementAnalysisInput, RequirementConversationResponse,
     RequirementEventEmitter, RequirementMessageRequest, RequirementStatus,
-    RequirementTaskExecutionInput, RpcStatus,
+    RequirementTaskExecutionInput, RpcStatus, StartResponse,
 };
 use crate::store::{ProjectScheduleAction, TaskExecutionDisposition};
 use crate::AppState;
@@ -53,9 +53,14 @@ fn execution_is_active(requirement_id: &str) -> bool {
         .contains(requirement_id)
 }
 
-pub async fn get_start(State(state): State<AppState>) -> Json<AppData> {
+pub async fn get_start(State(state): State<AppState>) -> Json<StartResponse> {
     let store = state.store.read().await;
-    Json(store.data.clone())
+    Json(StartResponse {
+        projects: store.data.projects.clone(),
+        settings_summary: store.data.settings_summary.clone(),
+        model_summary: store.data.model_summary.clone(),
+        model_settings: store.data.model_settings.clone(),
+    })
 }
 
 pub async fn create_project(

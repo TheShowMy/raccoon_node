@@ -41,6 +41,14 @@ impl Default for AppData {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct StartResponse {
+    pub projects: Vec<Project>,
+    pub settings_summary: SummaryNode,
+    pub model_summary: SummaryNode,
+    pub model_settings: ModelSettings,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectChat {
     pub project_id: String,

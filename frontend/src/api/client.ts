@@ -10,17 +10,31 @@ import {
   type ProjectChatResponse,
 } from "../types/api";
 
-export async function fetchStart(): Promise<{
+type StartData = {
   projects: Project[];
   settings_summary: { title: string; description: string };
   model_summary: { title: string; description: string };
   model_settings: ModelSettings;
-}> {
-  const response = await fetch("/api/start");
-  if (!response.ok) {
-    throw new Error("读取 start 数据失败");
+};
+
+let fetchStartPromise: Promise<StartData> | null = null;
+
+export async function fetchStart(): Promise<StartData> {
+  if (fetchStartPromise) {
+    return fetchStartPromise;
   }
-  return response.json();
+  fetchStartPromise = (async () => {
+    const response = await fetch("/api/start");
+    if (!response.ok) {
+      throw new Error("读取 start 数据失败");
+    }
+    return response.json() as Promise<StartData>;
+  })();
+  try {
+    return await fetchStartPromise;
+  } finally {
+    fetchStartPromise = null;
+  }
 }
 
 export async function createProject(
