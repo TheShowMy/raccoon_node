@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import RequirementConversationWorkbench from "./RequirementConversation";
 import type {
@@ -84,6 +84,7 @@ describe("RequirementConversationWorkbench", () => {
         onConfirm={vi.fn()}
         onContinueEditing={vi.fn()}
         onCancel={vi.fn()}
+        onAbandon={vi.fn()}
       />,
     );
 
@@ -135,11 +136,112 @@ describe("RequirementConversationWorkbench", () => {
         onConfirm={vi.fn()}
         onContinueEditing={vi.fn()}
         onCancel={vi.fn()}
+        onAbandon={vi.fn()}
       />,
     );
 
     expect(
       screen.getByRole("button", { name: "确认并执行" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows a stop button while running and calls onCancel when clicked", () => {
+    const requirement = testRequirement();
+    requirement.status = "analyzing";
+    const onCancel = vi.fn();
+    const conversation: RequirementConversation = {
+      id: requirement.id,
+      project_id: requirement.project_id,
+      title: requirement.title,
+      status: "analyzing",
+      running: true,
+      items: [],
+      prompt: null,
+      error: null,
+      updated_at: now,
+    };
+
+    render(
+      <RequirementConversationWorkbench
+        conversation={conversation}
+        requirement={requirement}
+        projectName="alpha"
+        prompt={null}
+        promptDismissed={false}
+        input=""
+        busy={false}
+        error={null}
+        streamEvents={[]}
+        answers={{}}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onAnswerChange={vi.fn()}
+        onSubmitClarifications={vi.fn()}
+        onConfirm={vi.fn()}
+        onContinueEditing={vi.fn()}
+        onCancel={onCancel}
+        onAbandon={vi.fn()}
+      />,
+    );
+
+    const stopButton = screen.getByRole("button", { name: "停止分析" });
+    expect(stopButton).toBeInTheDocument();
+    fireEvent.click(stopButton);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an abandon button for unfinished conversations and confirms before calling onAbandon", () => {
+    const requirement = testRequirement();
+    requirement.status = "clarifying";
+    const onAbandon = vi.fn();
+    const conversation: RequirementConversation = {
+      id: requirement.id,
+      project_id: requirement.project_id,
+      title: requirement.title,
+      status: "clarifying",
+      running: false,
+      items: [],
+      prompt: null,
+      error: null,
+      updated_at: now,
+    };
+
+    render(
+      <RequirementConversationWorkbench
+        conversation={conversation}
+        requirement={requirement}
+        projectName="alpha"
+        prompt={null}
+        promptDismissed={false}
+        input=""
+        busy={false}
+        error={null}
+        streamEvents={[]}
+        answers={{}}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onAnswerChange={vi.fn()}
+        onSubmitClarifications={vi.fn()}
+        onConfirm={vi.fn()}
+        onContinueEditing={vi.fn()}
+        onCancel={vi.fn()}
+        onAbandon={onAbandon}
+      />,
+    );
+
+    const abandonButton = screen.getByRole("button", {
+      name: "放弃当前需求",
+    });
+    expect(abandonButton).toBeInTheDocument();
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(abandonButton);
+    expect(onAbandon).not.toHaveBeenCalled();
+
+    confirmSpy.mockReturnValue(true);
+    fireEvent.click(abandonButton);
+    expect(onAbandon).toHaveBeenCalledTimes(1);
+
+    confirmSpy.mockRestore();
   });
 });

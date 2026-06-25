@@ -7,6 +7,7 @@ import {
   retryFromNode as apiRetryFromNode,
   rerunReview as apiRerunReview,
   cancelRequirementAnalysis as apiCancelRequirementAnalysis,
+  deleteRequirement as apiDeleteRequirement,
 } from "../api/client";
 import { readError } from "../utils/format";
 
@@ -303,13 +304,22 @@ export function useProjectCanvas(
       try {
         const data = await apiCancelRequirementAnalysis(requirementId);
         setProjectCanvas(data);
-        setSelectedDagRequirementId(requirementId);
       } catch (reason) {
         setRequirementActionError(readError(reason));
       }
     },
     [],
   );
+
+  const abandonRequirement = useCallback(async (requirementId: string) => {
+    try {
+      const data = await apiDeleteRequirement(requirementId);
+      setProjectCanvas(data);
+      setSelectedDagRequirementId(null);
+    } catch (reason) {
+      setRequirementActionError(readError(reason));
+    }
+  }, []);
 
   return {
     projectCanvas,
@@ -332,5 +342,6 @@ export function useProjectCanvas(
     retryFromNode,
     rerunReview,
     cancelRequirementAnalysis,
+    abandonRequirement,
   };
 }

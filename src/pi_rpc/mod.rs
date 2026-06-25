@@ -296,8 +296,8 @@ impl ModelProvider for PiRpcModelProvider {
     fn cancel_requirement_analysis(&self, project_id: &str) -> ModelProviderActionFuture<'_> {
         let project_id = project_id.to_owned();
         Box::pin(async move {
-            let clients = self.project_clients.lock().await;
-            if let Some((client, _)) = clients.get(&project_id) {
+            let mut clients = self.project_clients.lock().await;
+            if let Some((client, _)) = clients.remove(&project_id) {
                 client.cancel().await;
             }
             Ok(())

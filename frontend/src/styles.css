@@ -424,6 +424,17 @@
     color: var(--text-soft);
   }
 
+  .node-header__action {
+    @apply flex h-[28px] w-[28px] cursor-pointer items-center justify-center rounded-lg border-0 transition disabled:cursor-not-allowed disabled:opacity-45;
+    margin-left: auto;
+    color: var(--accent-danger);
+    background: color-mix(in srgb, var(--accent-danger) 14%, transparent);
+  }
+
+  .node-header__action:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+
   .create-form {
     @apply mt-[18px] grid grid-cols-[1fr_auto] gap-2;
   }
@@ -1738,6 +1749,10 @@
   .rq-composer button:hover:not(:disabled),
   .rq-shelf__actions button:hover:not(:disabled) {
     filter: brightness(1.08);
+  }
+
+  .rq-composer__stop {
+    background: var(--accent-danger);
   }
 
   .requirement-input {

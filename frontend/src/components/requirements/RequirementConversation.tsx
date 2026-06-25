@@ -10,7 +10,9 @@ import {
   MessageSquare,
   Send,
   Sparkles,
+  Square,
   User,
+  X,
 } from "lucide-react";
 import type {
   DraftClarificationAnswer,
@@ -55,6 +57,7 @@ type Props = {
   onConfirm: (requirement: Requirement) => Promise<void>;
   onContinueEditing: (requirement: Requirement) => void;
   onCancel: () => void;
+  onAbandon: () => void;
 };
 
 export default function RequirementConversationWorkbench({
@@ -75,6 +78,7 @@ export default function RequirementConversationWorkbench({
   onConfirm,
   onContinueEditing,
   onCancel,
+  onAbandon,
 }: Props) {
   const running =
     conversation?.running ??
@@ -117,6 +121,24 @@ export default function RequirementConversationWorkbench({
                 : "等待描述"}
           </span>
         </div>
+        {requirement && requirement.status !== "completed" ? (
+          <button
+            type="button"
+            className="node-header__action rq-abandon-btn"
+            disabled={busy}
+            aria-label="放弃当前需求"
+            title="放弃当前需求"
+            onClick={() => {
+              if (
+                window.confirm("确定要放弃当前需求？已输入的内容将不会保留。")
+              ) {
+                onAbandon();
+              }
+            }}
+          >
+            <X size={15} />
+          </button>
+        ) : null}
       </div>
 
       <div className="rq-workbench">
@@ -158,6 +180,7 @@ export default function RequirementConversationWorkbench({
           canSend={canSend}
           onChange={onInputChange}
           onSubmit={submit}
+          onStop={onCancel}
         />
       </div>
     </>
@@ -550,6 +573,7 @@ function RequirementComposer({
   canSend,
   onChange,
   onSubmit,
+  onStop,
 }: {
   value: string;
   busy: boolean;
@@ -558,6 +582,7 @@ function RequirementComposer({
   canSend: boolean;
   onChange: (value: string) => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onStop: () => void;
 }) {
   return (
     <form className="rq-composer nowheel nodrag" onSubmit={onSubmit}>
@@ -574,9 +599,21 @@ function RequirementComposer({
         }
         rows={1}
       />
-      <button type="submit" disabled={!canSend}>
-        <Send size={15} />
-      </button>
+      {running ? (
+        <button
+          type="button"
+          className="rq-composer__stop"
+          onClick={onStop}
+          aria-label="停止分析"
+          title="停止分析"
+        >
+          <Square size={15} fill="currentColor" />
+        </button>
+      ) : (
+        <button type="submit" disabled={!canSend} aria-label="发送">
+          <Send size={15} />
+        </button>
+      )}
     </form>
   );
 }

@@ -110,6 +110,7 @@ export interface BuildProjectChatNodeParams {
   confirmRequirement: (requirement: Requirement) => Promise<void>;
   continueEditingRequirement: (requirement: Requirement) => void;
   cancelRequirementAnalysis: (requirementId: string) => Promise<void>;
+  abandonRequirement: (requirementId: string) => Promise<void>;
 }
 
 export function buildProjectNodes({
@@ -406,12 +407,15 @@ export function buildProjectChatNode({
   confirmRequirement,
   continueEditingRequirement,
   cancelRequirementAnalysis,
+  abandonRequirement,
 }: BuildProjectChatNodeParams): Node<StartNodeData> | null {
   const fallbackProject = selectedProjectId
     ? startProjects.find((project) => project.id === selectedProjectId)
     : null;
   const project = projectCanvas?.project ?? fallbackProject;
   if (!project) return null;
+
+  const activeRequirementId = projectCanvas?.active_requirement?.id ?? "";
 
   return withDimensions([
     {
@@ -444,10 +448,8 @@ export function buildProjectChatNode({
         onSubmitClarifications: submitClarifications,
         onConfirm: confirmRequirement,
         onContinueEditing: continueEditingRequirement,
-        onCancel: () =>
-          cancelRequirementAnalysis(
-            projectCanvas?.active_requirement?.id ?? "",
-          ),
+        onCancel: () => cancelRequirementAnalysis(activeRequirementId),
+        onAbandon: () => abandonRequirement(activeRequirementId),
       },
     },
   ])[0];

@@ -428,6 +428,7 @@ export type StartNodeData =
       onConfirm: (requirement: Requirement) => Promise<void>;
       onContinueEditing: (requirement: Requirement) => void;
       onCancel: () => void;
+      onAbandon: () => void;
     }
   | {
       kind: "requirement-dag";

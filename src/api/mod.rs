@@ -14,7 +14,7 @@ pub mod handlers;
 
 use crate::api::handlers::{
     append_requirement_message, cancel_requirement_analysis, confirm_requirement, create_project,
-    create_requirement, delete_project, get_model_settings, get_project_canvas,
+    create_requirement, delete_project, delete_requirement, get_model_settings, get_project_canvas,
     get_requirement_conversation, get_start, plan_requirement_execution, put_model_settings,
     requirement_events, rerun_review, retry_failed_node, retry_from_node,
     spawn_startup_requirement_scheduler, submit_requirement_clarifications,
@@ -100,6 +100,7 @@ fn build_app_with_startup_requirements(
             "/requirements/{id}/cancel",
             post(cancel_requirement_analysis),
         )
+        .route("/requirements/{id}", delete(delete_requirement))
         .route(
             "/settings/models",
             get(get_model_settings).put(put_model_settings),

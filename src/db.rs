@@ -186,6 +186,15 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_requirement(&self, id: &str) -> Result<(), AppError> {
+        let conn = self.conn.lock().expect("db lock poisoned");
+        conn.execute(
+            "DELETE FROM requirements WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+        Ok(())
+    }
+
     // --- Requirements ---
 
     pub fn load_requirements(&self) -> Result<Vec<Requirement>, AppError> {

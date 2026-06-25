@@ -327,10 +327,12 @@ export default function App() {
         confirmRequirement: requirement.confirmRequirement,
         continueEditingRequirement: requirement.continueEditingRequirement,
         cancelRequirementAnalysis: project.cancelRequirementAnalysis,
+        abandonRequirement: project.abandonRequirement,
       }),
     [
       project.projectCanvas,
       project.cancelRequirementAnalysis,
+      project.abandonRequirement,
       start.selectedProjectId,
       start.startData.projects,
       requirement.requirementConversation,

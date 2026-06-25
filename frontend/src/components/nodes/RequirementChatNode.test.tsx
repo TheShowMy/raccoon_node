@@ -40,6 +40,7 @@ function data(projectId: string): ChatData {
     onConfirm: vi.fn(),
     onContinueEditing: vi.fn(),
     onCancel: vi.fn(),
+    onAbandon: vi.fn(),
   };
 }
 

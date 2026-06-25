@@ -150,6 +150,7 @@ describe("buildProjectNodes", () => {
       confirmRequirement: async () => {},
       continueEditingRequirement: () => {},
       cancelRequirementAnalysis: async () => {},
+      abandonRequirement: async () => {},
     };
     const first = mergeProjectNodes(
       structure,

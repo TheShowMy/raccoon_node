@@ -244,6 +244,22 @@ export async function cancelRequirementAnalysis(
   return response.json();
 }
 
+export async function deleteRequirement(
+  requirementId: string,
+): Promise<ProjectCanvasData> {
+  const response = await fetch(
+    `/api/requirements/${encodeURIComponent(requirementId)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "删除需求失败");
+  }
+  return response.json();
+}
+
 export function rerunReview(
   requirementId: string,
   taskId: string,

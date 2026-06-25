@@ -44,6 +44,7 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
           onConfirm={data.onConfirm}
           onContinueEditing={data.onContinueEditing}
           onCancel={data.onCancel}
+          onAbandon={data.onAbandon}
         />
       </ChatCard>
 

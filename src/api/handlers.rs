@@ -353,6 +353,29 @@ pub async fn cancel_requirement_analysis(
     Ok(Json(store.project_canvas(&project_id)?))
 }
 
+pub async fn delete_requirement(
+    State(state): State<AppState>,
+    AxumPath(requirement_id): AxumPath<String>,
+) -> Result<Json<crate::models::ProjectCanvasResponse>, AppError> {
+    let project_id = {
+        let store = state.store.read().await;
+        let index = store
+            .requirement_index(&requirement_id)
+            .map_err(|_| AppError::not_found("需求不存在"))?;
+        store.data.requirements[index].project_id.clone()
+    };
+    state
+        .model_provider
+        .cancel_requirement_analysis(&project_id)
+        .await?;
+    {
+        let mut store = state.store.write().await;
+        store.delete_requirement(&requirement_id).await?;
+    }
+    let store = state.store.read().await;
+    Ok(Json(store.project_canvas(&project_id)?))
+}
+
 fn spawn_requirement_analysis(
     state: AppState,
     requirement_id: String,

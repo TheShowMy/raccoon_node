@@ -274,6 +274,17 @@ impl JsonStore {
         Ok(())
     }
 
+    pub async fn delete_requirement(&mut self, requirement_id: &str) -> Result<String, AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        let project_id = self.data.requirements[index].project_id.clone();
+        self.data.requirements.remove(index);
+        self.write_persist().await?;
+        if let Some(ref db) = self.db {
+            let _ = db.delete_requirement(requirement_id);
+        }
+        Ok(project_id)
+    }
+
     pub async fn save_model_settings(
         &mut self,
         settings: ModelSettings,

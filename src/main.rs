@@ -794,6 +794,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deletes_active_requirement_and_returns_empty_canvas() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_path = temp_dir.path().join("data/app.json");
+        let mut store = JsonStore::open(data_path.clone()).await.unwrap();
+        let project = test_project("alpha");
+        store.data.projects.push(project.clone());
+        let now = Utc::now();
+        let requirement =
+            test_requirement("req-1", &project.id, RequirementStatus::Clarifying, now);
+        store.data.requirements.push(requirement.clone());
+        write_json(&store.path, &store.data).await.unwrap();
+
+        let app = build_app_with_model_provider(
+            store,
+            PathBuf::from("frontend/dist"),
+            fake_provider(vec![test_model("test/model", "Test Model")]),
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/requirements/{}", requirement.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let canvas: crate::models::ProjectCanvasResponse = serde_json::from_slice(&body).unwrap();
+        assert!(canvas.active_requirement.is_none());
+
+        let store = JsonStore::open(data_path).await.unwrap();
+        assert!(!store
+            .data
+            .requirements
+            .iter()
+            .any(|req| req.id == requirement.id));
+    }
+
+    #[tokio::test]
     async fn requirement_clarification_answers_resume_analysis() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_path = temp_dir.path().join("data/app.json");
