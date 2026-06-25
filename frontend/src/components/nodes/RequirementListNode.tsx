@@ -46,10 +46,9 @@ export default function RequirementListNode({
             const isBusy = data.busyRequirementId === requirement.id;
             const canPlan =
               data.tone === "pending" &&
-              (requirement.status === "queued" ||
-                (requirement.status === "failed" &&
-                  !requirement.execution_plan));
-            const canView = Boolean(requirement.execution_plan) || canPlan;
+              requirement.status === "failed" &&
+              !requirement.execution_plan;
+            const canView = Boolean(requirement.execution_plan);
             return (
               <div
                 className={`requirement-list__item ${
@@ -92,7 +91,7 @@ export default function RequirementListNode({
                         ) : (
                           <GitBranch size={13} />
                         )}
-                        {isBusy ? "生成中" : "生成 DAG"}
+                        {isBusy ? "生成中" : "重新生成 DAG"}
                       </button>
                     ) : (
                       <span>

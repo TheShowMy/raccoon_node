@@ -66,6 +66,8 @@ pub struct Requirement {
     #[serde(skip_serializing)]
     pub pi_session_file: Option<String>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub queued_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -672,6 +674,7 @@ mod tests {
             execution_plan: None,
             pi_session_file: Some("/secret/session.json".to_owned()),
             error: None,
+            queued_at: None,
             created_at: now,
             updated_at: now,
         };

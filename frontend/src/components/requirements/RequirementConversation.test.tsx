@@ -93,4 +93,53 @@ describe("RequirementConversationWorkbench", () => {
       screen.getByPlaceholderText("先处理上方卡片，或选择继续补充"),
     ).toBeDisabled();
   });
+
+  it("uses the combined confirmation and execution label", () => {
+    const requirement = testRequirement();
+    const prompt: RequirementConversationPrompt = {
+      type: "confirmation",
+      draft: {
+        title: "新增登录",
+        summary: "实现登录流程",
+        acceptance_criteria: ["用户可以登录"],
+      },
+    };
+    const conversation: RequirementConversation = {
+      id: requirement.id,
+      project_id: requirement.project_id,
+      title: requirement.title,
+      status: "draft_ready",
+      running: false,
+      items: [],
+      prompt,
+      error: null,
+      updated_at: now,
+    };
+
+    render(
+      <RequirementConversationWorkbench
+        conversation={conversation}
+        requirement={{ ...requirement, status: "draft_ready" }}
+        projectName="alpha"
+        prompt={prompt}
+        promptDismissed={false}
+        input=""
+        busy={false}
+        error={null}
+        streamEvents={[]}
+        answers={{}}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onAnswerChange={vi.fn()}
+        onSubmitClarifications={vi.fn()}
+        onConfirm={vi.fn()}
+        onContinueEditing={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "确认并执行" }),
+    ).toBeInTheDocument();
+  });
 });

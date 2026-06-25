@@ -4,7 +4,7 @@ import type { StartNodeData } from "../../types/api";
 import { renderNodeContent } from "../../nodes/renderNodeContent";
 import { githubUrlFromGitUrl } from "../../utils/format";
 
-export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
+function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const isPendingDelete =
     data.kind === "project-item" &&
     data.pendingDeleteProjectId === data.project.id;
@@ -159,3 +159,5 @@ export default function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
     </div>
   );
 }
+
+export default React.memo(StartNode);

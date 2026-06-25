@@ -17,8 +17,7 @@ use crate::api::handlers::{
     create_requirement, delete_project, get_model_settings, get_project_canvas,
     get_requirement_conversation, get_start, plan_requirement_execution, put_model_settings,
     requirement_events, rerun_review, retry_failed_node, retry_from_node,
-    spawn_startup_requirement_scheduler, start_requirement_execution,
-    submit_requirement_clarifications,
+    spawn_startup_requirement_scheduler, submit_requirement_clarifications,
 };
 use crate::pi_rpc::PiRpcModelProvider;
 use crate::store::JsonStore;
@@ -61,6 +60,7 @@ fn build_app_with_startup_requirements(
         store: Arc::new(tokio::sync::RwLock::new(store)),
         model_provider,
         requirement_events: event_tx,
+        project_scheduler_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let api = Router::new()
@@ -84,10 +84,6 @@ fn build_app_with_startup_requirements(
         .route("/requirements/{id}/events", get(requirement_events))
         .route("/requirements/{id}/confirm", post(confirm_requirement))
         .route("/requirements/{id}/plan", post(plan_requirement_execution))
-        .route(
-            "/requirements/{id}/execute",
-            post(start_requirement_execution),
-        )
         .route(
             "/requirements/{id}/tasks/{task_id}/retry",
             post(retry_failed_node),

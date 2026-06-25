@@ -14,7 +14,7 @@ use crate::models::{
     RequirementEventEmitter, RequirementMessageRequest, RequirementStatus,
     RequirementTaskExecutionInput, RpcStatus,
 };
-use crate::store::TaskExecutionDisposition;
+use crate::store::{ProjectScheduleAction, TaskExecutionDisposition};
 use crate::AppState;
 
 static ACTIVE_EXECUTIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -222,6 +222,7 @@ pub async fn confirm_requirement(
         let mut store = state.store.write().await;
         store.confirm_requirement(&requirement_id).await?
     };
+    spawn_project_scheduler(state.clone(), project_id.clone());
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -230,28 +231,11 @@ pub async fn plan_requirement_execution(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    let (project_id, input) = {
+    let project_id = {
         let mut store = state.store.write().await;
-        store.start_requirement_planning(&requirement_id).await?
+        store.requeue_failed_planning(&requirement_id).await?
     };
-    spawn_requirement_execution_plan(state.clone(), requirement_id, input);
-    let store = state.store.read().await;
-    Ok(Json(store.project_canvas(&project_id)?))
-}
-
-pub async fn start_requirement_execution(
-    State(state): State<AppState>,
-    AxumPath(requirement_id): AxumPath<String>,
-) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    let (project_id, initial_inputs) = {
-        let mut store = state.store.write().await;
-        let project_id = store.start_requirement_execution(&requirement_id).await?;
-        let initial_inputs = store
-            .prepare_runnable_execution_tasks(&requirement_id)
-            .await?;
-        (project_id, initial_inputs)
-    };
-    spawn_requirement_execution(state.clone(), requirement_id, Some(initial_inputs));
+    spawn_project_scheduler(state.clone(), project_id.clone());
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -267,7 +251,7 @@ pub async fn retry_failed_node(
         let mut store = state.store.write().await;
         store.retry_failed_node(&requirement_id, &task_id).await?
     };
-    spawn_requirement_execution(state.clone(), requirement_id, None);
+    spawn_project_scheduler(state.clone(), project_id.clone());
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -283,7 +267,7 @@ pub async fn retry_from_node(
         let mut store = state.store.write().await;
         store.retry_from_node(&requirement_id, &task_id).await?
     };
-    spawn_requirement_execution(state.clone(), requirement_id, None);
+    spawn_project_scheduler(state.clone(), project_id.clone());
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -299,7 +283,7 @@ pub async fn rerun_review(
         let mut store = state.store.write().await;
         store.rerun_review(&requirement_id, &task_id).await?
     };
-    spawn_requirement_execution(state.clone(), requirement_id, None);
+    spawn_project_scheduler(state.clone(), project_id.clone());
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -426,136 +410,165 @@ fn spawn_requirement_analysis(
     });
 }
 
-fn spawn_requirement_execution_plan(
-    state: AppState,
-    requirement_id: String,
-    input: crate::models::RequirementPlanInput,
-) {
-    tokio::spawn(async move {
-        let emitter = RequirementEventEmitter {
-            requirement_id: requirement_id.clone(),
-            task_id: None,
-            bus: state.requirement_events.clone(),
-        };
-        emitter.emit("execution_planning_started", "开始拆分执行 DAG。");
-
-        let output = state
-            .model_provider
-            .plan_requirement_execution(input, Some(emitter.clone()))
-            .await;
-        let event = if output.is_ok() {
-            ("execution_plan_ready", "执行 DAG 已生成。")
-        } else {
-            ("execution_plan_failed", "执行 DAG 生成失败。")
-        };
-
-        {
-            let mut store = state.store.write().await;
-            if let Err(error) = store
-                .apply_requirement_execution_plan(&requirement_id, output)
-                .await
-            {
-                emitter.emit(
-                    "execution_plan_failed",
-                    &format!("保存执行 DAG 失败：{error}"),
-                );
-                return;
-            }
-        }
-
-        emitter.emit(event.0, event.1);
-    });
-}
-
-pub(crate) fn spawn_startup_requirement_scheduler(state: AppState, requirement_ids: Vec<String>) {
-    if requirement_ids.is_empty() {
-        return;
+pub(crate) fn spawn_startup_requirement_scheduler(state: AppState, project_ids: Vec<String>) {
+    for project_id in project_ids {
+        spawn_project_scheduler(state.clone(), project_id);
     }
-    tokio::spawn(async move {
-        tracing::info!(
-            requirement_count = requirement_ids.len(),
-            "starting recovered requirement scheduler"
-        );
-        for requirement_id in requirement_ids {
-            spawn_requirement_execution(state.clone(), requirement_id, None);
-        }
-    });
 }
 
-fn spawn_requirement_execution(
-    state: AppState,
-    requirement_id: String,
-    initial_inputs: Option<Vec<RequirementTaskExecutionInput>>,
-) {
-    let Some(execution_guard) = ExecutionGuard::acquire(&requirement_id) else {
-        return;
+fn spawn_project_scheduler(state: AppState, project_id: String) {
+    let lock = {
+        // ponytail: projects are few and app lifetime bounds this lock map.
+        let mut locks = state
+            .project_scheduler_locks
+            .lock()
+            .expect("project scheduler lock poisoned");
+        locks
+            .entry(project_id.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     };
     tokio::spawn(async move {
-        let _execution_guard = execution_guard;
-        let emitter = RequirementEventEmitter {
-            requirement_id: requirement_id.clone(),
-            task_id: None,
-            bus: state.requirement_events.clone(),
-        };
-        emitter.emit("execution_started", "开始按 DAG 执行任务。");
-        let mut running_tasks = JoinSet::new();
-        let mut initial_inputs = initial_inputs;
+        let _guard = lock.lock().await;
+        run_project_scheduler(state, project_id).await;
+    });
+}
 
-        loop {
-            let inputs = if let Some(inputs) = initial_inputs.take() {
-                inputs
-            } else {
-                let mut store = state.store.write().await;
-                match store
-                    .prepare_runnable_execution_tasks(&requirement_id)
-                    .await
+async fn run_project_scheduler(state: AppState, project_id: String) {
+    loop {
+        let action = {
+            let mut store = state.store.write().await;
+            match store.prepare_next_project_action(&project_id).await {
+                Ok(action) => action,
+                Err(error) => {
+                    tracing::error!(project_id, %error, "project scheduler failed");
+                    return;
+                }
+            }
+        };
+        match action {
+            Some(ProjectScheduleAction::Plan {
+                requirement_id,
+                input,
+            }) => {
+                let emitter = RequirementEventEmitter {
+                    requirement_id: requirement_id.clone(),
+                    task_id: None,
+                    bus: state.requirement_events.clone(),
+                };
+                emitter.emit("execution_planning_started", "开始拆分执行 DAG。");
+                let output = state
+                    .model_provider
+                    .plan_requirement_execution(*input, Some(emitter.clone()))
+                    .await;
+                let succeeded = output.is_ok();
                 {
-                    Ok(inputs) => inputs,
-                    Err(error) => {
-                        let _ = store
-                            .fail_requirement_execution(&requirement_id, error)
-                            .await;
-                        emitter.emit("execution_failed", "执行 DAG 依赖检查失败。");
+                    let mut store = state.store.write().await;
+                    if let Err(error) = store
+                        .apply_requirement_execution_plan(&requirement_id, output)
+                        .await
+                    {
+                        emitter.emit(
+                            "execution_plan_failed",
+                            &format!("保存执行 DAG 失败：{error}"),
+                        );
                         return;
                     }
                 }
-            };
-
-            spawn_execution_tasks(&mut running_tasks, inputs, state.clone(), &requirement_id);
-
-            if running_tasks.is_empty() {
-                let status = {
-                    let store = state.store.read().await;
-                    store.requirement_status(&requirement_id)
-                };
-                match status {
-                    Ok(RequirementStatus::Completed) => {
-                        emitter.emit("execution_completed", "需求执行完成。")
-                    }
-                    Ok(RequirementStatus::Failed) => {
-                        emitter.emit("execution_failed", "需求执行失败。")
-                    }
-                    Ok(_) | Err(_) => {
-                        emitter.emit("execution_failed", "执行 DAG 没有可继续执行的任务。")
-                    }
-                }
-                return;
-            }
-
-            match running_tasks.join_next().await {
-                Some(Ok(TaskExecutionDisposition::Continue)) => {}
-                Some(Ok(TaskExecutionDisposition::FinalFailure)) | Some(Err(_)) => {
-                    running_tasks.abort_all();
-                    while running_tasks.join_next().await.is_some() {}
-                    let mut store = state.store.write().await;
-                    let _ = store.reset_running_execution_tasks(&requirement_id).await;
-                    emitter.emit("execution_failed", "需求执行失败。");
+                if succeeded {
+                    emitter.emit("execution_plan_ready", "执行 DAG 已生成。");
+                } else {
+                    emitter.emit("execution_plan_failed", "执行 DAG 生成失败。");
                     return;
                 }
-                None => {}
             }
+            Some(ProjectScheduleAction::Execute { requirement_id }) => {
+                if run_requirement_execution(state.clone(), requirement_id).await
+                    != RequirementStatus::Completed
+                {
+                    return;
+                }
+            }
+            None => return,
         }
-    });
+    }
+}
+
+async fn run_requirement_execution(state: AppState, requirement_id: String) -> RequirementStatus {
+    let Some(execution_guard) = ExecutionGuard::acquire(&requirement_id) else {
+        return current_requirement_status(&state, &requirement_id).await;
+    };
+    let _execution_guard = execution_guard;
+    let emitter = RequirementEventEmitter {
+        requirement_id: requirement_id.clone(),
+        task_id: None,
+        bus: state.requirement_events.clone(),
+    };
+    emitter.emit("execution_started", "开始按 DAG 执行任务。");
+    let mut running_tasks = JoinSet::new();
+
+    loop {
+        let inputs = {
+            let mut store = state.store.write().await;
+            match store
+                .prepare_runnable_execution_tasks(&requirement_id)
+                .await
+            {
+                Ok(inputs) => inputs,
+                Err(error) => {
+                    let _ = store
+                        .fail_requirement_execution(&requirement_id, error)
+                        .await;
+                    emitter.emit("execution_failed", "执行 DAG 依赖检查失败。");
+                    return RequirementStatus::Failed;
+                }
+            }
+        };
+
+        spawn_execution_tasks(&mut running_tasks, inputs, state.clone(), &requirement_id);
+
+        if running_tasks.is_empty() {
+            let mut status = current_requirement_status(&state, &requirement_id).await;
+            if status == RequirementStatus::Running {
+                let mut store = state.store.write().await;
+                let _ = store
+                    .fail_requirement_execution(
+                        &requirement_id,
+                        AppError::internal("执行 DAG 没有可继续执行的任务"),
+                    )
+                    .await;
+                status = RequirementStatus::Failed;
+            }
+            match status {
+                RequirementStatus::Completed => {
+                    emitter.emit("execution_completed", "需求执行完成。")
+                }
+                RequirementStatus::Failed => emitter.emit("execution_failed", "需求执行失败。"),
+                _ => emitter.emit("execution_failed", "执行 DAG 没有可继续执行的任务。"),
+            }
+            return status;
+        }
+
+        match running_tasks.join_next().await {
+            Some(Ok(TaskExecutionDisposition::Continue)) => {}
+            Some(Ok(TaskExecutionDisposition::FinalFailure)) | Some(Err(_)) => {
+                running_tasks.abort_all();
+                while running_tasks.join_next().await.is_some() {}
+                let mut store = state.store.write().await;
+                let _ = store.reset_running_execution_tasks(&requirement_id).await;
+                emitter.emit("execution_failed", "需求执行失败。");
+                return RequirementStatus::Failed;
+            }
+            None => {}
+        }
+    }
+}
+
+async fn current_requirement_status(state: &AppState, requirement_id: &str) -> RequirementStatus {
+    let store = state.store.read().await;
+    store
+        .requirement_status(requirement_id)
+        .unwrap_or(RequirementStatus::Failed)
 }
 
 fn spawn_execution_tasks(
@@ -617,4 +630,4 @@ fn spawn_execution_tasks(
     }
 }
 use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};

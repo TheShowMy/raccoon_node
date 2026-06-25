@@ -10,8 +10,8 @@ use super::{
 };
 use crate::error::AppError;
 use crate::models::{
-    Project, Requirement, RequirementExecutionPlan, RequirementExecutionTask, RequirementMessage,
-    RequirementMessageRole, RequirementModelTier, RequirementRecoveryStage,
+    Project, Requirement, RequirementDraft, RequirementExecutionPlan, RequirementExecutionTask,
+    RequirementMessage, RequirementMessageRole, RequirementModelTier, RequirementRecoveryStage,
     RequirementReviewStatus, RequirementStatus, RequirementTaskExecutionOutput,
     RequirementTaskKind, RequirementTaskStatus,
 };
@@ -407,7 +407,7 @@ async fn startup_recovery_persists_interrupted_tasks_and_returns_all_running_req
 
     let requirement_ids = store.recover_interrupted_requirements().await.unwrap();
 
-    assert_eq!(requirement_ids, vec!["interrupted", "waiting"]);
+    assert_eq!(requirement_ids, vec!["project"]);
     let task = &store.data.requirements[0]
         .execution_plan
         .as_ref()
@@ -427,11 +427,9 @@ async fn startup_recovery_persists_interrupted_tasks_and_returns_all_running_req
             .status,
         RequirementTaskStatus::Pending
     );
-    assert_eq!(store.data.requirements[2].status, RequirementStatus::Failed);
-    assert!(store.data.requirements[2]
-        .error
-        .as_deref()
-        .is_some_and(|error| error.contains("请重新生成执行 DAG")));
+    assert_eq!(store.data.requirements[2].status, RequirementStatus::Queued);
+    assert!(store.data.requirements[2].error.is_none());
+    assert!(store.data.requirements[2].queued_at.is_some());
 
     let reopened = JsonStore::open(path).await.unwrap();
     assert_eq!(
@@ -445,7 +443,132 @@ async fn startup_recovery_persists_interrupted_tasks_and_returns_all_running_req
     );
     assert_eq!(
         reopened.data.requirements[2].status,
-        RequirementStatus::Failed
+        RequirementStatus::Queued
+    );
+}
+
+#[tokio::test]
+async fn project_scheduler_claims_confirmed_requirements_in_fifo_order() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let now = Utc::now();
+    store.data.projects.push(Project {
+        id: "project".to_owned(),
+        name: "project".to_owned(),
+        git_url: "https://example.com/project.git".to_owned(),
+        local_path: temp_dir.path().to_string_lossy().to_string(),
+        created_at: now,
+        updated_at: now,
+    });
+    let mut second = queued_requirement("second", now + chrono::Duration::seconds(2));
+    second.updated_at = now - chrono::Duration::days(1);
+    let first = queued_requirement("first", now + chrono::Duration::seconds(1));
+    store.data.requirements = vec![second, first];
+
+    let action = store
+        .prepare_next_project_action("project")
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(matches!(
+        action,
+        super::ProjectScheduleAction::Plan {
+            requirement_id,
+            ..
+        } if requirement_id == "first"
+    ));
+    assert_eq!(
+        store.data.requirements[1].status,
+        RequirementStatus::Planning
+    );
+    let persisted = store
+        .db
+        .as_ref()
+        .unwrap()
+        .load_requirements()
+        .unwrap()
+        .into_iter()
+        .find(|requirement| requirement.id == "first")
+        .unwrap();
+    assert_eq!(
+        persisted.queued_at,
+        Some(now + chrono::Duration::seconds(1))
+    );
+}
+
+#[tokio::test]
+async fn failed_requirement_pauses_project_queue() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let now = Utc::now();
+    store.data.projects.push(Project {
+        id: "project".to_owned(),
+        name: "project".to_owned(),
+        git_url: "https://example.com/project.git".to_owned(),
+        local_path: temp_dir.path().to_string_lossy().to_string(),
+        created_at: now,
+        updated_at: now,
+    });
+    let mut failed = queued_requirement("failed", now);
+    failed.status = RequirementStatus::Failed;
+    failed.error = Some("规划失败".to_owned());
+    store.data.requirements = vec![
+        failed,
+        queued_requirement("waiting", now + chrono::Duration::seconds(1)),
+    ];
+
+    assert!(store
+        .prepare_next_project_action("project")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(store.data.requirements[1].status, RequirementStatus::Queued);
+}
+
+#[tokio::test]
+async fn running_requirement_only_blocks_its_own_project() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let now = Utc::now();
+    for id in ["project-a", "project-b"] {
+        store.data.projects.push(Project {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            git_url: format!("https://example.com/{id}.git"),
+            local_path: temp_dir.path().join(id).to_string_lossy().to_string(),
+            created_at: now,
+            updated_at: now,
+        });
+    }
+    let mut running = requirement("running");
+    running.project_id = "project-a".to_owned();
+    let mut waiting = queued_requirement("waiting", now);
+    waiting.project_id = "project-b".to_owned();
+    store.data.requirements = vec![running, waiting];
+
+    let action = store
+        .prepare_next_project_action("project-b")
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(matches!(
+        action,
+        super::ProjectScheduleAction::Plan {
+            requirement_id,
+            ..
+        } if requirement_id == "waiting"
+    ));
+    assert_eq!(
+        store.data.requirements[0].status,
+        RequirementStatus::Running
     );
 }
 
@@ -514,9 +637,22 @@ fn requirement(id: &str) -> Requirement {
         execution_plan: None,
         pi_session_file: None,
         error: None,
+        queued_at: None,
         created_at: now,
         updated_at: now,
     }
+}
+
+fn queued_requirement(id: &str, queued_at: chrono::DateTime<Utc>) -> Requirement {
+    let mut requirement = requirement(id);
+    requirement.status = RequirementStatus::Queued;
+    requirement.draft = Some(RequirementDraft {
+        title: id.to_owned(),
+        summary: id.to_owned(),
+        acceptance_criteria: vec!["完成".to_owned()],
+    });
+    requirement.queued_at = Some(queued_at);
+    requirement
 }
 
 fn task(

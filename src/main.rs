@@ -20,6 +20,9 @@ pub struct AppState {
     pub store: std::sync::Arc<RwLock<JsonStore>>,
     pub model_provider: std::sync::Arc<dyn ModelProvider>,
     pub requirement_events: RequirementEventBus,
+    pub project_scheduler_locks: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+    >,
 }
 
 #[tokio::main]
@@ -758,49 +761,13 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let canvas: crate::models::ProjectCanvasResponse = serde_json::from_slice(&body).unwrap();
         assert!(canvas.active_requirement.is_none());
-        assert_eq!(
+        assert!(matches!(
             canvas.queued_requirements[0].status,
             RequirementStatus::Queued
-        );
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/requirements/{}/plan", active.id))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let canvas: crate::models::ProjectCanvasResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(
-            canvas.queued_requirements[0].status,
-            RequirementStatus::Planning
-        );
-
-        let active =
-            wait_for_requirement_status(&data_path, &active.id, RequirementStatus::PlanReady).await;
-        assert_eq!(
-            active.execution_plan.as_ref().unwrap().tasks[0].status,
-            RequirementTaskStatus::Pending
-        );
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/requirements/{}/execute", active.id))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+                | RequirementStatus::Planning
+                | RequirementStatus::PlanReady
+                | RequirementStatus::Running
+        ));
 
         let completed =
             wait_for_requirement_status(&data_path, &active.id, RequirementStatus::Completed).await;
@@ -1029,6 +996,7 @@ mod tests {
             execution_plan: None,
             pi_session_file: None,
             error: None,
+            queued_at: None,
             created_at: now,
             updated_at: now,
         }
@@ -1108,6 +1076,7 @@ mod tests {
             execution_plan: None,
             pi_session_file: Some("/data/pi-sessions/secret.json".to_owned()),
             error: None,
+            queued_at: None,
             created_at: now,
             updated_at: now,
         };

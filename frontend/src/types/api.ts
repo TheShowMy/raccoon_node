@@ -128,6 +128,7 @@ export type Requirement = {
   execution_plan: RequirementExecutionPlan | null;
   pi_session_file: string | null;
   error: string | null;
+  queued_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -402,9 +403,7 @@ export type StartNodeData =
   | {
       kind: "requirement-dag";
       requirement: Requirement;
-      busy: boolean;
       actionError: string | null;
-      onStartExecution: (requirement: Requirement) => Promise<void>;
       onClose: () => void;
     }
   | {
@@ -418,7 +417,6 @@ export type StartNodeData =
       requirementId: string;
       task: RequirementExecutionTask;
       reviews: RequirementExecutionTask[];
-      streamEvents: StreamEvent[];
       busy: boolean;
       collapsed?: boolean;
       onToggleCollapsed?: (requirementId: string, taskId: string) => void;

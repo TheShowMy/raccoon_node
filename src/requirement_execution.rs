@@ -1147,6 +1147,7 @@ mod tests {
             execution_plan: None,
             pi_session_file: None,
             error: None,
+            queued_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

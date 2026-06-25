@@ -1,15 +1,59 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectCanvasData, Requirement } from "../types/api";
 import {
   getProjectCanvas,
   planRequirementExecution,
-  startRequirementExecution,
   retryFailedNode as apiRetryFailedNode,
   retryFromNode as apiRetryFromNode,
   rerunReview as apiRerunReview,
   cancelRequirementAnalysis as apiCancelRequirementAnalysis,
 } from "../api/client";
 import { readError } from "../utils/format";
+
+function hasSameRequirementRevision(
+  current: Requirement | null,
+  next: Requirement | null,
+) {
+  return (
+    current?.id === next?.id &&
+    current?.status === next?.status &&
+    current?.updated_at === next?.updated_at
+  );
+}
+
+function hasSameRequirementRevisions(
+  current: Requirement[],
+  next: Requirement[],
+) {
+  return (
+    current.length === next.length &&
+    current.every((requirement, index) =>
+      hasSameRequirementRevision(requirement, next[index]),
+    )
+  );
+}
+
+function hasSameProjectCanvasRevision(
+  current: ProjectCanvasData | null,
+  next: ProjectCanvasData | null,
+) {
+  return (
+    current?.project.id === next?.project.id &&
+    current?.project.updated_at === next?.project.updated_at &&
+    hasSameRequirementRevision(
+      current?.active_requirement ?? null,
+      next?.active_requirement ?? null,
+    ) &&
+    hasSameRequirementRevisions(
+      current?.queued_requirements ?? [],
+      next?.queued_requirements ?? [],
+    ) &&
+    hasSameRequirementRevisions(
+      current?.completed_requirements ?? [],
+      next?.completed_requirements ?? [],
+    )
+  );
+}
 
 export function useProjectCanvas(
   selectedProjectId: string | null,
@@ -18,8 +62,14 @@ export function useProjectCanvas(
   setCurrentCanvas: (canvas: "start" | "project") => void,
   setSelectedProjectId: (id: string | null) => void,
 ) {
-  const [projectCanvas, setProjectCanvas] = useState<ProjectCanvasData | null>(
-    null,
+  const [projectCanvas, setProjectCanvasState] =
+    useState<ProjectCanvasData | null>(null);
+  const setProjectCanvas = useCallback(
+    (next: ProjectCanvasData | null) =>
+      setProjectCanvasState((current) =>
+        hasSameProjectCanvasRevision(current, next) ? current : next,
+      ),
+    [],
   );
   const [selectedDagRequirementId, setSelectedDagRequirementId] = useState<
     string | null
@@ -33,11 +83,28 @@ export function useProjectCanvas(
   const [requirementActionError, setRequirementActionError] = useState<
     string | null
   >(null);
+  const projectCanvasRequest = useRef<{
+    projectId: string;
+    promise: Promise<ProjectCanvasData>;
+  } | null>(null);
 
-  const loadProjectCanvas = useCallback(async (projectId: string) => {
-    const data = await getProjectCanvas(projectId);
-    setProjectCanvas(data);
-    return data;
+  const loadProjectCanvas = useCallback((projectId: string) => {
+    if (projectCanvasRequest.current?.projectId === projectId) {
+      return projectCanvasRequest.current.promise;
+    }
+
+    const promise = getProjectCanvas(projectId)
+      .then((data) => {
+        setProjectCanvas(data);
+        return data;
+      })
+      .finally(() => {
+        if (projectCanvasRequest.current?.promise === promise) {
+          projectCanvasRequest.current = null;
+        }
+      });
+    projectCanvasRequest.current = { projectId, promise };
+    return promise;
   }, []);
 
   useEffect(() => {
@@ -123,6 +190,33 @@ export function useProjectCanvas(
       (requirement) => requirement.id === selectedDagRequirementId,
     ) ?? null;
   const observedRequirementId = selectedDagRequirementId ?? activeRequirementId;
+  const shouldPollProjectCanvas = allProjectRequirements.some(
+    (requirement) =>
+      requirement.status === "planning" || requirement.status === "running",
+  );
+
+  useEffect(() => {
+    if (
+      currentCanvas !== "project" ||
+      !selectedProjectId ||
+      !shouldPollProjectCanvas
+    ) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void loadProjectCanvas(selectedProjectId).catch((reason) =>
+        setError(readError(reason)),
+      );
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [
+    currentCanvas,
+    loadProjectCanvas,
+    selectedProjectId,
+    setError,
+    shouldPollProjectCanvas,
+  ]);
 
   useEffect(() => {
     if (
@@ -152,22 +246,6 @@ export function useProjectCanvas(
       setRequirementActionBusyId(requirement.id);
       try {
         const data = await planRequirementExecution(requirement.id);
-        setProjectCanvas(data);
-      } catch (reason) {
-        setError(readError(reason));
-      } finally {
-        setRequirementActionBusyId(null);
-      }
-    },
-    [setError],
-  );
-
-  const startExecution = useCallback(
-    async (requirement: Requirement) => {
-      setSelectedDagRequirementId(requirement.id);
-      setRequirementActionBusyId(requirement.id);
-      try {
-        const data = await startRequirementExecution(requirement.id);
         setProjectCanvas(data);
       } catch (reason) {
         setError(readError(reason));
@@ -250,7 +328,6 @@ export function useProjectCanvas(
     selectDagRequirement,
     closeDag,
     planRequirement,
-    startExecution,
     retryFailedNode,
     retryFromNode,
     rerunReview,

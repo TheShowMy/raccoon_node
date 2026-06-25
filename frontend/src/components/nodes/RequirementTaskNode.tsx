@@ -18,6 +18,7 @@ import type {
   StartNodeData,
   TraceUsage,
 } from "../../types/api";
+import { useRequirementTaskEvents } from "../../contexts/RequirementTaskEventsContext";
 import TraceBubble from "../ui/TraceBubble";
 import {
   buildBubbleStreamFromEvents,
@@ -197,7 +198,6 @@ export default function RequirementTaskNode({
         open={detailOpen}
         task={task}
         reviews={data.reviews}
-        streamEvents={data.streamEvents}
         onClose={() => setDetailOpen(false)}
       />
     </>
@@ -208,29 +208,16 @@ function TaskDetailDialog({
   open,
   task,
   reviews,
-  streamEvents,
   onClose,
 }: {
   open: boolean;
   task: RequirementExecutionTask;
   reviews: RequirementExecutionTask[];
-  streamEvents: Extract<
-    StartNodeData,
-    { kind: "requirement-task" }
-  >["streamEvents"];
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const taskEvents = streamEvents.filter((event) => event.task_id === task.id);
-  const liveBubbles = buildBubbleStreamFromEvents(taskEvents);
   const historicalTrace = traceFromMetadata(task.trace);
   const reviewFeedback = buildReviewFeedback(task, reviews);
-  const traceBubbles =
-    liveBubbles.length > 0
-      ? liveBubbles
-      : historicalTrace
-        ? buildBubbleStreamFromTrace(historicalTrace)
-        : [];
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -308,17 +295,7 @@ function TaskDetailDialog({
               ))}
             </ol>
           </section>
-          <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-            <h3>执行过程</h3>
-            {traceBubbles.length > 0 ? (
-              <TraceBubble
-                bubbles={traceBubbles}
-                isLive={liveBubbles.length > 0}
-              />
-            ) : (
-              <p className="task-detail-dialog__empty">暂无执行过程</p>
-            )}
-          </section>
+          <TaskExecutionTrace task={task} />
           {historicalTrace?.usage ? (
             <TaskUsage usage={historicalTrace.usage} />
           ) : null}
@@ -376,6 +353,29 @@ function TaskDetailDialog({
       </div>
     </dialog>,
     document.body,
+  );
+}
+
+function TaskExecutionTrace({ task }: { task: RequirementExecutionTask }) {
+  const taskEvents = useRequirementTaskEvents(task.id);
+  const liveBubbles = buildBubbleStreamFromEvents(taskEvents);
+  const historicalTrace = traceFromMetadata(task.trace);
+  const traceBubbles =
+    liveBubbles.length > 0
+      ? liveBubbles
+      : historicalTrace
+        ? buildBubbleStreamFromTrace(historicalTrace)
+        : [];
+
+  return (
+    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
+      <h3>执行过程</h3>
+      {traceBubbles.length > 0 ? (
+        <TraceBubble bubbles={traceBubbles} isLive={liveBubbles.length > 0} />
+      ) : (
+        <p className="task-detail-dialog__empty">暂无执行过程</p>
+      )}
+    </section>
   );
 }
 

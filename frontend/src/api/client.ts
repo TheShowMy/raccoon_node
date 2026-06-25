@@ -177,22 +177,6 @@ export async function planRequirementExecution(
   return response.json();
 }
 
-export async function startRequirementExecution(
-  requirementId: string,
-): Promise<ProjectCanvasData> {
-  const response = await fetch(
-    `/api/requirements/${encodeURIComponent(requirementId)}/execute`,
-    { method: "POST" },
-  );
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    throw new Error(body?.message ?? "开始执行需求失败");
-  }
-  return response.json();
-}
-
 export function retryFailedNode(
   requirementId: string,
   taskId: string,

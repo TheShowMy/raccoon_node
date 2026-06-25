@@ -532,7 +532,7 @@ function RequirementConfirmCard({
       </ul>
       <div className="rq-shelf__actions">
         <button type="button" disabled={busy} onClick={onConfirm}>
-          确认需求
+          确认并执行
         </button>
         <button type="button" disabled={busy} onClick={onContinueEditing}>
           继续补充

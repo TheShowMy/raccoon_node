@@ -51,6 +51,7 @@ impl Database {
                 draft TEXT,
                 execution_plan TEXT,
                 error TEXT,
+                queued_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -63,6 +64,21 @@ impl Database {
             INSERT OR IGNORE INTO schema_version (version) VALUES (1);
             ",
         )?;
+        let has_queued_at = {
+            let mut stmt = conn.prepare("PRAGMA table_info(requirements)")?;
+            let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            let mut found = false;
+            for column in columns {
+                if column? == "queued_at" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        if !has_queued_at {
+            conn.execute("ALTER TABLE requirements ADD COLUMN queued_at TEXT", [])?;
+        }
         Ok(())
     }
 
@@ -124,7 +140,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, project_id, title, original_message, status, messages,
                     clarification_round, clarifications, draft, execution_plan, error,
-                    created_at, updated_at
+                    queued_at, created_at, updated_at
              FROM requirements",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -146,8 +162,11 @@ impl Database {
                     .get::<_, Option<String>>(9)?
                     .and_then(|v| serde_json::from_str(&v).ok()),
                 error: row.get(10)?,
-                created_at: row.get::<_, String>(11)?.parse().unwrap_or_default(),
-                updated_at: row.get::<_, String>(12)?.parse().unwrap_or_default(),
+                queued_at: row
+                    .get::<_, Option<String>>(11)?
+                    .and_then(|value| value.parse().ok()),
+                created_at: row.get::<_, String>(12)?.parse().unwrap_or_default(),
+                updated_at: row.get::<_, String>(13)?.parse().unwrap_or_default(),
                 pi_session_file: None,
             })
         })?;
@@ -164,8 +183,8 @@ impl Database {
             "INSERT OR REPLACE INTO requirements
              (id, project_id, title, original_message, status, messages,
               clarification_round, clarifications, draft, execution_plan, error,
-              created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+              queued_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             rusqlite::params![
                 req.id,
                 req.project_id,
@@ -184,6 +203,7 @@ impl Database {
                     .as_ref()
                     .map(|p| serde_json::to_string(p).unwrap_or_default()),
                 req.error,
+                req.queued_at.map(|value| value.to_rfc3339()),
                 req.created_at.to_rfc3339(),
                 req.updated_at.to_rfc3339(),
             ],

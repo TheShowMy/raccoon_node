@@ -35,6 +35,16 @@ pub enum TaskExecutionDisposition {
     FinalFailure,
 }
 
+pub enum ProjectScheduleAction {
+    Plan {
+        requirement_id: String,
+        input: Box<RequirementPlanInput>,
+    },
+    Execute {
+        requirement_id: String,
+    },
+}
+
 pub struct JsonStore {
     pub path: PathBuf,
     pub data_root: PathBuf,
@@ -394,6 +404,7 @@ impl JsonStore {
             execution_plan: None,
             pi_session_file: None,
             error: None,
+            queued_at: None,
             created_at: now,
             updated_at: now,
         };
@@ -615,7 +626,31 @@ impl JsonStore {
         requirement.status = RequirementStatus::Queued;
         requirement.error = None;
         requirement.execution_plan = None;
+        requirement.queued_at = Some(now);
         requirement.updated_at = now;
+        self.write_persist().await?;
+        Ok(project_id)
+    }
+
+    pub async fn requeue_failed_planning(
+        &mut self,
+        requirement_id: &str,
+    ) -> Result<String, AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        let requirement = &mut self.data.requirements[index];
+        if requirement.status != RequirementStatus::Failed
+            || requirement.execution_plan.is_some()
+            || requirement.draft.is_none()
+        {
+            return Err(AppError::bad_request(
+                "只有执行计划生成失败的需求才能重新规划",
+            ));
+        }
+        requirement.status = RequirementStatus::Queued;
+        requirement.error = None;
+        requirement.queued_at.get_or_insert(requirement.updated_at);
+        requirement.updated_at = Utc::now();
+        let project_id = requirement.project_id.clone();
         self.write_persist().await?;
         Ok(project_id)
     }
@@ -673,7 +708,7 @@ impl JsonStore {
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::Assistant,
-                    content: "执行 DAG 已生成，请确认后开始执行。".to_owned(),
+                    content: "执行 DAG 已生成，开始自动执行。".to_owned(),
                     metadata: None,
                     created_at: now,
                 });
@@ -716,85 +751,152 @@ impl JsonStore {
         Ok(project_id)
     }
 
+    pub async fn prepare_next_project_action(
+        &mut self,
+        project_id: &str,
+    ) -> Result<Option<ProjectScheduleAction>, AppError> {
+        if !self
+            .data
+            .projects
+            .iter()
+            .any(|project| project.id == project_id)
+        {
+            return Err(AppError::not_found("项目不存在"));
+        }
+        if self.data.requirements.iter().any(|requirement| {
+            requirement.project_id == project_id
+                && requirement.status == RequirementStatus::Failed
+                && requirement.draft.is_some()
+        }) {
+            return Ok(None);
+        }
+
+        let oldest = |status: RequirementStatus| {
+            self.data
+                .requirements
+                .iter()
+                .filter(|requirement| {
+                    requirement.project_id == project_id && requirement.status == status
+                })
+                .min_by_key(|requirement| {
+                    (
+                        requirement.queued_at.unwrap_or(requirement.updated_at),
+                        requirement.created_at,
+                        requirement.id.clone(),
+                    )
+                })
+                .map(|requirement| requirement.id.clone())
+        };
+
+        if let Some(requirement_id) = oldest(RequirementStatus::Running) {
+            return Ok(Some(ProjectScheduleAction::Execute { requirement_id }));
+        }
+        if let Some(requirement_id) = oldest(RequirementStatus::PlanReady) {
+            self.start_requirement_execution(&requirement_id).await?;
+            return Ok(Some(ProjectScheduleAction::Execute { requirement_id }));
+        }
+        if self.data.requirements.iter().any(|requirement| {
+            requirement.project_id == project_id
+                && requirement.status == RequirementStatus::Planning
+        }) {
+            return Ok(None);
+        }
+        if let Some(requirement_id) = oldest(RequirementStatus::Queued) {
+            let (_, input) = self.start_requirement_planning(&requirement_id).await?;
+            return Ok(Some(ProjectScheduleAction::Plan {
+                requirement_id,
+                input: Box::new(input),
+            }));
+        }
+        Ok(None)
+    }
+
     pub async fn recover_interrupted_requirements(&mut self) -> Result<Vec<String>, AppError> {
         let now = Utc::now();
         let mut changed = false;
-        let mut requirement_ids = Vec::new();
+        let mut project_ids = HashSet::new();
 
         for requirement in &mut self.data.requirements {
             if requirement.status == RequirementStatus::Planning {
-                requirement.status = RequirementStatus::Failed;
-                requirement.error = Some(format!("{RESTART_INTERRUPTION}，请重新生成执行 DAG"));
+                requirement.status = RequirementStatus::Queued;
+                requirement.error = None;
+                requirement.execution_plan = None;
+                requirement.queued_at.get_or_insert(requirement.updated_at);
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::System,
-                    content: format!("执行 DAG 生成因{RESTART_INTERRUPTION}，请重新生成。"),
+                    content: format!("执行 DAG 生成因{RESTART_INTERRUPTION}，已重新排队。"),
                     metadata: None,
                     created_at: now,
                 });
                 changed = true;
-                continue;
-            }
-
-            if requirement.status != RequirementStatus::Running {
-                continue;
-            }
-
-            let mut interrupted_tasks = Vec::new();
-            let mut final_failure = false;
-            if let Some(plan) = requirement.execution_plan.as_mut() {
-                for task in &mut plan.tasks {
-                    if task.status != RequirementTaskStatus::Running {
-                        continue;
-                    }
-
-                    let recoverable = register_execution_failure(
-                        task,
-                        RESTART_INTERRUPTION,
-                        RESTART_INTERRUPTION,
-                        true,
-                    );
-                    interrupted_tasks.push((task.title.clone(), recoverable));
-                    final_failure |= !recoverable;
-                    changed = true;
-                }
-            }
-
-            if !interrupted_tasks.is_empty() {
-                requirement.updated_at = now;
-                for (task_title, recoverable) in interrupted_tasks {
-                    requirement.messages.push(RequirementMessage {
-                        role: RequirementMessageRole::System,
-                        content: if recoverable {
-                            format!(
-                                "任务「{task_title}」因{RESTART_INTERRUPTION}，将按恢复策略重试。"
-                            )
-                        } else {
-                            format!(
-                                "任务「{task_title}」因{RESTART_INTERRUPTION}，恢复次数已耗尽。"
-                            )
-                        },
-                        metadata: None,
-                        created_at: now,
-                    });
-                }
-                if final_failure {
-                    requirement.status = RequirementStatus::Failed;
-                    requirement.error = Some(format!("{RESTART_INTERRUPTION}，任务恢复次数已耗尽"));
-                } else {
-                    requirement.error = None;
-                }
             }
 
             if requirement.status == RequirementStatus::Running {
-                requirement_ids.push(requirement.id.clone());
+                let mut interrupted_tasks = Vec::new();
+                let mut final_failure = false;
+                if let Some(plan) = requirement.execution_plan.as_mut() {
+                    for task in &mut plan.tasks {
+                        if task.status != RequirementTaskStatus::Running {
+                            continue;
+                        }
+
+                        let recoverable = register_execution_failure(
+                            task,
+                            RESTART_INTERRUPTION,
+                            RESTART_INTERRUPTION,
+                            true,
+                        );
+                        interrupted_tasks.push((task.title.clone(), recoverable));
+                        final_failure |= !recoverable;
+                        changed = true;
+                    }
+                }
+
+                if !interrupted_tasks.is_empty() {
+                    requirement.updated_at = now;
+                    for (task_title, recoverable) in interrupted_tasks {
+                        requirement.messages.push(RequirementMessage {
+                            role: RequirementMessageRole::System,
+                            content: if recoverable {
+                                format!(
+                                    "任务「{task_title}」因{RESTART_INTERRUPTION}，将按恢复策略重试。"
+                                )
+                            } else {
+                                format!(
+                                    "任务「{task_title}」因{RESTART_INTERRUPTION}，恢复次数已耗尽。"
+                                )
+                            },
+                            metadata: None,
+                            created_at: now,
+                        });
+                    }
+                    if final_failure {
+                        requirement.status = RequirementStatus::Failed;
+                        requirement.error =
+                            Some(format!("{RESTART_INTERRUPTION}，任务恢复次数已耗尽"));
+                    } else {
+                        requirement.error = None;
+                    }
+                }
+            }
+
+            if matches!(
+                requirement.status,
+                RequirementStatus::Queued
+                    | RequirementStatus::PlanReady
+                    | RequirementStatus::Running
+            ) {
+                project_ids.insert(requirement.project_id.clone());
             }
         }
 
         if changed {
             self.write_persist().await?;
         }
-        Ok(requirement_ids)
+        let mut project_ids = project_ids.into_iter().collect::<Vec<_>>();
+        project_ids.sort();
+        Ok(project_ids)
     }
 
     pub async fn cleanup_stale_pi_sessions(&self) {

@@ -32,6 +32,7 @@ export function useRequirementFlow(
   observedRequirementId: string | null,
   setProjectCanvas: (data: ProjectCanvasData) => void,
   loadProjectCanvas: (projectId: string) => Promise<ProjectCanvasData>,
+  observeRequirement: (requirementId: string) => void,
 ) {
   const [requirementInput, setRequirementInput] = useState("");
   const [requirementBusy, setRequirementBusy] = useState(false);
@@ -79,6 +80,10 @@ export function useRequirementFlow(
       setClarificationAnswers({});
     }
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    setRequirementStreamEvents([]);
+  }, [observedRequirementId]);
 
   const sendRequirementMessage = useCallback(async () => {
     const message = requirementInput.trim();
@@ -174,6 +179,7 @@ export function useRequirementFlow(
         const data = await confirmRequirement(requirement.id);
         setDismissedPromptRequirementId(null);
         setProjectCanvas(data);
+        observeRequirement(requirement.id);
         if (data.active_requirement) {
           void loadRequirementConversation(data.active_requirement.id).catch(
             (reason) => setRequirementError(readError(reason)),
@@ -187,7 +193,7 @@ export function useRequirementFlow(
         setRequirementBusy(false);
       }
     },
-    [loadRequirementConversation, setProjectCanvas],
+    [loadRequirementConversation, observeRequirement, setProjectCanvas],
   );
 
   const continueEditingRequirement = useCallback((requirement: Requirement) => {
@@ -210,9 +216,10 @@ export function useRequirementFlow(
           console.error("Invalid EventSource payload", parsed);
           return;
         }
-        if (parsed.requirement_id === activeRequirementId) {
-          setRequirementStreamEvents((current) => [...current, parsed]);
+        if (parsed.requirement_id !== observedRequirementId) {
+          return;
         }
+        setRequirementStreamEvents((current) => [...current, parsed]);
 
         const transient =
           parsed.event === "coordinator_started" ||
@@ -254,7 +261,6 @@ export function useRequirementFlow(
 
     return () => source.close();
   }, [
-    activeRequirementId,
     loadRequirementConversation,
     loadProjectCanvas,
     observedRequirementId,

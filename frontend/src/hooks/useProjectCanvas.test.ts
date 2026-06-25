@@ -16,7 +16,6 @@ import { useProjectCanvas } from "./useProjectCanvas";
 vi.mock("../api/client", () => ({
   getProjectCanvas: vi.fn(),
   planRequirementExecution: vi.fn(),
-  startRequirementExecution: vi.fn(),
   retryFailedNode: vi.fn(),
   retryFromNode: vi.fn(),
   rerunReview: vi.fn(),
@@ -172,5 +171,137 @@ describe("useProjectCanvas task recovery actions", () => {
     });
 
     expect(result.current.requirementActionBusyId).toBeNull();
+  });
+
+  it("planning 时轮询画布，并在终态停止", async () => {
+    vi.useFakeTimers();
+    try {
+      const planningCanvas = createCanvas(createRequirement("planning"));
+      const completedCanvas = createCanvas(createRequirement("completed"));
+      vi.mocked(getProjectCanvas)
+        .mockResolvedValueOnce(planningCanvas)
+        .mockResolvedValueOnce(completedCanvas);
+
+      const { result } = renderProjectCanvas();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(result.current.projectCanvas).toBe(planningCanvas);
+
+      await act(async () => {
+        vi.advanceTimersByTime(2500);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(getProjectCanvas).toHaveBeenCalledTimes(2);
+      expect(result.current.projectCanvas).toBe(completedCanvas);
+
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+        await Promise.resolve();
+      });
+      expect(getProjectCanvas).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("复用同一项目正在进行的画布请求", async () => {
+    vi.useFakeTimers();
+    try {
+      const planningCanvas = createCanvas(createRequirement("running"));
+      let resolvePoll!: (data: ProjectCanvasData) => void;
+      vi.mocked(getProjectCanvas)
+        .mockResolvedValueOnce(planningCanvas)
+        .mockReturnValueOnce(
+          new Promise((resolve) => {
+            resolvePoll = resolve;
+          }),
+        );
+
+      const { result } = renderProjectCanvas();
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(2500);
+      });
+      const duplicate = result.current.loadProjectCanvas(project.id);
+
+      expect(getProjectCanvas).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        resolvePoll(createCanvas(createRequirement("completed")));
+        await duplicate;
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("revision 未变化时保留画布引用，变化或队列重排时更新", async () => {
+    const { result } = renderProjectCanvas();
+
+    await waitFor(() => {
+      expect(result.current.projectCanvas).toBe(initialCanvas);
+    });
+
+    vi.mocked(getProjectCanvas).mockResolvedValueOnce({
+      ...initialCanvas,
+      active_requirement: { ...initialRequirement },
+    });
+    await act(async () => {
+      await result.current.loadProjectCanvas(project.id);
+    });
+    expect(getProjectCanvas).toHaveBeenCalledTimes(2);
+    expect(result.current.projectCanvas).toBe(initialCanvas);
+
+    act(() => {
+      result.current.setProjectCanvas({
+        ...initialCanvas,
+        project: { ...project, name: "仅名称变化" },
+        active_requirement: {
+          ...initialRequirement,
+          title: "仅标题变化",
+        },
+      });
+    });
+    expect(result.current.projectCanvas).toBe(initialCanvas);
+
+    const updatedCanvas = createCanvas({
+      ...initialRequirement,
+      updated_at: "2026-06-24T00:01:00Z",
+    });
+    act(() => {
+      result.current.setProjectCanvas(updatedCanvas);
+    });
+    expect(result.current.projectCanvas).toBe(updatedCanvas);
+
+    const queuedFirst = {
+      ...createRequirement("queued"),
+      id: "requirement-2",
+    };
+    const queuedSecond = {
+      ...createRequirement("queued"),
+      id: "requirement-3",
+    };
+    const queuedCanvas: ProjectCanvasData = {
+      ...updatedCanvas,
+      active_requirement: null,
+      queued_requirements: [queuedFirst, queuedSecond],
+    };
+    act(() => {
+      result.current.setProjectCanvas(queuedCanvas);
+    });
+
+    const reorderedCanvas = {
+      ...queuedCanvas,
+      queued_requirements: [queuedSecond, queuedFirst],
+    };
+    act(() => {
+      result.current.setProjectCanvas(reorderedCanvas);
+    });
+    expect(result.current.projectCanvas).toBe(reorderedCanvas);
   });
 });

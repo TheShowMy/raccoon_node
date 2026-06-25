@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildProjectChatNode,
   buildProjectNodes,
+  buildRequirementDagEdges,
+  mergeProjectNodes,
   type BuildProjectNodesParams,
 } from "./buildProjectNodes";
 import type {
@@ -98,38 +101,22 @@ function params(
     startProjects: [projectCanvas.project],
     selectedDagRequirement,
     selectedDagRequirementId: selectedDagRequirement?.id ?? null,
-    observedRequirementId: null,
     collapsedTaskGroups: new Set(),
     requirementActionBusyId: null,
     requirementActionError: null,
-    requirementConversation: null,
-    requirementInput: "",
-    requirementBusy: false,
-    requirementError: null,
-    requirementStreamEvents: [],
-    clarificationAnswers: {},
-    dismissedPromptRequirementId: null,
     backToStartCanvas: () => {},
     closeDag: () => {},
     selectDagRequirement: () => {},
     planRequirement: async () => {},
-    startExecution: async () => {},
     retryFailedNode: async () => {},
     retryFromNode: async () => {},
     rerunReview: async () => {},
-    setRequirementInput: () => {},
-    sendRequirementMessage: async () => {},
-    updateClarificationAnswer: () => {},
-    submitClarifications: async () => {},
-    confirmRequirement: async () => {},
-    continueEditingRequirement: () => {},
     toggleTaskGroupCollapsed: () => {},
-    cancelRequirementAnalysis: async () => {},
   };
 }
 
 describe("buildProjectNodes", () => {
-  it("keeps the requirement chat visible while a DAG is selected", () => {
+  it("replaces only the chat node when high-frequency chat state changes", () => {
     const selectedRequirement = requirement();
     const canvas: ProjectCanvasData = {
       project: project(),
@@ -137,10 +124,41 @@ describe("buildProjectNodes", () => {
       queued_requirements: [selectedRequirement],
       completed_requirements: [],
     };
+    const structure = buildProjectNodes(params(canvas, selectedRequirement));
+    const chatParams = {
+      projectCanvas: canvas,
+      selectedProjectId: canvas.project.id,
+      startProjects: [canvas.project],
+      requirementConversation: null,
+      requirementInput: "",
+      requirementBusy: false,
+      requirementError: null,
+      requirementStreamEvents: [],
+      clarificationAnswers: {},
+      dismissedPromptRequirementId: null,
+      setRequirementInput: () => {},
+      sendRequirementMessage: async () => {},
+      updateClarificationAnswer: () => {},
+      submitClarifications: async () => {},
+      confirmRequirement: async () => {},
+      continueEditingRequirement: () => {},
+      cancelRequirementAnalysis: async () => {},
+    };
+    const first = mergeProjectNodes(
+      structure,
+      buildProjectChatNode(chatParams),
+    );
+    const second = mergeProjectNodes(
+      structure,
+      buildProjectChatNode({ ...chatParams, requirementInput: "新输入" }),
+    );
 
-    const nodes = buildProjectNodes(params(canvas, selectedRequirement));
-
-    expect(nodes.some((node) => node.id === "requirement-chat")).toBe(true);
+    for (const node of structure) {
+      expect(second.find((candidate) => candidate.id === node.id)).toBe(node);
+    }
+    expect(second.find((node) => node.id === "requirement-chat")).not.toBe(
+      first.find((node) => node.id === "requirement-chat"),
+    );
   });
 
   it("places the DAG entry to the right of the project requirement list", () => {
@@ -279,5 +297,38 @@ describe("buildProjectNodes", () => {
 
     expect(group.height).toBe(82);
     expect(nodes.some((node) => node.parentId === group.id)).toBe(false);
+  });
+
+  it("keeps every edge endpoint valid with more than 50 DAG nodes", () => {
+    const tasks = Array.from({ length: 11 }, (_, index) => {
+      const implementation = task(`implementation-${index}`);
+      const reviews = Array.from({ length: 3 }, (_, reviewIndex) =>
+        task(`review-${index}-${reviewIndex}`, "review_sub_agent", {
+          depends_on: [implementation.id],
+          review_for: implementation.id,
+        }),
+      );
+      const summary = task(`summary-${index}`, "review_summary", {
+        depends_on: reviews.map((review) => review.id),
+        review_for: implementation.id,
+      });
+      return [implementation, ...reviews, summary];
+    }).flat();
+    const selectedRequirement = requirement(tasks);
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [selectedRequirement],
+      completed_requirements: [],
+    };
+    const nodes = buildProjectNodes(params(canvas, selectedRequirement));
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges = buildRequirementDagEdges(selectedRequirement, new Set());
+
+    expect(nodes.length).toBeGreaterThan(50);
+    for (const edge of edges) {
+      expect(nodeIds.has(edge.source), edge.id).toBe(true);
+      expect(nodeIds.has(edge.target), edge.id).toBe(true);
+    }
   });
 });

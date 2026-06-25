@@ -67,10 +67,23 @@ export interface BuildProjectNodesParams {
   startProjects: Project[];
   selectedDagRequirement: Requirement | null;
   selectedDagRequirementId: string | null;
-  observedRequirementId: string | null;
   collapsedTaskGroups: Set<string>;
   requirementActionBusyId: string | null;
   requirementActionError: string | null;
+  backToStartCanvas: () => void;
+  closeDag: () => void;
+  selectDagRequirement: (requirement: Requirement) => void;
+  planRequirement: (requirement: Requirement) => Promise<void>;
+  retryFailedNode: (requirementId: string, taskId: string) => Promise<void>;
+  retryFromNode: (requirementId: string, taskId: string) => Promise<void>;
+  rerunReview: (requirementId: string, taskId: string) => Promise<void>;
+  toggleTaskGroupCollapsed: (requirementId: string, taskId: string) => void;
+}
+
+export interface BuildProjectChatNodeParams {
+  projectCanvas: ProjectCanvasData | null;
+  selectedProjectId: string | null;
+  startProjects: Project[];
   requirementConversation: RequirementConversation | null;
   requirementInput: string;
   requirementBusy: boolean;
@@ -78,14 +91,6 @@ export interface BuildProjectNodesParams {
   requirementStreamEvents: StreamEvent[];
   clarificationAnswers: Record<string, DraftClarificationAnswer>;
   dismissedPromptRequirementId: string | null;
-  backToStartCanvas: () => void;
-  closeDag: () => void;
-  selectDagRequirement: (requirement: Requirement) => void;
-  planRequirement: (requirement: Requirement) => Promise<void>;
-  startExecution: (requirement: Requirement) => Promise<void>;
-  retryFailedNode: (requirementId: string, taskId: string) => Promise<void>;
-  retryFromNode: (requirementId: string, taskId: string) => Promise<void>;
-  rerunReview: (requirementId: string, taskId: string) => Promise<void>;
   setRequirementInput: (value: string) => void;
   sendRequirementMessage: () => Promise<void>;
   updateClarificationAnswer: (
@@ -95,7 +100,6 @@ export interface BuildProjectNodesParams {
   submitClarifications: (requirement: Requirement) => Promise<void>;
   confirmRequirement: (requirement: Requirement) => Promise<void>;
   continueEditingRequirement: (requirement: Requirement) => void;
-  toggleTaskGroupCollapsed: (requirementId: string, taskId: string) => void;
   cancelRequirementAnalysis: (requirementId: string) => Promise<void>;
 }
 
@@ -105,33 +109,17 @@ export function buildProjectNodes({
   startProjects,
   selectedDagRequirement,
   selectedDagRequirementId,
-  observedRequirementId,
   collapsedTaskGroups,
   requirementActionBusyId,
   requirementActionError,
-  requirementConversation,
-  requirementInput,
-  requirementBusy,
-  requirementError,
-  requirementStreamEvents,
-  clarificationAnswers,
-  dismissedPromptRequirementId,
   backToStartCanvas,
   closeDag,
   selectDagRequirement,
   planRequirement,
-  startExecution,
   retryFailedNode,
   retryFromNode,
   rerunReview,
-  setRequirementInput,
-  sendRequirementMessage,
-  updateClarificationAnswer,
-  submitClarifications,
-  confirmRequirement,
-  continueEditingRequirement,
   toggleTaskGroupCollapsed,
-  cancelRequirementAnalysis,
 }: BuildProjectNodesParams): Node<StartNodeData>[] {
   const fallbackProject = selectedProjectId
     ? startProjects.find((project) => project.id === selectedProjectId)
@@ -210,35 +198,6 @@ export function buildProjectNodes({
       },
     },
     {
-      id: "requirement-chat",
-      type: "startNode" as const,
-      position: { x: 0, y: 20 },
-      data: {
-        kind: "requirement-chat" as const,
-        project,
-        requirement: projectCanvas?.active_requirement ?? null,
-        conversation: requirementConversation,
-        promptDismissed:
-          dismissedPromptRequirementId ===
-          (projectCanvas?.active_requirement?.id ?? null),
-        input: requirementInput,
-        busy: requirementBusy,
-        error: requirementError,
-        streamEvents: requirementStreamEvents,
-        answers: clarificationAnswers,
-        onInputChange: setRequirementInput,
-        onSend: sendRequirementMessage,
-        onAnswerChange: updateClarificationAnswer,
-        onSubmitClarifications: submitClarifications,
-        onConfirm: confirmRequirement,
-        onContinueEditing: continueEditingRequirement,
-        onCancel: () =>
-          cancelRequirementAnalysis(
-            projectCanvas?.active_requirement?.id ?? "",
-          ),
-      },
-    },
-    {
       id: "queued-requirements",
       type: "startNode",
       position: { x: 780, y: 140 },
@@ -264,9 +223,7 @@ export function buildProjectNodes({
             data: {
               kind: "requirement-dag" as const,
               requirement: selectedDagRequirement,
-              busy: requirementActionBusyId === selectedDagRequirement.id,
               actionError: requirementActionError,
-              onStartExecution: startExecution,
               onClose: closeDag,
             },
           },
@@ -300,10 +257,6 @@ export function buildProjectNodes({
                   task,
                   reviews,
                   collapsed,
-                  streamEvents:
-                    selectedDagRequirement.id === observedRequirementId
-                      ? requirementStreamEvents
-                      : [],
                   busy: requirementActionBusyId === selectedDagRequirement.id,
                   onToggleCollapsed: toggleTaskGroupCollapsed,
                   onRetryFailedNode: retryFailedNode,
@@ -330,10 +283,6 @@ export function buildProjectNodes({
                         requirementId: selectedDagRequirement.id,
                         task,
                         reviews,
-                        streamEvents:
-                          selectedDagRequirement.id === observedRequirementId
-                            ? requirementStreamEvents
-                            : [],
                         busy:
                           requirementActionBusyId === selectedDagRequirement.id,
                         onRetryFailedNode: retryFailedNode,
@@ -359,11 +308,6 @@ export function buildProjectNodes({
                               requirementId: selectedDagRequirement.id,
                               task: summary,
                               reviews: subAgents,
-                              streamEvents:
-                                selectedDagRequirement.id ===
-                                observedRequirementId
-                                  ? requirementStreamEvents
-                                  : [],
                               busy:
                                 requirementActionBusyId ===
                                 selectedDagRequirement.id,
@@ -390,10 +334,6 @@ export function buildProjectNodes({
                         requirementId: selectedDagRequirement.id,
                         task: review,
                         reviews: [],
-                        streamEvents:
-                          selectedDagRequirement.id === observedRequirementId
-                            ? requirementStreamEvents
-                            : [],
                         busy:
                           requirementActionBusyId === selectedDagRequirement.id,
                         onRetryFailedNode: retryFailedNode,
@@ -420,10 +360,6 @@ export function buildProjectNodes({
                 requirementId: selectedDagRequirement.id,
                 task,
                 reviews: [],
-                streamEvents:
-                  selectedDagRequirement.id === observedRequirementId
-                    ? requirementStreamEvents
-                    : [],
                 busy: requirementActionBusyId === selectedDagRequirement.id,
                 onRetryFailedNode: retryFailedNode,
                 onRetryFromNode: retryFromNode,
@@ -434,6 +370,71 @@ export function buildProjectNodes({
         ]
       : []),
   ]);
+}
+
+export function buildProjectChatNode({
+  projectCanvas,
+  selectedProjectId,
+  startProjects,
+  requirementConversation,
+  requirementInput,
+  requirementBusy,
+  requirementError,
+  requirementStreamEvents,
+  clarificationAnswers,
+  dismissedPromptRequirementId,
+  setRequirementInput,
+  sendRequirementMessage,
+  updateClarificationAnswer,
+  submitClarifications,
+  confirmRequirement,
+  continueEditingRequirement,
+  cancelRequirementAnalysis,
+}: BuildProjectChatNodeParams): Node<StartNodeData> | null {
+  const fallbackProject = selectedProjectId
+    ? startProjects.find((project) => project.id === selectedProjectId)
+    : null;
+  const project = projectCanvas?.project ?? fallbackProject;
+  if (!project) return null;
+
+  return withDimensions([
+    {
+      id: "requirement-chat",
+      type: "startNode",
+      position: { x: 0, y: 20 },
+      data: {
+        kind: "requirement-chat",
+        project,
+        requirement: projectCanvas?.active_requirement ?? null,
+        conversation: requirementConversation,
+        promptDismissed:
+          dismissedPromptRequirementId ===
+          (projectCanvas?.active_requirement?.id ?? null),
+        input: requirementInput,
+        busy: requirementBusy,
+        error: requirementError,
+        streamEvents: requirementStreamEvents,
+        answers: clarificationAnswers,
+        onInputChange: setRequirementInput,
+        onSend: sendRequirementMessage,
+        onAnswerChange: updateClarificationAnswer,
+        onSubmitClarifications: submitClarifications,
+        onConfirm: confirmRequirement,
+        onContinueEditing: continueEditingRequirement,
+        onCancel: () =>
+          cancelRequirementAnalysis(
+            projectCanvas?.active_requirement?.id ?? "",
+          ),
+      },
+    },
+  ])[0];
+}
+
+export function mergeProjectNodes(
+  structureNodes: Node<StartNodeData>[],
+  chatNode: Node<StartNodeData> | null,
+): Node<StartNodeData>[] {
+  return chatNode ? [...structureNodes, chatNode] : structureNodes;
 }
 
 export { buildRequirementDagEdges };

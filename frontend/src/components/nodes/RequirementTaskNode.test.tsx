@@ -4,6 +4,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import RequirementTaskNode from "./RequirementTaskNode";
 import type { RequirementExecutionTask, StreamEvent } from "../../types/api";
+import { RequirementTaskEventsProvider } from "../../contexts/RequirementTaskEventsContext";
 
 function task(
   overrides: Partial<RequirementExecutionTask> = {},
@@ -69,22 +70,29 @@ function renderNode({
   reviews?: RequirementExecutionTask[];
   streamEvents?: StreamEvent[];
 } = {}) {
-  return render(
-    <RequirementTaskNode
-      data={{
-        kind: "requirement-task",
-        nodeRole,
-        requirementId: "req-1",
-        task: nodeTask,
-        reviews,
-        streamEvents,
-        busy: false,
-        onRetryFailedNode: vi.fn(),
-        onRetryFromNode: vi.fn(),
-        onRerunReview: vi.fn(),
-      }}
-    />,
+  const renderWithEvents = (events: StreamEvent[]) => (
+    <RequirementTaskEventsProvider requirementId="req-1" events={events}>
+      <RequirementTaskNode
+        data={{
+          kind: "requirement-task",
+          nodeRole,
+          requirementId: "req-1",
+          task: nodeTask,
+          reviews,
+          busy: false,
+          onRetryFailedNode: vi.fn(),
+          onRetryFromNode: vi.fn(),
+          onRerunReview: vi.fn(),
+        }}
+      />
+    </RequirementTaskEventsProvider>
   );
+  const view = render(renderWithEvents(streamEvents));
+  return {
+    ...view,
+    updateEvents: (events: StreamEvent[]) =>
+      view.rerender(renderWithEvents(events)),
+  };
 }
 
 describe("RequirementTaskNode", () => {
@@ -349,5 +357,33 @@ describe("RequirementTaskNode", () => {
 
     expect(screen.getByText("实时执行思考")).toBeInTheDocument();
     expect(screen.queryByText("其他任务思考")).toBeNull();
+  });
+
+  it("does not read task events until the detail is open", () => {
+    const taskIdRead = vi.fn(() => "task-1");
+    const event = {
+      requirement_id: "req-1",
+      get task_id() {
+        return taskIdRead();
+      },
+      event: "pi_event",
+      message: "当前任务",
+      pi_type: "message_update",
+      payload: {
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          delta: "延迟读取事件",
+        },
+      },
+    } as StreamEvent;
+
+    const view = renderNode();
+
+    expect(taskIdRead).not.toHaveBeenCalled();
+    view.updateEvents([event]);
+    expect(taskIdRead).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+    expect(taskIdRead).toHaveBeenCalled();
+    expect(screen.getByText("延迟读取事件")).toBeInTheDocument();
   });
 });

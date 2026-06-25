@@ -1,6 +1,6 @@
 import React from "react";
 import { Handle, Position } from "@xyflow/react";
-import { GitBranch, Loader2, Play, X } from "lucide-react";
+import { GitBranch, X } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import { requirementStatusText } from "../../utils/format";
 
@@ -11,7 +11,6 @@ export default function RequirementDagNode({
 }) {
   const requirement = data.requirement;
   const plan = requirement.execution_plan;
-  const canStart = requirement.status === "plan_ready" && Boolean(plan);
 
   return (
     <>
@@ -39,8 +38,13 @@ export default function RequirementDagNode({
         {!plan && requirement.status === "planning" ? (
           <p>Coordinator 正在生成执行 DAG...</p>
         ) : null}
-        {!plan && requirement.status !== "planning" ? (
-          <p>请在右侧需求列表卡片中点击“生成 DAG”。</p>
+        {!plan && requirement.status === "failed" ? (
+          <p>执行 DAG 生成失败，可在右侧需求列表中重新生成。</p>
+        ) : null}
+        {!plan &&
+        requirement.status !== "planning" &&
+        requirement.status !== "failed" ? (
+          <p>确认需求后会自动生成并执行 DAG。</p>
         ) : null}
         {data.actionError || requirement.error ? (
           <small className="dag-node__error">
@@ -49,22 +53,6 @@ export default function RequirementDagNode({
         ) : null}
       </div>
 
-      <div className="dag-node__actions nowheel nodrag">
-        {canStart ? (
-          <button
-            type="button"
-            disabled={data.busy}
-            onClick={() => void data.onStartExecution(requirement)}
-          >
-            {data.busy ? (
-              <Loader2 size={14} className="spin-icon" />
-            ) : (
-              <Play size={14} />
-            )}
-            {data.busy ? "启动中" : "开始执行"}
-          </button>
-        ) : null}
-      </div>
       <Handle
         id="requirement-dag-entry"
         type="source"

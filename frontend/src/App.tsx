@@ -18,11 +18,16 @@ import type { StartNodeData } from "./types/api";
 import StartNode from "./components/nodes/StartNode";
 import { buildRequirementDagEdges } from "./canvas/edges";
 import { buildStartNodes } from "./canvas/buildStartNodes";
-import { buildProjectNodes } from "./canvas/buildProjectNodes";
+import {
+  buildProjectChatNode,
+  buildProjectNodes,
+  mergeProjectNodes,
+} from "./canvas/buildProjectNodes";
 import { useStartData } from "./hooks/useStartData";
 import { useProjectCanvas } from "./hooks/useProjectCanvas";
 import { useRequirementFlow } from "./hooks/useRequirementFlow";
 import { useModelSettings } from "./hooks/useModelSettings";
+import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsContext";
 
 const nodeTypes = { startNode: StartNode };
 
@@ -195,6 +200,7 @@ export default function App() {
     project.observedRequirementId,
     project.setProjectCanvas,
     project.loadProjectCanvas,
+    project.setSelectedDagRequirementId,
   );
   const models = useModelSettings(start.loadStart);
 
@@ -252,7 +258,7 @@ export default function App() {
     ],
   );
 
-  const projectNodes = useMemo(
+  const projectStructureNodes = useMemo(
     () =>
       buildProjectNodes({
         projectCanvas: project.projectCanvas,
@@ -260,46 +266,28 @@ export default function App() {
         startProjects: start.startData.projects,
         selectedDagRequirement: project.selectedDagRequirement,
         selectedDagRequirementId: project.selectedDagRequirementId,
-        observedRequirementId: project.observedRequirementId,
         collapsedTaskGroups: project.collapsedTaskGroups,
         requirementActionBusyId: project.requirementActionBusyId,
         requirementActionError: project.requirementActionError,
-        requirementConversation: requirement.requirementConversation,
-        requirementInput: requirement.requirementInput,
-        requirementBusy: requirement.requirementBusy,
-        requirementError: requirement.requirementError,
-        requirementStreamEvents: requirement.requirementStreamEvents,
-        clarificationAnswers: requirement.clarificationAnswers,
-        dismissedPromptRequirementId: requirement.dismissedPromptRequirementId,
         backToStartCanvas: start.backToStartCanvas,
         closeDag: project.closeDag,
         selectDagRequirement: project.selectDagRequirement,
         planRequirement: project.planRequirement,
-        startExecution: project.startExecution,
         retryFailedNode: project.retryFailedNode,
         retryFromNode: project.retryFromNode,
         rerunReview: project.rerunReview,
-        setRequirementInput: requirement.setRequirementInput,
-        sendRequirementMessage: requirement.sendRequirementMessage,
-        updateClarificationAnswer: requirement.updateClarificationAnswer,
-        submitClarifications: requirement.submitClarifications,
-        confirmRequirement: requirement.confirmRequirement,
-        continueEditingRequirement: requirement.continueEditingRequirement,
         toggleTaskGroupCollapsed: project.toggleTaskGroupCollapsed,
-        cancelRequirementAnalysis: project.cancelRequirementAnalysis,
       }),
     [
       project.projectCanvas,
       project.selectedDagRequirement,
       project.selectedDagRequirementId,
-      project.observedRequirementId,
       project.collapsedTaskGroups,
       project.requirementActionBusyId,
       project.requirementActionError,
       project.closeDag,
       project.selectDagRequirement,
       project.planRequirement,
-      project.startExecution,
       project.retryFailedNode,
       project.retryFromNode,
       project.rerunReview,
@@ -307,6 +295,35 @@ export default function App() {
       start.selectedProjectId,
       start.startData.projects,
       start.backToStartCanvas,
+    ],
+  );
+
+  const projectChatNode = useMemo(
+    () =>
+      buildProjectChatNode({
+        projectCanvas: project.projectCanvas,
+        selectedProjectId: start.selectedProjectId,
+        startProjects: start.startData.projects,
+        requirementConversation: requirement.requirementConversation,
+        requirementInput: requirement.requirementInput,
+        requirementBusy: requirement.requirementBusy,
+        requirementError: requirement.requirementError,
+        requirementStreamEvents: requirement.requirementStreamEvents,
+        clarificationAnswers: requirement.clarificationAnswers,
+        dismissedPromptRequirementId: requirement.dismissedPromptRequirementId,
+        setRequirementInput: requirement.setRequirementInput,
+        sendRequirementMessage: requirement.sendRequirementMessage,
+        updateClarificationAnswer: requirement.updateClarificationAnswer,
+        submitClarifications: requirement.submitClarifications,
+        confirmRequirement: requirement.confirmRequirement,
+        continueEditingRequirement: requirement.continueEditingRequirement,
+        cancelRequirementAnalysis: project.cancelRequirementAnalysis,
+      }),
+    [
+      project.projectCanvas,
+      project.cancelRequirementAnalysis,
+      start.selectedProjectId,
+      start.startData.projects,
       requirement.requirementConversation,
       requirement.requirementInput,
       requirement.requirementBusy,
@@ -321,6 +338,11 @@ export default function App() {
       requirement.confirmRequirement,
       requirement.continueEditingRequirement,
     ],
+  );
+
+  const projectNodes = useMemo(
+    () => mergeProjectNodes(projectStructureNodes, projectChatNode),
+    [projectChatNode, projectStructureNodes],
   );
 
   const nodes = start.currentCanvas === "project" ? projectNodes : startNodes;
@@ -443,54 +465,59 @@ export default function App() {
         <div className="status-pill">{start.loading ? "加载中" : "已连接"}</div>
       </section>
       <section className="canvas-shell">
-        <ReactFlowProvider>
-          <ReactFlow
-            key={flowKey}
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            fitView
-            fitViewOptions={{ padding: 0.08, duration: 0 }}
-            minZoom={0.05}
-            maxZoom={2}
-            nodesDraggable
-            nodesConnectable={false}
-            elementsSelectable
-            panOnScroll
-            panActivationKeyCode="Space"
-            selectionOnDrag
-            defaultEdgeOptions={{
-              type: "smoothstep",
-              style: { strokeWidth: 2 },
-              markerEnd: {
-                type: MarkerType.ArrowClosed,
-                width: 12,
-                height: 12,
-              },
-            }}
-          >
-            <Background color="rgba(148, 163, 184, 0.18)" gap={24} />
-            <MiniMap
-              position="bottom-left"
-              pannable
-              zoomable
-              nodeColor={minimapNodeColor}
-              nodeStrokeWidth={2}
-              nodeStrokeColor="rgba(255, 255, 255, 0.5)"
-            />
-            <Controls position="bottom-right" />
-            <FitViewOnGraphChange
-              enabled={start.currentCanvas === "start"}
-              nodeCount={nodes.length}
-              edgeCount={edges.length}
-            />
-            <ProjectCanvasViewportController
-              currentCanvas={start.currentCanvas}
-              projectLoaded={Boolean(project.projectCanvas)}
-              selectedDagRequirementId={project.selectedDagRequirementId}
-            />
-          </ReactFlow>
-        </ReactFlowProvider>
+        <RequirementTaskEventsProvider
+          requirementId={project.observedRequirementId}
+          events={requirement.requirementStreamEvents}
+        >
+          <ReactFlowProvider>
+            <ReactFlow
+              key={flowKey}
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              fitView
+              fitViewOptions={{ padding: 0.08, duration: 0 }}
+              minZoom={0.05}
+              maxZoom={2}
+              nodesDraggable
+              nodesConnectable={false}
+              elementsSelectable
+              panOnScroll
+              panActivationKeyCode="Space"
+              selectionOnDrag
+              defaultEdgeOptions={{
+                type: "smoothstep",
+                style: { strokeWidth: 2 },
+                markerEnd: {
+                  type: MarkerType.ArrowClosed,
+                  width: 12,
+                  height: 12,
+                },
+              }}
+            >
+              <Background color="rgba(148, 163, 184, 0.18)" gap={24} />
+              <MiniMap
+                position="bottom-left"
+                pannable
+                zoomable
+                nodeColor={minimapNodeColor}
+                nodeStrokeWidth={2}
+                nodeStrokeColor="rgba(255, 255, 255, 0.5)"
+              />
+              <Controls position="bottom-right" />
+              <FitViewOnGraphChange
+                enabled={start.currentCanvas === "start"}
+                nodeCount={nodes.length}
+                edgeCount={edges.length}
+              />
+              <ProjectCanvasViewportController
+                currentCanvas={start.currentCanvas}
+                projectLoaded={Boolean(project.projectCanvas)}
+                selectedDagRequirementId={project.selectedDagRequirementId}
+              />
+            </ReactFlow>
+          </ReactFlowProvider>
+        </RequirementTaskEventsProvider>
       </section>
     </main>
   );
