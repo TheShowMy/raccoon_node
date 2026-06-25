@@ -938,9 +938,12 @@ async fn prepare_task_workspace(
             if !worktree.exists() {
                 return Err(AppError::internal("恢复审核失败：目标 worktree 不存在"));
             }
-            if let Some(commit) = reviewed.commit_sha.as_deref() {
-                ensure_commit_exists(&worktree, commit).await?;
-            }
+            let commit = reviewed
+                .commit_sha
+                .as_deref()
+                .ok_or_else(|| AppError::internal("恢复审核失败：审核目标缺少提交"))?;
+            ensure_commit_exists(&worktree, commit).await?;
+            ensure_head_matches(&worktree, commit).await?;
             Ok((worktree, None, None))
         }
         RequirementTaskKind::Implementation
@@ -1019,6 +1022,17 @@ async fn ensure_commit_exists(repo: &Path, commit: &str) -> Result<(), AppError>
         .map_err(|_| AppError::internal(format!("恢复节点失败：提交 {commit} 不可达")))
 }
 
+async fn ensure_head_matches(repo: &Path, expected: &str) -> Result<(), AppError> {
+    let head = git(repo, &["rev-parse", "HEAD"]).await?;
+    if head.trim() != expected {
+        return Err(AppError::internal(format!(
+            "恢复审核失败：worktree HEAD {} 与审核提交 {expected} 不一致",
+            head.trim()
+        )));
+    }
+    Ok(())
+}
+
 fn task_dependency_commits(input: &RequirementTaskExecutionInput) -> Vec<String> {
     dependency_commits_for_task(&input.task, &input.plan)
 }
@@ -1060,6 +1074,17 @@ async fn commit_task_changes(
     task: &crate::models::RequirementExecutionTask,
     output: &mut RequirementTaskExecutionOutput,
 ) -> Result<String, AppError> {
+    let fixing_commit = if task.kind == RequirementTaskKind::Implementation
+        && task.status == crate::models::RequirementTaskStatus::Fixing
+    {
+        Some(
+            task.commit_sha
+                .as_deref()
+                .ok_or_else(|| AppError::internal("修复实现节点缺少旧 commit_sha"))?,
+        )
+    } else {
+        None
+    };
     let worktree = task
         .worktree_path
         .as_deref()
@@ -1071,6 +1096,9 @@ async fn commit_task_changes(
         let message = format!("raccoon_node: {}", task.title);
         git(&worktree, &["commit", "-m", &message]).await?;
     } else if task.kind == RequirementTaskKind::Implementation {
+        if fixing_commit.is_some() {
+            return Err(AppError::internal("修复实现节点必须产生实际代码改动"));
+        }
         let no_op_reason = output
             .no_op_reason
             .as_deref()
@@ -1090,9 +1118,13 @@ async fn commit_task_changes(
             return Err(AppError::internal("实现节点没有产生可提交改动"));
         }
     }
-    git(&worktree, &["rev-parse", "HEAD"])
+    let commit = git(&worktree, &["rev-parse", "HEAD"])
         .await
-        .map(|sha| sha.trim().to_owned())
+        .map(|sha| sha.trim().to_owned())?;
+    if fixing_commit == Some(commit.as_str()) {
+        return Err(AppError::internal("修复实现节点没有产生新的代码版本"));
+    }
+    Ok(commit)
 }
 
 struct PublishResult {
@@ -1452,8 +1484,8 @@ impl Drop for PiRpcClient {
 mod tests {
     use super::{
         attach_session_usage, build_pr_merge_args, commit_task_changes,
-        dependency_commits_for_task, generated_branch_names, is_terminal_agent_end,
-        parse_default_branch, parse_session_header_cwd, safe_worktree_name,
+        dependency_commits_for_task, ensure_head_matches, generated_branch_names,
+        is_terminal_agent_end, parse_default_branch, parse_session_header_cwd, safe_worktree_name,
     };
     use crate::models::{
         RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
@@ -1614,6 +1646,55 @@ mod tests {
         let error = commit_task_changes(&task, &mut output).await.unwrap_err();
 
         assert!(error.to_string().contains("没有产生可提交改动"));
+    }
+
+    #[tokio::test]
+    async fn fixing_implementation_requires_a_new_commit() {
+        let temp = tempfile::tempdir().unwrap();
+        init_repo(temp.path()).await;
+        let old_commit = super::git(temp.path(), &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .trim()
+            .to_owned();
+        let mut task = test_task(temp.path());
+        task.status = RequirementTaskStatus::Fixing;
+        task.commit_sha = Some(old_commit.clone());
+        let mut output = test_output(Some(false), Some("无需修改"));
+
+        let error = commit_task_changes(&task, &mut output).await.unwrap_err();
+        assert!(error.to_string().contains("必须产生实际代码改动"));
+
+        tokio::fs::write(temp.path().join("README.md"), "fixed\n")
+            .await
+            .unwrap();
+        let new_commit = commit_task_changes(&task, &mut output).await.unwrap();
+        assert_ne!(new_commit, old_commit);
+    }
+
+    #[tokio::test]
+    async fn review_workspace_head_must_match_reviewed_commit() {
+        let temp = tempfile::tempdir().unwrap();
+        init_repo(temp.path()).await;
+        let reviewed_commit = super::git(temp.path(), &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .trim()
+            .to_owned();
+        tokio::fs::write(temp.path().join("README.md"), "new\n")
+            .await
+            .unwrap();
+        super::git(temp.path(), &["add", "README.md"])
+            .await
+            .unwrap();
+        super::git(temp.path(), &["commit", "-m", "new"])
+            .await
+            .unwrap();
+
+        let error = ensure_head_matches(temp.path(), &reviewed_commit)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("与审核提交"));
     }
 
     async fn init_repo(path: &Path) {

@@ -169,6 +169,12 @@ pub fn build_requirement_task_prompt(
         .join("\n");
     let future_tasks = future_implementation_tasks_for_prompt(plan, task);
     let failure_context = execution_failure_context(task);
+    let reviewed_commit = task
+        .review_for
+        .as_deref()
+        .and_then(|review_for| plan.tasks.iter().find(|item| item.id == review_for))
+        .and_then(|reviewed| reviewed.commit_sha.as_deref())
+        .unwrap_or("缺少提交 SHA");
 
     let (role, json_contract, extra) = match task.kind {
         RequirementTaskKind::Implementation => (
@@ -199,8 +205,9 @@ pub fn build_requirement_task_prompt(
                 future_tasks = future_tasks,
                 fix_feedback = if task.status == RequirementTaskStatus::Fixing {
                     format!(
-                        "\n## 审核反馈\n{}\n\n请在原实现基础上修复问题，不要重做无关内容。",
-                        task.last_review_feedback.as_deref().unwrap_or("审核未通过")
+                        "\n## 修复要求\n- 当前提交：{}\n- 最新审核反馈：{}\n- 必须针对审核反馈产生实际代码修改和新提交，禁止 changed=false 或仅重新描述已有实现。\n- 请在原实现基础上修复问题，不要重做无关内容。",
+                        task.commit_sha.as_deref().unwrap_or("缺少提交 SHA"),
+                        task.last_review_feedback.as_deref().unwrap_or("审核未通过"),
                     )
                 } else {
                     String::new()
@@ -220,9 +227,9 @@ pub fn build_requirement_task_prompt(
   "approved": true,
   "feedback": "审核意见，若不通过必须说明需要如何修复",
   "result_summary": "本次审核结论"
-}"#,
+            }"#,
             format!(
-                "请只审核 review_for 对应实现节点的提交和 diff，不要修改代码。\n审核角度：{}",
+                "请只审核提交 {reviewed_commit} 及其最新 diff，不要审核旧提交，不要修改代码。\n审核角度：{}",
                 task.review_angle.as_deref().unwrap_or("综合审核")
             ),
         ),
@@ -232,9 +239,9 @@ pub fn build_requirement_task_prompt(
   "approved": true,
   "feedback": "审核意见，若不通过必须说明需要如何修复",
   "result_summary": "本次审核结论"
-}"#,
+            }"#,
             format!(
-                "请只审核 review_for 对应代码节点的提交和 diff，不要修改代码。\n审核角度：{}",
+                "请只审核提交 {reviewed_commit} 及其最新 diff，不要审核旧提交，不要修改代码。\n审核角度：{}",
                 task.review_angle.as_deref().unwrap_or("综合审核")
             ),
         ),
@@ -244,9 +251,9 @@ pub fn build_requirement_task_prompt(
   "approved": true,
   "feedback": "汇总后的审核意见，若不通过必须说明代码节点需要如何修复",
   "result_summary": "审核汇总结论"
-}"#,
+            }"#,
             format!(
-                "请汇总三个审核 Sub Agent 的意见，决定 review_for 对应代码节点是否通过。\n{}",
+                "请汇总提交 {reviewed_commit} 的三个审核 Sub Agent 意见。只要任一 Sub Agent 不通过，approved 必须为 false，feedback 和 result_summary 必须明确写审核不通过；禁止状态与文字结论矛盾。\n{}",
                 review_feedback_for_prompt(plan, task.review_for.as_deref())
             ),
         ),
@@ -1095,6 +1102,31 @@ mod tests {
         assert!(prompt.contains("禁止提前实现、补全或顺手优化后续未完成任务"));
         assert!(prompt.contains("不要把验证工作推给后续独立任务"));
         assert!(prompt.contains("实现搜索"));
+    }
+
+    #[test]
+    fn fixing_and_review_prompts_pin_latest_feedback_and_commit() {
+        let requirement = test_requirement("修复页面");
+        let mut implementation = test_task("task-1", "修复实现", Vec::new());
+        implementation.status = RequirementTaskStatus::Fixing;
+        implementation.commit_sha = Some("new-commit".to_owned());
+        implementation.last_review_feedback = Some("补充边界校验".to_owned());
+        let mut review = test_task("review-task-1", "审核实现", vec!["task-1".to_owned()]);
+        review.kind = RequirementTaskKind::ReviewSubAgent;
+        review.review_for = Some("task-1".to_owned());
+        let plan = RequirementExecutionPlan {
+            summary: "计划".to_owned(),
+            tasks: vec![implementation.clone(), review.clone()],
+        };
+
+        let fixing_prompt = build_requirement_task_prompt(&requirement, &plan, &implementation);
+        assert!(fixing_prompt.contains("当前提交：new-commit"));
+        assert!(fixing_prompt.contains("最新审核反馈：补充边界校验"));
+        assert!(fixing_prompt.contains("必须针对审核反馈产生实际代码修改和新提交"));
+
+        let review_prompt = build_requirement_task_prompt(&requirement, &plan, &review);
+        assert!(review_prompt.contains("只审核提交 new-commit 及其最新 diff"));
+        assert!(review_prompt.contains("不要审核旧提交"));
     }
 
     fn test_requirement(title: &str) -> Requirement {
