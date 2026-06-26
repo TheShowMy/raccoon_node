@@ -1850,17 +1850,17 @@
   }
 
   .token-usage-node__item {
-    @apply flex flex-col items-end justify-center rounded-lg py-1 px-1.5;
+    @apply flex flex-col items-start justify-center rounded-lg py-1 px-1.5;
     background: color-mix(in srgb, var(--surface-subtle) 60%, transparent);
   }
 
   .token-usage-node__value {
-    @apply text-[11px] font-bold leading-tight;
+    @apply w-full text-right text-[11px] font-bold leading-tight;
     color: var(--text-strong);
   }
 
   .token-usage-node__label {
-    @apply text-[9px] leading-tight;
+    @apply w-full text-left text-[9px] leading-tight;
     color: var(--text-muted);
   }
 
