@@ -182,11 +182,11 @@ describe("buildProjectNodes", () => {
     const github = nodes.find((node) => node.id === "project-github")!;
 
     expect(back.position).toEqual({ x: -350, y: 20 });
-    expect(github.position).toEqual({ x: -168, y: 20 });
-    expect(back.width).toBe(166);
-    expect(github.width).toBe(166);
-    expect(back.height).toBe(90);
-    expect(github.height).toBe(90);
+    expect(github.position).toEqual({ x: -200, y: 20 });
+    expect(back.width).toBe(140);
+    expect(github.width).toBe(140);
+    expect(back.height).toBe(56);
+    expect(github.height).toBe(56);
   });
 
   it("places the DAG entry to the right of the project requirement list", () => {
