@@ -222,6 +222,7 @@ export function buildProjectNodes({
       id: "token-usage",
       type: "startNode",
       position: { x: 780, y: 20 },
+      style: { width: 290, height: 96 },
       data: {
         kind: "token-usage",
         usage: projectCanvas?.token_usage ?? null,
