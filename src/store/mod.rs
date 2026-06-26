@@ -360,6 +360,14 @@ impl JsonStore {
             .collect::<Vec<_>>();
         sort_requirements_desc(&mut completed_requirements);
 
+        for requirement in active
+            .iter_mut()
+            .chain(queued_requirements.iter_mut())
+            .chain(completed_requirements.iter_mut())
+        {
+            requirement.messages.clear();
+        }
+
         Ok(ProjectCanvasResponse {
             project,
             active_requirement: active.into_iter().next(),

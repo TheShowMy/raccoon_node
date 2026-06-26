@@ -46,8 +46,8 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       "model-config": { width: 252, height: 360 },
       "style-settings": { width: 252, height: 134 },
       summary: { width: 252, height: 134 },
-      "project-back": { width: 140, height: 56 },
-      "project-github": { width: 140, height: 56 },
+      "project-back": { width: 166, height: 90 },
+      "project-github": { width: 166, height: 90 },
       "requirement-list": { width: 290, height: 640 },
       "requirement-chat": { width: 720, height: 760 },
       "requirement-dag": DAG_NODE_SIZE,
@@ -184,7 +184,7 @@ export function buildProjectNodes({
     {
       id: "project-github",
       type: "startNode",
-      position: { x: -200, y: 20 },
+      position: { x: -168, y: 20 },
       data: {
         kind: "project-github",
         project,
