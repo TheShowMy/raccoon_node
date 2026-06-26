@@ -18,6 +18,11 @@ fn normalize_stored_paths(data: &mut AppData) -> Result<bool, AppError> {
             }
         }
     }
+    for chat in &mut data.project_chats {
+        if let Some(path) = chat.pi_session_file.as_mut() {
+            changed |= normalize_stored_path(path)?;
+        }
+    }
     Ok(changed)
 }
 
@@ -337,6 +342,11 @@ fn referenced_pi_session_paths(data: &AppData, session_dir: &Path) -> HashSet<Pa
                     .filter_map(|task| task.pi_session_file.as_ref()),
             )
         })
+        .chain(
+            data.project_chats
+                .iter()
+                .filter_map(|chat| chat.pi_session_file.as_ref()),
+        )
         .filter_map(|session_file| {
             let path = PathBuf::from(session_file);
             let resolved = if path.is_absolute() {
@@ -350,6 +360,16 @@ fn referenced_pi_session_paths(data: &AppData, session_dir: &Path) -> HashSet<Pa
             Some(std::fs::canonicalize(&resolved).unwrap_or(resolved))
         })
         .collect()
+}
+
+fn project_chat_response_from(chat: &ProjectChat) -> ProjectChatResponse {
+    ProjectChatResponse {
+        project_id: chat.project_id.clone(),
+        messages: chat.messages.clone(),
+        running: chat.running,
+        error: chat.error.clone(),
+        updated_at: chat.updated_at,
+    }
 }
 
 fn ensure_no_running_tasks(plan: &RequirementExecutionPlan) -> Result<(), AppError> {

@@ -15,9 +15,10 @@ pub mod handlers;
 use crate::api::handlers::{
     append_requirement_message, cancel_requirement_analysis, confirm_requirement, create_project,
     create_requirement, delete_project, delete_requirement, get_model_settings, get_project_canvas,
-    get_requirement_conversation, get_start, plan_requirement_execution, put_model_settings,
-    requirement_events, rerun_review, retry_failed_node, retry_from_node,
-    spawn_startup_requirement_scheduler, submit_requirement_clarifications,
+    get_project_chat, get_requirement_conversation, get_start, plan_requirement_execution,
+    project_chat_events, put_model_settings, requirement_events, rerun_review, retry_failed_node,
+    retry_from_node, send_project_chat_message, spawn_startup_requirement_scheduler,
+    submit_requirement_clarifications,
 };
 use crate::pi_rpc::PiRpcModelProvider;
 use crate::store::JsonStore;
@@ -31,6 +32,10 @@ pub async fn build_app(data_path: PathBuf, public_dir: PathBuf) -> Router {
         .recover_interrupted_requirements()
         .await
         .expect("failed to recover interrupted requirements");
+    store
+        .recover_interrupted_project_chats()
+        .await
+        .expect("failed to recover interrupted project chats");
     store.cleanup_stale_pi_sessions().await;
     let model_provider = PiRpcModelProvider::start(store.data_root.clone()).await;
     build_app_with_startup_requirements(
@@ -56,10 +61,12 @@ fn build_app_with_startup_requirements(
     startup_requirement_ids: Vec<String>,
 ) -> Router {
     let (event_tx, _) = broadcast::channel(256);
+    let (project_chat_tx, _) = broadcast::channel(256);
     let state = AppState {
         store: Arc::new(tokio::sync::RwLock::new(store)),
         model_provider,
         requirement_events: event_tx,
+        project_chat_events: project_chat_tx,
         project_scheduler_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
@@ -68,6 +75,12 @@ fn build_app_with_startup_requirements(
         .route("/projects", post(create_project))
         .route("/projects/{id}", delete(delete_project))
         .route("/projects/{id}/canvas", get(get_project_canvas))
+        .route("/projects/{id}/chat", get(get_project_chat))
+        .route(
+            "/projects/{id}/chat/messages",
+            post(send_project_chat_message),
+        )
+        .route("/projects/{id}/chat/events", get(project_chat_events))
         .route("/projects/{id}/requirements", post(create_requirement))
         .route(
             "/requirements/{id}/messages",

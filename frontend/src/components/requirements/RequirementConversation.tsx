@@ -1,22 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  Bot,
   Check,
-  ChevronDown,
-  ChevronRight,
   Circle,
-  Loader2,
   MessageSquare,
-  Send,
   Sparkles,
-  Square,
-  User,
   X,
 } from "lucide-react";
 import type {
   DraftClarificationAnswer,
-  LiveBubble,
   Requirement,
   RequirementClarification,
   RequirementConversation,
@@ -28,13 +20,14 @@ import {
   buildBubbleStreamFromEvents,
   buildBubbleStreamFromTrace,
   createDraftAnswer,
-  formatDate,
   hasDraftAnswer,
   requirementStatusText,
   toggleClarificationOption,
   traceFromMetadata,
-  traceStatusText,
 } from "../../utils/format";
+import ChatComposer from "../ui/ChatComposer";
+import ChatMessageBubble from "../ui/ChatMessageBubble";
+import LiveProcessCard from "../ui/LiveProcessCard";
 
 type Props = {
   conversation: RequirementConversation | null;
@@ -95,8 +88,7 @@ export default function RequirementConversationWorkbench({
       ) ||
       promptDismissed);
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submit() {
     if (canSend) {
       await onSend();
     }
@@ -172,15 +164,22 @@ export default function RequirementConversationWorkbench({
           </RequirementPromptLayer>
         ) : null}
 
-        <RequirementComposer
+        <ChatComposer
           value={input}
-          busy={busy}
-          running={running}
-          blocked={hasBlockingPrompt}
+          disabled={busy || running || hasBlockingPrompt}
           canSend={canSend}
+          placeholder={
+            hasBlockingPrompt
+              ? "先处理上方卡片，或选择继续补充"
+              : running
+                ? "Coordinator 正在处理，过程会实时显示"
+                : "继续描述你的需求..."
+          }
           onChange={onInputChange}
           onSubmit={submit}
-          onStop={onCancel}
+          onStop={running ? onCancel : undefined}
+          sendLabel="发送"
+          stopLabel="停止分析"
         />
       </div>
     </>
@@ -249,7 +248,7 @@ function RequirementTranscript({
             </div>
           ) : null}
           {liveBubbles.length > 0 || running ? (
-            <RequirementProcessCard
+            <LiveProcessCard
               title="Coordinator 正在处理"
               status={running ? "running" : "done"}
               bubbles={liveBubbles}
@@ -278,7 +277,7 @@ function RequirementTranscriptItem({
 }) {
   if (item.kind === "process") {
     return (
-      <RequirementProcessCard
+      <LiveProcessCard
         title={item.title}
         status={item.status}
         bubbles={buildBubbleStreamFromTrace(
@@ -307,90 +306,12 @@ function RequirementTranscriptItem({
   }
 
   return (
-    <article className={`rq-message rq-message--${item.kind}`}>
-      <div className="rq-message__avatar">
-        {item.kind === "user" ? <User size={14} /> : <Bot size={14} />}
-      </div>
-      <div className="rq-message__body">
-        <div className="rq-message__meta">
-          <span>{item.kind === "user" ? "你" : "Coordinator"}</span>
-          <time>{formatDate(item.created_at)}</time>
-        </div>
-        <p>{item.text}</p>
-      </div>
-    </article>
-  );
-}
-
-function RequirementProcessCard({
-  title,
-  status,
-  bubbles,
-  live = false,
-}: {
-  title: string;
-  status: "running" | "done" | "error";
-  bubbles: LiveBubble[];
-  live?: boolean;
-}) {
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(status === "running" || live);
-  const errored =
-    status === "error" || bubbles.some((bubble) => bubble.status === "error");
-  const bubbleScrollKey = bubbles
-    .map((bubble) => `${bubble.id}:${bubble.status}:${bubble.content.length}`)
-    .join("|");
-
-  useEffect(() => {
-    if (!open || (status !== "running" && !live)) return;
-    const frame = requestAnimationFrame(() => {
-      const body = bodyRef.current;
-      if (!body) return;
-      body.scrollTop = body.scrollHeight;
-      body.querySelectorAll("pre").forEach((element) => {
-        element.scrollTop = element.scrollHeight;
-      });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [bubbleScrollKey, live, open, status]);
-
-  return (
-    <section className={`rq-process rq-process--${errored ? "error" : status}`}>
-      <button
-        className="rq-process__head"
-        type="button"
-        onClick={() => setOpen(!open)}
-      >
-        <span className="rq-process__icon">
-          {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-        </span>
-        <strong>{title || "Pi Agent 过程"}</strong>
-        <span>{errored ? "异常" : traceStatusText(status)}</span>
-        <span>{bubbles.length} 步</span>
-        {status === "running" ? (
-          <Loader2 className="rq-spin" size={14} />
-        ) : null}
-      </button>
-      {open ? (
-        <div ref={bodyRef} className="rq-process__body">
-          {bubbles.length > 0 ? (
-            bubbles.map((bubble) => (
-              <div
-                key={bubble.id}
-                className={`rq-process-step rq-process-step--${bubble.status}`}
-              >
-                <span>{bubble.label}</span>
-                {bubble.content ? <pre>{bubble.content}</pre> : null}
-              </div>
-            ))
-          ) : (
-            <div className="rq-process-step rq-process-step--running">
-              <span>等待 Pi Agent 事件...</span>
-            </div>
-          )}
-        </div>
-      ) : null}
-    </section>
+    <ChatMessageBubble
+      role={item.kind}
+      content={item.text}
+      createdAt={item.created_at}
+      assistantLabel="Coordinator"
+    />
   );
 }
 
@@ -562,58 +483,5 @@ function RequirementConfirmCard({
         </button>
       </div>
     </section>
-  );
-}
-
-function RequirementComposer({
-  value,
-  busy,
-  running,
-  blocked,
-  canSend,
-  onChange,
-  onSubmit,
-  onStop,
-}: {
-  value: string;
-  busy: boolean;
-  running: boolean;
-  blocked: boolean;
-  canSend: boolean;
-  onChange: (value: string) => void;
-  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
-  onStop: () => void;
-}) {
-  return (
-    <form className="rq-composer nowheel nodrag" onSubmit={onSubmit}>
-      <textarea
-        value={value}
-        disabled={busy || running || blocked}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={
-          blocked
-            ? "先处理上方卡片，或选择继续补充"
-            : running
-              ? "Coordinator 正在处理，过程会实时显示"
-              : "继续描述你的需求..."
-        }
-        rows={1}
-      />
-      {running ? (
-        <button
-          type="button"
-          className="rq-composer__stop"
-          onClick={onStop}
-          aria-label="停止分析"
-          title="停止分析"
-        >
-          <Square size={15} fill="currentColor" />
-        </button>
-      ) : (
-        <button type="submit" disabled={!canSend} aria-label="发送">
-          <Send size={15} />
-        </button>
-      )}
-    </form>
   );
 }

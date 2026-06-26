@@ -292,6 +292,46 @@ impl PiRpcClient {
         Ok(output)
     }
 
+    pub async fn ask_project_chat(
+        &self,
+        input: ProjectChatInput,
+        events: Option<ProjectChatEventEmitter>,
+    ) -> Result<ProjectChatOutput, AppError> {
+        let session_reused = self
+            .restore_or_new_session(input.pi_session_file.as_deref())
+            .await?;
+        self.prepare_model_tier(&input.model_settings, RequirementModelTier::Medium)
+            .await?;
+        self.prompt(&crate::project_chat::build_project_chat_prompt(
+            &input,
+            session_reused,
+        ))
+        .await?;
+        let mut pi_events = Vec::new();
+        let no_requirement_events = None;
+        self.wait_for_agent_end_with_events(
+            Duration::from_secs(120),
+            Duration::from_secs(600),
+            &no_requirement_events,
+            |event| {
+                if let Some(emitter) = &events {
+                    emitter.emit_pi_event(event.clone());
+                }
+                pi_events.push(event);
+            },
+        )
+        .await?;
+        let response = self
+            .extract_pi_response(&pi_events)
+            .await
+            .map_err(pi_response_failure_error)?;
+        Ok(ProjectChatOutput {
+            assistant_message: response.assistant_text,
+            pi_session_file: self.get_session_file().await?,
+            trace: response.trace,
+        })
+    }
+
     async fn prepare_high_model(&self, model_settings: &ModelSettings) -> Result<(), AppError> {
         self.prepare_model_tier(model_settings, RequirementModelTier::High)
             .await

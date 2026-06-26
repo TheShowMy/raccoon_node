@@ -207,7 +207,7 @@
 
   .node-card--project-back,
   .node-card--project-github {
-    @apply h-[90px] w-[166px] cursor-pointer;
+    @apply h-[90px] w-[137px] cursor-pointer;
     box-shadow:
       var(--shadow-card),
       0 0 28px var(--glow-projects);
@@ -273,7 +273,7 @@
   }
 
   .chat-stack-card__switch {
-    @apply absolute inset-0 z-10 cursor-pointer border-0 bg-transparent p-0 text-[10px] font-bold;
+    @apply absolute top-0 right-0 bottom-0 z-10 flex w-6 cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-[10px] font-bold;
     color: var(--text-soft);
   }
 
@@ -282,7 +282,6 @@
   }
 
   .chat-stack-card__switch span {
-    @apply absolute top-1/2 right-1 -translate-y-1/2;
     writing-mode: vertical-rl;
   }
 
@@ -1370,7 +1369,7 @@
   }
 
   .rq-transcript {
-    @apply min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-[96px];
+    @apply min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-[188px];
     overscroll-behavior: contain;
   }
 
@@ -1487,6 +1486,18 @@
     overflow-wrap: anywhere;
   }
 
+  .rq-message__attachments {
+    @apply mt-2 grid gap-2;
+  }
+
+  .rq-message__attachments .rq-process {
+    @apply rounded-[12px];
+  }
+
+  .rq-message__attachments .rq-process__body {
+    @apply max-h-[180px];
+  }
+
   .rq-message--assistant {
     @apply max-w-[92%];
   }
@@ -1583,43 +1594,20 @@
     color: var(--text-strong);
   }
 
+  .rq-process-step__head {
+    @apply flex w-full cursor-pointer items-center justify-between gap-3 border-0 bg-transparent p-0 text-left;
+    color: inherit;
+  }
+
+  .rq-process-step__head em {
+    @apply shrink-0 text-[10px] not-italic;
+    color: var(--text-muted);
+  }
+
   .rq-process-step pre {
     @apply m-0 max-h-[180px] overflow-auto text-[11px] leading-relaxed whitespace-pre-wrap;
     color: var(--text-soft);
     overflow-wrap: anywhere;
-  }
-
-  .project-chat-events {
-    @apply grid gap-2 rounded-[14px] border p-3;
-    border-color: color-mix(in srgb, var(--accent-projects) 28%, transparent);
-    background: color-mix(in srgb, var(--accent-projects) 6%, transparent);
-  }
-
-  .project-chat-events > strong {
-    @apply text-xs;
-    color: var(--accent-projects);
-  }
-
-  .project-chat-event {
-    @apply grid gap-1 rounded-[10px] border px-3 py-2;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
-  }
-
-  .project-chat-event span {
-    @apply text-[10px] font-bold;
-    color: var(--text-muted);
-  }
-
-  .project-chat-event p,
-  .project-chat-event pre {
-    @apply m-0 text-[11px] leading-relaxed whitespace-pre-wrap;
-    color: var(--text-soft);
-    overflow-wrap: anywhere;
-  }
-
-  .project-chat-event pre {
-    @apply max-h-[160px] overflow-auto;
   }
 
   .rq-prompt-layer {
@@ -1726,14 +1714,14 @@
   }
 
   .rq-composer {
-    @apply absolute right-4 bottom-4 left-4 z-20 grid grid-cols-[minmax(0,1fr)_42px] gap-2 rounded-[16px] border p-2 backdrop-blur-xl;
+    @apply absolute right-4 bottom-4 left-4 z-20 grid grid-cols-[minmax(0,1fr)_42px] items-end gap-2 rounded-[16px] border p-2 backdrop-blur-xl;
     border-color: var(--card-border-strong);
     background: color-mix(in srgb, var(--card-bg) 92%, transparent);
     box-shadow: 0 12px 34px rgba(0, 0, 0, 0.32);
   }
 
   .rq-composer textarea {
-    @apply min-h-[42px] max-h-[130px] px-3 py-2.5 text-[13px] leading-relaxed;
+    @apply min-h-[42px] max-h-[156px] overflow-hidden px-3 py-2.5 text-[13px] leading-relaxed;
   }
 
   .rq-composer textarea::placeholder,
@@ -2244,10 +2232,15 @@
 /* === Compact project-back / project-github === */
 .node-card--project-back.compact,
 .node-card--project-github.compact {
-  width: 140px !important;
-  height: 56px !important;
+  width: 137px !important;
+  height: 90px !important;
   min-height: 0 !important;
-  padding: 4px 8px;
+  padding: 12px;
   border-radius: 12px;
   box-shadow: var(--shadow-card);
+}
+
+.node-card--project-back.compact .node-header,
+.node-card--project-github.compact .node-header {
+  gap: 8px;
 }

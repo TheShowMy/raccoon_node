@@ -192,6 +192,45 @@ async fn prepare_task_workspace(
     }
 }
 
+async fn prepare_project_chat_workspace(
+    data_root: &Path,
+    input: &ProjectChatInput,
+) -> Result<(PathBuf, String), AppError> {
+    let repo = resolve_project_working_dir(data_root, &input.project.local_path)?;
+    let head = git(&repo, &["rev-parse", "HEAD"])
+        .await?
+        .trim()
+        .to_owned();
+    let worktree = data_root
+        .join("projects")
+        .join(&input.project.id)
+        .join("project-chat-worktree");
+    let worktree = normalize_local_path(&worktree)?;
+    ensure_child_path(data_root, &worktree)?;
+
+    if !worktree.join(".git").exists() {
+        if worktree.exists() {
+            tokio::fs::remove_dir_all(&worktree).await?;
+        }
+        if let Some(parent) = worktree.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        git(
+            &repo,
+            &["worktree", "add", "--detach", path_str(&worktree)?, &head],
+        )
+        .await?;
+    }
+    clean_project_chat_workspace(&worktree, &head).await?;
+    Ok((worktree, head))
+}
+
+async fn clean_project_chat_workspace(worktree: &Path, head: &str) -> Result<(), AppError> {
+    git(worktree, &["reset", "--hard", head]).await?;
+    git(worktree, &["clean", "-fd"]).await?;
+    Ok(())
+}
+
 async fn ensure_branch_exists(repo: &Path, branch: &str) -> Result<(), AppError> {
     git(repo, &["rev-parse", "--verify", branch])
         .await

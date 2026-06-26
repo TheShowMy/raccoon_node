@@ -8,6 +8,7 @@ import {
   type TraceData,
   type TraceMetadata,
   type StreamEvent,
+  type ProjectChatEvent,
   type ModelSettings,
   type ThemeMode,
   type ModelTierKey,
@@ -166,8 +167,10 @@ export function buildBubbleStreamFromTrace(trace: TraceData): LiveBubble[] {
   return bubbles;
 }
 
+type PiStreamEvent = StreamEvent | ProjectChatEvent;
+
 export function buildBubbleStreamFromEvents(
-  events: StreamEvent[],
+  events: PiStreamEvent[],
 ): LiveBubble[] {
   const bubbles: LiveBubble[] = [];
   let seq = 0;
@@ -251,7 +254,7 @@ export function buildBubbleStreamFromEvents(
       bubbles.push({
         id: `end-${seq++}`,
         type: "status",
-        label: event.pi_type === "agent_end" ? "分析完成" : "本轮分析完成",
+        label: event.pi_type === "agent_end" ? "处理完成" : "本轮处理完成",
         content: "",
         status: "done",
       });

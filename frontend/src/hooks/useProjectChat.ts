@@ -55,14 +55,22 @@ export function useProjectChat(projectId: string | null) {
           return;
         }
         setProjectChatEvents((current) => [...current, parsed]);
-        if (
-          parsed.event !== "pi_event" ||
-          parsed.pi_type === "agent_end" ||
-          parsed.pi_type === "turn_end"
-        ) {
-          void loadProjectChat(projectId).catch((reason) =>
-            setProjectChatError(readError(reason)),
-          );
+        const finalEvent = [
+          "project_chat_completed",
+          "project_chat_failed",
+          "chat_completed",
+          "chat_failed",
+          "completed",
+          "failed",
+        ].includes(parsed.event);
+        if (finalEvent) {
+          void loadProjectChat(projectId)
+            .then(() => {
+              if (projectIdRef.current === projectId) {
+                setProjectChatEvents([]);
+              }
+            })
+            .catch((reason) => setProjectChatError(readError(reason)));
         }
       } catch (error) {
         console.error(
@@ -76,6 +84,9 @@ export function useProjectChat(projectId: string | null) {
     source.onmessage = handleEvent;
     for (const eventName of [
       "pi_event",
+      "project_chat_started",
+      "project_chat_completed",
+      "project_chat_failed",
       "chat_started",
       "chat_updated",
       "chat_completed",

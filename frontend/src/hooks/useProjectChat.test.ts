@@ -52,7 +52,7 @@ describe("useProjectChat", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it("loads project chat and refreshes persisted messages after completion", async () => {
+  it("loads project chat and refreshes persisted messages after project completion", async () => {
     const { result } = renderHook(() => useProjectChat("project-1"));
 
     await waitFor(() => expect(result.current.projectChat).toEqual(response));
@@ -61,15 +61,71 @@ describe("useProjectChat", () => {
     );
 
     act(() => {
-      FakeEventSource.instances[0].emit("completed", {
+      FakeEventSource.instances[0].emit("pi_event", {
         project_id: "project-1",
-        event: "completed",
-        message: "完成",
+        event: "pi_event",
+        message: "本轮处理完成",
+        pi_type: "turn_end",
       });
     });
 
     await waitFor(() => {
       expect(result.current.projectChatEvents).toHaveLength(1);
+    });
+    expect(getProjectChat).toHaveBeenCalledTimes(1);
+
+    vi.mocked(getProjectChat).mockResolvedValueOnce({
+      ...response,
+      messages: [
+        {
+          role: "assistant",
+          content: "回答完成",
+          created_at: response.updated_at,
+        },
+      ],
+    });
+
+    act(() => {
+      FakeEventSource.instances[0].emit("project_chat_completed", {
+        project_id: "project-1",
+        event: "project_chat_completed",
+        message: "完成",
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.projectChat?.messages).toHaveLength(1);
+      expect(result.current.projectChatEvents).toHaveLength(0);
+      expect(getProjectChat).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("refreshes persisted state after project chat failure", async () => {
+    const { result } = renderHook(() => useProjectChat("project-1"));
+    await waitFor(() => expect(result.current.projectChat).toEqual(response));
+
+    vi.mocked(getProjectChat).mockResolvedValueOnce({
+      ...response,
+      error: "项目问答失败。",
+    });
+
+    act(() => {
+      FakeEventSource.instances[0].emit("pi_event", {
+        project_id: "project-1",
+        event: "pi_event",
+        message: "正在生成内容。",
+        pi_type: "message_update",
+      });
+      FakeEventSource.instances[0].emit("project_chat_failed", {
+        project_id: "project-1",
+        event: "project_chat_failed",
+        message: "项目问答失败。",
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.projectChatError).toBe("项目问答失败。");
+      expect(result.current.projectChatEvents).toHaveLength(0);
       expect(getProjectChat).toHaveBeenCalledTimes(2);
     });
   });

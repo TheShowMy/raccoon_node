@@ -180,13 +180,19 @@ describe("buildProjectNodes", () => {
     const nodes = buildProjectNodes(params(canvas, null));
     const back = nodes.find((node) => node.id === "project-back")!;
     const github = nodes.find((node) => node.id === "project-github")!;
+    const completed = nodes.find(
+      (node) => node.id === "completed-requirements",
+    )!;
 
     expect(back.position).toEqual({ x: -350, y: 20 });
-    expect(github.position).toEqual({ x: -200, y: 20 });
-    expect(back.width).toBe(140);
-    expect(github.width).toBe(140);
-    expect(back.height).toBe(56);
-    expect(github.height).toBe(56);
+    expect(github.position).toEqual({ x: -197, y: 20 });
+    expect(back.width).toBe(137);
+    expect(github.width).toBe(137);
+    expect(back.height).toBe(90);
+    expect(github.height).toBe(90);
+    expect((github.position.x ?? 0) + (github.width ?? 0)).toBe(
+      (completed.position.x ?? 0) + (completed.width ?? 0),
+    );
   });
 
   it("places the DAG entry to the right of the project requirement list", () => {

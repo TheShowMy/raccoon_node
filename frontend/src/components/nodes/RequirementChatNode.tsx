@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from "react";
-import { Bot, MessageSquare, Send, User } from "lucide-react";
-import type {
-  ProjectChatEvent,
-  ProjectChatMessage,
-  StartNodeData,
-} from "../../types/api";
-import { formatDate } from "../../utils/format";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { MessageSquare } from "lucide-react";
+import type { StartNodeData } from "../../types/api";
+import {
+  buildBubbleStreamFromEvents,
+  buildBubbleStreamFromTrace,
+  traceFromMetadata,
+} from "../../utils/format";
 import RequirementConversationWorkbench from "../requirements/RequirementConversation";
+import ChatComposer from "../ui/ChatComposer";
+import ChatMessageBubble from "../ui/ChatMessageBubble";
+import LiveProcessCard from "../ui/LiveProcessCard";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 type ActiveCard = "requirement" | "project";
@@ -96,6 +99,26 @@ function ProjectChatWorkbench({ data }: { data: ChatData }) {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const running = data.projectChat?.running ?? false;
   const error = data.projectChatError ?? data.projectChat?.error ?? null;
+  const liveBubbles = useMemo(
+    () => buildBubbleStreamFromEvents(data.projectChatEvents),
+    [data.projectChatEvents],
+  );
+  const transientEvents = data.projectChatEvents.filter(
+    (event) =>
+      event.event !== "pi_event" &&
+      ![
+        "project_chat_started",
+        "project_chat_completed",
+        "project_chat_failed",
+        "chat_started",
+        "chat_updated",
+        "chat_completed",
+        "chat_failed",
+        "started",
+        "completed",
+        "failed",
+      ].includes(event.event),
+  );
   const canSend =
     !data.projectChatBusy &&
     !running &&
@@ -111,6 +134,7 @@ function ProjectChatWorkbench({ data }: { data: ChatData }) {
     data.projectChat?.messages.length,
     data.projectChat?.updated_at,
     data.projectChatEvents.length,
+    liveBubbles.length,
   ]);
 
   return (
@@ -130,17 +154,57 @@ function ProjectChatWorkbench({ data }: { data: ChatData }) {
       <div className="rq-workbench project-chat-workbench">
         <div ref={transcriptRef} className="rq-transcript nowheel nodrag">
           {data.projectChat?.messages.length ||
-          data.projectChatEvents.length ||
+          (running && liveBubbles.length) ||
+          transientEvents.length ||
+          running ||
           error ? (
             <div className="rq-transcript__items">
               {data.projectChat?.messages.map((message, index) => (
-                <ProjectChatMessageView
-                  key={`${message.created_at}-${index}`}
-                  message={message}
-                />
+                <Fragment key={`${message.created_at}-${index}`}>
+                  <ChatMessageBubble
+                    role={message.role}
+                    content={message.content}
+                    createdAt={message.created_at}
+                    assistantLabel="Pi Agent"
+                  >
+                    {message.role === "assistant" && message.metadata ? (
+                      <LiveProcessCard
+                        title="回答过程"
+                        status="done"
+                        bubbles={buildBubbleStreamFromTrace(
+                          traceFromMetadata(message.metadata) ?? {
+                            thinking: "",
+                            output: "",
+                            tools: [],
+                            statuses: [],
+                          },
+                        )}
+                      />
+                    ) : null}
+                  </ChatMessageBubble>
+                </Fragment>
               ))}
-              {data.projectChatEvents.length > 0 ? (
-                <ProjectChatEvents events={data.projectChatEvents} />
+              {transientEvents.length > 0 ? (
+                <div className="rq-notice rq-notice--info">
+                  {transientEvents.at(-1)?.message}
+                </div>
+              ) : null}
+              {running ? (
+                <ChatMessageBubble
+                  role="assistant"
+                  content=""
+                  createdAt={
+                    data.projectChat?.updated_at ?? new Date().toISOString()
+                  }
+                  assistantLabel="Pi Agent"
+                >
+                  <LiveProcessCard
+                    title="正在回答"
+                    status="running"
+                    bubbles={liveBubbles}
+                    live
+                  />
+                </ChatMessageBubble>
               ) : null}
               {error ? (
                 <div className="rq-notice rq-notice--warn" role="alert">
@@ -157,71 +221,18 @@ function ProjectChatWorkbench({ data }: { data: ChatData }) {
           )}
         </div>
 
-        <form
-          className="rq-composer nowheel nodrag"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (canSend) void data.onProjectChatSend();
-          }}
-        >
-          <textarea
-            value={data.projectChatInput}
-            disabled={data.projectChatBusy || running}
-            onChange={(event) =>
-              data.onProjectChatInputChange(event.target.value)
-            }
-            placeholder={
-              running ? "Pi Agent 正在处理..." : "询问项目代码、结构或实现..."
-            }
-            rows={1}
-          />
-          <button type="submit" disabled={!canSend} aria-label="发送项目问答">
-            <Send size={15} />
-          </button>
-        </form>
+        <ChatComposer
+          value={data.projectChatInput}
+          disabled={data.projectChatBusy || running}
+          canSend={canSend}
+          placeholder={
+            running ? "Pi Agent 正在处理..." : "询问项目代码、结构或实现..."
+          }
+          sendLabel="发送项目问答"
+          onChange={data.onProjectChatInputChange}
+          onSubmit={data.onProjectChatSend}
+        />
       </div>
     </>
-  );
-}
-
-function ProjectChatMessageView({ message }: { message: ProjectChatMessage }) {
-  return (
-    <article className={`rq-message rq-message--${message.role}`}>
-      <div className="rq-message__avatar">
-        {message.role === "user" ? <User size={14} /> : <Bot size={14} />}
-      </div>
-      <div className="rq-message__body">
-        <div className="rq-message__meta">
-          <span>
-            {message.role === "user"
-              ? "你"
-              : message.role === "assistant"
-                ? "Pi Agent"
-                : "系统"}
-          </span>
-          <time dateTime={message.created_at}>
-            {formatDate(message.created_at)}
-          </time>
-        </div>
-        <p>{message.content}</p>
-      </div>
-    </article>
-  );
-}
-
-function ProjectChatEvents({ events }: { events: ProjectChatEvent[] }) {
-  return (
-    <section className="project-chat-events" aria-label="实时 Pi 事件">
-      <strong>实时 Pi 事件</strong>
-      {events.map((event, index) => (
-        <div key={`${event.event}-${index}`} className="project-chat-event">
-          <span>{event.pi_type ?? event.event}</span>
-          <p>{event.message}</p>
-          {event.payload === undefined ? null : (
-            <pre>{JSON.stringify(event.payload, null, 2)}</pre>
-          )}
-        </div>
-      ))}
-    </section>
   );
 }

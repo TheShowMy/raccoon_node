@@ -183,6 +183,10 @@ impl Database {
             "DELETE FROM requirements WHERE project_id = ?1",
             rusqlite::params![id],
         )?;
+        conn.execute(
+            "DELETE FROM project_chats WHERE project_id = ?1",
+            rusqlite::params![id],
+        )?;
         Ok(())
     }
 
@@ -191,6 +195,15 @@ impl Database {
         conn.execute(
             "DELETE FROM requirements WHERE id = ?1",
             rusqlite::params![id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_project_chat(&self, project_id: &str) -> Result<(), AppError> {
+        let conn = self.conn.lock().expect("db lock poisoned");
+        conn.execute(
+            "DELETE FROM project_chats WHERE project_id = ?1",
+            rusqlite::params![project_id],
         )?;
         Ok(())
     }

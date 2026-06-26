@@ -195,6 +195,7 @@ export type ProjectCanvasData = {
 export type ProjectChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
+  metadata?: TraceMetadata | null;
   created_at: string;
 };
 

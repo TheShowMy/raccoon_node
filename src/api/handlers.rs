@@ -10,9 +10,10 @@ use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 use crate::error::AppError;
 use crate::models::{
     ClarificationAnswerRequest, ModelSettings, ModelSettingsResponse, Project,
-    ProjectCanvasResponse, RequirementAnalysisInput, RequirementConversationResponse,
-    RequirementEventEmitter, RequirementMessageRequest, RequirementStatus,
-    RequirementTaskExecutionInput, RpcStatus, StartResponse,
+    ProjectCanvasResponse, ProjectChatEventEmitter, ProjectChatMessageRequest, ProjectChatResponse,
+    RequirementAnalysisInput, RequirementConversationResponse, RequirementEventEmitter,
+    RequirementMessageRequest, RequirementStatus, RequirementTaskExecutionInput, RpcStatus,
+    StartResponse,
 };
 use crate::store::{ProjectScheduleAction, TaskExecutionDisposition};
 use crate::AppState;
@@ -103,6 +104,14 @@ pub async fn delete_project(
     }) {
         return Err(AppError::bad_request("项目仍有任务运行，暂时无法删除"));
     }
+    if store
+        .data
+        .project_chats
+        .iter()
+        .any(|chat| chat.project_id == id && chat.running)
+    {
+        return Err(AppError::bad_request("项目问答正在运行，暂时无法删除"));
+    }
     state.model_provider.release_project(&id).await?;
     store.delete_project(&id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -114,6 +123,34 @@ pub async fn get_project_canvas(
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&id)?))
+}
+
+pub async fn get_project_chat(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<ProjectChatResponse>, AppError> {
+    let mut store = state.store.write().await;
+    Ok(Json(store.project_chat_response(&id).await?))
+}
+
+pub async fn send_project_chat_message(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(payload): Json<ProjectChatMessageRequest>,
+) -> Result<Json<ProjectChatResponse>, AppError> {
+    let message = payload.message.trim().to_owned();
+    if message.is_empty() {
+        return Err(AppError::bad_request("项目问答内容不能为空"));
+    }
+
+    let (input, response) = {
+        let mut store = state.store.write().await;
+        store
+            .start_project_chat_message(&project_id, message)
+            .await?
+    };
+    spawn_project_chat_response(state, project_id, input);
+    Ok(Json(response))
 }
 
 pub async fn get_requirement_conversation(
@@ -211,6 +248,42 @@ pub async fn requirement_events(
                 Ok(_) => None,
                 Err(error) => {
                     tracing::warn!("SSE broadcast lagged: {}", error);
+                    None
+                }
+            }
+        });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+pub async fn project_chat_events(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let stream =
+        BroadcastStream::new(state.project_chat_events.subscribe()).filter_map(move |result| {
+            let project_id = project_id.clone();
+            match result {
+                Ok(event) if event.project_id == project_id => {
+                    let event_name = event.event.clone();
+                    let data = match serde_json::to_string(&event) {
+                        Ok(json) => json,
+                        Err(error) => {
+                            tracing::error!(
+                                project_id = %project_id,
+                                event_name = %event_name,
+                                error = %error,
+                                "project chat SSE event serialization failed"
+                            );
+                            r#"{"event":"serialization_failed","message":"事件序列化失败"}"#
+                                .to_owned()
+                        }
+                    };
+                    Some(Ok(Event::default().event(event_name).data(data)))
+                }
+                Ok(_) => None,
+                Err(error) => {
+                    tracing::warn!("project chat SSE broadcast lagged: {}", error);
                     None
                 }
             }
@@ -435,6 +508,48 @@ fn spawn_requirement_analysis(
         }
 
         emitter.emit(event.0, event.1);
+    });
+}
+
+fn spawn_project_chat_response(
+    state: AppState,
+    project_id: String,
+    input: crate::models::ProjectChatInput,
+) {
+    tokio::spawn(async move {
+        let emitter = ProjectChatEventEmitter {
+            project_id: project_id.clone(),
+            bus: state.project_chat_events.clone(),
+        };
+        emitter.emit("project_chat_started", "Pi Agent 开始回答项目问题。");
+
+        let output = state
+            .model_provider
+            .ask_project_chat(input, Some(emitter.clone()))
+            .await;
+        let succeeded = output.is_ok();
+        let failure = output.as_ref().err().map(ToString::to_string);
+
+        let saved = {
+            let mut store = state.store.write().await;
+            store.apply_project_chat_result(&project_id, output).await
+        };
+        if let Err(error) = saved {
+            emitter.emit(
+                "project_chat_failed",
+                &format!("保存项目问答结果失败：{error}"),
+            );
+            return;
+        }
+
+        if succeeded {
+            emitter.emit("project_chat_completed", "项目问答已完成。");
+        } else {
+            emitter.emit(
+                "project_chat_failed",
+                failure.as_deref().unwrap_or("项目问答失败。"),
+            );
+        }
     });
 }
 

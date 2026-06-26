@@ -31,6 +31,81 @@ function testRequirement(): Requirement {
 }
 
 describe("RequirementConversationWorkbench", () => {
+  it("renders conversation messages and process cards with shared UI", () => {
+    const requirement = testRequirement();
+    const conversation: RequirementConversation = {
+      id: requirement.id,
+      project_id: requirement.project_id,
+      title: requirement.title,
+      status: requirement.status,
+      running: false,
+      prompt: null,
+      error: null,
+      updated_at: now,
+      items: [
+        {
+          kind: "user",
+          id: "user-1",
+          text: "我要新增登录",
+          created_at: now,
+        },
+        {
+          kind: "assistant",
+          id: "assistant-1",
+          text: "我会先澄清范围",
+          created_at: now,
+        },
+        {
+          kind: "process",
+          id: "process-1",
+          title: "Coordinator 正在处理",
+          status: "done",
+          created_at: now,
+          metadata: {
+            type: "pi_trace",
+            version: 1,
+            trace: {
+              thinking: "分析登录边界",
+              output: "",
+              tools: [],
+              statuses: [],
+            },
+          },
+        },
+      ],
+    };
+
+    render(
+      <RequirementConversationWorkbench
+        conversation={conversation}
+        requirement={requirement}
+        projectName="alpha"
+        prompt={null}
+        promptDismissed={false}
+        input=""
+        busy={false}
+        error={null}
+        streamEvents={[]}
+        answers={{}}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onAnswerChange={vi.fn()}
+        onSubmitClarifications={vi.fn()}
+        onConfirm={vi.fn()}
+        onContinueEditing={vi.fn()}
+        onCancel={vi.fn()}
+        onAbandon={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("你")).toBeInTheDocument();
+    expect(screen.getByText("我要新增登录")).toBeInTheDocument();
+    expect(screen.getByText("Coordinator")).toBeInTheDocument();
+    expect(screen.getByText("我会先澄清范围")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Coordinator 正在处理"));
+    expect(screen.getByText("分析登录边界")).toBeInTheDocument();
+  });
+
   it("renders prompt shelf as overlay and blocks composer", () => {
     const requirement = testRequirement();
     const prompt: RequirementConversationPrompt = {

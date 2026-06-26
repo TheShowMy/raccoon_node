@@ -6,12 +6,13 @@ pub mod db;
 pub mod error;
 pub mod models;
 pub mod pi_rpc;
+pub mod project_chat;
 pub mod requirement_analysis;
 pub mod requirement_execution;
 pub mod store;
 pub mod utils;
 
-use crate::models::{ModelProvider, RequirementEventBus};
+use crate::models::{ModelProvider, ProjectChatEventBus, RequirementEventBus};
 use crate::store::JsonStore;
 use crate::utils::{data_file_path, public_dir_path, server_addr};
 
@@ -20,6 +21,7 @@ pub struct AppState {
     pub store: std::sync::Arc<RwLock<JsonStore>>,
     pub model_provider: std::sync::Arc<dyn ModelProvider>,
     pub requirement_events: RequirementEventBus,
+    pub project_chat_events: ProjectChatEventBus,
     pub project_scheduler_locks: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
     >,
@@ -70,7 +72,8 @@ mod tests {
     use crate::error::AppError;
     use crate::models::{
         ClarificationAnswerRequest, ClarificationOption, ClarificationQuestionType, ModelProvider,
-        ModelProviderFuture, ModelSettings, PiModel, Project, Requirement,
+        ModelProviderFuture, ModelSettings, PiModel, Project, ProjectChatEventEmitter,
+        ProjectChatFuture, ProjectChatInput, ProjectChatOutput, Requirement,
         RequirementAnalysisFuture, RequirementAnalysisInput, RequirementAnalysisOutput,
         RequirementClarification, RequirementConversationItem, RequirementConversationPrompt,
         RequirementDraft, RequirementEventEmitter, RequirementExecutionPlan,
@@ -90,6 +93,7 @@ mod tests {
         analysis: Result<RequirementAnalysisOutput, String>,
         plan: Result<RequirementExecutionPlan, String>,
         task: Result<RequirementTaskExecutionOutput, String>,
+        project_chat: Result<ProjectChatOutput, String>,
     }
 
     impl ModelProvider for FakeModelProvider {
@@ -120,6 +124,14 @@ mod tests {
         ) -> RequirementTaskExecutionFuture<'_> {
             Box::pin(async move { self.task.clone().map_err(AppError::internal) })
         }
+
+        fn ask_project_chat(
+            &self,
+            _input: ProjectChatInput,
+            _events: Option<ProjectChatEventEmitter>,
+        ) -> ProjectChatFuture<'_> {
+            Box::pin(async move { self.project_chat.clone().map_err(AppError::internal) })
+        }
     }
 
     fn fake_provider(models: Vec<PiModel>) -> std::sync::Arc<dyn ModelProvider> {
@@ -137,6 +149,7 @@ mod tests {
             }),
             plan: Ok(test_execution_plan()),
             task: Ok(test_task_output()),
+            project_chat: Ok(test_project_chat_output()),
         })
     }
 
@@ -148,6 +161,7 @@ mod tests {
             analysis: Ok(analysis),
             plan: Ok(test_execution_plan()),
             task: Ok(test_task_output()),
+            project_chat: Ok(test_project_chat_output()),
         })
     }
 
@@ -157,6 +171,7 @@ mod tests {
             analysis: Err(message.to_owned()),
             plan: Err(message.to_owned()),
             task: Err(message.to_owned()),
+            project_chat: Err(message.to_owned()),
         })
     }
 
@@ -256,6 +271,23 @@ mod tests {
                 "version": 1,
                 "trace": {
                     "thinking": "执行任务",
+                    "output": "",
+                    "tools": [],
+                    "statuses": []
+                }
+            })),
+        }
+    }
+
+    fn test_project_chat_output() -> ProjectChatOutput {
+        ProjectChatOutput {
+            assistant_message: "项目入口在 src/main.rs。".to_owned(),
+            pi_session_file: Some("project-chat.jsonl".to_owned()),
+            trace: Some(serde_json::json!({
+                "type": "pi_trace",
+                "version": 1,
+                "trace": {
+                    "thinking": "检查入口",
                     "output": "",
                     "tools": [],
                     "statuses": []
@@ -376,10 +408,13 @@ mod tests {
             .unwrap();
         let project_dir = store.project_dir(&project.id).unwrap();
         assert!(project_dir.exists());
+        store.project_chat_response(&project.id).await.unwrap();
+        assert_eq!(store.data.project_chats.len(), 1);
 
         store.delete_project(&project.id).await.unwrap();
 
         assert!(store.data.projects.is_empty());
+        assert!(store.data.project_chats.is_empty());
         assert!(!project_dir.exists());
 
         let missing = store.delete_project("missing").await.unwrap_err();
@@ -451,6 +486,85 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn project_chat_api_persists_messages() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_path = temp_dir.path().join("data/app.json");
+        let mut store = JsonStore::open(data_path.clone()).await.unwrap();
+        let project = test_project("alpha");
+        store.data.projects.push(project.clone());
+        write_json(&store.path, &store.data).await.unwrap();
+
+        let app = build_app_with_model_provider(
+            store,
+            PathBuf::from("frontend/dist"),
+            fake_provider(vec![test_model("test/model", "Test Model")]),
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/projects/{}/chat", project.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["project_id"], project.id);
+        assert_eq!(value["messages"].as_array().unwrap().len(), 0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/projects/{}/chat/messages", project.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"message":"项目入口在哪里？"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["running"], true);
+
+        let chat = wait_for_project_chat_answer(&data_path, &project.id).await;
+        assert!(!chat.running);
+        assert_eq!(chat.messages.len(), 2);
+        assert_eq!(chat.messages[0].content, "项目入口在哪里？");
+        assert!(chat.messages[0].metadata.is_none());
+        assert!(chat.messages[1].content.contains("src/main.rs"));
+        assert_eq!(
+            chat.messages[1]
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("type"))
+                .and_then(serde_json::Value::as_str),
+            Some("pi_trace")
+        );
+        let store = JsonStore::open(data_path).await.unwrap();
+        assert!(store.data.requirements.is_empty());
+    }
+
+    #[test]
+    fn project_chat_message_allows_legacy_missing_metadata() {
+        let message: crate::models::ProjectChatMessage =
+            serde_json::from_value(serde_json::json!({
+                "role": "assistant",
+                "content": "旧回答",
+                "created_at": "2026-06-25T00:00:00Z"
+            }))
+            .unwrap();
+
+        assert_eq!(message.content, "旧回答");
+        assert!(message.metadata.is_none());
     }
 
     #[tokio::test]
@@ -1087,6 +1201,27 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
         panic!("requirement {requirement_id} did not reach {status:?}");
+    }
+
+    async fn wait_for_project_chat_answer(
+        data_path: &Path,
+        project_id: &str,
+    ) -> crate::models::ProjectChat {
+        for _ in 0..20 {
+            let store = JsonStore::open(data_path.to_path_buf()).await.unwrap();
+            if let Some(chat) = store
+                .data
+                .project_chats
+                .iter()
+                .find(|chat| chat.project_id == project_id)
+            {
+                if !chat.running && chat.messages.len() >= 2 {
+                    return chat.clone();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("project chat {project_id} did not finish");
     }
 
     #[tokio::test]

@@ -19,7 +19,8 @@ use tokio::{
 use crate::error::AppError;
 use crate::models::{
     ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings, ModelTierSetting,
-    PiModel, RequirementAnalysisFuture, RequirementAnalysisInput, RequirementAnalysisOutput,
+    PiModel, ProjectChatEventEmitter, ProjectChatFuture, ProjectChatInput, ProjectChatOutput,
+    RequirementAnalysisFuture, RequirementAnalysisInput, RequirementAnalysisOutput,
     RequirementEventEmitter, RequirementModelTier, RequirementPlanFuture, RequirementPlanInput,
     RequirementReviewStatus, RequirementTaskExecutionFuture, RequirementTaskExecutionInput,
     RequirementTaskExecutionOutput, RequirementTaskKind, PI_RPC_REQUEST_ID,
@@ -274,6 +275,30 @@ impl ModelProvider for PiRpcModelProvider {
                 output.cleanup_summary = Some(publish.cleanup_summary);
             }
             Ok(output)
+        })
+    }
+
+    fn ask_project_chat(
+        &self,
+        input: ProjectChatInput,
+        events: Option<ProjectChatEventEmitter>,
+    ) -> ProjectChatFuture<'_> {
+        Box::pin(async move {
+            let (working_dir, head) =
+                prepare_project_chat_workspace(&self.data_root, &input).await?;
+            let client = PiRpcClient::start(&self.session_dir, &working_dir).await?;
+            let output = client.ask_project_chat(input, events).await;
+            client.shutdown().await;
+            let cleanup = clean_project_chat_workspace(&working_dir, &head).await;
+            match (output, cleanup) {
+                (Ok(output), Ok(())) => Ok(output),
+                (Ok(_), Err(error)) => Err(error),
+                (Err(error), Ok(())) => Err(error),
+                (Err(error), Err(cleanup_error)) => {
+                    tracing::warn!("项目问答 worktree 清理失败：{cleanup_error}");
+                    Err(error)
+                }
+            }
         })
     }
 

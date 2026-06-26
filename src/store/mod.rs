@@ -9,12 +9,13 @@ use chrono::Utc;
 use crate::error::AppError;
 use crate::models::{
     AppData, ClarificationAnswer, ModelSettings, PiModel, Project, ProjectCanvasResponse,
-    Requirement, RequirementAnalysisInput, RequirementAnalysisOutput, RequirementConversationItem,
-    RequirementConversationPrompt, RequirementConversationResponse, RequirementExecutionPlan,
-    RequirementMessage, RequirementMessageRole, RequirementNoticeLevel, RequirementPlanInput,
-    RequirementProcessStatus, RequirementRecoveryStage, RequirementReviewStatus, RequirementStatus,
-    RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
-    RequirementTaskStatus,
+    ProjectChat, ProjectChatInput, ProjectChatMessage, ProjectChatMessageRole, ProjectChatOutput,
+    ProjectChatResponse, Requirement, RequirementAnalysisInput, RequirementAnalysisOutput,
+    RequirementConversationItem, RequirementConversationPrompt, RequirementConversationResponse,
+    RequirementExecutionPlan, RequirementMessage, RequirementMessageRole, RequirementNoticeLevel,
+    RequirementPlanInput, RequirementProcessStatus, RequirementRecoveryStage,
+    RequirementReviewStatus, RequirementStatus, RequirementTaskExecutionInput,
+    RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
 };
 use crate::requirement_execution::effective_model_tier;
 use crate::utils::{
@@ -135,7 +136,7 @@ impl JsonStore {
             AppData {
                 projects,
                 requirements,
-                project_chats: Vec::new(),
+                project_chats: db.load_project_chats().unwrap_or_default(),
                 settings_summary,
                 model_summary,
                 model_settings,
@@ -270,7 +271,11 @@ impl JsonStore {
         self.data
             .requirements
             .retain(|requirement| requirement.project_id != id);
+        self.data.project_chats.retain(|chat| chat.project_id != id);
         self.write_persist().await?;
+        if let Some(ref db) = self.db {
+            let _ = db.delete_project(id);
+        }
         Ok(())
     }
 
@@ -394,6 +399,135 @@ impl JsonStore {
             .ok_or_else(|| AppError::not_found("需求不存在"))?;
 
         Ok(build_requirement_conversation(requirement))
+    }
+
+    pub async fn project_chat_response(
+        &mut self,
+        project_id: &str,
+    ) -> Result<ProjectChatResponse, AppError> {
+        self.ensure_project_chat(project_id).await?;
+        self.project_chat_response_inner(project_id)
+    }
+
+    pub async fn start_project_chat_message(
+        &mut self,
+        project_id: &str,
+        message: String,
+    ) -> Result<(ProjectChatInput, ProjectChatResponse), AppError> {
+        self.ensure_project_chat(project_id).await?;
+        let project = self
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+        let index = self.project_chat_index(project_id)?;
+        if self.data.project_chats[index].running {
+            return Err(AppError::bad_request("项目问答正在回答，请稍后再发送"));
+        }
+
+        let now = Utc::now();
+        let chat = &mut self.data.project_chats[index];
+        chat.messages.push(ProjectChatMessage {
+            role: ProjectChatMessageRole::User,
+            content: message,
+            metadata: None,
+            created_at: now,
+        });
+        chat.running = true;
+        chat.error = None;
+        chat.updated_at = now;
+
+        let input = ProjectChatInput {
+            project,
+            messages: chat.messages.clone(),
+            model_settings: self.data.model_settings.clone(),
+            pi_session_file: chat.pi_session_file.clone(),
+        };
+        let response = project_chat_response_from(chat);
+        self.write_persist().await?;
+        Ok((input, response))
+    }
+
+    pub async fn apply_project_chat_result(
+        &mut self,
+        project_id: &str,
+        output: Result<ProjectChatOutput, AppError>,
+    ) -> Result<ProjectChatResponse, AppError> {
+        let index = self.project_chat_index(project_id)?;
+        let now = Utc::now();
+        let chat = &mut self.data.project_chats[index];
+        chat.running = false;
+        chat.updated_at = now;
+        match output {
+            Ok(output) => {
+                chat.error = None;
+                chat.pi_session_file = output.pi_session_file;
+                let content = output.assistant_message.trim();
+                if !content.is_empty() {
+                    chat.messages.push(ProjectChatMessage {
+                        role: ProjectChatMessageRole::Assistant,
+                        content: content.to_owned(),
+                        metadata: output.trace,
+                        created_at: now,
+                    });
+                }
+            }
+            Err(error) => {
+                chat.error = Some(error.to_string());
+            }
+        }
+        let response = project_chat_response_from(chat);
+        self.write_persist().await?;
+        Ok(response)
+    }
+
+    async fn ensure_project_chat(&mut self, project_id: &str) -> Result<(), AppError> {
+        if !self
+            .data
+            .projects
+            .iter()
+            .any(|project| project.id == project_id)
+        {
+            return Err(AppError::not_found("项目不存在"));
+        }
+        if self
+            .data
+            .project_chats
+            .iter()
+            .any(|chat| chat.project_id == project_id)
+        {
+            return Ok(());
+        }
+
+        let now = Utc::now();
+        self.data.project_chats.push(ProjectChat {
+            project_id: project_id.to_owned(),
+            messages: Vec::new(),
+            running: false,
+            error: None,
+            pi_session_file: None,
+            created_at: now,
+            updated_at: now,
+        });
+        self.write_persist().await
+    }
+
+    fn project_chat_index(&self, project_id: &str) -> Result<usize, AppError> {
+        self.data
+            .project_chats
+            .iter()
+            .position(|chat| chat.project_id == project_id)
+            .ok_or_else(|| AppError::not_found("项目问答不存在"))
+    }
+
+    fn project_chat_response_inner(
+        &self,
+        project_id: &str,
+    ) -> Result<ProjectChatResponse, AppError> {
+        let index = self.project_chat_index(project_id)?;
+        Ok(project_chat_response_from(&self.data.project_chats[index]))
     }
 
     pub async fn create_requirement(
@@ -922,6 +1056,45 @@ impl JsonStore {
         let mut project_ids = project_ids.into_iter().collect::<Vec<_>>();
         project_ids.sort();
         Ok(project_ids)
+    }
+
+    pub async fn recover_interrupted_project_chats(&mut self) -> Result<(), AppError> {
+        let now = Utc::now();
+        let project_ids = self
+            .data
+            .projects
+            .iter()
+            .map(|project| project.id.as_str())
+            .collect::<HashSet<_>>();
+        let mut changed = false;
+        let mut removed_project_ids = Vec::new();
+        self.data.project_chats.retain(|chat| {
+            let keep = project_ids.contains(chat.project_id.as_str());
+            if !keep {
+                removed_project_ids.push(chat.project_id.clone());
+                changed = true;
+            }
+            keep
+        });
+        for chat in &mut self.data.project_chats {
+            if chat.running {
+                chat.running = false;
+                chat.error = Some(format!(
+                    "项目问答因{RESTART_INTERRUPTION}，请重新发送问题。"
+                ));
+                chat.updated_at = now;
+                changed = true;
+            }
+        }
+        if changed {
+            self.write_persist().await?;
+            if let Some(ref db) = self.db {
+                for project_id in removed_project_ids {
+                    let _ = db.delete_project_chat(&project_id);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn cleanup_stale_pi_sessions(&self) {

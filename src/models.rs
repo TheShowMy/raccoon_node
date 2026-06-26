@@ -67,6 +67,8 @@ pub struct ProjectChat {
 pub struct ProjectChatMessage {
     pub role: ProjectChatMessageRole,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -538,6 +540,7 @@ pub struct ProjectChatInput {
 pub struct ProjectChatOutput {
     pub assistant_message: String,
     pub pi_session_file: Option<String>,
+    pub trace: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
