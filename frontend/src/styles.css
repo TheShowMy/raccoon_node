@@ -1850,7 +1850,7 @@
   }
 
   .token-usage-node__item {
-    @apply flex flex-col items-center justify-center rounded-lg py-1;
+    @apply flex flex-col items-end justify-center rounded-lg py-1 px-1.5;
     background: color-mix(in srgb, var(--surface-subtle) 60%, transparent);
   }
 
