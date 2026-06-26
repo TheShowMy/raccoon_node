@@ -1821,20 +1821,20 @@
   }
 
   .token-usage-node__header {
-    @apply mb-1.5 flex items-center justify-between gap-2;
+    @apply mb-1.5 grid grid-cols-3 items-center gap-2;
   }
 
   .token-usage-node__title {
-    @apply text-xs font-semibold;
+    @apply text-left text-xs font-semibold;
     color: var(--text-strong);
   }
 
-  .token-usage-node__total-group {
-    @apply flex items-center gap-1;
+  .token-usage-node__icon-center {
+    @apply flex justify-center px-1;
   }
 
   .token-usage-node__total {
-    @apply text-xs font-bold;
+    @apply text-right text-xs font-bold;
     color: var(--accent-primary);
   }
 

@@ -27,24 +27,20 @@ function TokenItem({
 export default function TokenUsageNode({ data }: { data: Data }) {
   const usage = data.usage;
 
-  const totalGroup = (
-    <div className="token-usage-node__total-group">
-      <span className="token-usage-node__total">
-        {usage
-          ? formatCompactNumber(
-              usage.input + usage.output + usage.cache_read + usage.cache_write,
-            )
-          : "--"}
-      </span>
-      <Gauge size={14} className="token-usage-node__icon-inline" />
-    </div>
-  );
+  const totalText = usage
+    ? formatCompactNumber(
+        usage.input + usage.output + usage.cache_read + usage.cache_write,
+      )
+    : "--";
 
   return (
     <section className="token-usage-node">
       <div className="token-usage-node__header">
         <span className="token-usage-node__title">Token 使用</span>
-        {totalGroup}
+        <div className="token-usage-node__icon-center">
+          <Gauge size={18} className="token-usage-node__icon-inline" />
+        </div>
+        <span className="token-usage-node__total">{totalText}</span>
       </div>
       {usage ? (
         <div className="token-usage-node__grid">
