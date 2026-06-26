@@ -1487,7 +1487,7 @@
   }
 
   .rq-message__attachments {
-    @apply mt-2 grid gap-2;
+    @apply mb-2 grid gap-2;
   }
 
   .rq-message__attachments .rq-process {

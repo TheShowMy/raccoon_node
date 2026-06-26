@@ -264,6 +264,36 @@ export function buildBubbleStreamFromEvents(
   return bubbles;
 }
 
+export function buildStreamingTextFromEvents(events: PiStreamEvent[]): string {
+  const parts: string[] = [];
+
+  for (const event of events) {
+    if (event.event !== "pi_event") continue;
+    if (event.pi_type !== "message_update") continue;
+    const payload = asRecord(event.payload);
+    const assistantEvent = asRecord(payload?.assistantMessageEvent);
+    if (!assistantEvent) continue;
+
+    const deltaType = String(assistantEvent.type ?? "");
+    if (deltaType === "thinking_delta") continue;
+    if (
+      deltaType !== "text_delta" &&
+      deltaType !== "content_delta" &&
+      deltaType !== "message_delta" &&
+      deltaType !== ""
+    ) {
+      continue;
+    }
+
+    const delta = String(assistantEvent.delta ?? assistantEvent.text ?? "");
+    if (delta) {
+      parts.push(delta);
+    }
+  }
+
+  return parts.join("");
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
     ? (value as Record<string, unknown>)

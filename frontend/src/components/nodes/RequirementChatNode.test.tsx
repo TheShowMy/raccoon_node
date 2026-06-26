@@ -223,4 +223,80 @@ describe("RequirementChatNode", () => {
     expect(screen.queryByText("正在回答")).not.toBeInTheDocument();
     expect(screen.queryByText("项目问答已完成。")).not.toBeInTheDocument();
   });
+
+  it("streams answer text while keeping process card above it", () => {
+    render(
+      <RequirementChatNode
+        data={data("project-1", {
+          projectChat: {
+            project_id: "project-1",
+            running: true,
+            error: null,
+            updated_at: "2026-06-25T00:00:10Z",
+            messages: [
+              {
+                role: "user",
+                content: "入口在哪里？",
+                created_at: "2026-06-25T00:00:00Z",
+              },
+            ],
+          },
+          projectChatEvents: [
+            {
+              project_id: "project-1",
+              event: "pi_event",
+              message: "正在生成内容。",
+              pi_type: "message_update",
+              payload: {
+                assistantMessageEvent: {
+                  type: "thinking_delta",
+                  delta: "正在查看入口。",
+                },
+              },
+            },
+            {
+              project_id: "project-1",
+              event: "pi_event",
+              message: "正在生成内容。",
+              pi_type: "message_update",
+              payload: {
+                assistantMessageEvent: {
+                  type: "text_delta",
+                  delta: "入口在",
+                },
+              },
+            },
+            {
+              project_id: "project-1",
+              event: "pi_event",
+              message: "正在生成内容。",
+              pi_type: "message_update",
+              payload: {
+                assistantMessageEvent: {
+                  type: "text_delta",
+                  delta: " src/main.rs",
+                },
+              },
+            },
+          ],
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "切换到项目问答" }));
+
+    expect(screen.getByText("正在回答")).toBeInTheDocument();
+    expect(screen.getByText("正在查看入口。")).toBeInTheDocument();
+    expect(screen.getByText("入口在 src/main.rs")).toBeInTheDocument();
+
+    const body = screen.getByText("入口在 src/main.rs").parentElement;
+    const card = screen
+      .getByText("正在回答")
+      .closest(".rq-message__attachments") as HTMLElement;
+    expect(body).toContainElement(card);
+    expect(
+      card.compareDocumentPosition(screen.getByText("入口在 src/main.rs")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });

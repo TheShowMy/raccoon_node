@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildBubbleStreamFromEvents,
+  buildStreamingTextFromEvents,
   formatDate,
   githubUrlFromGitUrl,
   shortenGitUrl,
@@ -104,7 +105,7 @@ describe("format utilities", () => {
     ]);
   });
 
-  it("accepts project chat events without rendering raw payloads", () => {
+  it("extracts streaming answer text from text_delta events", () => {
     const events: ProjectChatEvent[] = [
       {
         project_id: "project-1",
@@ -112,31 +113,84 @@ describe("format utilities", () => {
         message: "正在生成内容。",
         pi_type: "message_update",
         payload: {
-          assistantMessageEvent: {
-            type: "thinking_delta",
-            delta: "检查项目结构。",
-          },
+          assistantMessageEvent: { type: "text_delta", delta: "入口在" },
         },
       },
       {
         project_id: "project-1",
         event: "pi_event",
-        message: "本轮完成。",
-        pi_type: "turn_end",
-        payload: {},
+        message: "正在生成内容。",
+        pi_type: "message_update",
+        payload: {
+          assistantMessageEvent: { type: "text_delta", delta: " src/main.rs" },
+        },
       },
     ];
 
-    expect(buildBubbleStreamFromEvents(events)).toMatchObject([
+    expect(buildStreamingTextFromEvents(events)).toBe("入口在 src/main.rs");
+  });
+
+  it("ignores thinking_delta when extracting streaming text", () => {
+    const events: ProjectChatEvent[] = [
       {
-        type: "thinking",
-        content: "检查项目结构。",
-        status: "done",
+        project_id: "project-1",
+        event: "pi_event",
+        message: "正在生成内容。",
+        pi_type: "message_update",
+        payload: {
+          assistantMessageEvent: { type: "thinking_delta", delta: "思考中" },
+        },
       },
       {
-        type: "status",
-        label: "本轮处理完成",
+        project_id: "project-1",
+        event: "pi_event",
+        message: "正在生成内容。",
+        pi_type: "message_update",
+        payload: {
+          assistantMessageEvent: { type: "text_delta", delta: "答案" },
+        },
       },
-    ]);
+    ];
+
+    expect(buildStreamingTextFromEvents(events)).toBe("答案");
+  });
+
+  it("falls back to text field when delta is absent", () => {
+    const events: ProjectChatEvent[] = [
+      {
+        project_id: "project-1",
+        event: "pi_event",
+        message: "正在生成内容。",
+        pi_type: "message_update",
+        payload: {
+          assistantMessageEvent: { type: "content_delta", text: "第一段" },
+        },
+      },
+      {
+        project_id: "project-1",
+        event: "pi_event",
+        message: "正在生成内容。",
+        pi_type: "message_update",
+        payload: {
+          assistantMessageEvent: { type: "message_delta", text: "第二段" },
+        },
+      },
+    ];
+
+    expect(buildStreamingTextFromEvents(events)).toBe("第一段第二段");
+  });
+
+  it("returns empty string when no text deltas exist", () => {
+    const events: ProjectChatEvent[] = [
+      {
+        project_id: "project-1",
+        event: "pi_event",
+        message: "工具开始执行。",
+        pi_type: "tool_execution_start",
+        payload: { toolCallId: "tool-1", toolName: "rg" },
+      },
+    ];
+
+    expect(buildStreamingTextFromEvents(events)).toBe("");
   });
 });

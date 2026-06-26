@@ -32,10 +32,10 @@ export default function ChatMessageBubble({
           <span>{label}</span>
           <time dateTime={createdAt}>{formatDate(createdAt)}</time>
         </div>
-        {content.trim() ? <p>{content}</p> : null}
         {children ? (
           <div className="rq-message__attachments">{children}</div>
         ) : null}
+        {content.trim() ? <p>{content}</p> : null}
       </div>
     </article>
   );

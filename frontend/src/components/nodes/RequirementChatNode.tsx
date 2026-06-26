@@ -4,6 +4,7 @@ import type { StartNodeData } from "../../types/api";
 import {
   buildBubbleStreamFromEvents,
   buildBubbleStreamFromTrace,
+  buildStreamingTextFromEvents,
   traceFromMetadata,
 } from "../../utils/format";
 import RequirementConversationWorkbench from "../requirements/RequirementConversation";
@@ -103,6 +104,10 @@ function ProjectChatWorkbench({ data }: { data: ChatData }) {
     () => buildBubbleStreamFromEvents(data.projectChatEvents),
     [data.projectChatEvents],
   );
+  const streamingText = useMemo(
+    () => buildStreamingTextFromEvents(data.projectChatEvents),
+    [data.projectChatEvents],
+  );
   const transientEvents = data.projectChatEvents.filter(
     (event) =>
       event.event !== "pi_event" &&
@@ -192,7 +197,7 @@ function ProjectChatWorkbench({ data }: { data: ChatData }) {
               {running ? (
                 <ChatMessageBubble
                   role="assistant"
-                  content=""
+                  content={streamingText}
                   createdAt={
                     data.projectChat?.updated_at ?? new Date().toISOString()
                   }
