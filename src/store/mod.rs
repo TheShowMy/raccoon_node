@@ -366,6 +366,11 @@ impl JsonStore {
             .chain(completed_requirements.iter_mut())
         {
             requirement.messages.clear();
+            if let Some(plan) = requirement.execution_plan.as_mut() {
+                for task in plan.tasks.iter_mut() {
+                    task.trace = None;
+                }
+            }
         }
 
         Ok(ProjectCanvasResponse {
