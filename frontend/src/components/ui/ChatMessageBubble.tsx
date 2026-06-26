@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, Bot, User } from "lucide-react";
+import { AlertTriangle, Bot, FileText, User } from "lucide-react";
+import type { FileReference, ImageAttachment } from "../../types/api";
 import { formatDate } from "../../utils/format";
 
 export type ChatMessageRole = "user" | "assistant" | "system";
@@ -9,12 +10,18 @@ export default function ChatMessageBubble({
   content,
   createdAt,
   assistantLabel = "Pi Agent",
+  references = [],
+  images = [],
+  projectId,
   children,
 }: {
   role: ChatMessageRole;
   content: string;
   createdAt: string;
   assistantLabel?: string;
+  references?: FileReference[];
+  images?: ImageAttachment[];
+  projectId?: string;
   children?: ReactNode;
 }) {
   const label =
@@ -34,6 +41,27 @@ export default function ChatMessageBubble({
         </div>
         {children ? (
           <div className="rq-message__attachments">{children}</div>
+        ) : null}
+        {references.length || images.length ? (
+          <div className="rq-message__refs">
+            {references.map((reference) => (
+              <span key={reference.path}>
+                <FileText size={13} />
+                {reference.path}
+              </span>
+            ))}
+            {images.map((image) =>
+              projectId ? (
+                <img
+                  key={image.path}
+                  src={`/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(image.path.split("/").pop() ?? "")}`}
+                  alt={image.name}
+                />
+              ) : (
+                <span key={image.path}>{image.name}</span>
+              ),
+            )}
+          </div>
         ) : null}
         {content.trim() ? <p>{content}</p> : null}
       </div>

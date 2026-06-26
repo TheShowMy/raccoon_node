@@ -215,6 +215,34 @@ describe("buildProjectNodes", () => {
     );
   });
 
+  it("adds token usage above queued requirements", () => {
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [],
+      completed_requirements: [],
+      token_usage: {
+        input: 10,
+        output: 20,
+        cache_read: 30,
+        cache_write: 40,
+        context_tokens: 50,
+        context_window: 100,
+        context_percent: 50,
+      },
+    };
+
+    const nodes = buildProjectNodes(params(canvas, null));
+    const token = nodes.find((node) => node.id === "token-usage")!;
+
+    expect(token.position).toEqual({ x: 780, y: 20 });
+    expect(token.data).toMatchObject({
+      kind: "token-usage",
+      usage: canvas.token_usage,
+    });
+    expect(token.height).toBe(96);
+  });
+
   it("passes recovery errors to the selected DAG node", () => {
     const selectedRequirement = requirement();
     const canvas: ProjectCanvasData = {

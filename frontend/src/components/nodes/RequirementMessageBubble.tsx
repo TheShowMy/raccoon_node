@@ -1,5 +1,5 @@
 import React from "react";
-import { User, Bot, AlertCircle } from "lucide-react";
+import { User, Bot, AlertCircle, FileText } from "lucide-react";
 import {
   traceFromMessage,
   buildBubbleStreamFromTrace,
@@ -65,6 +65,19 @@ export default function RequirementMessageBubble({
           </time>
         </div>
         <div className="requirement-message__bubble">{message.content}</div>
+        {(message.references?.length ?? 0) || (message.images?.length ?? 0) ? (
+          <div className="requirement-message__refs">
+            {(message.references ?? []).map((reference) => (
+              <span key={reference.path}>
+                <FileText size={13} />
+                {reference.path}
+              </span>
+            ))}
+            {(message.images ?? []).map((image) => (
+              <span key={image.path}>{image.name}</span>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   );

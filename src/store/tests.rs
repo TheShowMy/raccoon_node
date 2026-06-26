@@ -628,6 +628,8 @@ fn requirement(id: &str) -> Requirement {
         messages: vec![RequirementMessage {
             role: RequirementMessageRole::User,
             content: id.to_owned(),
+            references: Vec::new(),
+            images: Vec::new(),
             metadata: None,
             created_at: now,
         }],

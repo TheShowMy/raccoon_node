@@ -1,19 +1,22 @@
 use axum::{
-    extract::{Path as AxumPath, State},
-    http::StatusCode,
+    body::Body,
+    extract::{Path as AxumPath, Query, State},
+    http::{header, Response, StatusCode},
     response::sse::{Event, KeepAlive, Sse},
     Json,
 };
+use serde::Deserialize;
 use tokio::task::JoinSet;
 use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
 use crate::error::AppError;
+use crate::file_refs::{content_type_value, list_repo_files, read_attachment, save_attachment};
 use crate::models::{
-    ClarificationAnswerRequest, ModelSettings, ModelSettingsResponse, Project,
-    ProjectCanvasResponse, ProjectChatEventEmitter, ProjectChatMessageRequest, ProjectChatResponse,
-    RequirementAnalysisInput, RequirementConversationResponse, RequirementEventEmitter,
-    RequirementMessageRequest, RequirementStatus, RequirementTaskExecutionInput, RpcStatus,
-    StartResponse,
+    AttachmentUploadRequest, ClarificationAnswerRequest, FileReference, ImageAttachment,
+    ModelSettings, ModelSettingsResponse, Project, ProjectCanvasResponse, ProjectChatEventEmitter,
+    ProjectChatMessageRequest, ProjectChatResponse, RequirementAnalysisInput,
+    RequirementConversationResponse, RequirementEventEmitter, RequirementMessageRequest,
+    RequirementStatus, RequirementTaskExecutionInput, RpcStatus, StartResponse,
 };
 use crate::store::{ProjectScheduleAction, TaskExecutionDisposition};
 use crate::AppState;
@@ -125,6 +128,66 @@ pub async fn get_project_canvas(
     Ok(Json(store.project_canvas(&id)?))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ProjectFilesQuery {
+    #[serde(default)]
+    search: String,
+}
+
+pub async fn get_project_files(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<ProjectFilesQuery>,
+) -> Result<Json<Vec<FileReference>>, AppError> {
+    let project = {
+        let store = state.store.read().await;
+        store
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?
+    };
+    Ok(Json(
+        list_repo_files(std::path::Path::new(&project.local_path), &query.search).await?,
+    ))
+}
+
+pub async fn upload_project_attachment(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    Json(payload): Json<AttachmentUploadRequest>,
+) -> Result<Json<ImageAttachment>, AppError> {
+    let project_dir = {
+        let store = state.store.read().await;
+        if !store.data.projects.iter().any(|project| project.id == id) {
+            return Err(AppError::not_found("项目不存在"));
+        }
+        store.project_dir(&id)?
+    };
+    Ok(Json(save_attachment(&project_dir, payload).await?))
+}
+
+pub async fn get_project_attachment(
+    State(state): State<AppState>,
+    AxumPath((id, file)): AxumPath<(String, String)>,
+) -> Result<Response<Body>, AppError> {
+    let project_dir = {
+        let store = state.store.read().await;
+        if !store.data.projects.iter().any(|project| project.id == id) {
+            return Err(AppError::not_found("项目不存在"));
+        }
+        store.project_dir(&id)?
+    };
+    let (bytes, mime_type) = read_attachment(&project_dir, &format!("attachments/{file}")).await?;
+    let mut response = Response::new(Body::from(bytes));
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, content_type_value(mime_type));
+    Ok(response)
+}
+
 pub async fn get_project_chat(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
@@ -146,7 +209,7 @@ pub async fn send_project_chat_message(
     let (input, response) = {
         let mut store = state.store.write().await;
         store
-            .start_project_chat_message(&project_id, message)
+            .start_project_chat_message(&project_id, message, payload.references, payload.images)
             .await?
     };
     spawn_project_chat_response(state, project_id, input);
@@ -173,7 +236,9 @@ pub async fn create_requirement(
 
     let (requirement_id, input) = {
         let mut store = state.store.write().await;
-        store.create_requirement(&project_id, message).await?
+        store
+            .create_requirement(&project_id, message, payload.references, payload.images)
+            .await?
     };
 
     spawn_requirement_analysis(state.clone(), requirement_id, input);
@@ -194,7 +259,12 @@ pub async fn append_requirement_message(
     let (project_id, input) = {
         let mut store = state.store.write().await;
         store
-            .append_requirement_message(&requirement_id, message)
+            .append_requirement_message(
+                &requirement_id,
+                message,
+                payload.references,
+                payload.images,
+            )
             .await?
     };
 

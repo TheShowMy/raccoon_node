@@ -432,6 +432,8 @@ fn build_requirement_conversation(requirement: Requirement) -> RequirementConver
             RequirementMessageRole::User => items.push(RequirementConversationItem::User {
                 id,
                 text: message.content.clone(),
+                references: message.references.clone(),
+                images: message.images.clone(),
                 created_at: message.created_at,
             }),
             RequirementMessageRole::Assistant => {

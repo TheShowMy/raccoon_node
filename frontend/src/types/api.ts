@@ -38,8 +38,19 @@ export type RequirementStatus =
 export type RequirementMessage = {
   role: "user" | "assistant" | "system" | "trace";
   content: string;
+  references?: FileReference[];
+  images?: ImageAttachment[];
   metadata?: TraceMetadata | null;
   created_at: string;
+};
+
+export type FileReference = {
+  path: string;
+};
+
+export type ImageAttachment = {
+  name: string;
+  path: string;
 };
 
 export type RequirementDraft = {
@@ -138,6 +149,8 @@ export type RequirementConversationItem =
       kind: "user";
       id: string;
       text: string;
+      references?: FileReference[];
+      images?: ImageAttachment[];
       created_at: string;
     }
   | {
@@ -190,11 +203,24 @@ export type ProjectCanvasData = {
   active_requirement: Requirement | null;
   queued_requirements: Requirement[];
   completed_requirements: Requirement[];
+  token_usage?: ProjectTokenUsage | null;
+};
+
+export type ProjectTokenUsage = {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  context_tokens: number;
+  context_window: number;
+  context_percent: number;
 };
 
 export type ProjectChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
+  references?: FileReference[];
+  images?: ImageAttachment[];
   metadata?: TraceMetadata | null;
   created_at: string;
 };
@@ -408,18 +434,26 @@ export type StartNodeData =
       conversation: RequirementConversation | null;
       promptDismissed: boolean;
       input: string;
+      references?: FileReference[];
+      images?: ImageAttachment[];
       busy: boolean;
       error: string | null;
       streamEvents: StreamEvent[];
       projectChat: ProjectChatResponse | null;
       projectChatInput: string;
+      projectChatReferences?: FileReference[];
+      projectChatImages?: ImageAttachment[];
       projectChatBusy: boolean;
       projectChatError: string | null;
       projectChatEvents: ProjectChatEvent[];
       answers: Record<string, DraftClarificationAnswer>;
       onInputChange: (value: string) => void;
+      onReferencesChange?: (references: FileReference[]) => void;
+      onImagesChange?: (images: ImageAttachment[]) => void;
       onSend: () => Promise<void>;
       onProjectChatInputChange: (value: string) => void;
+      onProjectChatReferencesChange?: (references: FileReference[]) => void;
+      onProjectChatImagesChange?: (images: ImageAttachment[]) => void;
       onProjectChatSend: () => Promise<void>;
       onAnswerChange: (
         clarification: RequirementClarification,
@@ -457,4 +491,8 @@ export type StartNodeData =
       ) => Promise<void>;
       onRetryFromNode: (requirementId: string, taskId: string) => Promise<void>;
       onRerunReview: (requirementId: string, taskId: string) => Promise<void>;
+    }
+  | {
+      kind: "token-usage";
+      usage: ProjectTokenUsage | null;
     };

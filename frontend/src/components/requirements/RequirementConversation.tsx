@@ -14,6 +14,8 @@ import type {
   RequirementConversation,
   RequirementConversationItem,
   RequirementConversationPrompt,
+  FileReference,
+  ImageAttachment,
   StreamEvent,
 } from "../../types/api";
 import {
@@ -33,14 +35,19 @@ type Props = {
   conversation: RequirementConversation | null;
   requirement: Requirement | null;
   projectName: string;
+  projectId: string;
   prompt: RequirementConversationPrompt | null;
   promptDismissed: boolean;
   input: string;
+  references?: FileReference[];
+  images?: ImageAttachment[];
   busy: boolean;
   error: string | null;
   streamEvents: StreamEvent[];
   answers: Record<string, DraftClarificationAnswer>;
   onInputChange: (value: string) => void;
+  onReferencesChange?: (references: FileReference[]) => void;
+  onImagesChange?: (images: ImageAttachment[]) => void;
   onSend: () => Promise<void>;
   onAnswerChange: (
     clarification: RequirementClarification,
@@ -57,14 +64,19 @@ export default function RequirementConversationWorkbench({
   conversation,
   requirement,
   projectName,
+  projectId,
   prompt,
   promptDismissed,
   input,
+  references = [],
+  images = [],
   busy,
   error,
   streamEvents,
   answers,
   onInputChange,
+  onReferencesChange = () => {},
+  onImagesChange = () => {},
   onSend,
   onAnswerChange,
   onSubmitClarifications,
@@ -166,6 +178,11 @@ export default function RequirementConversationWorkbench({
 
         <ChatComposer
           value={input}
+          projectId={projectId}
+          references={references}
+          images={images}
+          onReferencesChange={onReferencesChange}
+          onImagesChange={onImagesChange}
           disabled={busy || running || hasBlockingPrompt}
           canSend={canSend}
           placeholder={
@@ -228,7 +245,11 @@ function RequirementTranscript({
       {conversation ? (
         <div className="rq-transcript__items">
           {conversation.items.map((item) => (
-            <RequirementTranscriptItem key={item.id} item={item} />
+            <RequirementTranscriptItem
+              key={item.id}
+              item={item}
+              projectId={conversation.project_id}
+            />
           ))}
           {transientEvents.length > 0 ? (
             <div className="rq-notice rq-notice--info">
@@ -272,8 +293,10 @@ function RequirementTranscript({
 
 function RequirementTranscriptItem({
   item,
+  projectId,
 }: {
   item: RequirementConversationItem;
+  projectId: string;
 }) {
   if (item.kind === "process") {
     return (
@@ -309,6 +332,9 @@ function RequirementTranscriptItem({
     <ChatMessageBubble
       role={item.kind}
       content={item.text}
+      references={item.kind === "user" ? (item.references ?? []) : []}
+      images={item.kind === "user" ? (item.images ?? []) : []}
+      projectId={projectId}
       createdAt={item.created_at}
       assistantLabel="Coordinator"
     />

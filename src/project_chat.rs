@@ -42,6 +42,8 @@ pub fn build_project_chat_prompt(input: &ProjectChatInput, session_reused: bool)
 
 当前问题：
 {latest_question}
+
+{reference_context}
 "#,
         project_name = input.project.name,
         repo_path = input.project.local_path,
@@ -50,7 +52,8 @@ pub fn build_project_chat_prompt(input: &ProjectChatInput, session_reused: bool)
         } else {
             format!("历史消息：\n{history}")
         },
-        latest_question = latest_question
+        latest_question = latest_question,
+        reference_context = input.reference_context.as_deref().unwrap_or("")
     )
 }
 
@@ -75,9 +78,12 @@ mod tests {
             messages: vec![ProjectChatMessage {
                 role: ProjectChatMessageRole::User,
                 content: "入口在哪里？".to_owned(),
+                references: Vec::new(),
+                images: Vec::new(),
                 metadata: None,
                 created_at: Utc::now(),
             }],
+            reference_context: None,
             model_settings: ModelSettings::default(),
             pi_session_file: None,
         };

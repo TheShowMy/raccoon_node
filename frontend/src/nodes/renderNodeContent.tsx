@@ -13,6 +13,7 @@ import RequirementListNode from "../components/nodes/RequirementListNode";
 import RequirementTaskNode from "../components/nodes/RequirementTaskNode";
 import StyleSettingsNode from "../components/nodes/StyleSettingsNode";
 import SummaryCard from "../components/nodes/SummaryCard";
+import TokenUsageNode from "../components/nodes/TokenUsageNode";
 
 function assertNever(value: never): never {
   throw new Error(`Unexpected node kind: ${String(value)}`);
@@ -46,6 +47,8 @@ export function renderNodeContent(data: StartNodeData): React.JSX.Element {
       return <StyleSettingsNode data={data} />;
     case "summary":
       return <SummaryCard data={data} />;
+    case "token-usage":
+      return <TokenUsageNode data={data} />;
     default:
       return assertNever(data);
   }

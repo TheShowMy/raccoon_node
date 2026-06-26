@@ -5,17 +5,20 @@ use std::{
 };
 
 use chrono::Utc;
+use serde_json::Value;
 
 use crate::error::AppError;
+use crate::file_refs::build_reference_context;
 use crate::models::{
-    AppData, ClarificationAnswer, ModelSettings, PiModel, Project, ProjectCanvasResponse,
-    ProjectChat, ProjectChatInput, ProjectChatMessage, ProjectChatMessageRole, ProjectChatOutput,
-    ProjectChatResponse, Requirement, RequirementAnalysisInput, RequirementAnalysisOutput,
-    RequirementConversationItem, RequirementConversationPrompt, RequirementConversationResponse,
-    RequirementExecutionPlan, RequirementMessage, RequirementMessageRole, RequirementNoticeLevel,
-    RequirementPlanInput, RequirementProcessStatus, RequirementRecoveryStage,
-    RequirementReviewStatus, RequirementStatus, RequirementTaskExecutionInput,
-    RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
+    AppData, ClarificationAnswer, FileReference, ImageAttachment, ModelSettings, PiModel, Project,
+    ProjectCanvasResponse, ProjectChat, ProjectChatInput, ProjectChatMessage,
+    ProjectChatMessageRole, ProjectChatOutput, ProjectChatResponse, ProjectTokenUsage, Requirement,
+    RequirementAnalysisInput, RequirementAnalysisOutput, RequirementConversationItem,
+    RequirementConversationPrompt, RequirementConversationResponse, RequirementExecutionPlan,
+    RequirementMessage, RequirementMessageRole, RequirementNoticeLevel, RequirementPlanInput,
+    RequirementProcessStatus, RequirementRecoveryStage, RequirementReviewStatus, RequirementStatus,
+    RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
+    RequirementTaskStatus,
 };
 use crate::requirement_execution::effective_model_tier;
 use crate::utils::{
@@ -365,6 +368,13 @@ impl JsonStore {
             .collect::<Vec<_>>();
         sort_requirements_desc(&mut completed_requirements);
 
+        let token_usage = aggregate_project_token_usage(
+            self.data
+                .requirements
+                .iter()
+                .filter(|requirement| requirement.project_id == project_id),
+        );
+
         for requirement in active
             .iter_mut()
             .chain(queued_requirements.iter_mut())
@@ -383,6 +393,7 @@ impl JsonStore {
             active_requirement: active.into_iter().next(),
             queued_requirements,
             completed_requirements,
+            token_usage,
         })
     }
 
@@ -413,6 +424,8 @@ impl JsonStore {
         &mut self,
         project_id: &str,
         message: String,
+        references: Vec<FileReference>,
+        images: Vec<ImageAttachment>,
     ) -> Result<(ProjectChatInput, ProjectChatResponse), AppError> {
         self.ensure_project_chat(project_id).await?;
         let project = self
@@ -426,12 +439,22 @@ impl JsonStore {
         if self.data.project_chats[index].running {
             return Err(AppError::bad_request("项目问答正在回答，请稍后再发送"));
         }
+        let project_dir = self.project_dir(project_id)?;
+        let reference_context = build_reference_context(
+            Path::new(&project.local_path),
+            &project_dir,
+            &references,
+            &images,
+        )
+        .await?;
 
         let now = Utc::now();
         let chat = &mut self.data.project_chats[index];
         chat.messages.push(ProjectChatMessage {
             role: ProjectChatMessageRole::User,
             content: message,
+            references,
+            images,
             metadata: None,
             created_at: now,
         });
@@ -442,6 +465,7 @@ impl JsonStore {
         let input = ProjectChatInput {
             project,
             messages: chat.messages.clone(),
+            reference_context,
             model_settings: self.data.model_settings.clone(),
             pi_session_file: chat.pi_session_file.clone(),
         };
@@ -469,6 +493,8 @@ impl JsonStore {
                     chat.messages.push(ProjectChatMessage {
                         role: ProjectChatMessageRole::Assistant,
                         content: content.to_owned(),
+                        references: Vec::new(),
+                        images: Vec::new(),
                         metadata: output.trace,
                         created_at: now,
                     });
@@ -534,6 +560,8 @@ impl JsonStore {
         &mut self,
         project_id: &str,
         message: String,
+        references: Vec<FileReference>,
+        images: Vec<ImageAttachment>,
     ) -> Result<(String, RequirementAnalysisInput), AppError> {
         let project = self
             .data
@@ -542,6 +570,14 @@ impl JsonStore {
             .find(|project| project.id == project_id)
             .cloned()
             .ok_or_else(|| AppError::not_found("项目不存在"))?;
+        let project_dir = self.project_dir(project_id)?;
+        let reference_context = build_reference_context(
+            Path::new(&project.local_path),
+            &project_dir,
+            &references,
+            &images,
+        )
+        .await?;
 
         let now = Utc::now();
         let id = format!("requirement-{}", now.timestamp_millis());
@@ -554,6 +590,8 @@ impl JsonStore {
             messages: vec![RequirementMessage {
                 role: RequirementMessageRole::User,
                 content: message,
+                references,
+                images,
                 metadata: None,
                 created_at: now,
             }],
@@ -571,6 +609,7 @@ impl JsonStore {
         let input = RequirementAnalysisInput {
             project,
             messages: requirement.messages.clone(),
+            reference_context,
             clarifications: requirement.clarifications.clone(),
             draft: None,
             model_settings: self.data.model_settings.clone(),
@@ -585,6 +624,8 @@ impl JsonStore {
         &mut self,
         requirement_id: &str,
         message: String,
+        references: Vec<FileReference>,
+        images: Vec<ImageAttachment>,
     ) -> Result<(String, RequirementAnalysisInput), AppError> {
         let index = self.requirement_index(requirement_id)?;
         if !matches!(
@@ -607,6 +648,14 @@ impl JsonStore {
             .find(|project| project.id == project_id)
             .cloned()
             .ok_or_else(|| AppError::not_found("项目不存在"))?;
+        let project_dir = self.project_dir(&project_id)?;
+        let reference_context = build_reference_context(
+            Path::new(&project.local_path),
+            &project_dir,
+            &references,
+            &images,
+        )
+        .await?;
         let now = Utc::now();
         {
             let requirement = &mut self.data.requirements[index];
@@ -619,6 +668,8 @@ impl JsonStore {
             requirement.messages.push(RequirementMessage {
                 role: RequirementMessageRole::User,
                 content: message,
+                references,
+                images,
                 metadata: None,
                 created_at: now,
             });
@@ -631,6 +682,7 @@ impl JsonStore {
             RequirementAnalysisInput {
                 project,
                 messages: requirement.messages,
+                reference_context,
                 clarifications: requirement.clarifications,
                 draft: requirement.draft,
                 model_settings: self.data.model_settings.clone(),
@@ -696,6 +748,8 @@ impl JsonStore {
             requirement.messages.push(RequirementMessage {
                 role: RequirementMessageRole::User,
                 content: summary,
+                references: Vec::new(),
+                images: Vec::new(),
                 metadata: None,
                 created_at: now,
             });
@@ -708,6 +762,7 @@ impl JsonStore {
             RequirementAnalysisInput {
                 project,
                 messages: requirement.messages,
+                reference_context: None,
                 clarifications: requirement.clarifications,
                 draft: requirement.draft,
                 model_settings: self.data.model_settings.clone(),
@@ -745,6 +800,8 @@ impl JsonStore {
                     requirement.messages.push(RequirementMessage {
                         role: RequirementMessageRole::Assistant,
                         content: output.assistant_message,
+                        references: Vec::new(),
+                        images: Vec::new(),
                         metadata: None,
                         created_at: now,
                     });
@@ -753,6 +810,8 @@ impl JsonStore {
                     requirement.messages.push(RequirementMessage {
                         role: RequirementMessageRole::Trace,
                         content: "Pi Agent 分析过程".to_owned(),
+                        references: Vec::new(),
+                        images: Vec::new(),
                         metadata: Some(trace),
                         created_at: now,
                     });
@@ -765,6 +824,8 @@ impl JsonStore {
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::System,
                     content: format!("需求分析失败：{error}"),
+                    references: Vec::new(),
+                    images: Vec::new(),
                     metadata: None,
                     created_at: now,
                 });
@@ -868,6 +929,8 @@ impl JsonStore {
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::Assistant,
                     content: "执行 DAG 已生成，开始自动执行。".to_owned(),
+                    references: Vec::new(),
+                    images: Vec::new(),
                     metadata: None,
                     created_at: now,
                 });
@@ -879,6 +942,8 @@ impl JsonStore {
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::System,
                     content: format!("执行计划生成失败：{error}"),
+                    references: Vec::new(),
+                    images: Vec::new(),
                     metadata: None,
                     created_at: now,
                 });
@@ -985,6 +1050,8 @@ impl JsonStore {
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::System,
                     content: format!("执行 DAG 生成因{RESTART_INTERRUPTION}，已重新排队。"),
+                    references: Vec::new(),
+                    images: Vec::new(),
                     metadata: None,
                     created_at: now,
                 });
@@ -1026,6 +1093,8 @@ impl JsonStore {
                                     "任务「{task_title}」因{RESTART_INTERRUPTION}，恢复次数已耗尽。"
                                 )
                             },
+                            references: Vec::new(),
+                            images: Vec::new(),
                             metadata: None,
                             created_at: now,
                         });
@@ -1298,6 +1367,8 @@ impl JsonStore {
                     requirement.messages.push(RequirementMessage {
                         role: RequirementMessageRole::System,
                         content: format!("任务「{}」已生成高档模型恢复方案。", task.title),
+                        references: Vec::new(),
+                        images: Vec::new(),
                         metadata: None,
                         created_at: now,
                     });
@@ -1439,6 +1510,8 @@ impl JsonStore {
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::Assistant,
                     content: format!("任务「{}」已完成：{effective_result_summary}", task_title),
+                    references: Vec::new(),
+                    images: Vec::new(),
                     metadata: None,
                     created_at: now,
                 });
@@ -1446,6 +1519,8 @@ impl JsonStore {
                     requirement.messages.push(RequirementMessage {
                         role: RequirementMessageRole::Trace,
                         content: format!("任务「{}」执行过程", task_title),
+                        references: Vec::new(),
+                        images: Vec::new(),
                         metadata: Some(trace),
                         created_at: now,
                     });
@@ -1470,6 +1545,8 @@ impl JsonStore {
                     requirement.messages.push(RequirementMessage {
                         role: RequirementMessageRole::System,
                         content: "需求执行完成。".to_owned(),
+                        references: Vec::new(),
+                        images: Vec::new(),
                         metadata: None,
                         created_at: now,
                     });
@@ -1502,6 +1579,8 @@ impl JsonStore {
                     } else {
                         format!("任务「{}」执行失败：{error}", task_title)
                     },
+                    references: Vec::new(),
+                    images: Vec::new(),
                     metadata: None,
                     created_at: now,
                 });
@@ -1650,6 +1729,8 @@ impl JsonStore {
         requirement.messages.push(RequirementMessage {
             role: RequirementMessageRole::System,
             content: format!("需求执行失败：{error}"),
+            references: Vec::new(),
+            images: Vec::new(),
             metadata: None,
             created_at: now,
         });
@@ -1699,6 +1780,64 @@ impl JsonStore {
         ensure_child_path(&self.data_root, &project_dir)?;
         Ok(project_dir)
     }
+}
+
+fn aggregate_project_token_usage<'a>(
+    requirements: impl Iterator<Item = &'a Requirement>,
+) -> Option<ProjectTokenUsage> {
+    let mut usage = ProjectTokenUsage {
+        input: 0,
+        output: 0,
+        cache_read: 0,
+        cache_write: 0,
+        context_tokens: 0,
+        context_window: 0,
+        context_percent: 0.0,
+    };
+    let mut found = false;
+
+    for requirement in requirements {
+        let Some(plan) = &requirement.execution_plan else {
+            continue;
+        };
+        for task in &plan.tasks {
+            let Some(task_usage) = task.trace.as_ref().and_then(trace_usage) else {
+                continue;
+            };
+            found = true;
+            usage.input += task_usage.get("input").and_then(Value::as_u64).unwrap_or(0);
+            usage.output += task_usage
+                .get("output")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            usage.cache_read += task_usage
+                .get("cacheRead")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            usage.cache_write += task_usage
+                .get("cacheWrite")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+
+            let context = task_usage.get("context").unwrap_or(&Value::Null);
+            usage.context_tokens += context.get("tokens").and_then(Value::as_u64).unwrap_or(0);
+            usage.context_window = usage
+                .context_window
+                .max(context.get("window").and_then(Value::as_u64).unwrap_or(0));
+        }
+    }
+
+    if !found {
+        return None;
+    }
+    if usage.context_window > 0 {
+        usage.context_percent = usage.context_tokens as f64 * 100.0 / usage.context_window as f64;
+    }
+    Some(usage)
+}
+
+fn trace_usage(trace: &Value) -> Option<&Value> {
+    trace.get("trace")?.get("usage")
 }
 
 include!("helpers.rs");

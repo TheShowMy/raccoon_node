@@ -14,11 +14,12 @@ pub mod handlers;
 
 use crate::api::handlers::{
     append_requirement_message, cancel_requirement_analysis, confirm_requirement, create_project,
-    create_requirement, delete_project, delete_requirement, get_model_settings, get_project_canvas,
-    get_project_chat, get_requirement_conversation, get_start, plan_requirement_execution,
-    project_chat_events, put_model_settings, requirement_events, rerun_review, retry_failed_node,
-    retry_from_node, send_project_chat_message, spawn_startup_requirement_scheduler,
-    submit_requirement_clarifications,
+    create_requirement, delete_project, delete_requirement, get_model_settings,
+    get_project_attachment, get_project_canvas, get_project_chat, get_project_files,
+    get_requirement_conversation, get_start, plan_requirement_execution, project_chat_events,
+    put_model_settings, requirement_events, rerun_review, retry_failed_node, retry_from_node,
+    send_project_chat_message, spawn_startup_requirement_scheduler,
+    submit_requirement_clarifications, upload_project_attachment,
 };
 use crate::pi_rpc::PiRpcModelProvider;
 use crate::store::JsonStore;
@@ -75,6 +76,15 @@ fn build_app_with_startup_requirements(
         .route("/projects", post(create_project))
         .route("/projects/{id}", delete(delete_project))
         .route("/projects/{id}/canvas", get(get_project_canvas))
+        .route("/projects/{id}/files", get(get_project_files))
+        .route(
+            "/projects/{id}/attachments",
+            post(upload_project_attachment),
+        )
+        .route(
+            "/projects/{id}/attachments/{file}",
+            get(get_project_attachment),
+        )
         .route("/projects/{id}/chat", get(get_project_chat))
         .route(
             "/projects/{id}/chat/messages",

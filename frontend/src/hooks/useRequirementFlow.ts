@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type {
   DraftClarificationAnswer,
+  FileReference,
+  ImageAttachment,
   ProjectCanvasData,
   Requirement,
   RequirementClarification,
@@ -35,6 +37,12 @@ export function useRequirementFlow(
   observeRequirement: (requirementId: string) => void,
 ) {
   const [requirementInput, setRequirementInput] = useState("");
+  const [requirementReferences, setRequirementReferences] = useState<
+    FileReference[]
+  >([]);
+  const [requirementImages, setRequirementImages] = useState<ImageAttachment[]>(
+    [],
+  );
   const [requirementBusy, setRequirementBusy] = useState(false);
   const [requirementError, setRequirementError] = useState<string | null>(null);
   const [requirementStreamEvents, setRequirementStreamEvents] = useState<
@@ -73,6 +81,8 @@ export function useRequirementFlow(
   useEffect(() => {
     if (!selectedProjectId) {
       setRequirementInput("");
+      setRequirementReferences([]);
+      setRequirementImages([]);
       setRequirementError(null);
       setRequirementStreamEvents([]);
       setRequirementConversation(null);
@@ -95,8 +105,16 @@ export function useRequirementFlow(
     setRequirementError(null);
     try {
       const data = activeRequirementId
-        ? await appendRequirementMessage(activeRequirementId, message)
-        : await createRequirement(selectedProjectId, message);
+        ? await appendRequirementMessage(activeRequirementId, {
+            message,
+            references: requirementReferences,
+            images: requirementImages,
+          })
+        : await createRequirement(selectedProjectId, {
+            message,
+            references: requirementReferences,
+            images: requirementImages,
+          });
       setRequirementStreamEvents([]);
       setClarificationAnswers({});
       setDismissedPromptRequirementId(null);
@@ -109,6 +127,8 @@ export function useRequirementFlow(
         setRequirementConversation(null);
       }
       setRequirementInput("");
+      setRequirementReferences([]);
+      setRequirementImages([]);
     } catch (reason) {
       setRequirementError(readError(reason));
     } finally {
@@ -118,6 +138,8 @@ export function useRequirementFlow(
     activeRequirementId,
     loadRequirementConversation,
     requirementInput,
+    requirementImages,
+    requirementReferences,
     selectedProjectId,
     setProjectCanvas,
   ]);
@@ -270,6 +292,10 @@ export function useRequirementFlow(
   return {
     requirementInput,
     setRequirementInput,
+    requirementReferences,
+    setRequirementReferences,
+    requirementImages,
+    setRequirementImages,
     requirementBusy,
     requirementError,
     requirementStreamEvents,

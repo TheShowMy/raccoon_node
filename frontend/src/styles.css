@@ -1498,6 +1498,24 @@
     @apply max-h-[180px];
   }
 
+  .rq-message__refs,
+  .requirement-message__refs {
+    @apply mb-2 flex flex-wrap items-center gap-1.5;
+  }
+
+  .rq-message__refs span,
+  .requirement-message__refs span {
+    @apply inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 42%, transparent);
+    color: var(--text-soft);
+  }
+
+  .rq-message__refs img {
+    @apply h-14 w-14 rounded-[8px] border object-cover;
+    border-color: var(--card-border);
+  }
+
   .rq-message--assistant {
     @apply max-w-[92%];
   }
@@ -1741,6 +1759,97 @@
 
   .rq-composer__stop {
     background: var(--accent-danger);
+  }
+
+  .rq-composer__suggestions {
+    @apply absolute right-2 bottom-[calc(100%+6px)] left-2 z-40 grid max-h-[210px] overflow-auto rounded-[12px] border p-1;
+    border-color: var(--card-border-strong);
+    background: var(--card-bg);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
+  }
+
+  .rq-composer__suggestions button {
+    @apply grid h-8 w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-[8px] bg-transparent px-2 text-left text-[11px] font-semibold text-current;
+    color: var(--text-soft);
+  }
+
+  .rq-composer__suggestions button span,
+  .rq-composer__chips button span {
+    @apply min-w-0 truncate;
+  }
+
+  .rq-composer__suggestions button:hover {
+    background: color-mix(in srgb, var(--accent-model) 12%, transparent);
+    color: var(--text-strong);
+    filter: none;
+  }
+
+  .rq-composer__chips {
+    @apply col-span-2 flex max-h-[74px] flex-wrap gap-1.5 overflow-auto pr-1;
+  }
+
+  .rq-composer__chips button,
+  .rq-composer__chips > span {
+    @apply inline-flex h-7 max-w-[210px] items-center gap-1.5 rounded-full border px-2 text-[10px] font-semibold;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 42%, transparent);
+    color: var(--text-soft);
+  }
+
+  .rq-composer__chips button {
+    @apply w-auto cursor-pointer;
+  }
+
+  .rq-composer__chips > span {
+    border-color: color-mix(in srgb, var(--accent-danger) 28%, transparent);
+    color: var(--accent-danger);
+  }
+
+  .token-usage-node {
+    @apply h-full rounded-[16px] border p-3;
+    border-color: var(--card-border);
+    background: var(--card-bg);
+    box-shadow: var(--card-shadow);
+  }
+
+  .token-usage-node__header {
+    @apply mb-3 grid grid-cols-[32px_minmax(0,1fr)] items-center gap-2;
+  }
+
+  .token-usage-node__header strong {
+    @apply block text-sm;
+    color: var(--text-strong);
+  }
+
+  .token-usage-node__header span:last-child {
+    @apply block text-[11px];
+    color: var(--text-muted);
+  }
+
+  .token-usage-node dl {
+    @apply grid grid-cols-3 gap-1.5;
+  }
+
+  .token-usage-node div {
+    @apply min-w-0;
+  }
+
+  .token-usage-node dt {
+    @apply text-[10px] font-semibold uppercase;
+    color: var(--text-muted);
+  }
+
+  .token-usage-node dd {
+    @apply m-0 truncate text-xs font-bold;
+    color: var(--text-strong);
+  }
+
+  .token-usage-node--warn {
+    border-color: color-mix(in srgb, #f59e0b 42%, transparent);
+  }
+
+  .token-usage-node--danger {
+    border-color: color-mix(in srgb, var(--accent-danger) 44%, transparent);
   }
 
   .requirement-input {

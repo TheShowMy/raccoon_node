@@ -137,6 +137,8 @@ describe("useProjectChat", () => {
         {
           role: "user",
           content: "项目入口在哪？",
+          references: [],
+          images: [],
           created_at: response.updated_at,
         },
       ],
@@ -147,10 +149,11 @@ describe("useProjectChat", () => {
     act(() => result.current.setProjectChatInput("  项目入口在哪？  "));
     await act(async () => result.current.sendProjectChat());
 
-    expect(sendProjectChatMessage).toHaveBeenCalledWith(
-      "project-1",
-      "项目入口在哪？",
-    );
+    expect(sendProjectChatMessage).toHaveBeenCalledWith("project-1", {
+      message: "项目入口在哪？",
+      references: [],
+      images: [],
+    });
     expect(result.current.projectChatInput).toBe("");
     expect(result.current.projectChat?.messages).toHaveLength(1);
   });

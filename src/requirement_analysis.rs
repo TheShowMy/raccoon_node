@@ -18,11 +18,16 @@ pub fn build_requirement_prompt(input: &RequirementAnalysisInput) -> String {
         .map(|message| message.content.replace("###", "\\#\\#\\#"))
         .unwrap_or_default();
 
-    REQUIREMENT_PROMPT_TEMPLATE
+    let mut prompt = REQUIREMENT_PROMPT_TEMPLATE
         .replace("{{PROJECT_NAME}}", &input.project.name)
         .replace("{{GIT_URL}}", &input.project.git_url)
         .replace("{{LOCAL_PATH}}", &input.project.local_path)
-        .replace("{{CURRENT_REQUEST}}", &current_request)
+        .replace("{{CURRENT_REQUEST}}", &current_request);
+    if let Some(context) = &input.reference_context {
+        prompt.push_str("\n\n");
+        prompt.push_str(context);
+    }
+    prompt
 }
 
 pub fn parse_requirement_analysis(

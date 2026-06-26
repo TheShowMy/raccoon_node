@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getProjectChat, sendProjectChatMessage } from "../api/client";
-import type { ProjectChatEvent, ProjectChatResponse } from "../types/api";
+import type {
+  FileReference,
+  ImageAttachment,
+  ProjectChatEvent,
+  ProjectChatResponse,
+} from "../types/api";
 import { readError } from "../utils/format";
 
 function isProjectChatEvent(value: unknown): value is ProjectChatEvent {
@@ -19,6 +24,12 @@ export function useProjectChat(projectId: string | null) {
     null,
   );
   const [projectChatInput, setProjectChatInput] = useState("");
+  const [projectChatReferences, setProjectChatReferences] = useState<
+    FileReference[]
+  >([]);
+  const [projectChatImages, setProjectChatImages] = useState<ImageAttachment[]>(
+    [],
+  );
   const [projectChatBusy, setProjectChatBusy] = useState(false);
   const [projectChatError, setProjectChatError] = useState<string | null>(null);
   const [projectChatEvents, setProjectChatEvents] = useState<
@@ -37,6 +48,8 @@ export function useProjectChat(projectId: string | null) {
     projectIdRef.current = projectId;
     setProjectChat(null);
     setProjectChatInput("");
+    setProjectChatReferences([]);
+    setProjectChatImages([]);
     setProjectChatError(null);
     setProjectChatEvents([]);
     if (!projectId) return;
@@ -107,9 +120,15 @@ export function useProjectChat(projectId: string | null) {
     setProjectChatBusy(true);
     setProjectChatError(null);
     try {
-      const data = await sendProjectChatMessage(projectId, message);
+      const data = await sendProjectChatMessage(projectId, {
+        message,
+        references: projectChatReferences,
+        images: projectChatImages,
+      });
       setProjectChat(data);
       setProjectChatInput("");
+      setProjectChatReferences([]);
+      setProjectChatImages([]);
       setProjectChatEvents([]);
       setProjectChatError(data.error);
     } catch (reason) {
@@ -117,15 +136,25 @@ export function useProjectChat(projectId: string | null) {
     } finally {
       setProjectChatBusy(false);
     }
-  }, [projectChatBusy, projectChatInput, projectId]);
+  }, [
+    projectChatBusy,
+    projectChatImages,
+    projectChatInput,
+    projectChatReferences,
+    projectId,
+  ]);
 
   return {
     projectChat,
     projectChatInput,
+    projectChatReferences,
+    projectChatImages,
     projectChatBusy,
     projectChatError,
     projectChatEvents,
     setProjectChatInput,
+    setProjectChatReferences,
+    setProjectChatImages,
     sendProjectChat,
   };
 }

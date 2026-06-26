@@ -34,14 +34,19 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
           conversation={conversation}
           requirement={data.requirement}
           projectName={data.project.name}
+          projectId={data.project.id}
           prompt={prompt}
           promptDismissed={data.promptDismissed}
           input={data.input}
+          references={data.references ?? []}
+          images={data.images ?? []}
           busy={data.busy}
           error={data.error}
           streamEvents={data.streamEvents}
           answers={data.answers}
           onInputChange={data.onInputChange}
+          onReferencesChange={data.onReferencesChange ?? (() => {})}
+          onImagesChange={data.onImagesChange ?? (() => {})}
           onSend={data.onSend}
           onAnswerChange={data.onAnswerChange}
           onSubmitClarifications={data.onSubmitClarifications}
@@ -169,6 +174,9 @@ function ProjectChatWorkbench({ data }: { data: ChatData }) {
                   <ChatMessageBubble
                     role={message.role}
                     content={message.content}
+                    references={message.references ?? []}
+                    images={message.images ?? []}
+                    projectId={data.project.id}
                     createdAt={message.created_at}
                     assistantLabel="Pi Agent"
                   >
@@ -228,6 +236,11 @@ function ProjectChatWorkbench({ data }: { data: ChatData }) {
 
         <ChatComposer
           value={data.projectChatInput}
+          projectId={data.project.id}
+          references={data.projectChatReferences ?? []}
+          images={data.projectChatImages ?? []}
+          onReferencesChange={data.onProjectChatReferencesChange ?? (() => {})}
+          onImagesChange={data.onProjectChatImagesChange ?? (() => {})}
           disabled={data.projectChatBusy || running}
           canSend={canSend}
           placeholder={

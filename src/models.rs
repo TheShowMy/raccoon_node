@@ -67,6 +67,10 @@ pub struct ProjectChat {
 pub struct ProjectChatMessage {
     pub role: ProjectChatMessageRole,
     pub content: String,
+    #[serde(default)]
+    pub references: Vec<FileReference>,
+    #[serde(default)]
+    pub images: Vec<ImageAttachment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
     pub created_at: DateTime<Utc>,
@@ -141,6 +145,10 @@ pub enum RequirementStatus {
 pub struct RequirementMessage {
     pub role: RequirementMessageRole,
     pub content: String,
+    #[serde(default)]
+    pub references: Vec<FileReference>,
+    #[serde(default)]
+    pub images: Vec<ImageAttachment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
     pub created_at: DateTime<Utc>,
@@ -230,6 +238,17 @@ pub struct RequirementExecutionTask {
 
 fn default_task_timeout_seconds() -> u64 {
     45 * 60
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileReference {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImageAttachment {
+    pub name: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -325,6 +344,18 @@ pub struct ProjectCanvasResponse {
     pub active_requirement: Option<Requirement>,
     pub queued_requirements: Vec<Requirement>,
     pub completed_requirements: Vec<Requirement>,
+    pub token_usage: Option<ProjectTokenUsage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectTokenUsage {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub context_tokens: u64,
+    pub context_window: u64,
+    pub context_percent: f64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -346,6 +377,8 @@ pub enum RequirementConversationItem {
     User {
         id: String,
         text: String,
+        references: Vec<FileReference>,
+        images: Vec<ImageAttachment>,
         created_at: DateTime<Utc>,
     },
     Assistant {
@@ -532,6 +565,7 @@ pub trait ModelProvider: Send + Sync {
 pub struct ProjectChatInput {
     pub project: Project,
     pub messages: Vec<ProjectChatMessage>,
+    pub reference_context: Option<String>,
     pub model_settings: ModelSettings,
     pub pi_session_file: Option<String>,
 }
@@ -547,6 +581,7 @@ pub struct ProjectChatOutput {
 pub struct RequirementAnalysisInput {
     pub project: Project,
     pub messages: Vec<RequirementMessage>,
+    pub reference_context: Option<String>,
     pub clarifications: Vec<RequirementClarification>,
     pub draft: Option<RequirementDraft>,
     pub model_settings: ModelSettings,
@@ -748,11 +783,26 @@ pub struct CreateProjectRequest {
 #[derive(Debug, Deserialize)]
 pub struct RequirementMessageRequest {
     pub message: String,
+    #[serde(default)]
+    pub references: Vec<FileReference>,
+    #[serde(default)]
+    pub images: Vec<ImageAttachment>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ProjectChatMessageRequest {
     pub message: String,
+    #[serde(default)]
+    pub references: Vec<FileReference>,
+    #[serde(default)]
+    pub images: Vec<ImageAttachment>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttachmentUploadRequest {
+    pub name: String,
+    pub mime_type: String,
+    pub data_base64: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

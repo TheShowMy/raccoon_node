@@ -8,6 +8,8 @@ import {
   type DraftClarificationAnswer,
   type RequirementClarification,
   type ProjectChatResponse,
+  type FileReference,
+  type ImageAttachment,
 } from "../types/api";
 
 type StartData = {
@@ -97,16 +99,62 @@ export async function getProjectChat(
   return response.json();
 }
 
+export async function getProjectFiles(
+  projectId: string,
+  search: string,
+): Promise<FileReference[]> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/files?search=${encodeURIComponent(search)}`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取项目文件失败");
+  }
+  return response.json();
+}
+
+export async function uploadProjectAttachment(
+  projectId: string,
+  file: File,
+): Promise<ImageAttachment> {
+  const dataBase64 = await readFileAsDataUrl(file);
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/attachments`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: file.name || "image",
+        mime_type: file.type,
+        data_base64: dataBase64,
+      }),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "上传图片失败");
+  }
+  return response.json();
+}
+
 export async function sendProjectChatMessage(
   projectId: string,
-  message: string,
+  payload: {
+    message: string;
+    references: FileReference[];
+    images: ImageAttachment[];
+  },
 ): Promise<ProjectChatResponse> {
   const response = await fetch(
     `/api/projects/${encodeURIComponent(projectId)}/chat/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify(payload),
     },
   );
   if (!response.ok) {
@@ -120,14 +168,18 @@ export async function sendProjectChatMessage(
 
 export async function createRequirement(
   projectId: string,
-  message: string,
+  payload: {
+    message: string;
+    references: FileReference[];
+    images: ImageAttachment[];
+  },
 ): Promise<ProjectCanvasData> {
   const response = await fetch(
     `/api/projects/${encodeURIComponent(projectId)}/requirements`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify(payload),
     },
   );
   if (!response.ok) {
@@ -141,14 +193,18 @@ export async function createRequirement(
 
 export async function appendRequirementMessage(
   requirementId: string,
-  message: string,
+  payload: {
+    message: string;
+    references: FileReference[];
+    images: ImageAttachment[];
+  },
 ): Promise<ProjectCanvasData> {
   const response = await fetch(
     `/api/requirements/${encodeURIComponent(requirementId)}/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify(payload),
     },
   );
   if (!response.ok) {
@@ -240,6 +296,15 @@ export function retryFromNode(
   taskId: string,
 ): Promise<ProjectCanvasData> {
   return postTaskAction(requirementId, taskId, "retry-from", "从节点恢复失败");
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("读取图片失败"));
+    reader.readAsDataURL(file);
+  });
 }
 
 export async function cancelRequirementAnalysis(

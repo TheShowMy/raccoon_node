@@ -1,6 +1,8 @@
 import type { Node } from "@xyflow/react";
 import type {
   DraftClarificationAnswer,
+  FileReference,
+  ImageAttachment,
   Project,
   ProjectCanvasData,
   Requirement,
@@ -52,6 +54,7 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       "requirement-chat": { width: 720, height: 760 },
       "requirement-dag": DAG_NODE_SIZE,
       "requirement-task": { width: 252, height: 134 },
+      "token-usage": { width: 290, height: 96 },
     };
 
     const fallback = defaults[node.data.kind];
@@ -88,19 +91,27 @@ export interface BuildProjectChatNodeParams {
   startProjects: Project[];
   requirementConversation: RequirementConversation | null;
   requirementInput: string;
+  requirementReferences?: FileReference[];
+  requirementImages?: ImageAttachment[];
   requirementBusy: boolean;
   requirementError: string | null;
   requirementStreamEvents: StreamEvent[];
   projectChat: ProjectChatResponse | null;
   projectChatInput: string;
+  projectChatReferences?: FileReference[];
+  projectChatImages?: ImageAttachment[];
   projectChatBusy: boolean;
   projectChatError: string | null;
   projectChatEvents: ProjectChatEvent[];
   clarificationAnswers: Record<string, DraftClarificationAnswer>;
   dismissedPromptRequirementId: string | null;
   setRequirementInput: (value: string) => void;
+  setRequirementReferences?: (references: FileReference[]) => void;
+  setRequirementImages?: (images: ImageAttachment[]) => void;
   sendRequirementMessage: () => Promise<void>;
   setProjectChatInput: (value: string) => void;
+  setProjectChatReferences?: (references: FileReference[]) => void;
+  setProjectChatImages?: (images: ImageAttachment[]) => void;
   sendProjectChatMessage: () => Promise<void>;
   updateClarificationAnswer: (
     clarification: import("../types/api").RequirementClarification,
@@ -205,6 +216,15 @@ export function buildProjectNodes({
         busyRequirementId: requirementActionBusyId,
         onSelectRequirement: selectDagRequirement,
         onPlanRequirement: planRequirement,
+      },
+    },
+    {
+      id: "token-usage",
+      type: "startNode",
+      position: { x: 780, y: 20 },
+      data: {
+        kind: "token-usage",
+        usage: projectCanvas?.token_usage ?? null,
       },
     },
     {
@@ -388,19 +408,27 @@ export function buildProjectChatNode({
   startProjects,
   requirementConversation,
   requirementInput,
+  requirementReferences = [],
+  requirementImages = [],
   requirementBusy,
   requirementError,
   requirementStreamEvents,
   projectChat,
   projectChatInput,
+  projectChatReferences = [],
+  projectChatImages = [],
   projectChatBusy,
   projectChatError,
   projectChatEvents,
   clarificationAnswers,
   dismissedPromptRequirementId,
   setRequirementInput,
+  setRequirementReferences = () => {},
+  setRequirementImages = () => {},
   sendRequirementMessage,
   setProjectChatInput,
+  setProjectChatReferences = () => {},
+  setProjectChatImages = () => {},
   sendProjectChatMessage,
   updateClarificationAnswer,
   submitClarifications,
@@ -431,18 +459,26 @@ export function buildProjectChatNode({
           dismissedPromptRequirementId ===
           (projectCanvas?.active_requirement?.id ?? null),
         input: requirementInput,
+        references: requirementReferences,
+        images: requirementImages,
         busy: requirementBusy,
         error: requirementError,
         streamEvents: requirementStreamEvents,
         projectChat,
         projectChatInput,
+        projectChatReferences,
+        projectChatImages,
         projectChatBusy,
         projectChatError,
         projectChatEvents,
         answers: clarificationAnswers,
         onInputChange: setRequirementInput,
+        onReferencesChange: setRequirementReferences,
+        onImagesChange: setRequirementImages,
         onSend: sendRequirementMessage,
         onProjectChatInputChange: setProjectChatInput,
+        onProjectChatReferencesChange: setProjectChatReferences,
+        onProjectChatImagesChange: setProjectChatImages,
         onProjectChatSend: sendProjectChatMessage,
         onAnswerChange: updateClarificationAnswer,
         onSubmitClarifications: submitClarifications,
