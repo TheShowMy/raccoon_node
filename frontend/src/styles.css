@@ -1820,14 +1820,8 @@
     box-shadow: var(--card-shadow);
   }
 
-  .token-usage-node__icon {
-    @apply absolute right-2 top-2;
-    color: var(--text-muted);
-    opacity: 0.6;
-  }
-
   .token-usage-node__header {
-    @apply mb-1.5 flex items-center justify-between gap-2 pr-4;
+    @apply mb-1.5 flex items-center justify-between gap-2;
   }
 
   .token-usage-node__title {
@@ -1835,9 +1829,18 @@
     color: var(--text-strong);
   }
 
+  .token-usage-node__total-group {
+    @apply flex items-center gap-1;
+  }
+
   .token-usage-node__total {
     @apply text-xs font-bold;
     color: var(--accent-primary);
+  }
+
+  .token-usage-node__icon-inline {
+    color: var(--text-muted);
+    opacity: 0.6;
   }
 
   .token-usage-node__empty {
@@ -1850,17 +1853,44 @@
   }
 
   .token-usage-node__item {
-    @apply flex flex-col items-center justify-center rounded-lg py-1;
+    @apply flex flex-col justify-center rounded-lg py-1;
     background: color-mix(in srgb, var(--surface-subtle) 60%, transparent);
   }
 
+  .token-usage-node__item--left {
+    @apply items-start;
+  }
+
+  .token-usage-node__item--left .token-usage-node__value,
+  .token-usage-node__item--left .token-usage-node__label {
+    @apply text-left;
+  }
+
+  .token-usage-node__item--center {
+    @apply items-center;
+  }
+
+  .token-usage-node__item--center .token-usage-node__value,
+  .token-usage-node__item--center .token-usage-node__label {
+    @apply text-center;
+  }
+
+  .token-usage-node__item--right {
+    @apply items-end;
+  }
+
+  .token-usage-node__item--right .token-usage-node__value,
+  .token-usage-node__item--right .token-usage-node__label {
+    @apply text-right;
+  }
+
   .token-usage-node__value {
-    @apply text-[11px] font-bold leading-tight;
+    @apply w-full text-[11px] font-bold leading-tight;
     color: var(--text-strong);
   }
 
   .token-usage-node__label {
-    @apply text-[9px] leading-tight;
+    @apply w-full text-[9px] leading-tight;
     color: var(--text-muted);
   }
 
