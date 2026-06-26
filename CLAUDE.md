@@ -50,4 +50,4 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 - 不提交 `build/`、`target/`、`node_modules/`、`frontend/dist/`、`data/`、`*.tsbuildinfo`。
 - 提交代码绝对不能跳过 pre-commit，禁止 `git commit --no-verify`。
 - pre-commit 失败必须修复根因，不允许注释、删除或屏蔽钩子绕过。
-- 未经用户明确要求，不自动执行 `git commit` 或 `git push`；用户未明确说提交/推送代码时，绝不主动提交。
+- 每次执行 `git commit` 或 `git push` 前，必须得到用户的明确要求或确认；未获明确授权前绝不主动提交。
