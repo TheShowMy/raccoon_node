@@ -1827,7 +1827,7 @@
   }
 
   .token-usage-node__header {
-    @apply mb-1.5 flex items-center justify-between gap-2 pr-4;
+    @apply mb-1.5 flex items-center justify-between gap-2;
   }
 
   .token-usage-node__title {
@@ -1850,7 +1850,7 @@
   }
 
   .token-usage-node__item {
-    @apply flex flex-col items-start justify-center rounded-lg py-1 px-1.5;
+    @apply flex flex-col items-start justify-center rounded-lg py-1;
     background: color-mix(in srgb, var(--surface-subtle) 60%, transparent);
   }
 
