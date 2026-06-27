@@ -223,7 +223,7 @@ mod tests {
             } else {
                 RequirementModelTier::High
             },
-            timeout_seconds: 45 * 60,
+            timeout_seconds: 90,
             pi_session_file: None,
             branch_name: None,
             worktree_path: None,

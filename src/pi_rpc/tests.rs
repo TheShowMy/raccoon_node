@@ -2,9 +2,9 @@
 use super::*;
 
 use super::{
-    attach_session_usage, build_pr_merge_args, commit_staged_changes, generated_branch_names,
-    is_terminal_agent_end, parse_default_branch, parse_session_header_cwd, safe_worktree_name,
-    stage_task_changes,
+    attach_session_usage, build_pr_merge_args, commit_staged_changes, event_has_output_activity,
+    generated_branch_names, is_terminal_agent_end, parse_default_branch, parse_session_header_cwd,
+    safe_worktree_name, stage_task_changes,
 };
 use crate::models::{
     RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
@@ -77,6 +77,48 @@ fn wait_only_finishes_on_final_agent_end() {
         "willRetry": false
     })));
     assert!(is_terminal_agent_end(&json!({ "type": "agent_end" })));
+}
+
+#[test]
+fn event_activity_detects_output_content() {
+    assert!(event_has_output_activity(&json!({
+        "type": "message_update",
+        "assistantMessageEvent": {
+            "type": "text_delta",
+            "delta": "{\"ok\":true}"
+        }
+    })));
+    assert!(event_has_output_activity(&json!({
+        "type": "message_update",
+        "assistantMessageEvent": {
+            "type": "thinking_delta",
+            "delta": "思考"
+        }
+    })));
+    assert!(event_has_output_activity(&json!({
+        "type": "tool_execution_update",
+        "partialResult": {
+            "content": [{"text": "running tests"}]
+        }
+    })));
+}
+
+#[test]
+fn event_activity_ignores_response_and_empty_lifecycle_events() {
+    assert!(!event_has_output_activity(&json!({
+        "type": "response",
+        "success": true
+    })));
+    assert!(!event_has_output_activity(&json!({
+        "type": "agent_start"
+    })));
+    assert!(!event_has_output_activity(&json!({
+        "type": "message_update",
+        "assistantMessageEvent": {
+            "type": "text_delta",
+            "delta": "   "
+        }
+    })));
 }
 
 #[test]

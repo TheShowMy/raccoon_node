@@ -347,6 +347,16 @@ fn execution_failures_have_a_finite_escalation_path() {
     assert!(is_retryable_execution_error(&AppError::internal(
         "修复实现节点必须产生实际代码改动"
     )));
+    assert!(is_retryable_execution_error(&AppError::internal(
+        "等待 Pi Agent 新输出空闲超时"
+    )));
+    assert!(is_retryable_execution_error(&AppError::task_execution(
+        "任务结果 JSON 解析失败，已尝试同会话修复",
+        Some("session.jsonl".to_owned()),
+    )));
+    assert!(!is_retryable_execution_error(&AppError::internal(
+        "恢复节点失败：worktree 不存在"
+    )));
     assert_eq!(
         next_execution_recovery_stage(1, true),
         Some(RequirementRecoveryStage::AutoRetry)

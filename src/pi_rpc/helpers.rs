@@ -3,6 +3,44 @@ fn is_terminal_agent_end(event: &Value) -> bool {
         && event.get("willRetry").and_then(Value::as_bool) != Some(true)
 }
 
+fn event_has_output_activity(event: &Value) -> bool {
+    if event.get("type") == Some(&json!("response")) {
+        return false;
+    }
+    match event.get("type").and_then(Value::as_str) {
+        Some("message_update") => event
+            .get("assistantMessageEvent")
+            .is_some_and(value_has_non_empty_text),
+        Some("text_delta") | Some("content_delta") | Some("message_delta")
+        | Some("thinking_delta") => value_has_non_empty_text(event),
+        Some("tool_execution_update") | Some("tool_execution_end") => [
+            "partialResult",
+            "partial_result",
+            "result",
+            "output",
+        ]
+        .iter()
+        .any(|key| event.get(*key).is_some_and(value_has_non_empty_text)),
+        _ => false,
+    }
+}
+
+fn value_has_non_empty_text(value: &Value) -> bool {
+    match value {
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => items.iter().any(value_has_non_empty_text),
+        Value::Object(map) => {
+            for key in ["delta", "text", "content", "partialResult", "partial_result", "result", "output"] {
+                if map.get(key).is_some_and(value_has_non_empty_text) {
+                    return true;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 fn attach_session_usage(
     mut trace: Option<Value>,
     stats: &Value,

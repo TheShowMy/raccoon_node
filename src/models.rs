@@ -235,7 +235,7 @@ pub struct RequirementExecutionTask {
 }
 
 fn default_task_timeout_seconds() -> u64 {
-    45 * 60
+    90
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -29,12 +29,15 @@ use crate::requirement_analysis::{
     build_requirement_prompt, extract_pi_response, parse_requirement_analysis, PiResponseFailure,
 };
 use crate::requirement_execution::{
-    build_recovery_guidance_prompt, build_requirement_plan_prompt, build_requirement_task_prompt,
-    parse_recovery_guidance, parse_requirement_plan, parse_task_execution_output,
+    build_recovery_guidance_json_repair_prompt, build_recovery_guidance_prompt,
+    build_requirement_plan_json_repair_prompt, build_requirement_plan_prompt,
+    build_requirement_task_prompt, build_task_output_json_repair_prompt, parse_recovery_guidance,
+    parse_requirement_plan, parse_task_execution_output,
 };
 use crate::utils::{ensure_child_path, normalize_local_path};
 
 const MAX_PROJECT_CLIENTS: usize = 5;
+const MAX_JSON_REPAIR_ATTEMPTS: usize = 1;
 
 pub struct PiRpcModelProvider {
     pub data_root: PathBuf,
@@ -262,7 +265,10 @@ impl ModelProvider for PiRpcModelProvider {
             let mut output = match client.execute_requirement_task(input.clone(), events).await {
                 Ok(output) => output,
                 Err(error) => {
-                    let session_file = client.get_session_file().await.ok().flatten();
+                    let session_file = match error.pi_session_file() {
+                        Some(path) => Some(path.to_owned()),
+                        None => client.get_session_file().await.ok().flatten(),
+                    };
                     return Err(AppError::task_execution(error.to_string(), session_file));
                 }
             };
