@@ -121,7 +121,8 @@ impl PiRpcClient {
             .restore_or_new_session(input.pi_session_file.as_deref())
             .await?;
         self.prepare_high_model(&input.model_settings).await?;
-        self.prompt(&build_requirement_prompt(&input)).await?;
+        self.prompt_with_images(&build_requirement_prompt(&input), &input.prompt_images)
+            .await?;
         let mut pi_events = Vec::new();
         self.wait_for_agent_end_with_events(
             Duration::from_secs(120),  // first warning at 120s
@@ -345,10 +346,10 @@ impl PiRpcClient {
             .await?;
         self.prepare_model_tier(&input.model_settings, RequirementModelTier::Medium)
             .await?;
-        self.prompt(&crate::project_chat::build_project_chat_prompt(
-            &input,
-            session_reused,
-        ))
+        self.prompt_with_images(
+            &crate::project_chat::build_project_chat_prompt(&input, session_reused),
+            &input.prompt_images,
+        )
         .await?;
         let mut pi_events = Vec::new();
         let no_requirement_events = None;
@@ -470,11 +471,31 @@ impl PiRpcClient {
     }
 
     async fn prompt(&self, message: &str) -> Result<(), AppError> {
-        self.send_command(json!({
+        self.prompt_with_images(message, &[]).await
+    }
+
+    async fn prompt_with_images(
+        &self,
+        message: &str,
+        images: &[PromptImage],
+    ) -> Result<(), AppError> {
+        let mut command = json!({
             "type": "prompt",
             "message": message
-        }))
-        .await?;
+        });
+        if !images.is_empty() {
+            command["images"] = json!(
+                images
+                    .iter()
+                    .map(|image| json!({
+                        "type": "image",
+                        "data": image.data_base64.as_str(),
+                        "mimeType": image.mime_type.as_str(),
+                    }))
+                    .collect::<Vec<_>>()
+            );
+        }
+        self.send_command(command).await?;
         Ok(())
     }
 

@@ -249,6 +249,12 @@ pub struct ImageAttachment {
     pub path: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptImage {
+    pub data_base64: String,
+    pub mime_type: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RequirementTaskKind {
@@ -564,6 +570,7 @@ pub struct ProjectChatInput {
     pub project: Project,
     pub messages: Vec<ProjectChatMessage>,
     pub reference_context: Option<String>,
+    pub prompt_images: Vec<PromptImage>,
     pub model_settings: ModelSettings,
     pub pi_session_file: Option<String>,
 }
@@ -580,6 +587,7 @@ pub struct RequirementAnalysisInput {
     pub project: Project,
     pub messages: Vec<RequirementMessage>,
     pub reference_context: Option<String>,
+    pub prompt_images: Vec<PromptImage>,
     pub clarifications: Vec<RequirementClarification>,
     pub draft: Option<RequirementDraft>,
     pub model_settings: ModelSettings,

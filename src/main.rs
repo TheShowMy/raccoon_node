@@ -1151,6 +1151,7 @@ mod tests {
                 created_at: now,
             }],
             reference_context: None,
+            prompt_images: Vec::new(),
             clarifications: Vec::new(),
             draft: None,
             model_settings: ModelSettings::default(),

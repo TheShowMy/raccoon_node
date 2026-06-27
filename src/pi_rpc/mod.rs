@@ -20,7 +20,7 @@ use crate::error::AppError;
 use crate::models::{
     ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings, ModelTierSetting,
     PiModel, ProjectChatEventEmitter, ProjectChatFuture, ProjectChatInput, ProjectChatOutput,
-    RequirementAnalysisFuture, RequirementAnalysisInput, RequirementAnalysisOutput,
+    PromptImage, RequirementAnalysisFuture, RequirementAnalysisInput, RequirementAnalysisOutput,
     RequirementEventEmitter, RequirementModelTier, RequirementPlanFuture, RequirementPlanInput,
     RequirementReviewStatus, RequirementTaskExecutionFuture, RequirementTaskExecutionInput,
     RequirementTaskExecutionOutput, RequirementTaskKind, PI_RPC_REQUEST_ID,

@@ -8,7 +8,7 @@ use chrono::Utc;
 use serde_json::Value;
 
 use crate::error::AppError;
-use crate::file_refs::build_reference_context;
+use crate::file_refs::{build_prompt_images, build_reference_context};
 use crate::models::{
     AppData, ClarificationAnswer, FileReference, ImageAttachment, ModelSettings, PiModel, Project,
     ProjectCanvasResponse, ProjectChat, ProjectChatInput, ProjectChatMessage,
@@ -441,13 +441,9 @@ impl JsonStore {
             return Err(AppError::bad_request("项目问答正在回答，请稍后再发送"));
         }
         let project_dir = self.project_dir(project_id)?;
-        let reference_context = build_reference_context(
-            Path::new(&project.local_path),
-            &project_dir,
-            &references,
-            &images,
-        )
-        .await?;
+        let reference_context =
+            build_reference_context(Path::new(&project.local_path), &references, &images).await?;
+        let prompt_images = build_prompt_images(&project_dir, &images).await?;
 
         let now = Utc::now();
         let chat = &mut self.data.project_chats[index];
@@ -467,6 +463,7 @@ impl JsonStore {
             project,
             messages: chat.messages.clone(),
             reference_context,
+            prompt_images,
             model_settings: self.data.model_settings.clone(),
             pi_session_file: chat.pi_session_file.clone(),
         };
@@ -572,13 +569,9 @@ impl JsonStore {
             .cloned()
             .ok_or_else(|| AppError::not_found("项目不存在"))?;
         let project_dir = self.project_dir(project_id)?;
-        let reference_context = build_reference_context(
-            Path::new(&project.local_path),
-            &project_dir,
-            &references,
-            &images,
-        )
-        .await?;
+        let reference_context =
+            build_reference_context(Path::new(&project.local_path), &references, &images).await?;
+        let prompt_images = build_prompt_images(&project_dir, &images).await?;
 
         let now = Utc::now();
         let id = format!("requirement-{}", now.timestamp_millis());
@@ -611,6 +604,7 @@ impl JsonStore {
             project,
             messages: requirement.messages.clone(),
             reference_context,
+            prompt_images,
             clarifications: requirement.clarifications.clone(),
             draft: None,
             model_settings: self.data.model_settings.clone(),
@@ -650,13 +644,9 @@ impl JsonStore {
             .cloned()
             .ok_or_else(|| AppError::not_found("项目不存在"))?;
         let project_dir = self.project_dir(&project_id)?;
-        let reference_context = build_reference_context(
-            Path::new(&project.local_path),
-            &project_dir,
-            &references,
-            &images,
-        )
-        .await?;
+        let reference_context =
+            build_reference_context(Path::new(&project.local_path), &references, &images).await?;
+        let prompt_images = build_prompt_images(&project_dir, &images).await?;
         let now = Utc::now();
         {
             let requirement = &mut self.data.requirements[index];
@@ -684,6 +674,7 @@ impl JsonStore {
                 project,
                 messages: requirement.messages,
                 reference_context,
+                prompt_images,
                 clarifications: requirement.clarifications,
                 draft: requirement.draft,
                 model_settings: self.data.model_settings.clone(),
@@ -764,6 +755,7 @@ impl JsonStore {
                 project,
                 messages: requirement.messages,
                 reference_context: None,
+                prompt_images: Vec::new(),
                 clarifications: requirement.clarifications,
                 draft: requirement.draft,
                 model_settings: self.data.model_settings.clone(),
