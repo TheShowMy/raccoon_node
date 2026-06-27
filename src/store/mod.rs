@@ -20,6 +20,7 @@ use crate::models::{
     RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
     RequirementTaskStatus,
 };
+use crate::pi_rpc::commit_staged_changes;
 use crate::requirement_execution::effective_model_tier;
 use crate::utils::{
     build_clarification_answer_summary, clarification_has_answer, clone_git_repo,
@@ -1412,7 +1413,6 @@ impl JsonStore {
                         .or(task.pi_session_file.take());
                     task.branch_name = output.branch_name.clone().or(task.branch_name.take());
                     task.worktree_path = output.worktree_path.clone().or(task.worktree_path.take());
-                    task.commit_sha = output.commit_sha.clone().or(task.commit_sha.take());
                     task.pull_request_url = output
                         .pull_request_url
                         .clone()
@@ -1489,6 +1489,19 @@ impl JsonStore {
                                     task_id,
                                     effective_review_feedback.clone(),
                                 )?;
+                                let review_for_id = plan.tasks[task_index].review_for.clone();
+                                if let Some(reviewed) = plan.tasks.iter_mut().find(|t| {
+                                    review_for_id.as_deref() == Some(t.id.as_str())
+                                        && t.kind == RequirementTaskKind::Implementation
+                                        && t.status == RequirementTaskStatus::Completed
+                                }) {
+                                    if let Some(worktree) = reviewed.worktree_path.as_deref() {
+                                        let message = format!("raccoon_node: {}", reviewed.title);
+                                        let _ =
+                                            commit_staged_changes(Path::new(worktree), &message)
+                                                .await;
+                                    }
+                                }
                             }
                             RequirementReviewStatus::Rejected => {
                                 reject_reviewed_task(

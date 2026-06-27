@@ -107,7 +107,6 @@ pub fn parse_requirement_plan(text: &str) -> Result<RequirementExecutionPlan, Ap
             pi_session_file: None,
             branch_name: None,
             worktree_path: None,
-            commit_sha: None,
             review_for: None,
             review_angle: None,
             review_status: RequirementReviewStatus::Pending,
@@ -169,12 +168,6 @@ pub fn build_requirement_task_prompt(
         .join("\n");
     let future_tasks = future_implementation_tasks_for_prompt(plan, task);
     let failure_context = execution_failure_context(task);
-    let reviewed_commit = task
-        .review_for
-        .as_deref()
-        .and_then(|review_for| plan.tasks.iter().find(|item| item.id == review_for))
-        .and_then(|reviewed| reviewed.commit_sha.as_deref())
-        .unwrap_or("缺少提交 SHA");
 
     let (role, json_contract, extra) = match task.kind {
         RequirementTaskKind::Implementation => (
@@ -205,8 +198,7 @@ pub fn build_requirement_task_prompt(
                 future_tasks = future_tasks,
                 fix_feedback = if task.status == RequirementTaskStatus::Fixing {
                     format!(
-                        "\n## 修复要求\n- 当前提交：{}\n- 最新审核反馈：{}\n- 必须针对审核反馈产生实际代码修改和新提交，禁止 changed=false 或仅重新描述已有实现。\n- 请在原实现基础上修复问题，不要重做无关内容。",
-                        task.commit_sha.as_deref().unwrap_or("缺少提交 SHA"),
+                        "\n## 修复要求\n- 当前状态：未提交，改动位于暂存区（git diff --cached）\n- 最新审核反馈：{}\n- 必须针对审核反馈产生实际代码修改，禁止 changed=false 或仅重新描述已有实现。\n- 请在原实现基础上修复问题，不要重做无关内容。",
                         task.last_review_feedback.as_deref().unwrap_or("审核未通过"),
                     )
                 } else {
@@ -229,7 +221,7 @@ pub fn build_requirement_task_prompt(
   "result_summary": "本次审核结论"
             }"#,
             format!(
-                "请只审核提交 {reviewed_commit} 及其最新 diff，不要审核旧提交，不要修改代码。\n审核角度：{}",
+                "请只审核当前工作区暂存区（git diff --cached）的改动，不要审核旧提交，不要修改代码。\n若无暂存改动，直接通过。\n审核角度：{}",
                 task.review_angle.as_deref().unwrap_or("综合审核")
             ),
         ),
@@ -241,7 +233,7 @@ pub fn build_requirement_task_prompt(
   "result_summary": "本次审核结论"
             }"#,
             format!(
-                "请只审核提交 {reviewed_commit} 及其最新 diff，不要审核旧提交，不要修改代码。\n审核角度：{}",
+                "请只审核当前工作区暂存区（git diff --cached）的改动，不要审核旧提交，不要修改代码。\n若无暂存改动，直接通过。\n审核角度：{}",
                 task.review_angle.as_deref().unwrap_or("综合审核")
             ),
         ),
@@ -253,8 +245,9 @@ pub fn build_requirement_task_prompt(
   "result_summary": "审核汇总结论"
             }"#,
             format!(
-                "请汇总提交 {reviewed_commit} 的三个审核 Sub Agent 意见。只要任一 Sub Agent 不通过，approved 必须为 false，feedback 和 result_summary 必须明确写审核不通过；禁止状态与文字结论矛盾。\n{}",
-                review_feedback_for_prompt(plan, task.review_for.as_deref())
+                "请汇总当前工作区暂存区（git diff --cached）的三个审核 Sub Agent 意见。只要任一 Sub Agent 不通过，approved 必须为 false，feedback 和 result_summary 必须明确写审核不通过；禁止状态与文字结论矛盾。若无暂存改动，直接通过。\n{}\n审核角度：{}",
+                review_feedback_for_prompt(plan, task.review_for.as_deref()),
+                task.review_angle.as_deref().unwrap_or("综合审核")
             ),
         ),
         RequirementTaskKind::BranchMerge => (
@@ -412,7 +405,6 @@ pub fn parse_task_execution_output(
         pi_session_file: None,
         branch_name: None,
         worktree_path: None,
-        commit_sha: None,
         review_status: raw.approved.map(|approved| {
             if approved {
                 RequirementReviewStatus::Approved
@@ -490,7 +482,6 @@ fn expand_execution_tasks(
                 pi_session_file: None,
                 branch_name: None,
                 worktree_path: None,
-                commit_sha: None,
                 review_for: Some(task.id.clone()),
                 review_angle: Some((*angle).to_owned()),
                 review_status: RequirementReviewStatus::Pending,
@@ -526,7 +517,6 @@ fn expand_execution_tasks(
             pi_session_file: None,
             branch_name: None,
             worktree_path: None,
-            commit_sha: None,
             review_for: Some(task.id.clone()),
             review_angle: Some("审核汇总".to_owned()),
             review_status: RequirementReviewStatus::Pending,
@@ -561,7 +551,6 @@ fn expand_execution_tasks(
         pi_session_file: None,
         branch_name: None,
         worktree_path: None,
-        commit_sha: None,
         review_for: None,
         review_angle: None,
         review_status: RequirementReviewStatus::Pending,
@@ -708,7 +697,6 @@ fn branch_merge_task(
         pi_session_file: None,
         branch_name: None,
         worktree_path: None,
-        commit_sha: None,
         review_for: None,
         review_angle: None,
         review_status: RequirementReviewStatus::Pending,
@@ -1109,7 +1097,6 @@ mod tests {
         let requirement = test_requirement("修复页面");
         let mut implementation = test_task("task-1", "修复实现", Vec::new());
         implementation.status = RequirementTaskStatus::Fixing;
-        implementation.commit_sha = Some("new-commit".to_owned());
         implementation.last_review_feedback = Some("补充边界校验".to_owned());
         let mut review = test_task("review-task-1", "审核实现", vec!["task-1".to_owned()]);
         review.kind = RequirementTaskKind::ReviewSubAgent;
@@ -1120,12 +1107,12 @@ mod tests {
         };
 
         let fixing_prompt = build_requirement_task_prompt(&requirement, &plan, &implementation);
-        assert!(fixing_prompt.contains("当前提交：new-commit"));
+        assert!(fixing_prompt.contains("当前状态：未提交，改动位于暂存区"));
         assert!(fixing_prompt.contains("最新审核反馈：补充边界校验"));
-        assert!(fixing_prompt.contains("必须针对审核反馈产生实际代码修改和新提交"));
+        assert!(fixing_prompt.contains("必须针对审核反馈产生实际代码修改"));
 
         let review_prompt = build_requirement_task_prompt(&requirement, &plan, &review);
-        assert!(review_prompt.contains("只审核提交 new-commit 及其最新 diff"));
+        assert!(review_prompt.contains("只审核当前工作区暂存区（git diff --cached）的改动"));
         assert!(review_prompt.contains("不要审核旧提交"));
     }
 
@@ -1165,7 +1152,6 @@ mod tests {
             pi_session_file: None,
             branch_name: None,
             worktree_path: None,
-            commit_sha: None,
             review_for: None,
             review_angle: None,
             review_status: RequirementReviewStatus::Pending,

@@ -196,8 +196,6 @@ pub struct RequirementExecutionTask {
     #[serde(default)]
     pub worktree_path: Option<String>,
     #[serde(default)]
-    pub commit_sha: Option<String>,
-    #[serde(default)]
     pub review_for: Option<String>,
     #[serde(default)]
     pub review_angle: Option<String>,
@@ -622,7 +620,6 @@ pub struct RequirementTaskExecutionOutput {
     pub pi_session_file: Option<String>,
     pub branch_name: Option<String>,
     pub worktree_path: Option<String>,
-    pub commit_sha: Option<String>,
     pub review_status: Option<RequirementReviewStatus>,
     pub review_feedback: Option<String>,
     pub pull_request_url: Option<String>,

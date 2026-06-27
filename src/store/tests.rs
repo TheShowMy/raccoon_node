@@ -200,7 +200,6 @@ async fn review_summary_uses_rejected_sub_agent_feedback() {
                 pi_session_file: None,
                 branch_name: None,
                 worktree_path: None,
-                commit_sha: None,
                 review_status: Some(RequirementReviewStatus::Approved),
                 review_feedback: Some("全部通过".to_owned()),
                 pull_request_url: None,
@@ -239,12 +238,11 @@ async fn successful_fix_clears_old_reviews_and_requeues_latest_review() {
     let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
         .await
         .unwrap();
-    let mut implementation = task(
+    let implementation = task(
         "implementation",
         RequirementTaskKind::Implementation,
         RequirementTaskStatus::AwaitingReview,
     );
-    implementation.commit_sha = Some("old-commit".to_owned());
     let mut review = task_with_dependencies(
         "review",
         RequirementTaskKind::ReviewSubAgent,
@@ -280,7 +278,6 @@ async fn successful_fix_clears_old_reviews_and_requeues_latest_review() {
                 pi_session_file: Some("implementation.jsonl".to_owned()),
                 branch_name: None,
                 worktree_path: None,
-                commit_sha: Some("new-commit".to_owned()),
                 review_status: None,
                 review_feedback: None,
                 pull_request_url: None,
@@ -298,7 +295,10 @@ async fn successful_fix_clears_old_reviews_and_requeues_latest_review() {
 
     let plan = store.data.requirements[0].execution_plan.as_ref().unwrap();
     assert_eq!(plan.tasks[0].status, RequirementTaskStatus::AwaitingReview);
-    assert_eq!(plan.tasks[0].commit_sha.as_deref(), Some("new-commit"));
+    assert_eq!(
+        plan.tasks[0].pi_session_file.as_deref(),
+        Some("implementation.jsonl")
+    );
     assert_eq!(plan.tasks[1].status, RequirementTaskStatus::Pending);
     assert!(plan.tasks[1].pi_session_file.is_none());
     assert!(plan.tasks[1].last_review_feedback.is_none());
@@ -683,7 +683,6 @@ fn task_with_dependencies(
         pi_session_file: None,
         branch_name: None,
         worktree_path: None,
-        commit_sha: None,
         review_for: review_for.map(str::to_owned),
         review_angle: None,
         review_status: RequirementReviewStatus::Pending,

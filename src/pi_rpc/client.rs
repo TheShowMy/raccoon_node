@@ -228,7 +228,6 @@ impl PiRpcClient {
                 pi_session_file: self.get_session_file().await?,
                 branch_name: input.task.branch_name.clone(),
                 worktree_path: input.task.worktree_path.clone(),
-                commit_sha: None,
                 review_status: None,
                 review_feedback: None,
                 pull_request_url: None,
@@ -281,13 +280,14 @@ impl PiRpcClient {
         output.pi_session_file = self.get_session_file().await?;
         output.branch_name = input.task.branch_name.clone();
         output.worktree_path = input.task.worktree_path.clone();
-        if matches!(
-            input.task.kind,
-            RequirementTaskKind::Implementation
-                | RequirementTaskKind::BranchMerge
-                | RequirementTaskKind::MergeReview
-        ) {
-            output.commit_sha = Some(commit_task_changes(&input.task, &mut output).await?);
+        match input.task.kind {
+            RequirementTaskKind::BranchMerge | RequirementTaskKind::MergeReview => {
+                commit_task_changes(&input.task, &mut output).await?;
+            }
+            RequirementTaskKind::Implementation => {
+                stage_task_changes(&input.task, &mut output).await?;
+            }
+            _ => {}
         }
         Ok(output)
     }
