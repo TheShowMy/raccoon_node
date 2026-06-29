@@ -84,6 +84,7 @@ mod tests {
                 created_at: Utc::now(),
             }],
             reference_context: None,
+            prompt_images: Vec::new(),
             model_settings: ModelSettings::default(),
             pi_session_file: None,
         };

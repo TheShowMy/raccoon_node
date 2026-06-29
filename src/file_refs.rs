@@ -4,7 +4,7 @@ use axum::http::header;
 
 use crate::{
     error::AppError,
-    models::{AttachmentUploadRequest, FileReference, ImageAttachment},
+    models::{AttachmentUploadRequest, FileReference, ImageAttachment, PromptImage},
     utils::{ensure_child_path, normalize_local_path},
 };
 
@@ -74,7 +74,6 @@ pub async fn read_repo_file(repo_path: &Path, relative_path: &str) -> Result<Str
 
 pub async fn build_reference_context(
     repo_path: &Path,
-    project_dir: &Path,
     references: &[FileReference],
     images: &[ImageAttachment],
 ) -> Result<Option<String>, AppError> {
@@ -94,13 +93,10 @@ pub async fn build_reference_context(
         ));
     }
     for image in images {
-        let (bytes, mime_type) = read_attachment(project_dir, &image.path).await?;
         blocks.push(format!(
-            r#"<image name="{}" path="{}" mime_type="{}" data_base64="{}" />"#,
+            r#"<image name="{}" path="{}" />"#,
             escape_attr(&image.name),
             escape_attr(&image.path),
-            mime_type,
-            base64_encode(&bytes)
         ));
     }
 
@@ -108,6 +104,21 @@ pub async fn build_reference_context(
         "以下是用户引用的上下文：\n{}",
         blocks.join("\n\n")
     )))
+}
+
+pub async fn build_prompt_images(
+    project_dir: &Path,
+    images: &[ImageAttachment],
+) -> Result<Vec<PromptImage>, AppError> {
+    let mut prompt_images = Vec::with_capacity(images.len());
+    for image in images {
+        let (bytes, mime_type) = read_attachment(project_dir, &image.path).await?;
+        prompt_images.push(PromptImage {
+            data_base64: base64_encode(&bytes),
+            mime_type: mime_type.to_owned(),
+        });
+    }
+    Ok(prompt_images)
 }
 
 pub async fn save_attachment(

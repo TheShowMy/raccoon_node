@@ -103,11 +103,10 @@ pub fn parse_requirement_plan(text: &str) -> Result<RequirementExecutionPlan, Ap
             depends_on: task.depends_on,
             kind: RequirementTaskKind::Implementation,
             model_tier: effective_model_tier(RequirementTaskKind::Implementation),
-            timeout_seconds: 45 * 60,
+            timeout_seconds: 90,
             pi_session_file: None,
             branch_name: None,
             worktree_path: None,
-            commit_sha: None,
             review_for: None,
             review_angle: None,
             review_status: RequirementReviewStatus::Pending,
@@ -169,21 +168,10 @@ pub fn build_requirement_task_prompt(
         .join("\n");
     let future_tasks = future_implementation_tasks_for_prompt(plan, task);
     let failure_context = execution_failure_context(task);
-    let reviewed_commit = task
-        .review_for
-        .as_deref()
-        .and_then(|review_for| plan.tasks.iter().find(|item| item.id == review_for))
-        .and_then(|reviewed| reviewed.commit_sha.as_deref())
-        .unwrap_or("缺少提交 SHA");
 
-    let (role, json_contract, extra) = match task.kind {
+    let (role, extra) = match task.kind {
         RequirementTaskKind::Implementation => (
             "实现 Agent",
-            r#"{
-  "changed": true,
-  "no_op_reason": null,
-  "result_summary": "本任务完成了什么，涉及哪些关键文件，如何验证"
-}"#,
             format!(
                 r#"## 严格任务边界
 - 只允许实现“当前任务”描述中明确要求的内容。
@@ -205,8 +193,7 @@ pub fn build_requirement_task_prompt(
                 future_tasks = future_tasks,
                 fix_feedback = if task.status == RequirementTaskStatus::Fixing {
                     format!(
-                        "\n## 修复要求\n- 当前提交：{}\n- 最新审核反馈：{}\n- 必须针对审核反馈产生实际代码修改和新提交，禁止 changed=false 或仅重新描述已有实现。\n- 请在原实现基础上修复问题，不要重做无关内容。",
-                        task.commit_sha.as_deref().unwrap_or("缺少提交 SHA"),
+                        "\n## 修复要求\n- 当前状态：未提交，改动位于暂存区（git diff --cached）\n- 最新审核反馈：{}\n- 必须针对审核反馈产生实际代码修改，禁止 changed=false 或仅重新描述已有实现。\n- 请在原实现基础上修复问题，不要重做无关内容。",
                         task.last_review_feedback.as_deref().unwrap_or("审核未通过"),
                     )
                 } else {
@@ -223,57 +210,36 @@ pub fn build_requirement_task_prompt(
         ),
         RequirementTaskKind::Review => (
             "代码审核 Agent",
-            r#"{
-  "approved": true,
-  "feedback": "审核意见，若不通过必须说明需要如何修复",
-  "result_summary": "本次审核结论"
-            }"#,
             format!(
-                "请只审核提交 {reviewed_commit} 及其最新 diff，不要审核旧提交，不要修改代码。\n审核角度：{}",
+                "请只审核当前工作区暂存区（git diff --cached）的改动，不要审核旧提交，不要修改代码。\n若无暂存改动，直接通过。\n审核角度：{}",
                 task.review_angle.as_deref().unwrap_or("综合审核")
             ),
         ),
         RequirementTaskKind::ReviewSubAgent => (
             "代码审核 Sub Agent",
-            r#"{
-  "approved": true,
-  "feedback": "审核意见，若不通过必须说明需要如何修复",
-  "result_summary": "本次审核结论"
-            }"#,
             format!(
-                "请只审核提交 {reviewed_commit} 及其最新 diff，不要审核旧提交，不要修改代码。\n审核角度：{}",
+                "请只审核当前工作区暂存区（git diff --cached）的改动，不要审核旧提交，不要修改代码。\n若无暂存改动，直接通过。\n审核角度：{}",
                 task.review_angle.as_deref().unwrap_or("综合审核")
             ),
         ),
         RequirementTaskKind::ReviewSummary => (
             "代码审核汇总 Agent",
-            r#"{
-  "approved": true,
-  "feedback": "汇总后的审核意见，若不通过必须说明代码节点需要如何修复",
-  "result_summary": "审核汇总结论"
-            }"#,
             format!(
-                "请汇总提交 {reviewed_commit} 的三个审核 Sub Agent 意见。只要任一 Sub Agent 不通过，approved 必须为 false，feedback 和 result_summary 必须明确写审核不通过；禁止状态与文字结论矛盾。\n{}",
-                review_feedback_for_prompt(plan, task.review_for.as_deref())
+                "请汇总当前工作区暂存区（git diff --cached）的三个审核 Sub Agent 意见。只要任一 Sub Agent 不通过，approved 必须为 false，feedback 和 result_summary 必须明确写审核不通过；禁止状态与文字结论矛盾。若无暂存改动，直接通过。\n{}\n审核角度：{}",
+                review_feedback_for_prompt(plan, task.review_for.as_deref()),
+                task.review_angle.as_deref().unwrap_or("综合审核")
             ),
         ),
         RequirementTaskKind::BranchMerge => (
             "分支合并 Agent",
-            r#"{
-  "result_summary": "本分支合并节点完成了什么，是否处理了冲突，如何验证"
-}"#,
             "请合并所有前置分支提交；如有冲突，只做最小必要修复。".to_owned(),
         ),
         RequirementTaskKind::MergeReview => (
             "最终合并审核 Agent",
-            r#"{
-  "approved": true,
-  "feedback": "最终审核意见",
-  "result_summary": "最终合并审核结论"
-}"#,
             "请完成最终合并后的检查，至少运行 npm run check；必要时可以做最小修复。".to_owned(),
         ),
     };
+    let json_contract = task_output_json_contract(task.kind);
 
     format!(
         r#"你是当前项目的{role}。
@@ -343,31 +309,158 @@ pub fn build_recovery_guidance_prompt(task: &RequirementExecutionTask) -> String
 
 请根据任务边界、失败原因和审核反馈生成最小可执行恢复方案。
 只输出 JSON，不要 Markdown：
-{{
-  "root_cause": "根因判断",
-  "strategy": "处理策略",
-  "steps": ["执行步骤"],
-  "verification": ["验证步骤"]
-}}
+{recovery_guidance_json_contract}
 
-任务：{}
-描述：{}
-目标文件：{}
-失败原因：{}
-失败摘要：{}
-审核反馈：{}
+任务：{title}
+描述：{description}
+目标文件：{target_files}
+失败原因：{error}
+失败摘要：{failure_summary}
+审核反馈：{review_feedback}
 "#,
-        task.title,
-        task.description,
-        if task.target_files.is_empty() {
+        recovery_guidance_json_contract = recovery_guidance_json_contract(),
+        title = task.title,
+        description = task.description,
+        target_files = if task.target_files.is_empty() {
             "未限定".to_owned()
         } else {
             task.target_files.join("、")
         },
-        task.error.as_deref().unwrap_or("无"),
-        task.failure_summary.as_deref().unwrap_or("无"),
-        task.last_review_feedback.as_deref().unwrap_or("无"),
+        error = task.error.as_deref().unwrap_or("无"),
+        failure_summary = task.failure_summary.as_deref().unwrap_or("无"),
+        review_feedback = task.last_review_feedback.as_deref().unwrap_or("无"),
     )
+}
+
+pub fn build_task_output_json_repair_prompt(
+    task: &RequirementExecutionTask,
+    parse_error: &str,
+    previous_content: &str,
+) -> String {
+    build_json_repair_prompt(
+        "任务结果 JSON",
+        parse_error,
+        previous_content,
+        task_output_json_contract(task.kind),
+    )
+}
+
+pub fn build_recovery_guidance_json_repair_prompt(
+    parse_error: &str,
+    previous_content: &str,
+) -> String {
+    build_json_repair_prompt(
+        "恢复指导 JSON",
+        parse_error,
+        previous_content,
+        recovery_guidance_json_contract(),
+    )
+}
+
+pub fn build_requirement_plan_json_repair_prompt(
+    parse_error: &str,
+    previous_content: &str,
+) -> String {
+    build_json_repair_prompt(
+        "执行计划 JSON",
+        parse_error,
+        previous_content,
+        requirement_plan_json_contract(),
+    )
+}
+
+fn build_json_repair_prompt(
+    output_name: &str,
+    parse_error: &str,
+    previous_content: &str,
+    json_contract: &str,
+) -> String {
+    format!(
+        r#"上一轮输出无法解析为{output_name}：{parse_error}
+
+请基于同一会话上下文重新输出，不要重新执行任务，不要解释，只输出一个合法 JSON 对象，不要 Markdown，不要代码块。
+
+JSON 格式：
+{json_contract}
+
+上一轮输出摘录：
+{previous_content}
+"#,
+        previous_content = json_repair_excerpt(previous_content),
+    )
+}
+
+fn task_output_json_contract(kind: RequirementTaskKind) -> &'static str {
+    match kind {
+        RequirementTaskKind::Implementation => {
+            r#"{
+  "changed": true,
+  "no_op_reason": null,
+  "result_summary": "本任务完成了什么，涉及哪些关键文件，如何验证"
+}"#
+        }
+        RequirementTaskKind::Review | RequirementTaskKind::ReviewSubAgent => {
+            r#"{
+  "approved": true,
+  "feedback": "审核意见，若不通过必须说明需要如何修复",
+  "result_summary": "本次审核结论"
+}"#
+        }
+        RequirementTaskKind::ReviewSummary => {
+            r#"{
+  "approved": true,
+  "feedback": "汇总后的审核意见，若不通过必须说明代码节点需要如何修复",
+  "result_summary": "审核汇总结论"
+}"#
+        }
+        RequirementTaskKind::BranchMerge => {
+            r#"{
+  "result_summary": "本分支合并节点完成了什么，是否处理了冲突，如何验证"
+}"#
+        }
+        RequirementTaskKind::MergeReview => {
+            r#"{
+  "approved": true,
+  "feedback": "最终审核意见",
+  "result_summary": "最终合并审核结论"
+}"#
+        }
+    }
+}
+
+fn recovery_guidance_json_contract() -> &'static str {
+    r#"{
+  "root_cause": "根因判断",
+  "strategy": "处理策略",
+  "steps": ["执行步骤"],
+  "verification": ["验证步骤"]
+}"#
+}
+
+fn requirement_plan_json_contract() -> &'static str {
+    r#"{
+  "summary": "执行计划摘要",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "任务标题",
+      "description": "任务目标、边界和完成标准",
+      "depends_on": [],
+      "target_files": ["可能涉及的文件或目录"]
+    }
+  ]
+}"#
+}
+
+fn json_repair_excerpt(content: &str) -> String {
+    const MAX_CHARS: usize = 4000;
+    let trimmed = content.trim();
+    let excerpt = trimmed.chars().take(MAX_CHARS).collect::<String>();
+    if trimmed.chars().count() > MAX_CHARS {
+        format!("{excerpt}\n...（已截断）")
+    } else {
+        excerpt
+    }
 }
 
 pub fn parse_recovery_guidance(text: &str) -> Result<String, AppError> {
@@ -412,7 +505,6 @@ pub fn parse_task_execution_output(
         pi_session_file: None,
         branch_name: None,
         worktree_path: None,
-        commit_sha: None,
         review_status: raw.approved.map(|approved| {
             if approved {
                 RequirementReviewStatus::Approved
@@ -486,11 +578,10 @@ fn expand_execution_tasks(
                 depends_on: vec![task.id.clone()],
                 kind: RequirementTaskKind::ReviewSubAgent,
                 model_tier: effective_model_tier(RequirementTaskKind::ReviewSubAgent),
-                timeout_seconds: 20 * 60,
+                timeout_seconds: 90,
                 pi_session_file: None,
                 branch_name: None,
                 worktree_path: None,
-                commit_sha: None,
                 review_for: Some(task.id.clone()),
                 review_angle: Some((*angle).to_owned()),
                 review_status: RequirementReviewStatus::Pending,
@@ -522,11 +613,10 @@ fn expand_execution_tasks(
                 .collect(),
             kind: RequirementTaskKind::ReviewSummary,
             model_tier: effective_model_tier(RequirementTaskKind::ReviewSummary),
-            timeout_seconds: 20 * 60,
+            timeout_seconds: 90,
             pi_session_file: None,
             branch_name: None,
             worktree_path: None,
-            commit_sha: None,
             review_for: Some(task.id.clone()),
             review_angle: Some("审核汇总".to_owned()),
             review_status: RequirementReviewStatus::Pending,
@@ -557,11 +647,10 @@ fn expand_execution_tasks(
         depends_on: final_dependencies,
         kind: RequirementTaskKind::MergeReview,
         model_tier: RequirementModelTier::High,
-        timeout_seconds: 45 * 60,
+        timeout_seconds: 90,
         pi_session_file: None,
         branch_name: None,
         worktree_path: None,
-        commit_sha: None,
         review_for: None,
         review_angle: None,
         review_status: RequirementReviewStatus::Pending,
@@ -704,11 +793,10 @@ fn branch_merge_task(
         depends_on,
         kind: RequirementTaskKind::BranchMerge,
         model_tier: RequirementModelTier::High,
-        timeout_seconds: 30 * 60,
+        timeout_seconds: 90,
         pi_session_file: None,
         branch_name: None,
         worktree_path: None,
-        commit_sha: None,
         review_for: None,
         review_angle: None,
         review_status: RequirementReviewStatus::Pending,
@@ -974,7 +1062,8 @@ struct RawRecoveryGuidance {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_requirement_plan_prompt, build_requirement_task_prompt, effective_model_tier,
+        build_recovery_guidance_json_repair_prompt, build_requirement_plan_prompt,
+        build_requirement_task_prompt, build_task_output_json_repair_prompt, effective_model_tier,
         parse_recovery_guidance, parse_requirement_plan, parse_task_execution_output,
     };
     use crate::models::{
@@ -1000,6 +1089,27 @@ mod tests {
         assert!(prompt.contains("DAG 必须按“阶段”拆分"));
         assert!(prompt.contains("task-6 的 depends_on 必须为 [\"task-3\", \"task-4\", \"task-5\"]"));
         assert!(prompt.contains("不要在 tasks 中生成合并任务"));
+    }
+
+    #[test]
+    fn json_repair_prompts_include_error_excerpt_and_contract() {
+        let mut task = test_task("review-task-1", "审核实现", Vec::new());
+        task.kind = RequirementTaskKind::ReviewSubAgent;
+        let prompt = build_task_output_json_repair_prompt(
+            &task,
+            "expected value at line 1 column 1",
+            &"x".repeat(4100),
+        );
+
+        assert!(prompt.contains("expected value at line 1 column 1"));
+        assert!(prompt.contains("上一轮输出摘录"));
+        assert!(prompt.contains("已截断"));
+        assert!(prompt.contains("\"approved\": true"));
+        assert!(prompt.contains("只输出一个合法 JSON 对象"));
+
+        let guidance_prompt = build_recovery_guidance_json_repair_prompt("missing field", "{} ");
+        assert!(guidance_prompt.contains("\"root_cause\""));
+        assert!(guidance_prompt.contains("missing field"));
     }
 
     #[test]
@@ -1109,7 +1219,6 @@ mod tests {
         let requirement = test_requirement("修复页面");
         let mut implementation = test_task("task-1", "修复实现", Vec::new());
         implementation.status = RequirementTaskStatus::Fixing;
-        implementation.commit_sha = Some("new-commit".to_owned());
         implementation.last_review_feedback = Some("补充边界校验".to_owned());
         let mut review = test_task("review-task-1", "审核实现", vec!["task-1".to_owned()]);
         review.kind = RequirementTaskKind::ReviewSubAgent;
@@ -1120,12 +1229,12 @@ mod tests {
         };
 
         let fixing_prompt = build_requirement_task_prompt(&requirement, &plan, &implementation);
-        assert!(fixing_prompt.contains("当前提交：new-commit"));
+        assert!(fixing_prompt.contains("当前状态：未提交，改动位于暂存区"));
         assert!(fixing_prompt.contains("最新审核反馈：补充边界校验"));
-        assert!(fixing_prompt.contains("必须针对审核反馈产生实际代码修改和新提交"));
+        assert!(fixing_prompt.contains("必须针对审核反馈产生实际代码修改"));
 
         let review_prompt = build_requirement_task_prompt(&requirement, &plan, &review);
-        assert!(review_prompt.contains("只审核提交 new-commit 及其最新 diff"));
+        assert!(review_prompt.contains("只审核当前工作区暂存区（git diff --cached）的改动"));
         assert!(review_prompt.contains("不要审核旧提交"));
     }
 
@@ -1161,11 +1270,10 @@ mod tests {
             depends_on,
             kind: RequirementTaskKind::Implementation,
             model_tier: RequirementModelTier::Medium,
-            timeout_seconds: 45 * 60,
+            timeout_seconds: 90,
             pi_session_file: None,
             branch_name: None,
             worktree_path: None,
-            commit_sha: None,
             review_for: None,
             review_angle: None,
             review_status: RequirementReviewStatus::Pending,

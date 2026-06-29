@@ -340,6 +340,46 @@ describe("buildProjectNodes", () => {
     }
   });
 
+  it("expands recoverable compact review child nodes", () => {
+    const implementation = task("implementation");
+    const failedReview = task("review-1", "review_sub_agent", {
+      status: "failed",
+      review_for: "implementation",
+    });
+    const completedReview = task("review-2", "review_sub_agent", {
+      status: "completed",
+      review_for: "implementation",
+    });
+    const selectedRequirement = requirement([
+      implementation,
+      failedReview,
+      completedReview,
+    ]);
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [selectedRequirement],
+      completed_requirements: [],
+    };
+
+    const nodes = buildProjectNodes(params(canvas, selectedRequirement));
+    const failed = nodes.find(
+      (node) => node.id === "requirement-task-review-1",
+    )!;
+    const completed = nodes.find(
+      (node) => node.id === "requirement-task-review-2",
+    )!;
+
+    expect({ width: failed.width, height: failed.height }).toEqual({
+      width: 180,
+      height: 86,
+    });
+    expect({ width: completed.width, height: completed.height }).toEqual({
+      width: 140,
+      height: 52,
+    });
+  });
+
   it("keeps collapsed groups at 82px without child nodes", () => {
     const selectedRequirement = requirement();
     const canvas: ProjectCanvasData = {

@@ -54,17 +54,19 @@ export default function RequirementTaskNode({
   data: Extract<StartNodeData, { kind: "requirement-task" }>;
 }) {
   const task = data.task;
-  const canRecover = isRecoverable(task.status);
   const nodeRole = data.nodeRole ?? "external";
   const statusClass = `task-node--status-${task.status}`;
+  const compactReviewNode = nodeRole === "review_sub_agent";
+  const hasRecoveryActions = hasTaskRecoveryActions(task);
   const [detailOpen, setDetailOpen] = useState(false);
   if (nodeRole === "group") {
     const CollapseIcon = data.collapsed ? ChevronRight : ChevronDown;
+    const hasRecoverableReview = data.reviews.some(isRecoverableReviewTask);
     return (
       <div
         className={`task-node task-node--group ${statusClass} ${
           data.collapsed ? "task-node--collapsed" : ""
-        }`}
+        } ${hasRecoverableReview ? "task-node--has-recovery-actions" : ""}`}
       >
         <div className="task-node__head">
           <span className="node-icon">
@@ -89,6 +91,17 @@ export default function RequirementTaskNode({
               ) : null}
             </div>
           </div>
+          {data.collapsed && hasRecoverableReview ? (
+            <button
+              type="button"
+              className="task-node__handle-review nowheel nodrag"
+              onClick={() =>
+                data.onToggleCollapsed?.(data.requirementId, task.id)
+              }
+            >
+              展开处理
+            </button>
+          ) : null}
           <button
             type="button"
             className="task-node__collapse nowheel nodrag"
@@ -114,7 +127,11 @@ export default function RequirementTaskNode({
           : CircleDot;
   return (
     <>
-      <div className={`task-node task-node--${nodeRole} ${statusClass}`}>
+      <div
+        className={`task-node task-node--${nodeRole} ${statusClass} ${
+          hasRecoveryActions ? "task-node--has-recovery-actions" : ""
+        }`}
+      >
         <div className="task-node__head">
           <span className="node-icon">
             {task.status === "running" ? (
@@ -134,6 +151,17 @@ export default function RequirementTaskNode({
             >
               {taskStatusText[task.status]}
             </span>
+            {compactReviewNode && hasRecoveryActions ? (
+              <TaskRecoveryActions
+                task={task}
+                requirementId={data.requirementId}
+                busy={data.busy}
+                onRetryFailedNode={data.onRetryFailedNode}
+                onRetryFromNode={data.onRetryFromNode}
+                onRerunReview={data.onRerunReview}
+                className="task-node__inline-actions"
+              />
+            ) : null}
           </div>
         </div>
         <div className="task-node__body">
@@ -153,43 +181,15 @@ export default function RequirementTaskNode({
               <Eye size={13} />
               详情
             </button>
-            {task.status === "failed" ? (
-              <button
-                type="button"
-                disabled={data.busy}
-                onClick={() =>
-                  void data.onRetryFailedNode(data.requirementId, task.id)
-                }
-              >
-                <RotateCcw size={13} />
-                重试
-              </button>
-            ) : null}
-            {(nodeRole === "review_summary" ||
-              nodeRole === "review_sub_agent") &&
-            isRecoverable(task.status) ? (
-              <button
-                type="button"
-                disabled={data.busy}
-                onClick={() =>
-                  void data.onRerunReview(data.requirementId, task.id)
-                }
-              >
-                <RotateCcw size={13} />
-                重跑
-              </button>
-            ) : null}
-            {canRecover ? (
-              <button
-                type="button"
-                disabled={data.busy}
-                onClick={() =>
-                  void data.onRetryFromNode(data.requirementId, task.id)
-                }
-              >
-                <RotateCcw size={13} />
-                从此恢复
-              </button>
+            {!compactReviewNode ? (
+              <TaskRecoveryActions
+                task={task}
+                requirementId={data.requirementId}
+                busy={data.busy}
+                onRetryFailedNode={data.onRetryFailedNode}
+                onRetryFromNode={data.onRetryFromNode}
+                onRerunReview={data.onRerunReview}
+              />
             ) : null}
           </div>
         </div>
@@ -201,6 +201,60 @@ export default function RequirementTaskNode({
         onClose={() => setDetailOpen(false)}
       />
     </>
+  );
+}
+
+function TaskRecoveryActions({
+  task,
+  requirementId,
+  busy,
+  onRetryFailedNode,
+  onRetryFromNode,
+  onRerunReview,
+  className = "task-node__recovery-actions",
+}: {
+  task: RequirementExecutionTask;
+  requirementId: string;
+  busy: boolean;
+  onRetryFailedNode: (requirementId: string, taskId: string) => Promise<void>;
+  onRetryFromNode: (requirementId: string, taskId: string) => Promise<void>;
+  onRerunReview: (requirementId: string, taskId: string) => Promise<void>;
+  className?: string;
+}) {
+  if (!hasTaskRecoveryActions(task)) return null;
+  return (
+    <div className={`${className} nowheel nodrag`.trim()}>
+      {task.status === "failed" ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void onRetryFailedNode(requirementId, task.id)}
+        >
+          <RotateCcw size={13} />
+          重试
+        </button>
+      ) : null}
+      {isReviewTask(task) && isRecoverable(task.status) ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void onRerunReview(requirementId, task.id)}
+        >
+          <RotateCcw size={13} />
+          重跑
+        </button>
+      ) : null}
+      {isRecoverable(task.status) ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void onRetryFromNode(requirementId, task.id)}
+        >
+          <RotateCcw size={13} />
+          从此恢复
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -489,6 +543,22 @@ function DetailItem({
         </dd>
       )}
     </>
+  );
+}
+
+function hasTaskRecoveryActions(task: RequirementExecutionTask) {
+  return task.status === "failed" || isRecoverable(task.status);
+}
+
+function isRecoverableReviewTask(task: RequirementExecutionTask) {
+  return isReviewTask(task) && isRecoverable(task.status);
+}
+
+function isReviewTask(task: RequirementExecutionTask) {
+  return (
+    task.kind === "review" ||
+    task.kind === "review_sub_agent" ||
+    task.kind === "review_summary"
   );
 }
 

@@ -223,11 +223,10 @@ mod tests {
             } else {
                 RequirementModelTier::High
             },
-            timeout_seconds: 45 * 60,
+            timeout_seconds: 90,
             pi_session_file: None,
             branch_name: None,
             worktree_path: None,
-            commit_sha: None,
             review_for: review_for.map(str::to_owned),
             review_angle: review_for.map(|_| "综合审核".to_owned()),
             review_status: RequirementReviewStatus::Pending,
@@ -257,7 +256,6 @@ mod tests {
             pi_session_file: None,
             branch_name: None,
             worktree_path: None,
-            commit_sha: None,
             review_status: Some(RequirementReviewStatus::Approved),
             review_feedback: Some("通过".to_owned()),
             pull_request_url: None,
@@ -1170,6 +1168,7 @@ mod tests {
                 created_at: now,
             }],
             reference_context: None,
+            prompt_images: Vec::new(),
             clarifications: Vec::new(),
             draft: None,
             model_settings: ModelSettings::default(),

@@ -8,7 +8,7 @@ use chrono::Utc;
 use serde_json::Value;
 
 use crate::error::AppError;
-use crate::file_refs::build_reference_context;
+use crate::file_refs::{build_prompt_images, build_reference_context};
 use crate::models::{
     AppData, ClarificationAnswer, FileReference, ImageAttachment, ModelSettings, PiModel, Project,
     ProjectCanvasResponse, ProjectChat, ProjectChatInput, ProjectChatMessage,
@@ -20,6 +20,7 @@ use crate::models::{
     RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
     RequirementTaskStatus,
 };
+use crate::pi_rpc::commit_staged_changes;
 use crate::requirement_execution::effective_model_tier;
 use crate::utils::{
     build_clarification_answer_summary, clarification_has_answer, clone_git_repo,
@@ -440,13 +441,9 @@ impl JsonStore {
             return Err(AppError::bad_request("项目问答正在回答，请稍后再发送"));
         }
         let project_dir = self.project_dir(project_id)?;
-        let reference_context = build_reference_context(
-            Path::new(&project.local_path),
-            &project_dir,
-            &references,
-            &images,
-        )
-        .await?;
+        let reference_context =
+            build_reference_context(Path::new(&project.local_path), &references, &images).await?;
+        let prompt_images = build_prompt_images(&project_dir, &images).await?;
 
         let now = Utc::now();
         let chat = &mut self.data.project_chats[index];
@@ -466,6 +463,7 @@ impl JsonStore {
             project,
             messages: chat.messages.clone(),
             reference_context,
+            prompt_images,
             model_settings: self.data.model_settings.clone(),
             pi_session_file: chat.pi_session_file.clone(),
         };
@@ -590,13 +588,9 @@ impl JsonStore {
             .cloned()
             .ok_or_else(|| AppError::not_found("项目不存在"))?;
         let project_dir = self.project_dir(project_id)?;
-        let reference_context = build_reference_context(
-            Path::new(&project.local_path),
-            &project_dir,
-            &references,
-            &images,
-        )
-        .await?;
+        let reference_context =
+            build_reference_context(Path::new(&project.local_path), &references, &images).await?;
+        let prompt_images = build_prompt_images(&project_dir, &images).await?;
 
         let now = Utc::now();
         let id = format!("requirement-{}", now.timestamp_millis());
@@ -629,6 +623,7 @@ impl JsonStore {
             project,
             messages: requirement.messages.clone(),
             reference_context,
+            prompt_images,
             clarifications: requirement.clarifications.clone(),
             draft: None,
             model_settings: self.data.model_settings.clone(),
@@ -668,13 +663,9 @@ impl JsonStore {
             .cloned()
             .ok_or_else(|| AppError::not_found("项目不存在"))?;
         let project_dir = self.project_dir(&project_id)?;
-        let reference_context = build_reference_context(
-            Path::new(&project.local_path),
-            &project_dir,
-            &references,
-            &images,
-        )
-        .await?;
+        let reference_context =
+            build_reference_context(Path::new(&project.local_path), &references, &images).await?;
+        let prompt_images = build_prompt_images(&project_dir, &images).await?;
         let previous_clarifications = self.data.requirements[index].clarifications.clone();
         let previous_draft = self.data.requirements[index].draft.clone();
         let now = Utc::now();
@@ -704,6 +695,7 @@ impl JsonStore {
                 project,
                 messages: requirement.messages,
                 reference_context,
+                prompt_images,
                 clarifications: previous_clarifications,
                 draft: previous_draft,
                 model_settings: self.data.model_settings.clone(),
@@ -784,6 +776,7 @@ impl JsonStore {
                 project,
                 messages: requirement.messages,
                 reference_context: None,
+                prompt_images: Vec::new(),
                 clarifications: requirement.clarifications,
                 draft: requirement.draft,
                 model_settings: self.data.model_settings.clone(),
@@ -1433,7 +1426,6 @@ impl JsonStore {
                         .or(task.pi_session_file.take());
                     task.branch_name = output.branch_name.clone().or(task.branch_name.take());
                     task.worktree_path = output.worktree_path.clone().or(task.worktree_path.take());
-                    task.commit_sha = output.commit_sha.clone().or(task.commit_sha.take());
                     task.pull_request_url = output
                         .pull_request_url
                         .clone()
@@ -1510,6 +1502,19 @@ impl JsonStore {
                                     task_id,
                                     effective_review_feedback.clone(),
                                 )?;
+                                let review_for_id = plan.tasks[task_index].review_for.clone();
+                                if let Some(reviewed) = plan.tasks.iter_mut().find(|t| {
+                                    review_for_id.as_deref() == Some(t.id.as_str())
+                                        && t.kind == RequirementTaskKind::Implementation
+                                        && t.status == RequirementTaskStatus::Completed
+                                }) {
+                                    if let Some(worktree) = reviewed.worktree_path.as_deref() {
+                                        let message = format!("raccoon_node: {}", reviewed.title);
+                                        let _ =
+                                            commit_staged_changes(Path::new(worktree), &message)
+                                                .await;
+                                    }
+                                }
                             }
                             RequirementReviewStatus::Rejected => {
                                 reject_reviewed_task(

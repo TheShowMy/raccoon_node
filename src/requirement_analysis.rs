@@ -747,6 +747,7 @@ mod tests {
                 },
             ],
             reference_context: None,
+            prompt_images: Vec::new(),
             clarifications: vec![RequirementClarification {
                 id: "q1".to_owned(),
                 question: "导出范围？".to_owned(),

@@ -770,17 +770,22 @@ async fn run_requirement_execution(state: AppState, requirement_id: String) -> R
             return status;
         }
 
+        let mut final_failure_seen = false;
         match running_tasks.join_next().await {
             Some(Ok(TaskExecutionDisposition::Continue)) => {}
             Some(Ok(TaskExecutionDisposition::FinalFailure)) | Some(Err(_)) => {
-                running_tasks.abort_all();
-                while running_tasks.join_next().await.is_some() {}
-                let mut store = state.store.write().await;
-                let _ = store.reset_running_execution_tasks(&requirement_id).await;
-                emitter.emit("execution_failed", "需求执行失败。");
-                return RequirementStatus::Failed;
+                final_failure_seen = true;
             }
             None => {}
+        }
+
+        if final_failure_seen {
+            // 不 abort，让兄弟任务自然结束
+            while running_tasks.join_next().await.is_some() {}
+            let mut store = state.store.write().await;
+            let _ = store.reset_running_execution_tasks(&requirement_id).await;
+            emitter.emit("execution_failed", "需求执行失败。");
+            return RequirementStatus::Failed;
         }
     }
 }

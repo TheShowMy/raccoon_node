@@ -196,8 +196,6 @@ pub struct RequirementExecutionTask {
     #[serde(default)]
     pub worktree_path: Option<String>,
     #[serde(default)]
-    pub commit_sha: Option<String>,
-    #[serde(default)]
     pub review_for: Option<String>,
     #[serde(default)]
     pub review_angle: Option<String>,
@@ -237,7 +235,7 @@ pub struct RequirementExecutionTask {
 }
 
 fn default_task_timeout_seconds() -> u64 {
-    45 * 60
+    90
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -249,6 +247,12 @@ pub struct FileReference {
 pub struct ImageAttachment {
     pub name: String,
     pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptImage {
+    pub data_base64: String,
+    pub mime_type: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -566,6 +570,7 @@ pub struct ProjectChatInput {
     pub project: Project,
     pub messages: Vec<ProjectChatMessage>,
     pub reference_context: Option<String>,
+    pub prompt_images: Vec<PromptImage>,
     pub model_settings: ModelSettings,
     pub pi_session_file: Option<String>,
 }
@@ -582,6 +587,7 @@ pub struct RequirementAnalysisInput {
     pub project: Project,
     pub messages: Vec<RequirementMessage>,
     pub reference_context: Option<String>,
+    pub prompt_images: Vec<PromptImage>,
     pub clarifications: Vec<RequirementClarification>,
     pub draft: Option<RequirementDraft>,
     pub model_settings: ModelSettings,
@@ -622,7 +628,6 @@ pub struct RequirementTaskExecutionOutput {
     pub pi_session_file: Option<String>,
     pub branch_name: Option<String>,
     pub worktree_path: Option<String>,
-    pub commit_sha: Option<String>,
     pub review_status: Option<RequirementReviewStatus>,
     pub review_feedback: Option<String>,
     pub pull_request_url: Option<String>,

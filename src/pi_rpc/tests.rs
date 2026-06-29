@@ -2,9 +2,9 @@
 use super::*;
 
 use super::{
-    attach_session_usage, build_pr_merge_args, commit_task_changes, dependency_commits_for_task,
-    ensure_head_matches, generated_branch_names, is_terminal_agent_end, parse_default_branch,
-    parse_session_header_cwd, safe_worktree_name, session_header_matches_working_dir,
+    attach_session_usage, build_pr_merge_args, commit_staged_changes, event_has_output_activity,
+    generated_branch_names, is_terminal_agent_end, parse_default_branch, parse_session_header_cwd,
+    safe_worktree_name, session_header_matches_working_dir, stage_task_changes,
 };
 use crate::models::{
     RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
@@ -91,6 +91,48 @@ fn wait_only_finishes_on_final_agent_end() {
 }
 
 #[test]
+fn event_activity_detects_output_content() {
+    assert!(event_has_output_activity(&json!({
+        "type": "message_update",
+        "assistantMessageEvent": {
+            "type": "text_delta",
+            "delta": "{\"ok\":true}"
+        }
+    })));
+    assert!(event_has_output_activity(&json!({
+        "type": "message_update",
+        "assistantMessageEvent": {
+            "type": "thinking_delta",
+            "delta": "思考"
+        }
+    })));
+    assert!(event_has_output_activity(&json!({
+        "type": "tool_execution_update",
+        "partialResult": {
+            "content": [{"text": "running tests"}]
+        }
+    })));
+}
+
+#[test]
+fn event_activity_ignores_response_and_empty_lifecycle_events() {
+    assert!(!event_has_output_activity(&json!({
+        "type": "response",
+        "success": true
+    })));
+    assert!(!event_has_output_activity(&json!({
+        "type": "agent_start"
+    })));
+    assert!(!event_has_output_activity(&json!({
+        "type": "message_update",
+        "assistantMessageEvent": {
+            "type": "text_delta",
+            "delta": "   "
+        }
+    })));
+}
+
+#[test]
 fn session_stats_are_normalized_into_trace_usage() {
     let trace = Some(json!({
         "type": "pi_trace",
@@ -129,13 +171,13 @@ fn session_stats_are_normalized_into_trace_usage() {
 }
 
 #[test]
-fn dependency_commits_follow_task_dependency_order() {
+fn dependency_branches_follow_task_dependency_order() {
     let mut task_a = test_task(Path::new("/tmp/a"));
     task_a.id = "task-a".to_owned();
-    task_a.commit_sha = Some("commit-a".to_owned());
+    task_a.branch_name = Some("branch-a".to_owned());
     let mut task_b = test_task(Path::new("/tmp/b"));
     task_b.id = "task-b".to_owned();
-    task_b.commit_sha = Some("commit-b".to_owned());
+    task_b.branch_name = Some("branch-b".to_owned());
     let mut task_c = test_task(Path::new("/tmp/c"));
     task_c.id = "task-c".to_owned();
     task_c.depends_on = vec!["task-b".to_owned(), "task-a".to_owned()];
@@ -145,8 +187,8 @@ fn dependency_commits_follow_task_dependency_order() {
     };
 
     assert_eq!(
-        dependency_commits_for_task(&task_c, &plan),
-        vec!["commit-b", "commit-a"]
+        super::dependency_branches_for_task(&task_c, &plan),
+        vec!["branch-b", "branch-a"]
     );
 }
 
@@ -157,12 +199,19 @@ async fn implementation_no_diff_can_complete_with_no_op_reason() {
     let task = test_task(temp.path());
     let mut output = test_output(Some(false), Some("前置节点已完整实现"));
 
-    let commit = commit_task_changes(&task, &mut output).await.unwrap();
+    stage_task_changes(&task, &mut output).await.unwrap();
 
-    assert!(!commit.is_empty());
+    let head = super::git(temp.path(), &["rev-parse", "HEAD"])
+        .await
+        .unwrap();
+    let status = super::git(temp.path(), &["status", "--porcelain"])
+        .await
+        .unwrap();
+    assert!(status.trim().is_empty());
+    assert!(!head.trim().is_empty());
     assert_eq!(
         output.execution_warning.as_deref(),
-        Some("未产生新提交：前置节点已完整实现。按 no-op 完成并进入审核。")
+        Some("未产生新改动：前置节点已完整实现。按 no-op 完成并进入审核。")
     );
 }
 
@@ -173,7 +222,7 @@ async fn implementation_no_diff_without_no_op_reason_still_fails() {
     let task = test_task(temp.path());
     let mut output = test_output(None, None);
 
-    let error = commit_task_changes(&task, &mut output).await.unwrap_err();
+    let error = stage_task_changes(&task, &mut output).await.unwrap_err();
 
     assert!(error.to_string().contains("没有产生可提交改动"));
 }
@@ -189,42 +238,51 @@ async fn fixing_implementation_requires_a_new_commit() {
         .to_owned();
     let mut task = test_task(temp.path());
     task.status = RequirementTaskStatus::Fixing;
-    task.commit_sha = Some(old_commit.clone());
     let mut output = test_output(Some(false), Some("无需修改"));
 
-    let error = commit_task_changes(&task, &mut output).await.unwrap_err();
+    let error = stage_task_changes(&task, &mut output).await.unwrap_err();
     assert!(error.to_string().contains("必须产生实际代码改动"));
 
     tokio::fs::write(temp.path().join("README.md"), "fixed\n")
         .await
         .unwrap();
-    let new_commit = commit_task_changes(&task, &mut output).await.unwrap();
-    assert_ne!(new_commit, old_commit);
-}
-
-#[tokio::test]
-async fn review_workspace_head_must_match_reviewed_commit() {
-    let temp = tempfile::tempdir().unwrap();
-    init_repo(temp.path()).await;
-    let reviewed_commit = super::git(temp.path(), &["rev-parse", "HEAD"])
+    let mut output = test_output(Some(true), None);
+    stage_task_changes(&task, &mut output).await.unwrap();
+    commit_staged_changes(temp.path(), "raccoon_node: 实现功能")
+        .await
+        .unwrap();
+    let new_commit = super::git(temp.path(), &["rev-parse", "HEAD"])
         .await
         .unwrap()
         .trim()
         .to_owned();
-    tokio::fs::write(temp.path().join("README.md"), "new\n")
-        .await
-        .unwrap();
-    super::git(temp.path(), &["add", "README.md"])
-        .await
-        .unwrap();
-    super::git(temp.path(), &["commit", "-m", "new"])
-        .await
-        .unwrap();
+    assert_ne!(new_commit, old_commit);
+}
 
-    let error = ensure_head_matches(temp.path(), &reviewed_commit)
+#[tokio::test]
+async fn staged_changes_are_ready_for_review() {
+    let temp = tempfile::tempdir().unwrap();
+    init_repo(temp.path()).await;
+    let task = test_task(temp.path());
+    let mut output = test_output(Some(true), None);
+
+    tokio::fs::write(temp.path().join("README.md"), "staged\n")
         .await
-        .unwrap_err();
-    assert!(error.to_string().contains("与审核提交"));
+        .unwrap();
+    stage_task_changes(&task, &mut output).await.unwrap();
+
+    let status = super::git(temp.path(), &["status", "--porcelain"])
+        .await
+        .unwrap();
+    let diff = super::git(temp.path(), &["diff", "--cached"])
+        .await
+        .unwrap();
+    let log_count = super::git(temp.path(), &["rev-list", "--count", "HEAD"])
+        .await
+        .unwrap();
+    assert!(!status.trim().is_empty());
+    assert!(diff.contains("staged"));
+    assert_eq!(log_count.trim(), "1");
 }
 
 async fn init_repo(path: &Path) {
@@ -254,7 +312,6 @@ fn test_task(path: &Path) -> crate::models::RequirementExecutionTask {
         pi_session_file: None,
         branch_name: None,
         worktree_path: Some(path.to_string_lossy().to_string()),
-        commit_sha: None,
         review_for: None,
         review_angle: None,
         review_status: RequirementReviewStatus::Pending,
@@ -287,7 +344,6 @@ fn test_output(
         pi_session_file: None,
         branch_name: None,
         worktree_path: None,
-        commit_sha: None,
         review_status: None,
         review_feedback: None,
         pull_request_url: None,

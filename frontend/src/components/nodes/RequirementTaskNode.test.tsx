@@ -59,6 +59,7 @@ function renderNode({
   nodeRole,
   reviews = [],
   streamEvents = [],
+  collapsed = false,
 }: {
   nodeTask?: RequirementExecutionTask;
   nodeRole?:
@@ -69,6 +70,7 @@ function renderNode({
     | "external";
   reviews?: RequirementExecutionTask[];
   streamEvents?: StreamEvent[];
+  collapsed?: boolean;
 } = {}) {
   const renderWithEvents = (events: StreamEvent[]) => (
     <RequirementTaskEventsProvider requirementId="req-1" events={events}>
@@ -80,6 +82,7 @@ function renderNode({
           task: nodeTask,
           reviews,
           busy: false,
+          collapsed,
           onRetryFailedNode: vi.fn(),
           onRetryFromNode: vi.fn(),
           onRerunReview: vi.fn(),
@@ -179,8 +182,84 @@ describe("RequirementTaskNode", () => {
     expect(screen.queryByRole("button", { name: "重跑" })).toBeNull();
     unmount();
 
-    renderNode({ nodeTask: rejectedReview, nodeRole: "review_sub_agent" });
-    expect(screen.getByRole("button", { name: "重跑" })).toBeInTheDocument();
+    const rejected = renderNode({
+      nodeTask: rejectedReview,
+      nodeRole: "review_sub_agent",
+    });
+    const inlineActions = rejected.container.querySelector<HTMLElement>(
+      ".task-node__inline-actions",
+    )!;
+    expect(
+      within(inlineActions).getByRole("button", { name: "重跑" }),
+    ).toBeInTheDocument();
+    expect(
+      within(inlineActions).getByRole("button", { name: "从此恢复" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
+  });
+
+  it("shows all recovery actions on failed compact review nodes", () => {
+    const failedReview = task({
+      id: "review-task-1",
+      kind: "review_sub_agent",
+      status: "failed",
+      review_for: "task-1",
+      review_angle: "安全",
+      error: "审核执行失败",
+    });
+
+    const { container } = renderNode({
+      nodeTask: failedReview,
+      nodeRole: "review_sub_agent",
+    });
+
+    const inlineActions = container.querySelector<HTMLElement>(
+      ".task-node__inline-actions",
+    )!;
+    expect(
+      within(inlineActions).getByRole("button", { name: "重试" }),
+    ).toBeInTheDocument();
+    expect(
+      within(inlineActions).getByRole("button", { name: "重跑" }),
+    ).toBeInTheDocument();
+    expect(
+      within(inlineActions).getByRole("button", { name: "从此恢复" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show recovery actions on completed compact review nodes", () => {
+    renderNode({
+      nodeTask: task({
+        id: "review-task-1",
+        kind: "review_sub_agent",
+        status: "completed",
+        review_for: "task-1",
+      }),
+      nodeRole: "review_sub_agent",
+    });
+
+    expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "重跑" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "从此恢复" })).toBeNull();
+  });
+
+  it("shows an expand affordance when collapsed groups contain recoverable reviews", () => {
+    renderNode({
+      nodeRole: "group",
+      collapsed: true,
+      reviews: [
+        task({
+          id: "review-task-1",
+          kind: "review_sub_agent",
+          status: "rejected",
+          review_for: "task-1",
+        }),
+      ],
+    });
+
+    expect(
+      screen.getByRole("button", { name: "展开处理" }),
+    ).toBeInTheDocument();
   });
 
   it("marks group, code, and review nodes with task status classes", () => {

@@ -3,6 +3,44 @@ fn is_terminal_agent_end(event: &Value) -> bool {
         && event.get("willRetry").and_then(Value::as_bool) != Some(true)
 }
 
+fn event_has_output_activity(event: &Value) -> bool {
+    if event.get("type") == Some(&json!("response")) {
+        return false;
+    }
+    match event.get("type").and_then(Value::as_str) {
+        Some("message_update") => event
+            .get("assistantMessageEvent")
+            .is_some_and(value_has_non_empty_text),
+        Some("text_delta") | Some("content_delta") | Some("message_delta")
+        | Some("thinking_delta") => value_has_non_empty_text(event),
+        Some("tool_execution_update") | Some("tool_execution_end") => [
+            "partialResult",
+            "partial_result",
+            "result",
+            "output",
+        ]
+        .iter()
+        .any(|key| event.get(*key).is_some_and(value_has_non_empty_text)),
+        _ => false,
+    }
+}
+
+fn value_has_non_empty_text(value: &Value) -> bool {
+    match value {
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => items.iter().any(value_has_non_empty_text),
+        Value::Object(map) => {
+            for key in ["delta", "text", "content", "partialResult", "partial_result", "result", "output"] {
+                if map.get(key).is_some_and(value_has_non_empty_text) {
+                    return true;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 fn attach_session_usage(
     mut trace: Option<Value>,
     stats: &Value,
@@ -123,12 +161,6 @@ async fn prepare_task_workspace(
             if !worktree.exists() {
                 return Err(AppError::internal("恢复审核失败：目标 worktree 不存在"));
             }
-            let commit = reviewed
-                .commit_sha
-                .as_deref()
-                .ok_or_else(|| AppError::internal("恢复审核失败：审核目标缺少提交"))?;
-            ensure_commit_exists(&worktree, commit).await?;
-            ensure_head_matches(&worktree, commit).await?;
             Ok((worktree, None, None))
         }
         RequirementTaskKind::Implementation
@@ -153,23 +185,19 @@ async fn prepare_task_workspace(
 
             let existed = worktree.join(".git").exists();
             let recovering = input.task.worktree_path.is_some()
-                || input.task.branch_name.is_some()
-                || input.task.commit_sha.is_some();
+                || input.task.branch_name.is_some();
             if recovering && !existed {
                 return Err(AppError::internal("恢复节点失败：worktree 不存在"));
             }
             if let Some(existing_branch) = input.task.branch_name.as_deref() {
                 ensure_branch_exists(&repo, existing_branch).await?;
             }
-            if let Some(commit) = input.task.commit_sha.as_deref() {
-                ensure_commit_exists(&repo, commit).await?;
-            }
             if !existed {
                 if let Some(parent) = worktree.parent() {
                     tokio::fs::create_dir_all(parent).await?;
                 }
-                let dependency_commits = task_dependency_commits(input);
-                let base_ref = dependency_commits
+                let dependency_branches = task_dependency_branches(input);
+                let base_ref = dependency_branches
                     .first()
                     .map(String::as_str)
                     .unwrap_or("HEAD");
@@ -185,7 +213,10 @@ async fn prepare_task_workspace(
                     ],
                 )
                 .await?;
-                merge_dependency_commits(&worktree, dependency_commits.into_iter().skip(1)).await?;
+                merge_dependency_branches(&worktree,
+                    dependency_branches.into_iter().skip(1),
+                )
+                .await?;
             }
             Ok((worktree.clone(), Some(branch), Some(worktree)))
         }
@@ -199,30 +230,13 @@ async fn ensure_branch_exists(repo: &Path, branch: &str) -> Result<(), AppError>
         .map_err(|_| AppError::internal(format!("恢复节点失败：分支 {branch} 不存在")))
 }
 
-async fn ensure_commit_exists(repo: &Path, commit: &str) -> Result<(), AppError> {
-    let commit_ref = format!("{commit}^{{commit}}");
-    git(repo, &["cat-file", "-e", &commit_ref])
-        .await
-        .map(|_| ())
-        .map_err(|_| AppError::internal(format!("恢复节点失败：提交 {commit} 不可达")))
+fn task_dependency_branches(input: &RequirementTaskExecutionInput) -> Vec<String> {
+    dependency_branches_for_task(&input.task,
+        &input.plan,
+    )
 }
 
-async fn ensure_head_matches(repo: &Path, expected: &str) -> Result<(), AppError> {
-    let head = git(repo, &["rev-parse", "HEAD"]).await?;
-    if head.trim() != expected {
-        return Err(AppError::internal(format!(
-            "恢复审核失败：worktree HEAD {} 与审核提交 {expected} 不一致",
-            head.trim()
-        )));
-    }
-    Ok(())
-}
-
-fn task_dependency_commits(input: &RequirementTaskExecutionInput) -> Vec<String> {
-    dependency_commits_for_task(&input.task, &input.plan)
-}
-
-fn dependency_commits_for_task(
+fn dependency_branches_for_task(
     task: &crate::models::RequirementExecutionTask,
     plan: &crate::models::RequirementExecutionPlan,
 ) -> Vec<String> {
@@ -236,7 +250,7 @@ fn dependency_commits_for_task(
                 plan.tasks
                     .iter()
                     .find(|task| task.id == *dependency)
-                    .and_then(|task| task.commit_sha.clone())
+                    .and_then(|task| task.branch_name.clone())
             })
             .collect(),
         RequirementTaskKind::Review
@@ -245,31 +259,69 @@ fn dependency_commits_for_task(
     }
 }
 
-async fn merge_dependency_commits(
+async fn merge_dependency_branches(
     worktree: &Path,
-    commits: impl Iterator<Item = String>,
+    branches: impl Iterator<Item = String>,
 ) -> Result<(), AppError> {
-    for commit in commits {
-        git(worktree, &["merge", "--no-ff", "--no-edit", &commit]).await?;
+    for branch in branches {
+        git(worktree, &["merge", "--no-ff", "--no-edit", &branch]).await?;
     }
+    Ok(())
+}
+
+pub(crate) async fn stage_task_changes(
+    task: &crate::models::RequirementExecutionTask,
+    output: &mut RequirementTaskExecutionOutput,
+) -> Result<(), AppError> {
+    let worktree = task
+        .worktree_path
+        .as_deref()
+        .map(PathBuf::from)
+        .ok_or_else(|| AppError::internal("执行节点缺少 worktree_path"))?;
+    let status = git(&worktree, &["status", "--porcelain"]).await?;
+    if !status.trim().is_empty() {
+        git(&worktree, &["add", "-A"]).await?;
+        return Ok(());
+    }
+
+    if task.status == crate::models::RequirementTaskStatus::Fixing {
+        return Err(AppError::internal("修复实现节点必须产生实际代码改动"));
+    }
+
+    let no_op_reason = output
+        .no_op_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty());
+    if output.changed == Some(false) {
+        if let Some(reason) = no_op_reason {
+            output.execution_warning = Some(format!(
+                "未产生新改动：{reason}。按 no-op 完成并进入审核。"
+            ));
+            return Ok(());
+        }
+        return Err(AppError::internal("实现节点未产生改动，且缺少 no_op_reason"));
+    }
+
+    Err(AppError::internal("实现节点没有产生可提交改动"))
+}
+
+pub(crate) async fn commit_staged_changes(
+    worktree: &Path,
+    message: &str,
+) -> Result<(), AppError> {
+    let status = git(worktree, &["status", "--porcelain"]).await?;
+    if status.trim().is_empty() {
+        return Ok(());
+    }
+    git(worktree, &["commit", "-m", message]).await?;
     Ok(())
 }
 
 async fn commit_task_changes(
     task: &crate::models::RequirementExecutionTask,
-    output: &mut RequirementTaskExecutionOutput,
-) -> Result<String, AppError> {
-    let fixing_commit = if task.kind == RequirementTaskKind::Implementation
-        && task.status == crate::models::RequirementTaskStatus::Fixing
-    {
-        Some(
-            task.commit_sha
-                .as_deref()
-                .ok_or_else(|| AppError::internal("修复实现节点缺少旧 commit_sha"))?,
-        )
-    } else {
-        None
-    };
+    _output: &mut RequirementTaskExecutionOutput,
+) -> Result<(), AppError> {
     let worktree = task
         .worktree_path
         .as_deref()
@@ -280,36 +332,8 @@ async fn commit_task_changes(
         git(&worktree, &["add", "-A"]).await?;
         let message = format!("raccoon_node: {}", task.title);
         git(&worktree, &["commit", "-m", &message]).await?;
-    } else if task.kind == RequirementTaskKind::Implementation {
-        if fixing_commit.is_some() {
-            return Err(AppError::internal("修复实现节点必须产生实际代码改动"));
-        }
-        let no_op_reason = output
-            .no_op_reason
-            .as_deref()
-            .map(str::trim)
-            .filter(|reason| !reason.is_empty());
-        if output.changed == Some(false) {
-            if let Some(no_op_reason) = no_op_reason {
-                output.execution_warning = Some(format!(
-                    "未产生新提交：{no_op_reason}。按 no-op 完成并进入审核。"
-                ));
-            } else {
-                return Err(AppError::internal(
-                    "实现节点未产生提交，且缺少 no_op_reason",
-                ));
-            }
-        } else {
-            return Err(AppError::internal("实现节点没有产生可提交改动"));
-        }
     }
-    let commit = git(&worktree, &["rev-parse", "HEAD"])
-        .await
-        .map(|sha| sha.trim().to_owned())?;
-    if fixing_commit == Some(commit.as_str()) {
-        return Err(AppError::internal("修复实现节点没有产生新的代码版本"));
-    }
-    Ok(commit)
+    Ok(())
 }
 
 struct PublishResult {
@@ -328,16 +352,22 @@ async fn publish_merge_review(
         .branch_name
         .as_deref()
         .ok_or_else(|| AppError::internal("最终合并节点缺少分支名"))?;
-    let commit = output
-        .commit_sha
+    let worktree = input
+        .task
+        .worktree_path
         .as_deref()
-        .ok_or_else(|| AppError::internal("最终合并节点缺少提交"))?;
+        .map(Path::new)
+        .ok_or_else(|| AppError::internal("最终合并节点缺少 worktree_path"))?;
+    let commit = git(worktree, &["rev-parse", "HEAD"])
+        .await?
+        .trim()
+        .to_owned();
     let base_branch = default_branch(&repo).await?;
 
     git(&repo, &["push", "-u", "origin", branch]).await?;
     let pr_url = ensure_pull_request(&repo, &base_branch, branch, input).await?;
     if !pull_request_is_merged(&repo, &pr_url).await {
-        let merge_args = build_pr_merge_args(&pr_url, commit);
+        let merge_args = build_pr_merge_args(&pr_url, &commit);
         run_gh(
             &repo,
             &merge_args.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -515,7 +545,7 @@ fn generated_branch_names<'a>(branches: impl Iterator<Item = &'a str>) -> BTreeS
         .collect()
 }
 
-async fn git(dir: &Path, args: &[&str]) -> Result<String, AppError> {
+pub(crate) async fn git(dir: &Path, args: &[&str]) -> Result<String, AppError> {
     let dir = normalize_local_path(dir)?;
     let output = Command::new("git")
         .arg("-C")

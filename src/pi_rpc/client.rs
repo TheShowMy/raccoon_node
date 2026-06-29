@@ -121,7 +121,8 @@ impl PiRpcClient {
             .restore_or_new_session(input.pi_session_file.as_deref())
             .await?;
         self.prepare_high_model(&input.model_settings).await?;
-        self.prompt(&build_requirement_prompt(&input)).await?;
+        self.prompt_with_images(&build_requirement_prompt(&input), &input.prompt_images)
+            .await?;
         let mut pi_events = Vec::new();
         self.wait_for_agent_end_with_events(
             Duration::from_secs(120),  // first warning at 120s
@@ -165,27 +166,38 @@ impl PiRpcClient {
     ) -> Result<crate::models::RequirementExecutionPlan, AppError> {
         self.new_session().await?;
         self.prepare_high_model(&input.model_settings).await?;
-        self.prompt(&build_requirement_plan_prompt(&input.requirement))
+        let response = self
+            .prompt_and_extract_response(
+                &build_requirement_plan_prompt(&input.requirement),
+                Duration::from_secs(600),
+                Duration::from_secs(600),
+                &events,
+                false,
+            )
             .await?;
-        let mut pi_events = Vec::new();
-        self.wait_for_agent_end_with_events(
-            Duration::from_secs(600),  // warning after 600s (same as hard)
-            Duration::from_secs(600),  // hard timeout
-            &events,
-            |event| {
-                if let Some(emitter) = &events {
-                    emitter.emit_pi_event(event.clone());
-                }
-                pi_events.push(event);
-            },
-        )
-        .await?;
-        let mut response = self
-            .extract_pi_response(&pi_events)
-            .await
-            .map_err(pi_response_failure_error)?;
-        response.trace = self.attach_session_usage(response.trace, false).await;
-        parse_requirement_plan(&response.assistant_text)
+        match parse_requirement_plan(&response.assistant_text) {
+            Ok(plan) => Ok(plan),
+            Err(parse_error) => {
+                let repair_prompt = build_requirement_plan_json_repair_prompt(
+                    &parse_error.to_string(),
+                    &response.assistant_text,
+                );
+                let repaired = self
+                    .prompt_and_extract_response(
+                        &repair_prompt,
+                        Duration::from_secs(600),
+                        Duration::from_secs(600),
+                        &events,
+                        true,
+                    )
+                    .await?;
+                parse_requirement_plan(&repaired.assistant_text).map_err(|repair_error| {
+                    AppError::internal(format!(
+                        "执行计划 JSON 解析失败，已尝试同会话修复：{repair_error}"
+                    ))
+                })
+            }
+        }
     }
 
     pub async fn execute_requirement_task(
@@ -200,35 +212,44 @@ impl PiRpcClient {
             && input.task.recovery_guidance.is_none()
         {
             self.prepare_high_model(&input.model_settings).await?;
-            self.prompt(&build_recovery_guidance_prompt(&input.task))
-                .await?;
-            let mut guidance_events = Vec::new();
-            self.wait_for_agent_end_with_events(
-                Duration::from_secs(input.task.timeout_seconds.min(600)),
-                Duration::from_secs(input.task.timeout_seconds.min(600)),
-                &events,
-                |event| {
-                    if let Some(emitter) = &events {
-                        emitter.emit_pi_event(event.clone());
-                    }
-                    guidance_events.push(event);
-                },
-            )
-            .await?;
+            let timeout = Duration::from_secs(input.task.timeout_seconds.min(600));
             let mut response = self
-                .extract_pi_response(&guidance_events)
-                .await
-                .map_err(pi_response_failure_error)?;
-            response.trace = self
-                .attach_session_usage(response.trace, session_reused)
-                .await;
-            let guidance = parse_recovery_guidance(&response.assistant_text)?;
+                .prompt_and_extract_response(
+                    &build_recovery_guidance_prompt(&input.task),
+                    timeout,
+                    timeout,
+                    &events,
+                    session_reused,
+                )
+                .await?;
+            let guidance = match parse_recovery_guidance(&response.assistant_text) {
+                Ok(guidance) => guidance,
+                Err(parse_error) => {
+                    let repair_prompt = build_recovery_guidance_json_repair_prompt(
+                        &parse_error.to_string(),
+                        &response.assistant_text,
+                    );
+                    response = self
+                        .prompt_and_extract_response(
+                            &repair_prompt,
+                            timeout,
+                            timeout,
+                            &events,
+                            true,
+                        )
+                        .await?;
+                    parse_recovery_guidance(&response.assistant_text).map_err(|repair_error| {
+                        AppError::internal(format!(
+                            "恢复指导 JSON 解析失败，已尝试同会话修复：{repair_error}"
+                        ))
+                    })?
+                }
+            };
             return Ok(RequirementTaskExecutionOutput {
                 result_summary: "高档模型恢复方案已生成。".to_owned(),
                 pi_session_file: self.get_session_file().await?,
                 branch_name: input.task.branch_name.clone(),
                 worktree_path: input.task.worktree_path.clone(),
-                commit_sha: None,
                 review_status: None,
                 review_feedback: None,
                 pull_request_url: None,
@@ -244,50 +265,73 @@ impl PiRpcClient {
 
         self.prepare_model_tier(&input.model_settings, input.task.model_tier)
             .await?;
-        self.prompt(&build_requirement_task_prompt(
-            &input.requirement,
-            &input.plan,
-            &input.task,
-        ))
-        .await?;
-        let mut pi_events = Vec::new();
-        self.wait_for_agent_end_with_events(
-            Duration::from_secs(input.task.timeout_seconds),
-            Duration::from_secs(input.task.timeout_seconds),
-            &events,
-            |event| {
-                if let Some(emitter) = &events {
-                    emitter.emit_pi_event(event.clone());
-                }
-                pi_events.push(event);
-            },
-        )
-        .await
-        .map_err(|error| {
-            AppError::internal(format!(
-                "节点「{}」执行超时或失败：{error}",
-                input.task.title
-            ))
-        })?;
+        let task_timeout = Duration::from_secs(input.task.timeout_seconds);
         let mut response = self
-            .extract_pi_response(&pi_events)
+            .prompt_and_extract_response(
+                &build_requirement_task_prompt(&input.requirement, &input.plan, &input.task),
+                task_timeout,
+                task_timeout,
+                &events,
+                session_reused,
+            )
             .await
-            .map_err(pi_response_failure_error)?;
-        response.trace = self
-            .attach_session_usage(response.trace, session_reused)
-            .await;
-        let mut output = parse_task_execution_output(&response.assistant_text, response.trace)?;
+            .map_err(|error| {
+                AppError::internal(format!(
+                    "节点「{}」执行超时或失败：{error}",
+                    input.task.title
+                ))
+            })?;
+        let mut output = match parse_task_execution_output(
+            &response.assistant_text,
+            response.trace.clone(),
+        ) {
+            Ok(output) => output,
+            Err(parse_error) => {
+                let mut last_error = parse_error;
+                let mut repaired_output = None;
+                for _ in 0..MAX_JSON_REPAIR_ATTEMPTS {
+                    let repair_prompt = build_task_output_json_repair_prompt(
+                        &input.task,
+                        &last_error.to_string(),
+                        &response.assistant_text,
+                    );
+                    response = self
+                        .prompt_and_extract_response(
+                            &repair_prompt,
+                            task_timeout,
+                            task_timeout,
+                            &events,
+                            true,
+                        )
+                        .await?;
+                    match parse_task_execution_output(&response.assistant_text, response.trace.clone())
+                    {
+                        Ok(output) => {
+                            repaired_output = Some(output);
+                            break;
+                        }
+                        Err(error) => last_error = error,
+                    }
+                }
+                repaired_output.ok_or_else(|| {
+                    AppError::internal(format!(
+                        "任务结果 JSON 解析失败，已尝试同会话修复：{last_error}"
+                    ))
+                })?
+            }
+        };
         output.recovery_guidance = input.task.recovery_guidance.clone();
         output.pi_session_file = self.get_session_file().await?;
         output.branch_name = input.task.branch_name.clone();
         output.worktree_path = input.task.worktree_path.clone();
-        if matches!(
-            input.task.kind,
-            RequirementTaskKind::Implementation
-                | RequirementTaskKind::BranchMerge
-                | RequirementTaskKind::MergeReview
-        ) {
-            output.commit_sha = Some(commit_task_changes(&input.task, &mut output).await?);
+        match input.task.kind {
+            RequirementTaskKind::BranchMerge | RequirementTaskKind::MergeReview => {
+                commit_task_changes(&input.task, &mut output).await?;
+            }
+            RequirementTaskKind::Implementation => {
+                stage_task_changes(&input.task, &mut output).await?;
+            }
+            _ => {}
         }
         Ok(output)
     }
@@ -302,10 +346,10 @@ impl PiRpcClient {
             .await?;
         self.prepare_model_tier(&input.model_settings, RequirementModelTier::Medium)
             .await?;
-        self.prompt(&crate::project_chat::build_project_chat_prompt(
-            &input,
-            session_reused,
-        ))
+        self.prompt_with_images(
+            &crate::project_chat::build_project_chat_prompt(&input, session_reused),
+            &input.prompt_images,
+        )
         .await?;
         let mut pi_events = Vec::new();
         let no_requirement_events = None;
@@ -440,11 +484,31 @@ impl PiRpcClient {
     }
 
     async fn prompt(&self, message: &str) -> Result<(), AppError> {
-        self.send_command(json!({
+        self.prompt_with_images(message, &[]).await
+    }
+
+    async fn prompt_with_images(
+        &self,
+        message: &str,
+        images: &[PromptImage],
+    ) -> Result<(), AppError> {
+        let mut command = json!({
             "type": "prompt",
             "message": message
-        }))
-        .await?;
+        });
+        if !images.is_empty() {
+            command["images"] = json!(
+                images
+                    .iter()
+                    .map(|image| json!({
+                        "type": "image",
+                        "data": image.data_base64.as_str(),
+                        "mimeType": image.mime_type.as_str(),
+                    }))
+                    .collect::<Vec<_>>()
+            );
+        }
+        self.send_command(command).await?;
         Ok(())
     }
 
@@ -550,6 +614,33 @@ impl PiRpcClient {
         extract_pi_response(events, last_assistant_text)
     }
 
+    async fn prompt_and_extract_response(
+        &self,
+        prompt: &str,
+        warning_after: Duration,
+        idle_timeout: Duration,
+        events: &Option<RequirementEventEmitter>,
+        session_reused: bool,
+    ) -> Result<crate::requirement_analysis::PiResponseExtraction, AppError> {
+        self.prompt(prompt).await?;
+        let mut pi_events = Vec::new();
+        self.wait_for_agent_end_with_events(warning_after, idle_timeout, events, |event| {
+            if let Some(emitter) = events {
+                emitter.emit_pi_event(event.clone());
+            }
+            pi_events.push(event);
+        })
+        .await?;
+        let mut response = self
+            .extract_pi_response(&pi_events)
+            .await
+            .map_err(pi_response_failure_error)?;
+        response.trace = self
+            .attach_session_usage(response.trace, session_reused)
+            .await;
+        Ok(response)
+    }
+
     async fn wait_for_agent_end_with_events<F>(
         &self,
         warning_after: Duration,
@@ -562,63 +653,63 @@ impl PiRpcClient {
     {
         let mut io = self.io.lock().await;
         let mut line = String::new();
-        let start = std::time::Instant::now();
+        let mut last_output_at = Instant::now();
         let mut warned = false;
         let cancelled = io.cancelled.clone();
 
-        let result = tokio::time::timeout(hard_timeout, async {
-            loop {
-                // Check cancellation flag before each read.
-                if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _ = io.child.start_kill();
-                    return Err(AppError::internal("分析已被用户取消"));
-                }
+        loop {
+            if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = io.child.start_kill();
+                return Err(AppError::internal("分析已被用户取消"));
+            }
 
-                // Emit time warning when elapsed > warning_after.
-                if !warned && start.elapsed() > warning_after {
-                    warned = true;
-                    if let Some(emitter) = &events {
-                        emitter.emit(
-                            "coordinator_time_warning",
-                            "分析耗时较长，可在需求卡片中点击停止按钮取消",
-                        );
+            let idle_for = last_output_at.elapsed();
+            if !warned && idle_for > warning_after {
+                warned = true;
+                if let Some(emitter) = &events {
+                    emitter.emit(
+                        "coordinator_time_warning",
+                        "Pi Agent 已较长时间没有产生新输出，可取消或等待自动重试",
+                    );
+                }
+            }
+
+            line.clear();
+            let remaining = hard_timeout.saturating_sub(idle_for);
+            tokio::select! {
+                read = io.stdout.read_line(&mut line) => {
+                    let read = read?;
+                    if read == 0 {
+                        let _ = io.child.start_kill();
+                        return Err(AppError::internal("Pi Agent RPC 已退出"));
+                    }
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    let value: Value = serde_json::from_str(trimmed)?;
+                    if value.get("type") == Some(&json!("response")) {
+                        continue;
+                    }
+
+                    let has_activity = event_has_output_activity(&value);
+                    let terminal = is_terminal_agent_end(&value);
+                    on_event(value);
+                    if has_activity {
+                        last_output_at = Instant::now();
+                        warned = false;
+                    }
+                    if terminal {
+                        break;
                     }
                 }
-
-                line.clear();
-                let read = io.stdout.read_line(&mut line).await?;
-                if read == 0 {
-                    return Err(AppError::internal("Pi Agent RPC 已退出"));
+                _ = tokio::time::sleep(remaining) => {
+                    let _ = io.child.start_kill();
+                    return Err(AppError::internal("等待 Pi Agent 新输出空闲超时"));
                 }
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                let value: Value = serde_json::from_str(trimmed)?;
-                if value.get("type") == Some(&json!("response")) {
-                    continue;
-                }
-
-                let terminal = is_terminal_agent_end(&value);
-                on_event(value);
-                if terminal {
-                    return Ok::<_, AppError>(());
-                }
-            }
-        })
-        .await;
-
-        match result {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                let _ = io.child.start_kill();
-                return Err(error);
-            }
-            Err(_) => {
-                let _ = io.child.start_kill();
-                return Err(AppError::internal("等待 Pi Agent 需求分析超时"));
             }
         }
+
         drop(io);
         self.validate_session_working_dir().await
     }

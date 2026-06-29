@@ -113,9 +113,12 @@ export function externalNodeId(task: RequirementExecutionTask) {
 export function getTaskGroupChildSize(
   task: RequirementExecutionTask,
 ): TaskSize {
-  return task.kind === "review_sub_agent" || task.kind === "review"
-    ? { width: 140, height: 52 }
-    : { width: 142, height: 142 };
+  if (task.kind === "review_sub_agent" || task.kind === "review") {
+    return task.status === "failed" || task.status === "rejected"
+      ? { width: 180, height: 86 }
+      : { width: 140, height: 52 };
+  }
+  return { width: 142, height: 142 };
 }
 
 function layoutLayers(
