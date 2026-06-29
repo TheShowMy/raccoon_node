@@ -9,12 +9,16 @@ export function useCurrentProject() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const applyTheme = useCallback((nextTheme: ThemeMode) => {
+    setTheme(nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+  }, []);
+
   const loadCurrent = useCallback(async () => {
     const current = await getCurrentProject();
     setProject(current.project);
-    setTheme(current.theme);
-    document.documentElement.dataset.theme = current.theme;
-  }, []);
+    applyTheme(current.theme);
+  }, [applyTheme]);
 
   useEffect(() => {
     loadCurrent()
@@ -23,5 +27,13 @@ export function useCurrentProject() {
       .finally(() => setLoading(false));
   }, [loadCurrent]);
 
-  return { project, theme, loading, error, setError, loadCurrent };
+  return {
+    project,
+    theme,
+    loading,
+    error,
+    setError,
+    loadCurrent,
+    applyTheme,
+  };
 }

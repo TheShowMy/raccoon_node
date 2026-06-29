@@ -8,6 +8,8 @@ import RequirementListNode from "../components/nodes/RequirementListNode";
 import RequirementTaskNode from "../components/nodes/RequirementTaskNode";
 import SummaryCard from "../components/nodes/SummaryCard";
 import TokenUsageNode from "../components/nodes/TokenUsageNode";
+import SettingsListNode from "../components/nodes/SettingsListNode";
+import BasicSettingsNode from "../components/nodes/BasicSettingsNode";
 
 function assertNever(value: never): never {
   throw new Error(`Unexpected node kind: ${String(value)}`);
@@ -15,6 +17,10 @@ function assertNever(value: never): never {
 
 export function renderNodeContent(data: StartNodeData): React.JSX.Element {
   switch (data.kind) {
+    case "settings-list":
+      return <SettingsListNode data={data} />;
+    case "basic-settings":
+      return <BasicSettingsNode data={data} />;
     case "model-config":
       return <ModelConfigNode data={data} />;
     case "project-github":

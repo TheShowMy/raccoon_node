@@ -15,12 +15,13 @@ async fn api_not_found() -> StatusCode {
 
 use crate::api::handlers::{
     append_requirement_message, cancel_requirement_analysis, confirm_requirement,
-    create_requirement, delete_requirement, get_current_project, get_model_settings,
-    get_project_attachment, get_project_canvas, get_project_chat, get_project_files,
-    get_requirement_conversation, plan_requirement_execution, project_chat_events,
-    put_model_settings, requirement_events, rerun_review, reset_project_chat, retry_failed_node,
-    retry_from_node, send_project_chat_message, spawn_startup_requirement_scheduler,
-    submit_requirement_clarifications, upload_project_attachment,
+    create_requirement, delete_requirement, get_basic_settings, get_current_project,
+    get_model_settings, get_project_attachment, get_project_canvas, get_project_chat,
+    get_project_files, get_requirement_conversation, plan_requirement_execution,
+    project_chat_events, put_basic_settings, put_model_settings, requirement_events, rerun_review,
+    reset_project_chat, retry_failed_node, retry_from_node, send_project_chat_message,
+    spawn_startup_requirement_scheduler, submit_requirement_clarifications,
+    upload_project_attachment,
 };
 use crate::pi_rpc::PiRpcModelProvider;
 use crate::store::JsonStore;
@@ -29,7 +30,9 @@ use crate::AppState;
 pub async fn build_app(
     data_path: PathBuf,
     project_root: PathBuf,
-    theme: String,
+    config: Arc<tokio::sync::RwLock<crate::config::AppConfig>>,
+    config_path: PathBuf,
+    port_overridden: bool,
 ) -> (Router, AppState) {
     let mut store = JsonStore::open_project(data_path, project_root)
         .await
@@ -48,7 +51,9 @@ pub async fn build_app(
         store,
         Arc::new(model_provider),
         startup_requirement_ids,
-        theme,
+        config,
+        config_path,
+        port_overridden,
     )
 }
 
@@ -57,14 +62,44 @@ pub fn build_app_with_model_provider(
     _public_dir: PathBuf,
     model_provider: Arc<dyn crate::models::ModelProvider>,
 ) -> Router {
-    build_app_with_startup_requirements(store, model_provider, Vec::new(), "dark".to_owned()).0
+    let config_path = store.data_root.join("config.toml");
+    build_app_with_startup_requirements(
+        store,
+        model_provider,
+        Vec::new(),
+        Arc::new(tokio::sync::RwLock::new(crate::config::AppConfig::default())),
+        config_path,
+        false,
+    )
+    .0
+}
+
+#[cfg(test)]
+pub fn build_app_with_model_provider_and_config(
+    store: JsonStore,
+    model_provider: Arc<dyn crate::models::ModelProvider>,
+    config: crate::config::AppConfig,
+    port_overridden: bool,
+) -> Router {
+    let config_path = store.data_root.join("config.toml");
+    build_app_with_startup_requirements(
+        store,
+        model_provider,
+        Vec::new(),
+        Arc::new(tokio::sync::RwLock::new(config)),
+        config_path,
+        port_overridden,
+    )
+    .0
 }
 
 fn build_app_with_startup_requirements(
     store: JsonStore,
     model_provider: Arc<dyn crate::models::ModelProvider>,
     startup_requirement_ids: Vec<String>,
-    theme: String,
+    config: Arc<tokio::sync::RwLock<crate::config::AppConfig>>,
+    config_path: PathBuf,
+    port_overridden: bool,
 ) -> (Router, AppState) {
     let (event_tx, _) = broadcast::channel(256);
     let (project_chat_tx, _) = broadcast::channel(256);
@@ -73,7 +108,9 @@ fn build_app_with_startup_requirements(
         model_provider,
         requirement_events: event_tx,
         project_chat_events: project_chat_tx,
-        theme,
+        config,
+        config_path,
+        port_overridden,
         project_scheduler_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
@@ -134,6 +171,10 @@ fn build_app_with_startup_requirements(
         .route(
             "/settings/models",
             get(get_model_settings).put(put_model_settings),
+        )
+        .route(
+            "/settings/basic",
+            get(get_basic_settings).put(put_basic_settings),
         )
         .fallback(api_not_found)
         .with_state(state.clone());

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getProjectViewportAction,
   getReactFlowKey,
+  updateSettingsViewportStack,
   type ProjectViewportSnapshot,
 } from "./App";
 
@@ -47,5 +48,37 @@ describe("project viewport action", () => {
     expect(getProjectViewportAction(dagOpen, project)).toBe("fit");
     expect(getProjectViewportAction(project, project)).toBeNull();
     expect(getProjectViewportAction(dagOpen, dagOpen)).toBeNull();
+  });
+});
+
+describe("settings viewport stack", () => {
+  it("restores each saved viewport while closing settings layers", () => {
+    const initial = { x: 10, y: 20, zoom: 0.8 };
+    const list = { x: 100, y: 120, zoom: 0.8 };
+    const stack: (typeof initial)[] = [];
+
+    expect(
+      updateSettingsViewportStack("closed", "list", stack, initial),
+    ).toBeUndefined();
+    expect(
+      updateSettingsViewportStack("list", "basic", stack, list),
+    ).toBeUndefined();
+    expect(updateSettingsViewportStack("basic", "list", stack, list)).toBe(
+      list,
+    );
+    expect(updateSettingsViewportStack("list", "closed", stack, initial)).toBe(
+      initial,
+    );
+    expect(stack).toEqual([]);
+  });
+
+  it("does not change the stack when switching detail nodes", () => {
+    const viewport = { x: 10, y: 20, zoom: 1 };
+    const stack = [{ x: 1, y: 2, zoom: 1 }];
+
+    expect(
+      updateSettingsViewportStack("basic", "models", stack, viewport),
+    ).toBeUndefined();
+    expect(stack).toEqual([{ x: 1, y: 2, zoom: 1 }]);
   });
 });

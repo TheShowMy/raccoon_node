@@ -12,9 +12,9 @@ use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 use crate::error::AppError;
 use crate::file_refs::{content_type_value, list_repo_files, read_attachment, save_attachment};
 use crate::models::{
-    AttachmentUploadRequest, ClarificationAnswerRequest, CurrentProjectResponse, FileReference,
-    ImageAttachment, ModelSettings, ModelSettingsResponse, ProjectCanvasResponse,
-    ProjectChatEventEmitter, ProjectChatMessageRequest, ProjectChatResponse,
+    AttachmentUploadRequest, BasicSettings, BasicSettingsUpdate, ClarificationAnswerRequest,
+    CurrentProjectResponse, FileReference, ImageAttachment, ModelSettings, ModelSettingsResponse,
+    ProjectCanvasResponse, ProjectChatEventEmitter, ProjectChatMessageRequest, ProjectChatResponse,
     RequirementAnalysisInput, RequirementConversationResponse, RequirementEventEmitter,
     RequirementMessageRequest, RequirementStatus, RequirementTaskExecutionInput, RpcStatus,
 };
@@ -70,7 +70,45 @@ pub async fn get_current_project(
         .ok_or_else(|| AppError::not_found("项目不存在"))?;
     Ok(Json(CurrentProjectResponse {
         project,
-        theme: state.theme.clone(),
+        theme: state.config.read().await.theme.as_str().to_owned(),
+    }))
+}
+
+pub async fn get_basic_settings(
+    State(state): State<AppState>,
+) -> Result<Json<BasicSettings>, AppError> {
+    let config = state.config.read().await;
+    Ok(Json(BasicSettings {
+        theme: config.theme,
+        port: config.port,
+        port_overridden: state.port_overridden,
+    }))
+}
+
+pub async fn put_basic_settings(
+    State(state): State<AppState>,
+    Json(payload): Json<BasicSettingsUpdate>,
+) -> Result<Json<BasicSettings>, AppError> {
+    if !(1..=u16::MAX as u32).contains(&payload.port) {
+        return Err(AppError::bad_request("端口必须在 1 到 65535 之间"));
+    }
+
+    let mut config = state.config.write().await;
+    let updated = crate::config::AppConfig {
+        theme: payload.theme,
+        host: config.host.clone(),
+        port: payload.port as u16,
+    };
+    updated
+        .validate()
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
+    updated.save(&state.config_path)?;
+    *config = updated;
+
+    Ok(Json(BasicSettings {
+        theme: config.theme,
+        port: config.port,
+        port_overridden: state.port_overridden,
     }))
 }
 

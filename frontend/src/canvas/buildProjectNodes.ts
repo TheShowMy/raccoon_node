@@ -1,6 +1,7 @@
 import type { Node } from "@xyflow/react";
 import type {
   DraftClarificationAnswer,
+  BasicSettings,
   FileReference,
   ImageAttachment,
   ModelSettings,
@@ -15,6 +16,7 @@ import type {
   ProjectChatEvent,
   ProjectChatResponse,
   StartNodeData,
+  SettingsView,
   StreamEvent,
 } from "../types/api";
 import { buildRequirementDagEdges } from "./edges";
@@ -45,6 +47,8 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       StartNodeData["kind"],
       { width: number; height: number }
     > = {
+      "settings-list": { width: 300, height: 310 },
+      "basic-settings": { width: 360, height: 390 },
       "model-config": { width: 360, height: 800 },
       summary: { width: 252, height: 134 },
       "project-github": { width: 137, height: 90 },
@@ -72,14 +76,22 @@ export interface BuildProjectNodesParams {
   collapsedTaskGroups: Set<string>;
   requirementActionBusyId: string | null;
   requirementActionError: string | null;
-  modelSettingsOpen: boolean;
+  settingsView: SettingsView;
+  basicSettings: BasicSettings | null;
+  basicSettingsError: string | null;
+  savingBasicSettings: boolean;
   draftModelSettings: ModelSettings;
   models: PiModel[];
   modelRpcStatus: "idle" | "loading" | "ready" | "reconnecting" | "error";
   modelError: string | null;
   savingModels: boolean;
-  setModelSettingsOpen: (open: boolean) => void;
-  toggleModelSettings: () => void;
+  openSettings: () => void;
+  openBasicSettings: () => void;
+  openModelSettings: () => void;
+  closeSettingsDetail: () => void;
+  closeSettingsList: () => void;
+  updateBasicSettings: (settings: BasicSettings) => void;
+  saveBasicSettings: () => Promise<void>;
   updateModelTier: (tier: ModelTierKey, setting: ModelTierSetting) => void;
   saveModelSettings: () => Promise<void>;
   closeDag: () => void;
@@ -138,14 +150,22 @@ export function buildProjectNodes({
   collapsedTaskGroups,
   requirementActionBusyId,
   requirementActionError,
-  modelSettingsOpen,
+  settingsView,
+  basicSettings,
+  basicSettingsError,
+  savingBasicSettings,
   draftModelSettings,
   models,
   modelRpcStatus,
   modelError,
   savingModels,
-  setModelSettingsOpen,
-  toggleModelSettings,
+  openSettings,
+  openBasicSettings,
+  openModelSettings,
+  closeSettingsDetail,
+  closeSettingsList,
+  updateBasicSettings,
+  saveBasicSettings,
   updateModelTier,
   saveModelSettings,
   closeDag,
@@ -203,7 +223,7 @@ export function buildProjectNodes({
       },
     },
     {
-      id: "model-settings",
+      id: "settings",
       type: "startNode",
       position: { x: -350, y: 20 },
       width: 137,
@@ -211,19 +231,56 @@ export function buildProjectNodes({
       data: {
         kind: "summary",
         icon: "model",
-        title: "模型设置",
-        description: "配置任务使用的模型档位",
-        onAction: toggleModelSettings,
+        title: "设置",
+        description: "基础与模型设置",
+        onAction: openSettings,
       },
     },
-    ...(modelSettingsOpen
+    ...(settingsView !== "closed"
+      ? [
+          {
+            id: "settings-list",
+            type: "startNode" as const,
+            width: 300,
+            height: 310,
+            position: { x: -670, y: 20 },
+            data: {
+              kind: "settings-list" as const,
+              onOpenBasic: openBasicSettings,
+              onOpenModels: openModelSettings,
+              onClose: closeSettingsList,
+            },
+          },
+        ]
+      : []),
+    ...(settingsView === "basic"
+      ? [
+          {
+            id: "basic-settings",
+            type: "startNode" as const,
+            width: 360,
+            height: 390,
+            position: { x: -1050, y: 20 },
+            data: {
+              kind: "basic-settings" as const,
+              settings: basicSettings,
+              error: basicSettingsError,
+              saving: savingBasicSettings,
+              onChange: updateBasicSettings,
+              onClose: closeSettingsDetail,
+              onSave: saveBasicSettings,
+            },
+          },
+        ]
+      : []),
+    ...(settingsView === "models"
       ? [
           {
             id: "model-config",
             type: "startNode" as const,
             width: 360,
             height: 800,
-            position: { x: -730, y: 20 },
+            position: { x: -1050, y: 20 },
             data: {
               kind: "model-config" as const,
               settings: draftModelSettings,
@@ -232,7 +289,7 @@ export function buildProjectNodes({
               error: modelError,
               saving: savingModels,
               onChange: updateModelTier,
-              onClose: () => setModelSettingsOpen(false),
+              onClose: closeSettingsDetail,
               onSave: saveModelSettings,
             },
           },

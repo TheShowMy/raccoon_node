@@ -103,7 +103,10 @@ function params(
     collapsedTaskGroups: new Set(),
     requirementActionBusyId: null,
     requirementActionError: null,
-    modelSettingsOpen: false,
+    settingsView: "closed",
+    basicSettings: null,
+    basicSettingsError: null,
+    savingBasicSettings: false,
     draftModelSettings: {
       low: { model_id: null, thinking_level: "low" },
       medium: { model_id: null, thinking_level: "medium" },
@@ -113,8 +116,13 @@ function params(
     modelRpcStatus: "idle",
     modelError: null,
     savingModels: false,
-    setModelSettingsOpen: () => {},
-    toggleModelSettings: () => {},
+    openSettings: () => {},
+    openBasicSettings: () => {},
+    openModelSettings: () => {},
+    closeSettingsDetail: () => {},
+    closeSettingsList: () => {},
+    updateBasicSettings: () => {},
+    saveBasicSettings: async () => {},
     updateModelTier: () => {},
     saveModelSettings: async () => {},
     closeDag: () => {},
@@ -191,7 +199,7 @@ describe("buildProjectNodes", () => {
 
     const nodes = buildProjectNodes(params(canvas, null));
     const github = nodes.find((node) => node.id === "project-github")!;
-    const model = nodes.find((node) => node.id === "model-settings")!;
+    const model = nodes.find((node) => node.id === "settings")!;
     const completed = nodes.find(
       (node) => node.id === "completed-requirements",
     )!;
@@ -214,13 +222,38 @@ describe("buildProjectNodes", () => {
       completed_requirements: [],
     };
     const buildParams = params(canvas, null);
-    buildParams.modelSettingsOpen = true;
+    buildParams.settingsView = "models";
 
-    const modelConfig = buildProjectNodes(buildParams).find(
-      (node) => node.id === "model-config",
-    );
+    const nodes = buildProjectNodes(buildParams);
+    const settingsList = nodes.find((node) => node.id === "settings-list");
+    const modelConfig = nodes.find((node) => node.id === "model-config");
 
+    expect(settingsList?.data.kind).toBe("settings-list");
     expect(modelConfig?.data.kind).toBe("model-config");
+  });
+
+  it("keeps the settings list open beside basic settings", () => {
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [],
+      completed_requirements: [],
+    };
+    const buildParams = params(canvas, null);
+    buildParams.settingsView = "basic";
+    buildParams.basicSettings = {
+      theme: "dark",
+      port: 3000,
+      port_overridden: false,
+    };
+
+    const nodes = buildProjectNodes(buildParams);
+
+    expect(nodes.find((node) => node.id === "settings-list")).toBeDefined();
+    expect(nodes.find((node) => node.id === "basic-settings")?.data.kind).toBe(
+      "basic-settings",
+    );
+    expect(nodes.find((node) => node.id === "model-config")).toBeUndefined();
   });
 
   it("places the DAG entry to the right of the project requirement list", () => {

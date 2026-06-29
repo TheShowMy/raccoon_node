@@ -101,6 +101,19 @@ pub struct CurrentProjectResponse {
     pub theme: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BasicSettings {
+    pub theme: crate::config::Theme,
+    pub port: u16,
+    pub port_overridden: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct BasicSettingsUpdate {
+    pub theme: crate::config::Theme,
+    pub port: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Requirement {
     pub id: String,

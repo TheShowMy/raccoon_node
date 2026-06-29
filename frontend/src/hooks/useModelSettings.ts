@@ -1,14 +1,29 @@
 import { useCallback, useState } from "react";
 import type {
+  BasicSettings,
   ModelSettings,
   ModelTierKey,
   ModelTierSetting,
+  SettingsView,
+  ThemeMode,
 } from "../types/api";
-import { getModelSettings, saveModelSettings } from "../api/client";
+import {
+  getBasicSettings,
+  getModelSettings,
+  saveBasicSettings,
+  saveModelSettings,
+} from "../api/client";
 import { readError, DEFAULT_MODEL_SETTINGS } from "../utils/format";
 
-export function useModelSettings() {
-  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
+export function useModelSettings(onThemeChange?: (theme: ThemeMode) => void) {
+  const [settingsView, setSettingsView] = useState<SettingsView>("closed");
+  const [basicSettings, setBasicSettings] = useState<BasicSettings | null>(
+    null,
+  );
+  const [basicSettingsError, setBasicSettingsError] = useState<string | null>(
+    null,
+  );
+  const [savingBasicSettings, setSavingBasicSettings] = useState(false);
   const [models, setModels] = useState(
     [] as { id: string; name: string; provider: string; reasoning: boolean }[],
   );
@@ -38,16 +53,23 @@ export function useModelSettings() {
     }
   }, []);
 
-  const toggleModelSettings = useCallback(() => {
-    setModelSettingsOpen((open) => {
-      if (open) {
-        return false;
-      }
+  const openSettings = useCallback(() => setSettingsView("list"), []);
 
-      void loadModelSettings();
-      return true;
-    });
+  const openBasicSettings = useCallback(() => {
+    setSettingsView("basic");
+    setBasicSettingsError(null);
+    void getBasicSettings()
+      .then(setBasicSettings)
+      .catch((reason) => setBasicSettingsError(readError(reason)));
+  }, []);
+
+  const openModelSettings = useCallback(() => {
+    setSettingsView("models");
+    void loadModelSettings();
   }, [loadModelSettings]);
+
+  const closeSettingsDetail = useCallback(() => setSettingsView("list"), []);
+  const closeSettingsList = useCallback(() => setSettingsView("closed"), []);
 
   const updateModelTier = useCallback(
     (tier: ModelTierKey, setting: ModelTierSetting) => {
@@ -69,7 +91,7 @@ export function useModelSettings() {
       setDraftModelSettings(data.settings);
       setModelRpcStatus(data.rpc_status);
       setModelError(data.rpc_error);
-      setModelSettingsOpen(false);
+      setSettingsView("list");
     } catch (reason) {
       setModelError(readError(reason));
     } finally {
@@ -77,15 +99,50 @@ export function useModelSettings() {
     }
   }, [draftModelSettings]);
 
+  const saveBasicSettingsCallback = useCallback(async () => {
+    if (
+      !basicSettings ||
+      !Number.isInteger(basicSettings.port) ||
+      basicSettings.port < 1 ||
+      basicSettings.port > 65535
+    ) {
+      setBasicSettingsError("端口必须是 1 到 65535 之间的整数");
+      return;
+    }
+    setSavingBasicSettings(true);
+    setBasicSettingsError(null);
+    try {
+      const saved = await saveBasicSettings({
+        theme: basicSettings.theme,
+        port: basicSettings.port,
+      });
+      setBasicSettings(saved);
+      onThemeChange?.(saved.theme);
+      setSettingsView("list");
+    } catch (reason) {
+      setBasicSettingsError(readError(reason));
+    } finally {
+      setSavingBasicSettings(false);
+    }
+  }, [basicSettings, onThemeChange]);
+
   return {
-    modelSettingsOpen,
-    setModelSettingsOpen,
+    settingsView,
+    openSettings,
+    openBasicSettings,
+    openModelSettings,
+    closeSettingsDetail,
+    closeSettingsList,
+    basicSettings,
+    basicSettingsError,
+    savingBasicSettings,
+    updateBasicSettings: setBasicSettings,
+    saveBasicSettings: saveBasicSettingsCallback,
     models,
     draftModelSettings,
     modelRpcStatus,
     modelError,
     savingModels,
-    toggleModelSettings,
     updateModelTier,
     saveModelSettings: saveModelSettingsCallback,
   };

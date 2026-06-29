@@ -181,6 +181,20 @@
       0 0 28px var(--glow-model);
   }
 
+  .node-card--settings-list {
+    @apply min-h-[310px] w-[300px] overflow-visible;
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px var(--glow-model);
+  }
+
+  .node-card--basic-settings {
+    @apply min-h-[390px] w-[360px] overflow-visible;
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px var(--glow-model);
+  }
+
   .node-card--project-github {
     @apply h-[90px] w-[137px] cursor-pointer;
     box-shadow:
@@ -436,6 +450,103 @@
 
   .model-config-grid {
     @apply mt-4 grid gap-3;
+  }
+
+  .settings-list {
+    @apply mt-4 grid gap-3;
+  }
+
+  .settings-list button {
+    @apply grid cursor-pointer grid-cols-[24px_1fr] gap-x-2 rounded-xl border p-3 text-left transition;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 32%, transparent);
+    color: var(--accent-model);
+  }
+
+  .settings-list button:hover,
+  .settings-list button:focus-visible {
+    border-color: color-mix(in srgb, var(--accent-model) 45%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 10%, transparent);
+  }
+
+  .settings-list button strong,
+  .settings-list button small {
+    grid-column: 2;
+  }
+
+  .settings-list button strong {
+    @apply text-[13px];
+    color: var(--text-strong);
+  }
+
+  .settings-list button small {
+    @apply text-[11px];
+    color: var(--text-soft);
+  }
+
+  .settings-list button > svg,
+  .settings-list__icons {
+    grid-row: 1 / span 2;
+  }
+
+  .settings-list__icons {
+    @apply relative block h-5 w-6;
+  }
+
+  .settings-list__icons svg {
+    @apply absolute;
+  }
+
+  .settings-list__icons svg:last-child {
+    @apply right-0 bottom-0;
+  }
+
+  .settings-close {
+    @apply mt-3 w-full cursor-pointer rounded-[10px] border px-3 py-2 text-xs font-bold transition;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 40%, transparent);
+    color: var(--text-soft);
+  }
+
+  .basic-settings {
+    @apply mt-4 grid gap-4;
+  }
+
+  .basic-settings fieldset {
+    @apply grid grid-cols-2 gap-2 rounded-xl border p-3;
+    border-color: var(--card-border);
+  }
+
+  .basic-settings legend,
+  .basic-settings__port > span {
+    @apply text-xs font-bold;
+    color: var(--text-strong);
+  }
+
+  .basic-settings fieldset label {
+    @apply flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs;
+    border-color: var(--card-border);
+    color: var(--text-soft);
+  }
+
+  .basic-settings input[type="radio"] {
+    accent-color: var(--accent-model);
+  }
+
+  .basic-settings__port {
+    @apply grid gap-1.5;
+  }
+
+  .basic-settings__port input {
+    @apply rounded-[10px] border px-3 py-2 text-xs outline-none;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 56%, transparent);
+    color: var(--text-strong);
+  }
+
+  .basic-settings__port small {
+    @apply text-[10px] leading-normal;
+    color: var(--text-muted);
   }
 
   .requirement-list {

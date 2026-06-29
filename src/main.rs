@@ -37,7 +37,9 @@ pub struct AppState {
     pub model_provider: std::sync::Arc<dyn ModelProvider>,
     pub requirement_events: RequirementEventBus,
     pub project_chat_events: ProjectChatEventBus,
-    pub theme: String,
+    pub config: std::sync::Arc<RwLock<AppConfig>>,
+    pub config_path: std::path::PathBuf,
+    pub port_overridden: bool,
     pub project_scheduler_locks: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
     >,
@@ -108,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         setup::install_pi()?;
     }
 
-    let mut saved_config = match AppConfig::load(&config_path)? {
+    let saved_config = match AppConfig::load(&config_path)? {
         Some(config) => config,
         None if use_tui => tui::edit_config(
             AppConfig::default(),
@@ -121,6 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup::ensure_data_layout(&data_root)?;
     setup::ensure_gitignore(&project_root)?;
     saved_config.save(&config_path)?;
+    let shared_config = std::sync::Arc::new(RwLock::new(saved_config));
 
     let (log_tx, log_rx) = mpsc::channel();
     let filter =
@@ -147,7 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut opened = false;
     loop {
-        let effective = effective_config(&saved_config, &cli);
+        let effective = effective_config(&*shared_config.read().await, &cli);
         let addr = SocketAddr::new(effective.host.parse::<IpAddr>()?, effective.port);
         if addr.ip().is_unspecified() {
             tracing::warn!("服务正在监听所有网络接口；当前 API 没有身份验证");
@@ -156,7 +159,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (app, state) = api::build_app(
             data_root.join("app.json"),
             project_root.clone(),
-            effective.theme.as_str().to_owned(),
+            shared_config.clone(),
+            config_path.clone(),
+            cli.port.is_some(),
         )
         .await;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -235,7 +240,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
                     let Some(updated) = tui::edit_config(
-                        saved_config.clone(),
+                        shared_config.read().await.clone(),
                         "运行设置",
                         tui::ConfigEditContext {
                             host_overridden: cli.host.is_some(),
@@ -245,8 +250,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     else {
                         continue;
                     };
-                    updated.save(&config_path)?;
-                    saved_config = updated;
+                    {
+                        let mut config = shared_config.write().await;
+                        updated.save(&config_path)?;
+                        *config = updated;
+                    }
                     match state.model_provider.available_models().await {
                         Ok(models) => {
                             let current = state.store.read().await.data.model_settings.clone();
@@ -320,13 +328,14 @@ mod tests {
         response::IntoResponse,
     };
     use chrono::Utc;
+    use clap::Parser;
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use tokio::sync::RwLock;
     use tower::ServiceExt;
 
-    use crate::api::build_app_with_model_provider;
+    use crate::api::{build_app_with_model_provider, build_app_with_model_provider_and_config};
     use crate::error::AppError;
     use crate::models::{
         ClarificationAnswerRequest, ClarificationOption, ClarificationQuestionType, ModelProvider,
@@ -344,6 +353,7 @@ mod tests {
     use crate::requirement_analysis::{build_requirement_prompt, parse_requirement_analysis};
     use crate::store::JsonStore;
     use crate::utils::write_json;
+    use crate::{effective_config, AppConfig, Cli};
 
     #[derive(Clone)]
     struct FakeModelProvider {
@@ -641,6 +651,108 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
         }
+    }
+
+    #[tokio::test]
+    async fn basic_settings_api_persists_config_and_updates_runtime_theme() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("data/config.toml");
+        let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+            .await
+            .unwrap();
+        store.data.projects = vec![test_project("current")];
+        let app = build_app_with_model_provider_and_config(
+            store,
+            fake_provider(Vec::new()),
+            AppConfig {
+                theme: crate::config::Theme::Dark,
+                host: "0.0.0.0".to_owned(),
+                port: 3001,
+            },
+            true,
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/settings/basic")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(
+            body,
+            json!({"theme": "dark", "port": 3001, "port_overridden": true})
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/settings/basic")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"theme":"light","port":4321}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            AppConfig::load(&config_path).unwrap(),
+            Some(AppConfig {
+                theme: crate::config::Theme::Light,
+                host: "0.0.0.0".to_owned(),
+                port: 4321,
+            })
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/project/current")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["theme"], "light");
+
+        for port in [0, 65_536] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri("/api/settings/basic")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            json!({"theme": "dark", "port": port}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+    }
+
+    #[test]
+    fn cli_port_overrides_saved_port_without_mutating_it() {
+        let saved = AppConfig::default();
+        let cli = Cli::try_parse_from(["raccoon", "--port", "4567"]).unwrap();
+
+        assert_eq!(effective_config(&saved, &cli).port, 4567);
+        assert_eq!(saved.port, 3001);
     }
 
     #[tokio::test]

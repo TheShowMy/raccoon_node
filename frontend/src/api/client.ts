@@ -11,6 +11,7 @@ import {
   type FileReference,
   type ImageAttachment,
   type ThemeMode,
+  type BasicSettings,
 } from "../types/api";
 
 export async function getCurrentProject(): Promise<{
@@ -353,6 +354,34 @@ export async function getModelSettings(): Promise<ModelSettingsResponse> {
       message?: string;
     } | null;
     throw new Error(body?.message ?? "读取模型设置失败");
+  }
+  return response.json();
+}
+
+export async function getBasicSettings(): Promise<BasicSettings> {
+  const response = await fetch("/api/settings/basic");
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取基础设置失败");
+  }
+  return response.json();
+}
+
+export async function saveBasicSettings(
+  settings: Pick<BasicSettings, "theme" | "port">,
+): Promise<BasicSettings> {
+  const response = await fetch("/api/settings/basic", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "保存基础设置失败");
   }
   return response.json();
 }

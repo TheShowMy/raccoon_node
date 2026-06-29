@@ -3,6 +3,14 @@
 
 export type ThemeMode = "dark" | "light";
 
+export type BasicSettings = {
+  theme: ThemeMode;
+  port: number;
+  port_overridden: boolean;
+};
+
+export type SettingsView = "closed" | "list" | "basic" | "models";
+
 export type Project = {
   id: string;
   name: string;
@@ -344,6 +352,21 @@ export type ModelSettingsResponse = {
 };
 
 export type StartNodeData =
+  | {
+      kind: "settings-list";
+      onOpenBasic: () => void;
+      onOpenModels: () => void;
+      onClose: () => void;
+    }
+  | {
+      kind: "basic-settings";
+      settings: BasicSettings | null;
+      error: string | null;
+      saving: boolean;
+      onChange: (settings: BasicSettings) => void;
+      onClose: () => void;
+      onSave: () => Promise<void>;
+    }
   | {
       kind: "model-config";
       settings: ModelSettings;

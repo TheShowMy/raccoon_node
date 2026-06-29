@@ -15,8 +15,12 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
       : projectGithubUrl
         ? () => window.open(projectGithubUrl, "_blank", "noopener,noreferrer")
         : undefined;
-  const hasModelSourceHandle = data.kind === "summary" && data.icon === "model";
-  const hasModelTargetHandle = data.kind === "model-config";
+  const hasSettingsSourceHandle =
+    data.kind === "summary" && data.icon === "model";
+  const hasSettingsListTargetHandle = data.kind === "settings-list";
+  const hasSettingsListSourceHandle = data.kind === "settings-list";
+  const hasSettingsDetailTargetHandle =
+    data.kind === "model-config" || data.kind === "basic-settings";
   const hasRequirementChatLeftHandle = data.kind === "requirement-chat";
   const hasRequirementChatRightHandle = data.kind === "requirement-chat";
   const hasRequirementListLeftHandle =
@@ -43,11 +47,19 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
         }
       }}
     >
-      {hasModelTargetHandle ? (
+      {hasSettingsListTargetHandle ? (
         <Handle
-          id="model-left"
+          id="settings-list-right"
           type="target"
-          position={Position.Left}
+          position={Position.Right}
+          className="node-link-handle node-link-handle--model"
+        />
+      ) : null}
+      {hasSettingsDetailTargetHandle ? (
+        <Handle
+          id="settings-detail-right"
+          type="target"
+          position={Position.Right}
           className="node-link-handle node-link-handle--model"
         />
       ) : null}
@@ -116,9 +128,17 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
           className="node-link-handle node-link-handle--requirement"
         />
       ) : null}
-      {hasModelSourceHandle ? (
+      {hasSettingsListSourceHandle ? (
         <Handle
-          id="model-left-source"
+          id="settings-list-left-source"
+          type="source"
+          position={Position.Left}
+          className="node-link-handle node-link-handle--model"
+        />
+      ) : null}
+      {hasSettingsSourceHandle ? (
+        <Handle
+          id="settings-left-source"
           type="source"
           position={Position.Left}
           className="node-link-handle node-link-handle--model"
