@@ -45,7 +45,7 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       StartNodeData["kind"],
       { width: number; height: number }
     > = {
-      "model-config": { width: 252, height: 360 },
+      "model-config": { width: 360, height: 800 },
       summary: { width: 252, height: 134 },
       "project-github": { width: 137, height: 90 },
       "requirement-list": { width: 290, height: 640 },
@@ -196,7 +196,7 @@ export function buildProjectNodes({
     {
       id: "project-github",
       type: "startNode",
-      position: { x: -350, y: 20 },
+      position: { x: -197, y: 20 },
       data: {
         kind: "project-github",
         project,
@@ -205,10 +205,9 @@ export function buildProjectNodes({
     {
       id: "model-settings",
       type: "startNode",
-      position: { x: -197, y: 20 },
+      position: { x: -350, y: 20 },
       width: 137,
       height: 90,
-      style: { width: 137, height: 90 },
       data: {
         kind: "summary",
         icon: "model",
@@ -223,9 +222,8 @@ export function buildProjectNodes({
             id: "model-config",
             type: "startNode" as const,
             width: 360,
-            height: 480,
+            height: 800,
             position: { x: -730, y: 20 },
-            style: { width: 360, height: 480 },
             data: {
               kind: "model-config" as const,
               settings: draftModelSettings,
@@ -261,7 +259,8 @@ export function buildProjectNodes({
       id: "token-usage",
       type: "startNode",
       position: { x: 780, y: 20 },
-      style: { width: 290, height: 96 },
+      width: 290,
+      height: 96,
       data: {
         kind: "token-usage",
         usage: projectCanvas?.token_usage ?? null,

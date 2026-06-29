@@ -164,10 +164,14 @@
   }
 
   .node-card--summary {
-    @apply min-h-[92px] cursor-pointer;
+    @apply h-[90px] w-[137px] min-h-0 cursor-pointer;
     box-shadow:
       var(--shadow-card),
       0 0 28px var(--glow-model);
+  }
+
+  .node-card--summary .node-header {
+    gap: 8px;
   }
 
   .node-card--model-config {

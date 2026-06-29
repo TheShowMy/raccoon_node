@@ -9,7 +9,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "dev": "concurrently -k -n backend,frontend -c cyan,green \"cargo run\" \"npm --prefix frontend run dev\"",
+    "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
     "check:versions": "node scripts/check-versions.mjs"

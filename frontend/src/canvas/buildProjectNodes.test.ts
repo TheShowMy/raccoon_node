@@ -196,8 +196,8 @@ describe("buildProjectNodes", () => {
       (node) => node.id === "completed-requirements",
     )!;
 
-    expect(github.position).toEqual({ x: -350, y: 20 });
-    expect(model.position).toEqual({ x: -197, y: 20 });
+    expect(github.position).toEqual({ x: -197, y: 20 });
+    expect(model.position).toEqual({ x: -350, y: 20 });
     expect(github.width).toBe(137);
     expect(github.height).toBe(90);
     expect(model.width).toBe(137);

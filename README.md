@@ -111,10 +111,38 @@ worktree；会话首行记录的 `cwd` 必须与预期目录一致。
 ```sh
 npm ci
 npm --prefix frontend ci
+```
+
+### 启动开发服务
+
+开发模式下前端启用 Vite HMR 热更新，修改前端代码即时生效，无需重新构建。
+
+**在当前仓库测试（项目源码自身作为测试仓库）：**
+
+```sh
 npm run dev
 ```
 
-生产构建：
+**指定外部仓库测试（--project-root 指向要测试的 Git 仓库）：**
+
+macOS / Linux：
+
+```sh
+RACCOON_PROJECT_ROOT=/path/to/test-repo npm run dev
+```
+
+Windows PowerShell：
+
+```powershell
+$env:RACCOON_PROJECT_ROOT = "C:\path\to\test-repo"
+npm run dev
+```
+
+启动后浏览器自动打开 `http://localhost:5173`，前端 HMR 生效，API 请求自动代理到
+后端 `http://127.0.0.1:3001`。如果不设 `RACCOON_PROJECT_ROOT`，默认使用当前项目
+根目录。
+
+### 生产构建
 
 ```sh
 npm run build
