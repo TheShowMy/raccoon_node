@@ -675,15 +675,74 @@
     @apply cursor-pointer transition disabled:cursor-not-allowed disabled:opacity-55;
   }
 
-  .model-config-tier select {
-    @apply w-full rounded-[10px] border px-2.5 py-2 text-xs outline-none;
+  .simple-select {
+    @apply relative w-full;
+  }
+
+  .simple-select__trigger {
+    @apply flex w-full items-center justify-between gap-2 rounded-[10px] border px-2.5 py-2 text-left text-xs outline-none transition;
     border-color: var(--card-border);
     background: color-mix(in srgb, var(--canvas-bg) 52%, transparent);
     color: var(--text-strong);
   }
 
-  .model-config-tier select:disabled {
+  .simple-select__trigger:hover:not(:disabled) {
+    border-color: var(--card-border-strong);
+  }
+
+  .simple-select__trigger svg {
+    @apply shrink-0 transition-transform;
+    color: var(--text-muted);
+  }
+
+  .simple-select--open .simple-select__trigger svg {
+    transform: rotate(180deg);
+  }
+
+  .simple-select__trigger:disabled,
+  .simple-select--disabled .simple-select__trigger {
     @apply cursor-not-allowed opacity-55;
+  }
+
+  .simple-select__dropdown {
+    @apply absolute left-0 right-0 z-50 mt-1.5 grid max-h-[220px] overflow-y-auto rounded-[10px] border p-1 shadow-xl;
+    border-color: var(--card-border-strong);
+    background: var(--card-bg);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--accent-model) 42%, transparent)
+      transparent;
+  }
+
+  .simple-select__dropdown::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .simple-select__dropdown::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-model) 48%, var(--text-muted));
+  }
+
+  .simple-select__dropdown li {
+    @apply list-none;
+  }
+
+  .simple-select__dropdown button {
+    @apply flex w-full items-center justify-between gap-2 rounded-[8px] border-0 px-2.5 py-2 text-left text-xs font-medium transition;
+    background: transparent;
+    color: var(--text-soft);
+  }
+
+  .simple-select__dropdown button:hover,
+  .simple-select__dropdown li.is-active button,
+  .simple-select__dropdown button.is-selected {
+    background: color-mix(in srgb, var(--accent-model) 12%, transparent);
+    color: var(--text-strong);
+  }
+
+  .simple-select__dropdown button svg {
+    @apply shrink-0;
+    color: var(--accent-model);
   }
 
   .model-notice,
@@ -2279,66 +2338,6 @@
     color: var(--accent-model);
   }
 
-  .react-flow__controls {
-    overflow: hidden;
-    border: 1px solid var(--card-border-strong);
-    border-radius: 12px;
-    background: var(--card-bg);
-    box-shadow: var(--shadow-card);
-  }
-
-  .react-flow__controls-button {
-    width: 32px;
-    height: 32px;
-    border-bottom: 1px solid var(--card-border);
-    background: var(--card-bg);
-    color: var(--text-soft);
-    fill: var(--text-soft);
-  }
-
-  [data-theme="dark"] .react-flow__controls {
-    border-color: rgba(226, 232, 240, 0.24);
-    background: rgba(15, 23, 42, 0.98);
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.08),
-      0 12px 34px rgba(0, 0, 0, 0.42);
-  }
-
-  [data-theme="dark"] .react-flow__controls-button {
-    border-bottom-color: rgba(226, 232, 240, 0.18);
-    background: rgba(15, 23, 42, 0.98);
-    color: #e2e8f0;
-    fill: #e2e8f0;
-  }
-
-  [data-theme="dark"] .react-flow__controls-button svg {
-    opacity: 1;
-  }
-
-  .react-flow__controls-button:hover {
-    background: var(--card-bg-hover);
-    color: var(--text-strong);
-    fill: var(--text-strong);
-  }
-
-  [data-theme="dark"] .react-flow__controls-button:hover {
-    background: rgba(30, 41, 59, 1);
-    color: #ffffff;
-    fill: #ffffff;
-  }
-
-  [data-theme="dark"] .react-flow__controls-button:disabled {
-    color: #94a3b8;
-    fill: #94a3b8;
-    opacity: 0.7;
-  }
-
-  .react-flow__controls-button svg,
-  .react-flow__controls-button path {
-    fill: currentColor;
-    stroke: currentColor;
-  }
-
   .react-flow__minimap {
     overflow: hidden;
     border: 1px solid var(--card-border-strong);
@@ -2466,4 +2465,67 @@
 .node-card--project-back.compact .node-header,
 .node-card--project-github.compact .node-header {
   gap: 8px;
+}
+
+/* === React Flow controls === */
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--card-border-strong);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+}
+
+.react-flow__controls-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--card-border);
+  background: transparent;
+  color: var(--text-strong);
+}
+
+.react-flow__controls-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--card-bg-hover);
+  color: var(--text-strong);
+}
+
+.react-flow__controls-button:disabled {
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+.react-flow__controls-button svg,
+.react-flow__controls-button path {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+[data-theme="dark"] .react-flow__controls {
+  border-color: rgba(226, 232, 240, 0.3);
+  background: rgba(15, 23, 42, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 12px 34px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="dark"] .react-flow__controls-button {
+  border-bottom-color: rgba(226, 232, 240, 0.18);
+  color: #ffffff;
+}
+
+[data-theme="dark"] .react-flow__controls-button:hover {
+  background: rgba(51, 65, 85, 0.85);
+  color: #ffffff;
+}
+
+[data-theme="dark"] .react-flow__controls-button:disabled {
+  color: #94a3b8;
+  opacity: 0.7;
 }

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import type {
   StartNodeData,
@@ -10,6 +10,7 @@ import {
   tierLabels,
   thinkingLevels,
 } from "../../utils/format";
+import SimpleSelect from "../ui/SimpleSelect";
 
 export default function ModelConfigNode({
   data,
@@ -18,6 +19,24 @@ export default function ModelConfigNode({
 }) {
   const noModels = data.rpcStatus === "ready" && data.models.length === 0;
   const disabled = data.rpcStatus !== "ready" || data.models.length === 0;
+  const modelOptions = useMemo(
+    () => [
+      { value: "", label: "选择模型" },
+      ...data.models.map((model) => ({
+        value: model.id,
+        label: `${model.provider}/${model.name}`,
+      })),
+    ],
+    [data.models],
+  );
+  const thinkingOptions = useMemo(
+    () =>
+      thinkingLevels.map((level) => ({
+        value: level.value,
+        label: level.label,
+      })),
+    [],
+  );
 
   return (
     <>
@@ -45,42 +64,32 @@ export default function ModelConfigNode({
               <strong>{tierLabels[tier]}档</strong>
               <label>
                 <span>模型</span>
-                <select
+                <SimpleSelect
                   value={setting.model_id ?? ""}
+                  options={modelOptions}
                   disabled={disabled}
-                  onChange={(event) =>
+                  placeholder="选择模型"
+                  onChange={(value) =>
                     data.onChange(tier, {
                       ...setting,
-                      model_id: event.target.value || null,
+                      model_id: value || null,
                     })
                   }
-                >
-                  <option value="">选择模型</option>
-                  {data.models.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.provider}/{model.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
               <label>
                 <span>思考强度</span>
-                <select
+                <SimpleSelect
                   value={setting.thinking_level}
+                  options={thinkingOptions}
                   disabled={disabled}
-                  onChange={(event) =>
+                  onChange={(value) =>
                     data.onChange(tier, {
                       ...setting,
-                      thinking_level: event.target.value as ThinkingLevel,
+                      thinking_level: value as ThinkingLevel,
                     })
                   }
-                >
-                  {thinkingLevels.map((level) => (
-                    <option key={level.value} value={level.value}>
-                      {level.label}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
             </section>
           );
