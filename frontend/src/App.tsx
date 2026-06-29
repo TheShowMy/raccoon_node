@@ -1,11 +1,11 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import {
   Background,
   Controls,
-  Edge,
+  type Edge,
   MarkerType,
   MiniMap,
-  Node,
+  type Node,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -14,16 +14,14 @@ import "@xyflow/react/dist/style.css";
 import "./styles.css";
 
 import type { StartNodeData } from "./types/api";
-
 import StartNode from "./components/nodes/StartNode";
 import { buildRequirementDagEdges } from "./canvas/edges";
-import { buildStartNodes } from "./canvas/buildStartNodes";
 import {
   buildProjectChatNode,
   buildProjectNodes,
   mergeProjectNodes,
 } from "./canvas/buildProjectNodes";
-import { useStartData } from "./hooks/useStartData";
+import { useCurrentProject } from "./hooks/useCurrentProject";
 import { useProjectCanvas } from "./hooks/useProjectCanvas";
 import { useRequirementFlow } from "./hooks/useRequirementFlow";
 import { useProjectChat } from "./hooks/useProjectChat";
@@ -33,7 +31,6 @@ import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsC
 const nodeTypes = { startNode: StartNode };
 
 export type ProjectViewportSnapshot = {
-  currentCanvas: "start" | "project";
   projectLoaded: boolean;
   selectedDagRequirementId: string | null;
 };
@@ -42,9 +39,7 @@ export function getProjectViewportAction(
   previous: ProjectViewportSnapshot,
   current: ProjectViewportSnapshot,
 ): "fit" | "focus-dag" | null {
-  if (current.currentCanvas !== "project" || !current.projectLoaded) {
-    return null;
-  }
+  if (!current.projectLoaded) return null;
   if (previous.selectedDagRequirementId && !current.selectedDagRequirementId) {
     return "fit";
   }
@@ -58,72 +53,28 @@ export function getProjectViewportAction(
 }
 
 export function getReactFlowKey({
-  currentCanvas,
-  selectedProjectId,
+  projectId,
   projectLoaded,
 }: {
-  currentCanvas: "start" | "project";
-  selectedProjectId: string | null;
+  projectId: string | null;
   projectLoaded: boolean;
 }) {
-  if (currentCanvas === "start") {
-    return "start";
-  }
-  return `project-${selectedProjectId ?? "none"}-${projectLoaded ? "ready" : "loading"}`;
-}
-
-function FitViewOnGraphChange({
-  enabled,
-  nodeCount,
-  edgeCount,
-}: {
-  enabled: boolean;
-  nodeCount: number;
-  edgeCount: number;
-}) {
-  const { fitView } = useReactFlow();
-
-  React.useEffect(() => {
-    if (!enabled) return;
-
-    const timer = window.setTimeout(() => {
-      void fitView({ padding: 0.08, duration: 260 });
-    }, 80);
-
-    return () => window.clearTimeout(timer);
-  }, [edgeCount, fitView, nodeCount]);
-
-  return null;
+  return `project-${projectId ?? "none"}-${projectLoaded ? "ready" : "loading"}`;
 }
 
 function ProjectCanvasViewportController({
-  currentCanvas,
   projectLoaded,
   selectedDagRequirementId,
-}: {
-  currentCanvas: "start" | "project";
-  projectLoaded: boolean;
-  selectedDagRequirementId: string | null;
-}) {
+}: ProjectViewportSnapshot) {
   const { fitView, getNode, getViewport, setCenter } = useReactFlow();
-  const previous = React.useRef<{
-    currentCanvas: "start" | "project";
-    projectLoaded: boolean;
-    selectedDagRequirementId: string | null;
-  }>({
-    currentCanvas: "start",
+  const previous = React.useRef<ProjectViewportSnapshot>({
     projectLoaded: false,
     selectedDagRequirementId: null,
   });
 
   React.useLayoutEffect(() => {
     const last = previous.current;
-    previous.current = {
-      currentCanvas,
-      projectLoaded,
-      selectedDagRequirementId:
-        currentCanvas === "project" ? selectedDagRequirementId : null,
-    };
+    previous.current = { projectLoaded, selectedDagRequirementId };
 
     const action = getProjectViewportAction(last, previous.current);
     if (!action) return;
@@ -148,7 +99,6 @@ function ProjectCanvasViewportController({
 
     return () => window.clearTimeout(timer);
   }, [
-    currentCanvas,
     fitView,
     getNode,
     getViewport,
@@ -162,12 +112,6 @@ function ProjectCanvasViewportController({
 
 function minimapNodeColor(node: Node<StartNodeData>): string {
   switch (node.data.kind) {
-    case "create":
-      return "#3b82f6";
-    case "projects":
-      return "#14b8a6";
-    case "project-item":
-      return "#0ea5e9";
     case "requirement-chat":
       return "#f97316";
     case "requirement-list":
@@ -181,99 +125,55 @@ function minimapNodeColor(node: Node<StartNodeData>): string {
     case "model-config":
     case "summary":
       return "#f97316";
-    case "delete-confirm":
-      return "#fb7185";
     default:
       return "#94a3b8";
   }
 }
 
 export default function App() {
-  const start = useStartData();
-  const project = useProjectCanvas(
-    start.selectedProjectId,
-    start.currentCanvas,
-    start.setError,
-    start.setCurrentCanvas,
-    start.setSelectedProjectId,
-  );
+  useEffect(() => {
+    if (window.location.pathname !== "/") {
+      window.history.replaceState(
+        null,
+        "",
+        `/${window.location.search}${window.location.hash}`,
+      );
+    }
+  }, []);
+  const current = useCurrentProject();
+  const selectedProjectId = current.project?.id ?? null;
+  const project = useProjectCanvas(selectedProjectId, current.setError);
   const requirement = useRequirementFlow(
-    start.selectedProjectId,
+    selectedProjectId,
     project.activeRequirementId,
     project.observedRequirementId,
     project.setProjectCanvas,
     project.loadProjectCanvas,
     project.setSelectedDagRequirementId,
   );
-  const projectChat = useProjectChat(start.selectedProjectId);
-  const models = useModelSettings(start.loadStart);
+  const projectChat = useProjectChat(selectedProjectId);
+  const models = useModelSettings();
 
-  const startNodes = useMemo(
+  const projectStructureNodes = useMemo(
     () =>
-      buildStartNodes({
-        startData: start.startData,
-        theme: start.theme,
-        creating: start.creating,
-        error: start.error,
-        pendingDeleteProject: start.pendingDeleteProject,
-        deletingId: start.deletingId,
-        deleteError: start.deleteError,
+      buildProjectNodes({
+        projectCanvas: project.projectCanvas,
+        project: current.project,
+        selectedDagRequirement: project.selectedDagRequirement,
+        selectedDagRequirementId: project.selectedDagRequirementId,
+        collapsedTaskGroups: project.collapsedTaskGroups,
+        requirementActionBusyId: project.requirementActionBusyId,
+        requirementActionError: project.requirementActionError,
         modelSettingsOpen: models.modelSettingsOpen,
         draftModelSettings: models.draftModelSettings,
         models: models.models,
         modelRpcStatus: models.modelRpcStatus,
         modelError: models.modelError,
         savingModels: models.savingModels,
-        setTheme: start.setTheme,
-        createProject: start.createProject,
-        requestDeleteProject: start.requestDeleteProject,
-        cancelDeleteProject: start.cancelDeleteProject,
-        confirmDeleteProject: start.confirmDeleteProject,
         setModelSettingsOpen: models.setModelSettingsOpen,
         toggleModelSettings: models.toggleModelSettings,
         updateModelTier: models.updateModelTier,
         saveModelSettings: models.saveModelSettings,
-        openProjectCanvas: start.openProjectCanvas,
-      }),
-    [
-      start.startData,
-      start.theme,
-      start.creating,
-      start.error,
-      start.pendingDeleteProject,
-      start.deletingId,
-      start.deleteError,
-      start.setTheme,
-      start.createProject,
-      start.requestDeleteProject,
-      start.cancelDeleteProject,
-      start.confirmDeleteProject,
-      start.openProjectCanvas,
-      models.modelSettingsOpen,
-      models.draftModelSettings,
-      models.models,
-      models.modelRpcStatus,
-      models.modelError,
-      models.savingModels,
-      models.setModelSettingsOpen,
-      models.toggleModelSettings,
-      models.updateModelTier,
-      models.saveModelSettings,
-    ],
-  );
-
-  const projectStructureNodes = useMemo(
-    () =>
-      buildProjectNodes({
-        projectCanvas: project.projectCanvas,
-        selectedProjectId: start.selectedProjectId,
-        startProjects: start.startData.projects,
-        selectedDagRequirement: project.selectedDagRequirement,
-        selectedDagRequirementId: project.selectedDagRequirementId,
-        collapsedTaskGroups: project.collapsedTaskGroups,
-        requirementActionBusyId: project.requirementActionBusyId,
-        requirementActionError: project.requirementActionError,
-        backToStartCanvas: start.backToStartCanvas,
         closeDag: project.closeDag,
         selectDagRequirement: project.selectDagRequirement,
         planRequirement: project.planRequirement,
@@ -283,22 +183,30 @@ export default function App() {
         toggleTaskGroupCollapsed: project.toggleTaskGroupCollapsed,
       }),
     [
-      project.projectCanvas,
-      project.selectedDagRequirement,
-      project.selectedDagRequirementId,
+      current.project,
+      models.draftModelSettings,
+      models.modelError,
+      models.modelRpcStatus,
+      models.modelSettingsOpen,
+      models.models,
+      models.saveModelSettings,
+      models.savingModels,
+      models.setModelSettingsOpen,
+      models.toggleModelSettings,
+      models.updateModelTier,
+      project.closeDag,
       project.collapsedTaskGroups,
+      project.planRequirement,
+      project.projectCanvas,
       project.requirementActionBusyId,
       project.requirementActionError,
-      project.closeDag,
-      project.selectDagRequirement,
-      project.planRequirement,
+      project.rerunReview,
       project.retryFailedNode,
       project.retryFromNode,
-      project.rerunReview,
+      project.selectDagRequirement,
+      project.selectedDagRequirement,
+      project.selectedDagRequirementId,
       project.toggleTaskGroupCollapsed,
-      start.selectedProjectId,
-      start.startData.projects,
-      start.backToStartCanvas,
     ],
   );
 
@@ -306,8 +214,7 @@ export default function App() {
     () =>
       buildProjectChatNode({
         projectCanvas: project.projectCanvas,
-        selectedProjectId: start.selectedProjectId,
-        startProjects: start.startData.projects,
+        project: current.project,
         requirementConversation: requirement.requirementConversation,
         requirementInput: requirement.requirementInput,
         requirementReferences: requirement.requirementReferences,
@@ -341,51 +248,48 @@ export default function App() {
         abandonRequirement: project.abandonRequirement,
       }),
     [
-      project.projectCanvas,
-      project.cancelRequirementAnalysis,
+      current.project,
       project.abandonRequirement,
-      start.selectedProjectId,
-      start.startData.projects,
-      requirement.requirementConversation,
-      requirement.requirementInput,
-      requirement.requirementReferences,
-      requirement.requirementImages,
-      requirement.requirementBusy,
-      requirement.requirementError,
-      requirement.requirementStreamEvents,
+      project.cancelRequirementAnalysis,
+      project.projectCanvas,
+      projectChat.closeProjectChat,
       projectChat.projectChat,
-      projectChat.projectChatInput,
-      projectChat.projectChatReferences,
-      projectChat.projectChatImages,
       projectChat.projectChatBusy,
       projectChat.projectChatError,
       projectChat.projectChatEvents,
-      requirement.clarificationAnswers,
-      requirement.dismissedPromptRequirementId,
-      requirement.setRequirementInput,
-      requirement.setRequirementReferences,
-      requirement.setRequirementImages,
-      requirement.sendRequirementMessage,
+      projectChat.projectChatImages,
+      projectChat.projectChatInput,
+      projectChat.projectChatReferences,
+      projectChat.sendProjectChat,
+      projectChat.setProjectChatImages,
       projectChat.setProjectChatInput,
       projectChat.setProjectChatReferences,
-      projectChat.setProjectChatImages,
-      projectChat.sendProjectChat,
-      projectChat.closeProjectChat,
-      requirement.updateClarificationAnswer,
-      requirement.submitClarifications,
+      requirement.clarificationAnswers,
       requirement.confirmRequirement,
       requirement.continueEditingRequirement,
+      requirement.dismissedPromptRequirementId,
+      requirement.requirementBusy,
+      requirement.requirementConversation,
+      requirement.requirementError,
+      requirement.requirementImages,
+      requirement.requirementInput,
+      requirement.requirementReferences,
+      requirement.requirementStreamEvents,
+      requirement.sendRequirementMessage,
+      requirement.setRequirementImages,
+      requirement.setRequirementInput,
+      requirement.setRequirementReferences,
+      requirement.submitClarifications,
+      requirement.updateClarificationAnswer,
     ],
   );
 
-  const projectNodes = useMemo(
+  const nodes = useMemo(
     () => mergeProjectNodes(projectStructureNodes, projectChatNode),
     [projectChatNode, projectStructureNodes],
   );
 
-  const nodes = start.currentCanvas === "project" ? projectNodes : startNodes;
-
-  const projectEdges = useMemo<Edge[]>(() => {
+  const edges = useMemo<Edge[]>(() => {
     const flowEdges: Edge[] = project.selectedDagRequirement
       ? []
       : [
@@ -397,10 +301,7 @@ export default function App() {
             targetHandle: "requirement-chat-left",
             type: "smoothstep",
             animated: true,
-            style: {
-              stroke: "rgba(20, 184, 166, 0.62)",
-              strokeWidth: 2,
-            },
+            style: { stroke: "rgba(20, 184, 166, 0.62)", strokeWidth: 2 },
           },
           {
             id: "requirement-chat-to-queued-requirements",
@@ -410,10 +311,7 @@ export default function App() {
             targetHandle: "requirement-list-left",
             type: "smoothstep",
             animated: true,
-            style: {
-              stroke: "rgba(249, 115, 22, 0.68)",
-              strokeWidth: 2,
-            },
+            style: { stroke: "rgba(249, 115, 22, 0.68)", strokeWidth: 2 },
           },
         ];
 
@@ -425,44 +323,6 @@ export default function App() {
         ),
       );
     }
-
-    return flowEdges;
-  }, [project.selectedDagRequirement, project.collapsedTaskGroups]);
-
-  const startEdges = useMemo<Edge[]>(() => {
-    const flowEdges: Edge[] = [
-      {
-        id: "create-project-to-project-list",
-        source: "create-project",
-        sourceHandle: "left-link",
-        target: "project-list",
-        targetHandle: "left-link",
-        type: "smoothstep",
-        animated: true,
-        style: {
-          stroke: "rgba(20, 184, 166, 0.56)",
-          strokeWidth: 2,
-        },
-      },
-    ];
-
-    if (start.pendingDeleteProject) {
-      flowEdges.push({
-        id: `project-item-delete-confirm-${start.pendingDeleteProject.id}`,
-        source: `project-item-${start.pendingDeleteProject.id}`,
-        sourceHandle: "delete-right",
-        target: `delete-confirm-${start.pendingDeleteProject.id}`,
-        targetHandle: "delete-left",
-        type: "smoothstep",
-        animated: true,
-        style: {
-          stroke: "rgba(251, 113, 133, 0.72)",
-          strokeDasharray: "6 6",
-          strokeWidth: 2,
-        },
-      });
-    }
-
     if (models.modelSettingsOpen) {
       flowEdges.push({
         id: "model-settings-to-model-config",
@@ -472,35 +332,34 @@ export default function App() {
         targetHandle: "model-left",
         type: "smoothstep",
         animated: true,
-        style: {
-          stroke: "rgba(249, 115, 22, 0.68)",
-          strokeWidth: 2,
-        },
+        style: { stroke: "rgba(249, 115, 22, 0.68)", strokeWidth: 2 },
       });
     }
-
     return flowEdges;
-  }, [start.pendingDeleteProject, models.modelSettingsOpen]);
-
-  const edges = start.currentCanvas === "project" ? projectEdges : startEdges;
-  const flowKey = getReactFlowKey({
-    currentCanvas: start.currentCanvas,
-    selectedProjectId: start.selectedProjectId,
-    projectLoaded: Boolean(project.projectCanvas),
-  });
+  }, [
+    models.modelSettingsOpen,
+    project.collapsedTaskGroups,
+    project.selectedDagRequirement,
+  ]);
 
   return (
-    <main className="app-shell" data-theme={start.theme}>
+    <main className="app-shell" data-theme={current.theme}>
       <section className="toolbar">
         <div>
           <h1>Raccoon Node</h1>
           <p>
-            {start.currentCanvas === "project" && project.projectCanvas
-              ? `${project.projectCanvas.project.name} / 项目画布`
-              : "Start 画布"}
+            {current.project
+              ? `${current.project.name} / 项目画布`
+              : "项目画布"}
           </p>
         </div>
-        <div className="status-pill">{start.loading ? "加载中" : "已连接"}</div>
+        <div className="status-pill">
+          {current.error
+            ? current.error
+            : current.loading
+              ? "加载中"
+              : "已连接"}
+        </div>
       </section>
       <section className="canvas-shell">
         <RequirementTaskEventsProvider
@@ -509,7 +368,10 @@ export default function App() {
         >
           <ReactFlowProvider>
             <ReactFlow
-              key={flowKey}
+              key={getReactFlowKey({
+                projectId: selectedProjectId,
+                projectLoaded: Boolean(project.projectCanvas),
+              })}
               nodes={nodes}
               edges={edges}
               nodeTypes={nodeTypes}
@@ -543,13 +405,7 @@ export default function App() {
                 nodeStrokeColor="rgba(255, 255, 255, 0.5)"
               />
               <Controls position="bottom-right" />
-              <FitViewOnGraphChange
-                enabled={start.currentCanvas === "start"}
-                nodeCount={nodes.length}
-                edgeCount={edges.length}
-              />
               <ProjectCanvasViewportController
-                currentCanvas={start.currentCanvas}
                 projectLoaded={Boolean(project.projectCanvas)}
                 selectedDagRequirementId={project.selectedDagRequirementId}
               />

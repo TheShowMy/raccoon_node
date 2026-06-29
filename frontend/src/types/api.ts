@@ -12,18 +12,6 @@ export type Project = {
   updated_at: string;
 };
 
-export type SummaryNode = {
-  title: string;
-  description: string;
-};
-
-export type StartData = {
-  projects: Project[];
-  settings_summary: SummaryNode;
-  model_summary: SummaryNode;
-  model_settings: ModelSettings;
-};
-
 export type RequirementStatus =
   | "analyzing"
   | "clarifying"
@@ -357,32 +345,6 @@ export type ModelSettingsResponse = {
 
 export type StartNodeData =
   | {
-      kind: "create";
-      onCreate: (name: string, gitUrl: string) => Promise<void>;
-      busy: boolean;
-      error: string | null;
-    }
-  | {
-      kind: "projects";
-      projectCount: number;
-    }
-  | {
-      kind: "project-item";
-      project: Project;
-      deletingId: string | null;
-      pendingDeleteProjectId: string | null;
-      onOpenProject: (project: Project) => void;
-      onDeleteRequest: (project: Project) => void;
-    }
-  | {
-      kind: "delete-confirm";
-      project: Project;
-      deleting: boolean;
-      error: string | null;
-      onCancel: () => void;
-      onConfirm: (project: Project) => Promise<void>;
-    }
-  | {
       kind: "model-config";
       settings: ModelSettings;
       models: PiModel[];
@@ -394,22 +356,12 @@ export type StartNodeData =
       onSave: () => Promise<void>;
     }
   | {
-      kind: "style-settings";
-      theme: ThemeMode;
-      onThemeChange: (theme: ThemeMode) => void;
-    }
-  | {
       kind: "summary";
       title: string;
       description: string;
       icon: "model";
       actionLabel?: string;
       onAction?: () => void;
-    }
-  | {
-      kind: "project-back";
-      project: Project;
-      onBack: () => void;
     }
   | {
       kind: "project-github";

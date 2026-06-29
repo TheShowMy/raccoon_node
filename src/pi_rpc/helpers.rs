@@ -11,16 +11,15 @@ fn event_has_output_activity(event: &Value) -> bool {
         Some("message_update") => event
             .get("assistantMessageEvent")
             .is_some_and(value_has_non_empty_text),
-        Some("text_delta") | Some("content_delta") | Some("message_delta")
+        Some("text_delta")
+        | Some("content_delta")
+        | Some("message_delta")
         | Some("thinking_delta") => value_has_non_empty_text(event),
-        Some("tool_execution_update") | Some("tool_execution_end") => [
-            "partialResult",
-            "partial_result",
-            "result",
-            "output",
-        ]
-        .iter()
-        .any(|key| event.get(*key).is_some_and(value_has_non_empty_text)),
+        Some("tool_execution_update") | Some("tool_execution_end") => {
+            ["partialResult", "partial_result", "result", "output"]
+                .iter()
+                .any(|key| event.get(*key).is_some_and(value_has_non_empty_text))
+        }
         _ => false,
     }
 }
@@ -30,7 +29,15 @@ fn value_has_non_empty_text(value: &Value) -> bool {
         Value::String(text) => !text.trim().is_empty(),
         Value::Array(items) => items.iter().any(value_has_non_empty_text),
         Value::Object(map) => {
-            for key in ["delta", "text", "content", "partialResult", "partial_result", "result", "output"] {
+            for key in [
+                "delta",
+                "text",
+                "content",
+                "partialResult",
+                "partial_result",
+                "result",
+                "output",
+            ] {
                 if map.get(key).is_some_and(value_has_non_empty_text) {
                     return true;
                 }
@@ -156,11 +163,7 @@ async fn prepare_task_workspace(
                 .as_deref()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(&input.project.local_path));
-            let worktree = normalize_local_path(&worktree)?;
-            ensure_child_path(data_root, &worktree)?;
-            if !worktree.exists() {
-                return Err(AppError::internal("恢复审核失败：目标 worktree 不存在"));
-            }
+            let worktree = resolve_project_working_dir(data_root, &worktree.to_string_lossy())?;
             Ok((worktree, None, None))
         }
         RequirementTaskKind::Implementation
@@ -178,14 +181,13 @@ async fn prepare_task_workspace(
                 .as_deref()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| {
-                    task_worktree_path(data_root, &input.project.id, &input.task.id)
+                    task_worktree_path(data_root, &input.requirement.id, &input.task.id)
                 });
             let worktree = normalize_local_path(&worktree)?;
-            ensure_child_path(data_root, &worktree)?;
+            ensure_child_path(&data_root.join("worktrees"), &worktree)?;
 
             let existed = worktree.join(".git").exists();
-            let recovering = input.task.worktree_path.is_some()
-                || input.task.branch_name.is_some();
+            let recovering = input.task.worktree_path.is_some() || input.task.branch_name.is_some();
             if recovering && !existed {
                 return Err(AppError::internal("恢复节点失败：worktree 不存在"));
             }
@@ -213,10 +215,8 @@ async fn prepare_task_workspace(
                     ],
                 )
                 .await?;
-                merge_dependency_branches(&worktree,
-                    dependency_branches.into_iter().skip(1),
-                )
-                .await?;
+                merge_dependency_branches(&worktree, dependency_branches.into_iter().skip(1))
+                    .await?;
             }
             Ok((worktree.clone(), Some(branch), Some(worktree)))
         }
@@ -231,9 +231,7 @@ async fn ensure_branch_exists(repo: &Path, branch: &str) -> Result<(), AppError>
 }
 
 fn task_dependency_branches(input: &RequirementTaskExecutionInput) -> Vec<String> {
-    dependency_branches_for_task(&input.task,
-        &input.plan,
-    )
+    dependency_branches_for_task(&input.task, &input.plan)
 }
 
 fn dependency_branches_for_task(
@@ -295,21 +293,19 @@ pub(crate) async fn stage_task_changes(
         .filter(|reason| !reason.is_empty());
     if output.changed == Some(false) {
         if let Some(reason) = no_op_reason {
-            output.execution_warning = Some(format!(
-                "未产生新改动：{reason}。按 no-op 完成并进入审核。"
-            ));
+            output.execution_warning =
+                Some(format!("未产生新改动：{reason}。按 no-op 完成并进入审核。"));
             return Ok(());
         }
-        return Err(AppError::internal("实现节点未产生改动，且缺少 no_op_reason"));
+        return Err(AppError::internal(
+            "实现节点未产生改动，且缺少 no_op_reason",
+        ));
     }
 
     Err(AppError::internal("实现节点没有产生可提交改动"))
 }
 
-pub(crate) async fn commit_staged_changes(
-    worktree: &Path,
-    message: &str,
-) -> Result<(), AppError> {
+pub(crate) async fn commit_staged_changes(worktree: &Path, message: &str) -> Result<(), AppError> {
     let status = git(worktree, &["status", "--porcelain"]).await?;
     if status.trim().is_empty() {
         return Ok(());
@@ -356,9 +352,9 @@ async fn publish_merge_review(
         .task
         .worktree_path
         .as_deref()
-        .map(Path::new)
         .ok_or_else(|| AppError::internal("最终合并节点缺少 worktree_path"))?;
-    let commit = git(worktree, &["rev-parse", "HEAD"])
+    let worktree = resolve_project_working_dir(data_root, worktree)?;
+    let commit = git(&worktree, &["rev-parse", "HEAD"])
         .await?
         .trim()
         .to_owned();
@@ -506,7 +502,7 @@ async fn cleanup_requirement_branches(
 
     let mut removed_worktrees = 0;
     for worktree in worktrees {
-        if ensure_child_path(data_root, &worktree).is_ok() && worktree.exists() {
+        if ensure_child_path(&data_root.join("worktrees"), &worktree).is_ok() && worktree.exists() {
             let Ok(worktree_str) = path_str(&worktree) else {
                 continue;
             };
@@ -586,12 +582,10 @@ fn task_branch_name(requirement_id: &str, task_id: &str) -> String {
     format!("rn/{}/{}", slug(requirement_id), slug(task_id))
 }
 
-fn task_worktree_path(data_root: &Path, project_id: &str, task_id: &str) -> PathBuf {
+fn task_worktree_path(data_root: &Path, requirement_id: &str, task_id: &str) -> PathBuf {
     data_root
-        .join("projects")
-        .join(project_id)
         .join("worktrees")
-        .join(safe_worktree_name(task_id))
+        .join(safe_worktree_name(&format!("{requirement_id}-{task_id}")))
 }
 
 fn safe_worktree_name(value: &str) -> String {

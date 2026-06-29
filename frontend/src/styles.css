@@ -157,27 +157,6 @@
     transform: translateY(-2px);
   }
 
-  .node-card--create {
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px var(--glow-create);
-  }
-
-  .node-card--projects {
-    @apply h-full min-h-[154px] w-full;
-    box-shadow:
-      var(--shadow-card),
-      0 0 32px var(--glow-projects);
-  }
-
-  .node-card--project-item {
-    @apply h-full min-h-0 w-full px-3 py-2.5;
-    box-shadow:
-      var(--shadow-card),
-      0 0 24px color-mix(in srgb, var(--accent-projects) 22%, transparent);
-  }
-
-  .node-card--style-settings,
   .node-card--summary {
     box-shadow:
       var(--shadow-card),
@@ -191,13 +170,6 @@
       0 0 28px var(--glow-model);
   }
 
-  .node-card--delete-confirm {
-    @apply min-h-[360px] w-[300px];
-    box-shadow:
-      var(--shadow-card),
-      0 0 30px var(--glow-danger);
-  }
-
   .node-card--model-config {
     @apply min-h-[480px] w-[360px] overflow-visible;
     box-shadow:
@@ -205,7 +177,6 @@
       0 0 28px var(--glow-model);
   }
 
-  .node-card--project-back,
   .node-card--project-github {
     @apply h-[90px] w-[137px] cursor-pointer;
     box-shadow:
@@ -402,16 +373,8 @@
     color: var(--accent-projects);
   }
 
-  .node-header--style .node-icon {
-    color: var(--accent-style);
-  }
-
   .node-header--model .node-icon {
     color: var(--accent-model);
-  }
-
-  .node-header--danger .node-icon {
-    color: var(--accent-danger);
   }
 
   .node-header > div:last-child {
@@ -439,11 +402,6 @@
     filter: brightness(1.08);
   }
 
-  .create-form {
-    @apply mt-[18px] grid grid-cols-[1fr_auto] gap-2;
-  }
-
-  .create-form input,
   .requirement-input textarea {
     @apply min-w-0 rounded-[10px] border px-3 py-2.5 text-xs outline-none transition;
     border-color: var(--card-border);
@@ -451,37 +409,20 @@
     color: var(--text-strong);
   }
 
-  .create-form input::placeholder,
   .requirement-input textarea::placeholder {
     color: var(--text-muted);
   }
 
-  .create-form input:focus,
   .requirement-input textarea:focus {
     border-color: var(--accent-create);
     box-shadow: 0 0 0 3px
       color-mix(in srgb, var(--accent-create) 20%, transparent);
   }
 
-  .create-form__git {
-    @apply col-span-full;
-  }
-
-  .create-form button,
-  .ghost-button,
-  .theme-switcher button,
-  .delete-actions button,
   .model-actions button,
   .requirement-input button,
   .requirement-draft__confirm {
     @apply cursor-pointer rounded-[10px] border-0 px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
-  }
-
-  .create-form button {
-    @apply col-span-full text-white;
-    background: var(--accent-create);
-    box-shadow: 0 4px 14px
-      color-mix(in srgb, var(--accent-create) 35%, transparent);
   }
 
   .form-error {
@@ -489,79 +430,7 @@
     color: var(--accent-danger);
   }
 
-  .ghost-button {
-    @apply mt-[22px] w-full border;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 45%, transparent);
-    color: var(--text-soft);
-  }
-
-  .ghost-button:hover {
-    border-color: var(--card-border-strong);
-    color: var(--text-strong);
-  }
-
-  .theme-switcher {
-    @apply mt-[22px] grid grid-cols-2 gap-2 rounded-xl border p-1;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 36%, transparent);
-  }
-
-  .theme-switcher button {
-    @apply inline-flex items-center justify-center gap-1.5 border;
-    border-color: transparent;
-    color: var(--text-soft);
-  }
-
-  .theme-switcher button.theme-switcher__item--active {
-    border-color: color-mix(in srgb, var(--accent-style) 45%, transparent);
-    background: color-mix(in srgb, var(--accent-style) 18%, transparent);
-    color: var(--text-strong);
-  }
-
-  .project-summary {
-    @apply pointer-events-none mt-[18px] grid gap-1 rounded-[10px] border p-3;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 35%, transparent);
-  }
-
-  .project-summary strong {
-    @apply text-2xl leading-none;
-    color: var(--accent-projects);
-  }
-
-  .project-item-node__header {
-    @apply grid h-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2;
-  }
-
-  .project-item-node__main {
-    @apply grid h-full min-w-0 content-center gap-1 border-0 bg-transparent p-0 text-left;
-    color: var(--text-strong);
-  }
-
-  .project-item-node__delete {
-    @apply flex h-[30px] w-[30px] items-center justify-center self-center rounded-[9px] border p-0;
-    border-color: color-mix(in srgb, var(--accent-danger) 28%, transparent);
-    background: color-mix(in srgb, var(--accent-danger) 16%, transparent);
-    color: var(--accent-danger);
-  }
-
-  .project-item-node__main span,
-  .project-item-node__main small {
-    @apply overflow-hidden text-ellipsis whitespace-nowrap;
-  }
-
-  .project-item-node__main span {
-    @apply text-xs font-bold;
-  }
-
-  .project-item-node__main small {
-    @apply text-[11px];
-    color: var(--text-soft);
-  }
-
-  .model-config-grid,
-  .delete-detail {
+  .model-config-grid {
     @apply mt-4 grid gap-3;
   }
 
@@ -572,7 +441,6 @@
 
   .model-config-tier,
   .requirement-list__item,
-  .delete-detail div,
   .requirement-draft {
     @apply grid min-w-0 gap-2 rounded-xl border p-3;
     border-color: var(--card-border);
@@ -581,7 +449,6 @@
 
   .model-config-tier > strong,
   .requirement-list__item strong,
-  .delete-detail strong,
   .requirement-draft strong,
   .requirement-empty strong {
     @apply text-[13px] font-bold;
@@ -593,7 +460,6 @@
   }
 
   .model-config-tier label > span,
-  .delete-detail span,
   .requirement-message strong {
     @apply text-[10px] font-bold;
     color: var(--text-muted);
@@ -745,19 +611,16 @@
     color: var(--accent-model);
   }
 
-  .model-notice,
-  .delete-warning {
+  .model-notice {
     @apply mt-3.5 mb-0 text-xs leading-normal;
     color: color-mix(in srgb, var(--accent-model) 72%, var(--text-strong));
   }
 
-  .model-actions,
-  .delete-actions {
+  .model-actions {
     @apply mt-4 grid grid-cols-2 gap-2;
   }
 
-  .model-actions__close,
-  .delete-actions__cancel {
+  .model-actions__close {
     @apply border;
     border-color: var(--card-border);
     background: color-mix(in srgb, var(--canvas-bg) 40%, transparent);
@@ -765,7 +628,6 @@
   }
 
   .model-actions__save,
-  .delete-actions__confirm,
   .requirement-input button {
     @apply inline-flex items-center justify-center gap-1.5 text-white;
     border-color: color-mix(in srgb, var(--accent-danger) 45%, transparent);
@@ -2422,9 +2284,7 @@
       height: 112px;
     }
 
-    .node-card,
-    .node-card--projects,
-    .node-card--project-item {
+    .node-card {
       width: 280px;
     }
 
@@ -2490,8 +2350,7 @@
   opacity: 0.85;
 }
 
-/* === Compact project-back / project-github === */
-.node-card--project-back.compact,
+/* === Compact GitHub project action === */
 .node-card--project-github.compact {
   width: 137px !important;
   height: 90px !important;
@@ -2501,7 +2360,6 @@
   box-shadow: var(--shadow-card);
 }
 
-.node-card--project-back.compact .node-header,
 .node-card--project-github.compact .node-header {
   gap: 8px;
 }

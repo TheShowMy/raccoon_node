@@ -58,10 +58,7 @@ function hasSameProjectCanvasRevision(
 
 export function useProjectCanvas(
   selectedProjectId: string | null,
-  currentCanvas: "start" | "project",
   setError: (error: string | null) => void,
-  setCurrentCanvas: (canvas: "start" | "project") => void,
-  setSelectedProjectId: (id: string | null) => void,
 ) {
   const [projectCanvas, setProjectCanvasState] =
     useState<ProjectCanvasData | null>(null);
@@ -109,7 +106,7 @@ export function useProjectCanvas(
   }, []);
 
   useEffect(() => {
-    if (currentCanvas !== "project" || !selectedProjectId) {
+    if (!selectedProjectId) {
       setProjectCanvas(null);
       setSelectedDagRequirementId(null);
       setRequirementActionBusyId(null);
@@ -129,31 +126,12 @@ export function useProjectCanvas(
       .catch((reason) => {
         if (cancelled) return;
         setError(readError(reason));
-        window.history.replaceState({}, "", "/");
-        setCurrentCanvas("start");
-        setSelectedProjectId(null);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [
-    currentCanvas,
-    loadProjectCanvas,
-    selectedProjectId,
-    setCurrentCanvas,
-    setError,
-    setSelectedProjectId,
-  ]);
-
-  useEffect(() => {
-    if (currentCanvas !== "project") {
-      setSelectedDagRequirementId(null);
-      setCollapsedTaskGroups(new Set());
-      setRequirementActionBusyId(null);
-      setRequirementActionError(null);
-    }
-  }, [currentCanvas]);
+  }, [loadProjectCanvas, selectedProjectId, setError]);
 
   const toggleTaskGroupCollapsed = useCallback(
     (requirementId: string, taskId: string) => {
@@ -197,11 +175,7 @@ export function useProjectCanvas(
   );
 
   useEffect(() => {
-    if (
-      currentCanvas !== "project" ||
-      !selectedProjectId ||
-      !shouldPollProjectCanvas
-    ) {
+    if (!selectedProjectId || !shouldPollProjectCanvas) {
       return;
     }
 
@@ -211,13 +185,7 @@ export function useProjectCanvas(
       );
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [
-    currentCanvas,
-    loadProjectCanvas,
-    selectedProjectId,
-    setError,
-    shouldPollProjectCanvas,
-  ]);
+  }, [loadProjectCanvas, selectedProjectId, setError, shouldPollProjectCanvas]);
 
   useEffect(() => {
     if (

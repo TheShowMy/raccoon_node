@@ -23,12 +23,12 @@ use crate::models::{
 use crate::pi_rpc::commit_staged_changes;
 use crate::requirement_execution::effective_model_tier;
 use crate::utils::{
-    build_clarification_answer_summary, clarification_has_answer, clone_git_repo,
-    data_root_from_file, derive_requirement_title, ensure_child_path, normalize_local_path,
-    remove_dir_if_exists, slugify, sort_requirements_desc, validate_git_url,
-    validate_model_settings, write_json,
+    build_clarification_answer_summary, clarification_has_answer, data_root_from_file,
+    derive_requirement_title, ensure_child_path, git_remote_origin, normalize_local_path,
+    resolve_git_root, sort_requirements_desc, validate_model_settings, write_json,
 };
 
+pub const CURRENT_PROJECT_ID: &str = "current";
 const MAX_REVIEW_REJECTIONS: u32 = 5;
 const MAX_EXECUTION_FAILURES: u32 = 4;
 const PI_SESSION_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -58,6 +58,67 @@ pub struct JsonStore {
 }
 
 impl JsonStore {
+    pub async fn open_project(path: PathBuf, project_root: PathBuf) -> Result<Self, AppError> {
+        let requested_path = project_root.join(".raccoon-node").join("app.json");
+        let project_root = resolve_git_root(Some(&project_root), &project_root)?;
+        let expected_path = project_root.join(".raccoon-node").join("app.json");
+        if path != requested_path && normalize_local_path(&path)? != expected_path {
+            return Err(AppError::bad_request(
+                "数据文件必须位于 Git 根目录的 .raccoon-node/app.json",
+            ));
+        }
+
+        let data_root = project_root.join(".raccoon-node");
+        ensure_child_path(&project_root, &data_root)?;
+        tokio::fs::create_dir_all(&data_root).await?;
+        for file in ["app.json", "data.db"] {
+            let file = data_root.join(file);
+            ensure_child_path(&data_root, &file)?;
+            if std::fs::symlink_metadata(&file)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                return Err(AppError::bad_request(
+                    ".raccoon-node 中的存储文件不能是符号链接",
+                ));
+            }
+        }
+        for directory in ["sessions", "worktrees", "attachments"] {
+            let directory = data_root.join(directory);
+            ensure_child_path(&data_root, &directory)?;
+            tokio::fs::create_dir_all(directory).await?;
+        }
+        let mut store = Self::open(expected_path).await?;
+        let now = Utc::now();
+        let created_at = store
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == CURRENT_PROJECT_ID)
+            .map(|project| project.created_at)
+            .unwrap_or(now);
+        let project = Project {
+            id: CURRENT_PROJECT_ID.to_owned(),
+            name: project_root
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "repository".to_owned()),
+            git_url: git_remote_origin(&project_root),
+            local_path: project_root.to_string_lossy().into_owned(),
+            created_at,
+            updated_at: now,
+        };
+        store.data.projects = vec![project];
+        for requirement in &mut store.data.requirements {
+            requirement.project_id = CURRENT_PROJECT_ID.to_owned();
+        }
+        for chat in &mut store.data.project_chats {
+            chat.project_id = CURRENT_PROJECT_ID.to_owned();
+        }
+        store.write_persist().await?;
+        Ok(store)
+    }
+
     pub async fn open(path: PathBuf) -> Result<Self, AppError> {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -67,19 +128,15 @@ impl JsonStore {
         let db_path = data_root.join("data.db");
         let db = crate::db::Database::open(&db_path).ok();
 
-        // If a legacy app.json exists, migrate it to SQLite once.
+        // app.json is the primary store; SQLite is a write-through recovery copy.
         if path.exists() {
             let content = tokio::fs::read_to_string(&path).await?;
             let mut data: AppData = serde_json::from_str(&content)?;
             let paths_changed = normalize_stored_paths(&mut data)?;
 
-            // Migrate to SQLite if DB is available.
             if let Some(ref db) = db {
-                if db.save_all(&data).is_ok() {
-                    tracing::info!("migrated app.json data to SQLite");
-                    // Rename the old JSON so we don't re-migrate on restart.
-                    let migrated_path = path.with_extension("json.migrated");
-                    let _ = tokio::fs::rename(&path, &migrated_path).await;
+                if let Err(error) = db.save_all(&data) {
+                    tracing::warn!("failed to refresh SQLite recovery copy: {error}");
                 }
             }
 
@@ -176,111 +233,6 @@ impl JsonStore {
                 tracing::error!("failed to sync data to SQLite: {error}");
             }
         }
-    }
-
-    pub fn prepare_project(
-        &self,
-        raw_name: &str,
-        raw_git_url: &str,
-    ) -> Result<(String, PathBuf), AppError> {
-        let name = raw_name.trim();
-        if name.is_empty() {
-            return Err(AppError::bad_request("项目名称不能为空"));
-        }
-
-        let git_url = raw_git_url.trim();
-        validate_git_url(git_url)?;
-
-        if name
-            .chars()
-            .any(|ch| matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
-        {
-            return Err(AppError::bad_request("项目名称不能包含文件路径非法字符"));
-        }
-
-        if self
-            .data
-            .projects
-            .iter()
-            .any(|project| project.name.eq_ignore_ascii_case(name))
-        {
-            return Err(AppError::bad_request("项目名称已存在"));
-        }
-
-        let now = Utc::now();
-        let id = format!("{}-{}", slugify(name), now.timestamp_millis());
-        let project_dir = self.project_dir(&id)?;
-        let repo_dir = project_dir.join("repo");
-        if repo_dir.exists() {
-            return Err(AppError::bad_request("项目本地目录已存在"));
-        }
-
-        Ok((id, repo_dir))
-    }
-
-    pub async fn commit_project(
-        &mut self,
-        id: String,
-        name: String,
-        git_url: String,
-        repo_dir: PathBuf,
-    ) -> Result<Project, AppError> {
-        let now = Utc::now();
-        let project = Project {
-            id,
-            name,
-            git_url,
-            local_path: repo_dir.to_string_lossy().to_string(),
-            created_at: now,
-            updated_at: now,
-        };
-
-        self.data.projects.push(project.clone());
-        self.write_persist().await?;
-        Ok(project)
-    }
-
-    pub async fn create_project(
-        &mut self,
-        raw_name: String,
-        raw_git_url: String,
-    ) -> Result<Project, AppError> {
-        let (id, repo_dir) = self.prepare_project(&raw_name, &raw_git_url)?;
-        let name = raw_name.trim().to_owned();
-        let git_url = raw_git_url.trim().to_owned();
-
-        tokio::fs::create_dir_all(repo_dir.parent().unwrap()).await?;
-        if let Err(error) = clone_git_repo(&git_url, &repo_dir).await {
-            remove_dir_if_exists(&repo_dir).await?;
-            return Err(error);
-        }
-
-        self.commit_project(id, name, git_url, repo_dir).await
-    }
-
-    pub async fn delete_project(&mut self, id: &str) -> Result<(), AppError> {
-        let index = self
-            .data
-            .projects
-            .iter()
-            .position(|project| project.id == id)
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
-
-        let project_dir = self.project_dir(id)?;
-        if project_dir.exists() {
-            remove_dir_if_exists(&project_dir).await?;
-        }
-
-        self.data.projects.remove(index);
-        self.data
-            .requirements
-            .retain(|requirement| requirement.project_id != id);
-        self.data.project_chats.retain(|chat| chat.project_id != id);
-        self.write_persist().await?;
-        if let Some(ref db) = self.db {
-            let _ = db.delete_project(id);
-        }
-        Ok(())
     }
 
     pub async fn delete_requirement(&mut self, requirement_id: &str) -> Result<String, AppError> {
@@ -1188,7 +1140,7 @@ impl JsonStore {
     }
 
     async fn cleanup_unreferenced_pi_sessions_before(&self, cutoff: SystemTime) {
-        let session_dir = self.data_root.join("pi-sessions");
+        let session_dir = self.data_root.join("sessions");
         let mut entries = match tokio::fs::read_dir(&session_dir).await {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
@@ -1793,18 +1745,10 @@ impl JsonStore {
     }
 
     pub fn project_dir(&self, id: &str) -> Result<PathBuf, AppError> {
-        if id.is_empty()
-            || id
-                .chars()
-                .any(|ch| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
-        {
-            return Err(AppError::bad_request("项目 ID 非法"));
+        if !self.data.projects.iter().any(|project| project.id == id) {
+            return Err(AppError::not_found("项目不存在"));
         }
-
-        let projects_root = self.data_root.join("projects");
-        let project_dir = projects_root.join(id);
-        ensure_child_path(&self.data_root, &project_dir)?;
-        Ok(project_dir)
+        Ok(self.data_root.clone())
     }
 }
 

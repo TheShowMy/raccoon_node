@@ -47,7 +47,14 @@ impl PiRpcClient {
         session_dir: &Path,
         working_dir: &Path,
     ) -> Result<Self, AppError> {
-        let mut child = Command::new(program)
+        let mut command = if cfg!(windows) && program.ends_with(".cmd") {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/D", "/S", "/C", program]);
+            command
+        } else {
+            Command::new(program)
+        };
+        let mut child = command
             .arg("--mode")
             .arg("rpc")
             .arg("--session-dir")

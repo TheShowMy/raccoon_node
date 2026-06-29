@@ -3,6 +3,10 @@ import type {
   DraftClarificationAnswer,
   FileReference,
   ImageAttachment,
+  ModelSettings,
+  ModelTierKey,
+  ModelTierSetting,
+  PiModel,
   Project,
   ProjectCanvasData,
   Requirement,
@@ -41,14 +45,8 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       StartNodeData["kind"],
       { width: number; height: number }
     > = {
-      create: { width: 252, height: 134 },
-      projects: { width: 420, height: 220 },
-      "project-item": { width: 348, height: 86 },
-      "delete-confirm": { width: 252, height: 134 },
       "model-config": { width: 252, height: 360 },
-      "style-settings": { width: 252, height: 134 },
       summary: { width: 252, height: 134 },
-      "project-back": { width: 137, height: 90 },
       "project-github": { width: 137, height: 90 },
       "requirement-list": { width: 290, height: 640 },
       "requirement-chat": { width: 720, height: 760 },
@@ -68,14 +66,22 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
 
 export interface BuildProjectNodesParams {
   projectCanvas: ProjectCanvasData | null;
-  selectedProjectId: string | null;
-  startProjects: Project[];
+  project: Project | null;
   selectedDagRequirement: Requirement | null;
   selectedDagRequirementId: string | null;
   collapsedTaskGroups: Set<string>;
   requirementActionBusyId: string | null;
   requirementActionError: string | null;
-  backToStartCanvas: () => void;
+  modelSettingsOpen: boolean;
+  draftModelSettings: ModelSettings;
+  models: PiModel[];
+  modelRpcStatus: "idle" | "loading" | "ready" | "reconnecting" | "error";
+  modelError: string | null;
+  savingModels: boolean;
+  setModelSettingsOpen: (open: boolean) => void;
+  toggleModelSettings: () => void;
+  updateModelTier: (tier: ModelTierKey, setting: ModelTierSetting) => void;
+  saveModelSettings: () => Promise<void>;
   closeDag: () => void;
   selectDagRequirement: (requirement: Requirement) => void;
   planRequirement: (requirement: Requirement) => Promise<void>;
@@ -87,8 +93,7 @@ export interface BuildProjectNodesParams {
 
 export interface BuildProjectChatNodeParams {
   projectCanvas: ProjectCanvasData | null;
-  selectedProjectId: string | null;
-  startProjects: Project[];
+  project: Project | null;
   requirementConversation: RequirementConversation | null;
   requirementInput: string;
   requirementReferences?: FileReference[];
@@ -127,14 +132,22 @@ export interface BuildProjectChatNodeParams {
 
 export function buildProjectNodes({
   projectCanvas,
-  selectedProjectId,
-  startProjects,
+  project: currentProject,
   selectedDagRequirement,
   selectedDagRequirementId,
   collapsedTaskGroups,
   requirementActionBusyId,
   requirementActionError,
-  backToStartCanvas,
+  modelSettingsOpen,
+  draftModelSettings,
+  models,
+  modelRpcStatus,
+  modelError,
+  savingModels,
+  setModelSettingsOpen,
+  toggleModelSettings,
+  updateModelTier,
+  saveModelSettings,
   closeDag,
   selectDagRequirement,
   planRequirement,
@@ -143,10 +156,7 @@ export function buildProjectNodes({
   rerunReview,
   toggleTaskGroupCollapsed,
 }: BuildProjectNodesParams): Node<StartNodeData>[] {
-  const fallbackProject = selectedProjectId
-    ? startProjects.find((project) => project.id === selectedProjectId)
-    : null;
-  const project = projectCanvas?.project ?? fallbackProject;
+  const project = projectCanvas?.project ?? currentProject;
   if (!project) {
     return [];
   }
@@ -184,24 +194,52 @@ export function buildProjectNodes({
 
   return withDimensions([
     {
-      id: "project-back",
-      type: "startNode",
-      position: { x: -350, y: 20 },
-      data: {
-        kind: "project-back",
-        project,
-        onBack: backToStartCanvas,
-      },
-    },
-    {
       id: "project-github",
       type: "startNode",
-      position: { x: -197, y: 20 },
+      position: { x: -350, y: 20 },
       data: {
         kind: "project-github",
         project,
       },
     },
+    {
+      id: "model-settings",
+      type: "startNode",
+      position: { x: -197, y: 20 },
+      width: 137,
+      height: 90,
+      style: { width: 137, height: 90 },
+      data: {
+        kind: "summary",
+        icon: "model",
+        title: "模型设置",
+        description: "配置任务使用的模型档位",
+        onAction: toggleModelSettings,
+      },
+    },
+    ...(modelSettingsOpen
+      ? [
+          {
+            id: "model-config",
+            type: "startNode" as const,
+            width: 360,
+            height: 480,
+            position: { x: -730, y: 20 },
+            style: { width: 360, height: 480 },
+            data: {
+              kind: "model-config" as const,
+              settings: draftModelSettings,
+              models,
+              rpcStatus: modelRpcStatus,
+              error: modelError,
+              saving: savingModels,
+              onChange: updateModelTier,
+              onClose: () => setModelSettingsOpen(false),
+              onSave: saveModelSettings,
+            },
+          },
+        ]
+      : []),
     {
       id: "completed-requirements",
       type: "startNode",
@@ -406,8 +444,7 @@ export function buildProjectNodes({
 
 export function buildProjectChatNode({
   projectCanvas,
-  selectedProjectId,
-  startProjects,
+  project: currentProject,
   requirementConversation,
   requirementInput,
   requirementReferences = [],
@@ -440,10 +477,7 @@ export function buildProjectChatNode({
   cancelRequirementAnalysis,
   abandonRequirement,
 }: BuildProjectChatNodeParams): Node<StartNodeData> | null {
-  const fallbackProject = selectedProjectId
-    ? startProjects.find((project) => project.id === selectedProjectId)
-    : null;
-  const project = projectCanvas?.project ?? fallbackProject;
+  const project = projectCanvas?.project ?? currentProject;
   if (!project) return null;
 
   const activeRequirementId = projectCanvas?.active_requirement?.id ?? "";

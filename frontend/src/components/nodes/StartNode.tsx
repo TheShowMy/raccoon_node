@@ -5,9 +5,6 @@ import { renderNodeContent } from "../../nodes/renderNodeContent";
 import { githubUrlFromGitUrl } from "../../utils/format";
 
 function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
-  const isPendingDelete =
-    data.kind === "project-item" &&
-    data.pendingDeleteProjectId === data.project.id;
   const projectGithubUrl =
     data.kind === "project-github"
       ? githubUrlFromGitUrl(data.project.git_url)
@@ -15,16 +12,11 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const clickableAction =
     data.kind === "summary"
       ? data.onAction
-      : data.kind === "project-back"
-        ? data.onBack
-        : projectGithubUrl
-          ? () => window.open(projectGithubUrl, "_blank", "noopener,noreferrer")
-          : undefined;
-  const hasFlowLeftHandle = data.kind === "create" || data.kind === "projects";
+      : projectGithubUrl
+        ? () => window.open(projectGithubUrl, "_blank", "noopener,noreferrer")
+        : undefined;
   const hasModelSourceHandle = data.kind === "summary" && data.icon === "model";
   const hasModelTargetHandle = data.kind === "model-config";
-  const hasDeleteRightHandle = data.kind === "project-item";
-  const hasDeleteLeftHandle = data.kind === "delete-confirm";
   const hasRequirementChatLeftHandle = data.kind === "requirement-chat";
   const hasRequirementChatRightHandle = data.kind === "requirement-chat";
   const hasRequirementListLeftHandle =
@@ -38,12 +30,8 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   return (
     <div
       className={`node-card node-card--${data.kind} ${
-        isPendingDelete ? "node-card--pending-delete" : ""
-      } ${clickableAction ? "node-card--clickable" : ""} ${
-        data.kind === "project-back" || data.kind === "project-github"
-          ? "compact"
-          : ""
-      }`}
+        clickableAction ? "node-card--clickable" : ""
+      } ${data.kind === "project-github" ? "compact" : ""}`}
       role={clickableAction ? "button" : undefined}
       tabIndex={clickableAction ? 0 : undefined}
       onClick={clickableAction}
@@ -55,22 +43,6 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
         }
       }}
     >
-      {hasFlowLeftHandle ? (
-        <Handle
-          id="left-link"
-          type={data.kind === "create" ? "source" : "target"}
-          position={Position.Left}
-          className="node-link-handle node-link-handle--flow"
-        />
-      ) : null}
-      {hasDeleteLeftHandle ? (
-        <Handle
-          id="delete-left"
-          type="target"
-          position={Position.Left}
-          className="node-link-handle node-link-handle--danger"
-        />
-      ) : null}
       {hasModelTargetHandle ? (
         <Handle
           id="model-left"
@@ -112,14 +84,6 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
         />
       ) : null}
       {renderNodeContent(data)}
-      {hasDeleteRightHandle ? (
-        <Handle
-          id="delete-right"
-          type="source"
-          position={Position.Right}
-          className="node-link-handle node-link-handle--danger"
-        />
-      ) : null}
       {hasRequirementChatRightHandle ? (
         <Handle
           id="requirement-chat-right"

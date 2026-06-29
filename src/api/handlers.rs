@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::{Path as AxumPath, Query, State},
-    http::{header, Response, StatusCode},
+    http::{header, Response},
     response::sse::{Event, KeepAlive, Sse},
     Json,
 };
@@ -12,11 +12,11 @@ use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 use crate::error::AppError;
 use crate::file_refs::{content_type_value, list_repo_files, read_attachment, save_attachment};
 use crate::models::{
-    AttachmentUploadRequest, ClarificationAnswerRequest, FileReference, ImageAttachment,
-    ModelSettings, ModelSettingsResponse, Project, ProjectCanvasResponse, ProjectChatEventEmitter,
-    ProjectChatMessageRequest, ProjectChatResponse, RequirementAnalysisInput,
-    RequirementConversationResponse, RequirementEventEmitter, RequirementMessageRequest,
-    RequirementStatus, RequirementTaskExecutionInput, RpcStatus, StartResponse,
+    AttachmentUploadRequest, ClarificationAnswerRequest, CurrentProjectResponse, FileReference,
+    ImageAttachment, ModelSettings, ModelSettingsResponse, ProjectCanvasResponse,
+    ProjectChatEventEmitter, ProjectChatMessageRequest, ProjectChatResponse,
+    RequirementAnalysisInput, RequirementConversationResponse, RequirementEventEmitter,
+    RequirementMessageRequest, RequirementStatus, RequirementTaskExecutionInput, RpcStatus,
 };
 use crate::store::{ProjectScheduleAction, TaskExecutionDisposition};
 use crate::AppState;
@@ -57,67 +57,21 @@ fn execution_is_active(requirement_id: &str) -> bool {
         .contains(requirement_id)
 }
 
-pub async fn get_start(State(state): State<AppState>) -> Json<StartResponse> {
+pub async fn get_current_project(
+    State(state): State<AppState>,
+) -> Result<Json<CurrentProjectResponse>, AppError> {
     let store = state.store.read().await;
-    Json(StartResponse {
-        projects: store.data.projects.clone(),
-        settings_summary: store.data.settings_summary.clone(),
-        model_summary: store.data.model_summary.clone(),
-        model_settings: store.data.model_settings.clone(),
-    })
-}
-
-pub async fn create_project(
-    State(state): State<AppState>,
-    Json(payload): Json<crate::models::CreateProjectRequest>,
-) -> Result<Json<Project>, AppError> {
-    let (id, repo_dir) = {
-        let store = state.store.read().await;
-        store.prepare_project(&payload.name, &payload.git_url)?
-    };
-
-    let name = payload.name.trim().to_owned();
-    let git_url = payload.git_url.trim().to_owned();
-
-    tokio::fs::create_dir_all(repo_dir.parent().unwrap()).await?;
-    if let Err(error) = crate::utils::clone_git_repo(&git_url, &repo_dir).await {
-        crate::utils::remove_dir_if_exists(&repo_dir).await?;
-        return Err(error);
-    }
-
-    let mut store = state.store.write().await;
-    let project = store.commit_project(id, name, git_url, repo_dir).await?;
-    Ok(Json(project))
-}
-
-pub async fn delete_project(
-    State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
-) -> Result<StatusCode, AppError> {
-    let mut store = state.store.write().await;
-    if store.data.requirements.iter().any(|requirement| {
-        requirement.project_id == id
-            && matches!(
-                requirement.status,
-                RequirementStatus::Analyzing
-                    | RequirementStatus::Planning
-                    | RequirementStatus::Queued
-                    | RequirementStatus::Running
-            )
-    }) {
-        return Err(AppError::bad_request("项目仍有任务运行，暂时无法删除"));
-    }
-    if store
+    let project = store
         .data
-        .project_chats
+        .projects
         .iter()
-        .any(|chat| chat.project_id == id && chat.running)
-    {
-        return Err(AppError::bad_request("项目问答正在运行，暂时无法删除"));
-    }
-    state.model_provider.release_project(&id).await?;
-    store.delete_project(&id).await?;
-    Ok(StatusCode::NO_CONTENT)
+        .find(|project| project.id == crate::store::CURRENT_PROJECT_ID)
+        .cloned()
+        .ok_or_else(|| AppError::not_found("项目不存在"))?;
+    Ok(Json(CurrentProjectResponse {
+        project,
+        theme: state.theme.clone(),
+    }))
 }
 
 pub async fn get_project_canvas(

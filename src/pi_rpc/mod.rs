@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
     },
     time::{Duration, Instant},
@@ -34,7 +34,7 @@ use crate::requirement_execution::{
     build_requirement_task_prompt, build_task_output_json_repair_prompt, parse_recovery_guidance,
     parse_requirement_plan, parse_task_execution_output,
 };
-use crate::utils::{ensure_child_path, normalize_local_path};
+use crate::utils::{ensure_child_path, normalize_local_path, resolve_git_root};
 
 const MAX_PROJECT_CLIENTS: usize = 5;
 const MAX_JSON_REPAIR_ATTEMPTS: usize = 1;
@@ -47,6 +47,8 @@ pub struct PiRpcModelProvider {
     pub startup_error: Option<String>,
     /// 0=Ready, 1=Reconnecting, 2=Error
     pub rpc_status: Arc<AtomicU8>,
+    heartbeat_shutdown: Arc<AtomicBool>,
+    heartbeat_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 const RPC_STATUS_READY: u8 = 0;
@@ -55,10 +57,14 @@ const RPC_STATUS_ERROR: u8 = 2;
 
 impl PiRpcModelProvider {
     pub async fn start(data_root: PathBuf) -> Self {
-        let session_dir = data_root.join("pi-sessions");
+        let session_dir = data_root.join("sessions");
+        let project_root = data_root
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| data_root.clone());
         let rpc_status = Arc::new(AtomicU8::new(RPC_STATUS_ERROR));
         let (global_client, startup_error) =
-            match PiRpcClient::start(&session_dir, &data_root).await {
+            match PiRpcClient::start(&session_dir, &project_root).await {
                 Ok(client) => {
                     rpc_status.store(RPC_STATUS_READY, Ordering::Relaxed);
                     (Some(Arc::new(client)), None)
@@ -74,27 +80,46 @@ impl PiRpcModelProvider {
                     )
                 }
             };
-        let provider = Self {
+        let global_client = Arc::new(tokio::sync::RwLock::new(global_client));
+        let heartbeat_shutdown = Arc::new(AtomicBool::new(false));
+        let heartbeat_task = Self::start_heartbeat(
+            data_root.clone(),
+            session_dir.clone(),
+            global_client.clone(),
+            rpc_status.clone(),
+            heartbeat_shutdown.clone(),
+        );
+        Self {
             data_root,
             session_dir,
-            global_client: Arc::new(tokio::sync::RwLock::new(global_client)),
+            global_client,
             project_clients: tokio::sync::Mutex::new(HashMap::new()),
             startup_error,
-            rpc_status: rpc_status.clone(),
-        };
-        provider.start_heartbeat(rpc_status);
-        provider
+            rpc_status,
+            heartbeat_shutdown,
+            heartbeat_task: std::sync::Mutex::new(Some(heartbeat_task)),
+        }
     }
 
     /// Spawn a background task that checks `get_state` every 30s.
     /// On failure: kills the child and restarts the Pi Agent process.
-    fn start_heartbeat(&self, status_flag: Arc<AtomicU8>) {
-        let data_root = self.data_root.clone();
-        let session_dir = self.session_dir.clone();
-        let global_client_lock = self.global_client.clone(); // Arc<RwLock<...>>
+    fn start_heartbeat(
+        data_root: PathBuf,
+        session_dir: PathBuf,
+        global_client_lock: Arc<tokio::sync::RwLock<Option<Arc<PiRpcClient>>>>,
+        status_flag: Arc<AtomicU8>,
+        shutdown: Arc<AtomicBool>,
+    ) -> tokio::task::JoinHandle<()> {
+        let project_root = data_root
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or(data_root);
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(30)).await;
+                if shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
 
                 let is_healthy = {
                     let guard = global_client_lock.read().await;
@@ -126,7 +151,7 @@ impl PiRpcModelProvider {
                     }
                 }
 
-                match PiRpcClient::start(&session_dir, &data_root).await {
+                match PiRpcClient::start(&session_dir, &project_root).await {
                     Ok(client) => {
                         tracing::info!("Pi Agent RPC restarted successfully");
                         let mut guard = global_client_lock.write().await;
@@ -139,7 +164,32 @@ impl PiRpcModelProvider {
                     }
                 }
             }
-        });
+        })
+    }
+
+    async fn shutdown_all(&self) {
+        self.heartbeat_shutdown.store(true, Ordering::Relaxed);
+        if let Some(task) = self
+            .heartbeat_task
+            .lock()
+            .expect("heartbeat lock poisoned")
+            .take()
+        {
+            task.abort();
+        }
+        if let Some(client) = self.global_client.write().await.take() {
+            client.shutdown().await;
+        }
+        let clients = self
+            .project_clients
+            .lock()
+            .await
+            .drain()
+            .map(|(_, (client, _))| client)
+            .collect::<Vec<_>>();
+        for client in clients {
+            client.shutdown().await;
+        }
     }
 
     async fn project_client(
@@ -181,32 +231,20 @@ pub(crate) fn resolve_project_working_dir(
     data_root: &Path,
     local_path: &str,
 ) -> Result<PathBuf, AppError> {
-    let raw_path = PathBuf::from(local_path);
-    let candidates = if raw_path.is_absolute() {
-        vec![raw_path]
-    } else {
-        let mut candidates = Vec::with_capacity(3);
-        candidates.push(data_root.join(&raw_path));
-        if let Some(workspace_root) = data_root.parent() {
-            candidates.push(workspace_root.join(&raw_path));
-        }
-        candidates.push(raw_path);
-        candidates
-    };
-
-    let mut first_valid = None;
-    for candidate in candidates {
-        if ensure_child_path(data_root, &candidate).is_ok() {
-            if candidate.exists() {
-                return normalize_local_path(&candidate);
-            }
-            if first_valid.is_none() {
-                first_valid = Some(normalize_local_path(&candidate)?);
-            }
-        }
+    let project_root = data_root
+        .parent()
+        .ok_or_else(|| AppError::bad_request("数据目录缺少项目根目录"))?;
+    let project_root = resolve_git_root(Some(project_root), project_root)?;
+    let candidate = PathBuf::from(local_path);
+    if !candidate.is_absolute() {
+        return Err(AppError::bad_request("Pi 工作目录必须是绝对路径"));
     }
-
-    first_valid.ok_or_else(|| AppError::bad_request("路径必须位于数据目录内"))
+    let candidate = resolve_git_root(Some(&candidate), &candidate)?;
+    if candidate == project_root {
+        return Ok(candidate);
+    }
+    ensure_child_path(&data_root.join("worktrees"), &candidate)?;
+    Ok(candidate)
 }
 
 impl ModelProvider for PiRpcModelProvider {
@@ -322,6 +360,13 @@ impl ModelProvider for PiRpcModelProvider {
             if let Some((client, _)) = clients.remove(&project_id) {
                 client.cancel().await;
             }
+            Ok(())
+        })
+    }
+
+    fn shutdown(&self) -> ModelProviderActionFuture<'_> {
+        Box::pin(async move {
+            self.shutdown_all().await;
             Ok(())
         })
     }

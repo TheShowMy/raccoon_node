@@ -41,14 +41,6 @@ impl Default for AppData {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct StartResponse {
-    pub projects: Vec<Project>,
-    pub settings_summary: SummaryNode,
-    pub model_summary: SummaryNode,
-    pub model_settings: ModelSettings,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectChat {
     pub project_id: String,
@@ -101,6 +93,12 @@ pub struct Project {
     pub local_path: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CurrentProjectResponse {
+    pub project: Project,
+    pub theme: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -563,6 +561,9 @@ pub trait ModelProvider: Send + Sync {
     fn cancel_requirement_analysis(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })
     }
+    fn shutdown(&self) -> ModelProviderActionFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -779,12 +780,6 @@ pub struct RawClarificationOption {
 }
 
 // Request structs
-#[derive(Debug, Deserialize)]
-pub struct CreateProjectRequest {
-    pub name: String,
-    pub git_url: String,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct RequirementMessageRequest {
     pub message: String,

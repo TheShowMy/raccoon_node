@@ -4,7 +4,8 @@ use super::*;
 use super::{
     attach_session_usage, build_pr_merge_args, commit_staged_changes, event_has_output_activity,
     generated_branch_names, is_terminal_agent_end, parse_default_branch, parse_session_header_cwd,
-    safe_worktree_name, session_header_matches_working_dir, stage_task_changes,
+    resolve_project_working_dir, safe_worktree_name, session_header_matches_working_dir,
+    stage_task_changes,
 };
 use crate::models::{
     RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
@@ -50,6 +51,28 @@ fn worktree_names_avoid_windows_reserved_names_and_long_components() {
     let long = safe_worktree_name(&"a".repeat(300));
     assert!(long.len() <= 80);
     assert_ne!(long, safe_worktree_name(&"b".repeat(300)));
+}
+
+#[test]
+fn pi_working_directory_is_limited_to_project_root_or_managed_worktree() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("repo");
+    std::fs::create_dir(&project).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&project)
+        .status()
+        .unwrap()
+        .success());
+    let data_root = project.join(".raccoon-node");
+    std::fs::create_dir_all(data_root.join("worktrees")).unwrap();
+
+    assert_eq!(
+        resolve_project_working_dir(&data_root, &project.to_string_lossy()).unwrap(),
+        std::fs::canonicalize(&project).unwrap()
+    );
+    assert!(resolve_project_working_dir(&data_root, &temp.path().to_string_lossy()).is_err());
+    assert!(resolve_project_working_dir(&data_root, "relative").is_err());
 }
 
 #[test]

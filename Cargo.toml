@@ -1,21 +1,55 @@
 [package]
-name = "raccoon_node"
-version = "0.1.0"
+name = "raccoon-node"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.86"
+description = "Local Git project canvas powered by Pi Agent RPC"
+license = "MIT"
+repository = "https://github.com/TheShowMy/raccoon_node"
+readme = "README.md"
+keywords = ["agent", "git", "llm", "workflow"]
+include = [
+    "/src/**",
+    "/frontend/dist/**",
+    "/prompts/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/build.rs",
+    "/README.md",
+    "/LICENSE",
+]
+
+[[bin]]
+name = "raccoon"
+path = "src/main.rs"
 
 [dependencies]
 axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+# 新版 instability 要求 Rust 1.88。
+instability = "=0.3.10"
+mime_guess = "2"
+ratatui = "0.29"
 rusqlite = { version = "0.32", features = ["bundled"] }
+rust-embed = "8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "process", "io-util", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "process", "io-util", "time", "signal"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-tower-http = { version = "0.6", features = ["fs", "cors"] }
+toml = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "10", optional = true }
+webbrowser = "1"
 
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"

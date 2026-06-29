@@ -1,110 +1,32 @@
-import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const buildDir = path.join(root, "build");
-const isWindows = process.platform === "win32";
-const binaryName = isWindows ? "raccoon_node.exe" : "raccoon_node";
 const npmCli = process.env.npm_execpath;
+const binary = process.platform === "win32" ? "raccoon.exe" : "raccoon";
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: root,
     stdio: "inherit",
     shell: false,
-    ...options
+    ...options,
   });
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
-  }
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-async function pathExists(target) {
-  try {
-    await stat(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-await rm(buildDir, { recursive: true, force: true });
-await mkdir(path.join(buildDir, "bin"), { recursive: true });
-await mkdir(path.join(buildDir, "data"), { recursive: true });
-
-if (!npmCli) {
-  throw new Error("请通过 npm run build 执行构建");
-}
+if (!npmCli) throw new Error("请通过 npm run build 执行构建");
 
 run(process.execPath, [npmCli, "--prefix", "frontend", "run", "build"]);
-run("cargo", ["build", "--release"]);
+run("cargo", ["build", "--release"], {
+  env: { ...process.env, RACCOON_SKIP_FRONTEND_BUILD: "1" },
+});
 
-await cp(path.join(root, "target", "release", binaryName), path.join(buildDir, "bin", binaryName));
-await cp(path.join(root, "frontend", "dist"), path.join(buildDir, "public"), { recursive: true });
-
-const sourceData = path.join(root, "data", "app.json");
-const targetData = path.join(buildDir, "data", "app.json");
-if (await pathExists(sourceData)) {
-  await cp(sourceData, targetData);
-} else {
-  await writeFile(
-    targetData,
-    JSON.stringify(
-      {
-        projects: [],
-        settings_summary: {
-          title: "设置",
-          description: "基础设置待配置"
-        },
-        model_summary: {
-          title: "模型设置",
-          description: "默认模型待配置"
-        }
-      },
-      null,
-      2
-    )
-  );
-}
-
-const runCommand = isWindows ? `.\\bin\\${binaryName}` : `./bin/${binaryName}`;
-const environmentExample = isWindows
-  ? [
-      "```powershell",
-      '$env:RACCOON_HOST = "0.0.0.0"',
-      '$env:RACCOON_PORT = "3001"',
-      runCommand,
-      "```",
-    ]
-  : ["```sh", `RACCOON_HOST=0.0.0.0 RACCOON_PORT=3001 ${runCommand}`, "```"];
-
-await writeFile(
-  path.join(buildDir, "README.md"),
-  [
-    "# Raccoon Node Build",
-    "",
-    "运行方式：",
-    "",
-    isWindows ? "```powershell" : "```sh",
-    runCommand,
-    "```",
-    "",
-    "默认监听地址：127.0.0.1:3001",
-    "",
-    "本机访问：http://127.0.0.1:3001",
-    "",
-    "可选环境变量：",
-    "",
-    ...environmentExample,
-    "",
-    "生产数据文件：`data/app.json`",
-    ""
-  ].join("\n")
-);
-
-console.log(`Build output ready: ${buildDir}`);
+const output = path.join(root, "build", "bin");
+await rm(path.dirname(output), { recursive: true, force: true });
+await mkdir(output, { recursive: true });
+await copyFile(path.join(root, "target", "release", binary), path.join(output, binary));
+console.log(`Build output ready: ${output}`);

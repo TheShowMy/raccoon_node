@@ -1,25 +1,112 @@
 # raccoon_node
 
-本地节点画布应用，使用 Rust + Axum + Tokio 构建后端，React + Vite + React Flow 构建前端。
+面向本地 Git 仓库的节点画布。后端使用 Rust、Axum 与 Tokio，前端使用 React、
+Vite 与 React Flow；所有 LLM 和模型能力均通过持久 Pi Agent RPC 子进程提供。
 
 ## 功能
 
-- 启动画布展示项目列表与操作入口
-- 添加、克隆与删除 Git 项目
-- 项目问答：基于当前仓库内容进行只读问答，每个项目保留一个连续会话
-- 需求澄清 Coordinator：通过 Pi Agent RPC 分析需求、提出澄清问题、生成确认草案
-- 自动执行队列：确认后自动入队，项目内 FIFO 串行完成规划与执行，失败暂停并支持重启恢复
-- 模型设置：配置低/中/高三档模型的 model_id 与思考层级
+- 当前 Git 仓库即项目，启动后直接进入项目画布
+- 项目问答：基于当前仓库内容维护连续的只读问答会话
+- 需求澄清：分析需求、提出澄清问题并生成确认草案
+- 自动执行：确认后按 FIFO 规划和执行任务 DAG，支持失败恢复与重启恢复
+- 模型设置：配置低、中、高三档模型和思考等级
+- 本地 TUI：查看日志、打开浏览器、修改设置、重启或退出服务
 
-## 技术栈
+## 安装
 
-- 后端：Rust、Axum、Tokio、serde_json
-- 前端：React 19、Vite 7、React Flow 12、Tailwind CSS 4
-- LLM/模型能力：通过持久 `pi --mode rpc` 子进程使用 stdin/stdout JSONL 通信
+运行时需要系统已安装 Git 和 Pi Agent。首次启动检测不到 Pi Agent 时，交互式向导可
+确认执行官方 npm 安装命令。
 
-## 快速开始
+### npm
 
-需要 Node.js >= 20 与 Rust 1.86（参见 `rust-toolchain.toml`）。
+需要 Node.js 20 或更高版本。
+
+```sh
+npm install --global raccoon-node
+```
+
+### crates.io
+
+需要 Rust 1.86 或更高版本；crate 已包含前端产物，安装时不需要 Node.js。
+
+```sh
+cargo install raccoon-node
+```
+
+### GitHub Release
+
+也可从 [GitHub Releases](https://github.com/TheShowMy/raccoon_node/releases) 下载
+对应平台压缩包并校验 SHA256。当前提供：
+
+- macOS Apple Silicon（darwin-arm64）
+- Linux x64 GNU（linux-x64）
+- Windows x64（win32-x64）
+
+三种安装方式提供相同命令：`raccoon`。
+
+## 使用
+
+在 Git 仓库根目录或任意子目录运行：
+
+```sh
+raccoon
+```
+
+程序向上定位最近的 Git 根目录；非 Git 目录会直接报错，且不会创建运行数据。
+也可显式指定根目录，但该路径必须直接指向 Git 根：
+
+```sh
+raccoon --project-root /path/to/repository
+```
+
+常用选项：
+
+```text
+--port <PORT>           本次运行监听端口
+--host <HOST>           127.0.0.1 或 0.0.0.0
+--no-open               不自动打开浏览器
+--no-tui                使用纯文本日志
+--project-root <PATH>   直接指定 Git 根目录
+```
+
+默认监听 `127.0.0.1:3001`。TTY 环境默认启动 TUI 并打开浏览器；非 TTY 或
+`--no-tui` 不输出终端控制码，也不会自动打开浏览器。监听 `0.0.0.0` 没有 API
+鉴权，交互式设置会要求二次确认，CLI 显式传入时会输出风险警告。
+
+TUI 快捷键：
+
+- `o`：打开浏览器
+- `s`：设置主题、监听地址、端口和三档模型
+- `r`：重启服务
+- `q`：优雅退出
+
+配置优先级为 CLI 参数 > `.raccoon-node/config.toml` > 默认值。
+
+## 项目数据
+
+Raccoon 不复制或删除用户仓库。运行数据固定保存在 Git 根目录：
+
+```text
+<git_root>/
+├── .git/ 或 .git
+└── .raccoon-node/
+    ├── config.toml
+    ├── app.json
+    ├── data.db
+    ├── sessions/
+    ├── worktrees/
+    └── attachments/
+```
+
+首次初始化会幂等地将 `.raccoon-node/` 追加到仓库 `.gitignore`。旧版 `data/`、
+`build/data/` 和 `pi-sessions/` 不迁移、不读取，也不会删除。
+
+Pi Agent 的工作目录只能是当前 Git 根目录或 `.raccoon-node/worktrees/` 内的受管
+worktree；会话首行记录的 `cwd` 必须与预期目录一致。
+
+## 从源码开发
+
+需要 Node.js 20、Rust 1.86、Git 和 Pi Agent。
 
 ```sh
 npm ci
@@ -27,92 +114,32 @@ npm --prefix frontend ci
 npm run dev
 ```
 
-后端默认监听 `http://127.0.0.1:3001`，前端开发服务器默认使用 `http://127.0.0.1:5173`。
-
-需求确认后无需再次手动开始：后端按项目级 FIFO 自动规划并执行。规划失败时可重试
-规划，执行失败时暂停该项目队列；队列与执行状态持久化，服务重启后继续恢复。
-
-## 项目问答
-
-项目问答用于了解当前项目的代码、结构与实现，不创建需求，也不参与需求澄清、规划、
-执行队列或 DAG。它以项目仓库为只读工作目录，固定使用中档模型，并通过独立的持久
-Pi Agent RPC 子进程运行，避免与需求流程互相阻塞。
-
-每个项目只有一个问答会话，后续提问会延续该项目已有上下文。问答进度通过独立 SSE
-接口推送，不复用需求事件流。
-
-项目画布顶部提供“需求规划”和“项目问答”两张入口卡：点击卡片切换中央工作区，
-当前入口保持高亮；切换只改变展示内容，不会把问答消息转成需求或改变需求状态。
-
-## 构建
-
-macOS / Linux：
+生产构建：
 
 ```sh
 npm run build
-./build/bin/raccoon_node
+./build/bin/raccoon
 ```
 
 Windows PowerShell：
 
 ```powershell
 npm run build
-.\build\bin\raccoon_node.exe
+.\build\bin\raccoon.exe
 ```
 
-如需监听所有网络接口：
+构建结果是嵌入前端静态资源的单二进制，不需要外置 `public` 或数据目录。
 
-```powershell
-$env:RACCOON_HOST = "0.0.0.0"
-$env:RACCOON_PORT = "3001"
-.\build\bin\raccoon_node.exe
-```
+## 验证
 
-输出目录为 `build/`，包含二进制、前端静态资源与默认数据文件。
-
-## 环境变量
-
-| 变量 | 说明 | 默认值 |
-|---|---|---|
-| `RACCOON_HOST` | 后端绑定地址 | `127.0.0.1` |
-| `RACCOON_PORT` | 后端端口 | `3001` |
-| `RACCOON_DATA_FILE` | 数据文件路径 | `./data/app.json` |
-| `RACCOON_PUBLIC_DIR` | 前端静态资源目录 | `./frontend/dist` |
-
-## 目录结构
-
-```
-raccoon_node/
-├── src/                  # Rust 后端
-│   ├── main.rs           # 入口
-│   ├── api/              # HTTP 路由与处理器
-│   ├── models.rs         # 数据模型
-│   ├── store.rs          # JSON 存储
-│   ├── pi_rpc.rs         # Pi Agent RPC 客户端
-│   ├── requirement_analysis.rs  # 需求分析逻辑
-│   ├── error.rs          # 错误类型
-│   └── utils.rs          # 工具函数
-├── frontend/src/         # React 前端
-├── docs/api/             # API 文档
-├── prompts/              # LLM prompt 模板
-└── scripts/build.mjs     # 构建脚本
-```
-
-## API 文档
-
-参见 [docs/api/README.md](docs/api/README.md)。
-
-## 开发约束
-
-- 项目资源只允许位于当前数据目录：`<data_root>/projects/<project_id>/repo`。
-- 所有 LLM 相关功能必须基于 Pi Agent RPC，禁止绕过 `pi --mode rpc`。
-- 禁止直接读写 Pi Agent 的 auth/settings 文件。
-- 删除项目只能删除当前数据目录内的项目资源。
-- 提交代码前必须运行 `pre-commit run --all-files`。
-
-## 常用命令
-
-- 开发：`npm run dev`
-- 打包：`npm run build`
 - 基础检查：`npm run check`
 - 完整检查：`pre-commit run --all-files`
+
+## API
+
+后端 API 前缀为 `/api`，固定项目 ID 为 `current`。详见
+[docs/api/README.md](docs/api/README.md)。
+
+## 许可证
+
+[MIT](LICENSE)

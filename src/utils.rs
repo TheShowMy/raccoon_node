@@ -1,7 +1,6 @@
 use std::{
-    env,
-    net::SocketAddr,
     path::{Component, Path, PathBuf},
+    process::Command,
 };
 
 use chrono::Utc;
@@ -98,6 +97,63 @@ pub fn normalize_local_path(path: &Path) -> Result<PathBuf, AppError> {
         .map_err(|message| AppError::bad_request(format!("不支持的路径：{message}")))
 }
 
+pub fn resolve_git_root(explicit: Option<&Path>, cwd: &Path) -> Result<PathBuf, AppError> {
+    let start = explicit.unwrap_or(cwd);
+    let canonical = std::fs::canonicalize(start)
+        .map_err(|_| AppError::bad_request("项目目录不存在或无法访问"))?;
+    let canonical = normalize_local_path(&canonical)?;
+    if !canonical.is_dir() {
+        return Err(AppError::bad_request("项目目录必须是目录"));
+    }
+
+    let candidate = if explicit.is_some() {
+        if !canonical.join(".git").exists() {
+            return Err(AppError::bad_request(
+                "--project-root 必须直接指向 Git 仓库根目录",
+            ));
+        }
+        canonical
+    } else {
+        canonical
+            .ancestors()
+            .find(|path| path.join(".git").exists())
+            .map(Path::to_path_buf)
+            .ok_or_else(|| AppError::bad_request("当前目录不在 Git 仓库中"))?
+    };
+
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&candidate)
+        .output()
+        .map_err(|error| AppError::bad_request(format!("无法执行 Git：{error}")))?;
+    if !output.status.success() {
+        return Err(AppError::bad_request("无法验证 Git 仓库根目录"));
+    }
+    let reported = String::from_utf8(output.stdout)
+        .map_err(|_| AppError::bad_request("Git 返回了无效的仓库路径"))?;
+    let reported = std::fs::canonicalize(reported.trim())
+        .map_err(|_| AppError::bad_request("无法解析 Git 仓库根目录"))?;
+    let reported = normalize_local_path(&reported)?;
+    if reported != candidate {
+        return Err(AppError::bad_request(
+            "--project-root 必须直接指向 Git 仓库根目录",
+        ));
+    }
+    Ok(candidate)
+}
+
+pub fn git_remote_origin(project_root: &Path) -> String {
+    Command::new("git")
+        .args(["config", "--get", "remote.origin.url"])
+        .current_dir(project_root)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_default()
+}
+
 #[cfg(windows)]
 fn normalize_local_path_impl(path: &Path) -> Result<PathBuf, &'static str> {
     normalize_windows_path_value(&path.to_string_lossy())
@@ -128,25 +184,6 @@ fn normalize_windows_path_value(value: &str) -> Result<PathBuf, &'static str> {
 #[cfg(not(windows))]
 fn normalize_local_path_impl(path: &Path) -> Result<PathBuf, &'static str> {
     Ok(path.to_path_buf())
-}
-
-pub fn slugify(value: &str) -> String {
-    let mut slug = String::new();
-
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            slug.push(ch.to_ascii_lowercase());
-        } else if (ch.is_whitespace() || matches!(ch, '-' | '_')) && !slug.ends_with('-') {
-            slug.push('-');
-        }
-    }
-
-    let slug = slug.trim_matches('-').to_owned();
-    if slug.is_empty() {
-        "project".to_owned()
-    } else {
-        slug
-    }
 }
 
 pub fn derive_requirement_title(message: &str) -> String {
@@ -180,56 +217,6 @@ pub fn data_root_from_file(path: &Path) -> Result<PathBuf, AppError> {
     normalize_local_path(&canonical)
 }
 
-pub fn public_dir_path() -> PathBuf {
-    if let Ok(path) = env::var("RACCOON_PUBLIC_DIR") {
-        return PathBuf::from(path);
-    }
-
-    if let Some(build_root) = build_root_from_current_exe() {
-        return build_root.join("public");
-    }
-
-    PathBuf::from("frontend/dist")
-}
-
-pub fn server_addr() -> SocketAddr {
-    let host = env::var("RACCOON_HOST").unwrap_or_else(|_| "127.0.0.1".to_owned());
-    let port = env::var("RACCOON_PORT")
-        .ok()
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(3001);
-
-    format!("{host}:{port}")
-        .parse()
-        .expect("invalid RACCOON_HOST or RACCOON_PORT")
-}
-
-pub fn data_file_path() -> PathBuf {
-    if let Ok(path) = env::var("RACCOON_DATA_FILE") {
-        return PathBuf::from(path);
-    }
-
-    if let Some(build_root) = build_root_from_current_exe() {
-        return build_root.join("data/app.json");
-    }
-
-    PathBuf::from("data/app.json")
-}
-
-pub fn build_root_from_current_exe() -> Option<PathBuf> {
-    let exe = env::current_exe().ok()?;
-    let bin_dir = exe.parent()?;
-    if bin_dir.file_name()?.to_string_lossy() != "bin" {
-        return None;
-    }
-    let build_root = bin_dir.parent()?.to_path_buf();
-    if build_root.join("public").exists() || build_root.join("data").exists() {
-        Some(build_root)
-    } else {
-        None
-    }
-}
-
 pub fn model_summary_description(settings: &ModelSettings) -> String {
     if settings.low.model_id.is_some()
         && settings.medium.model_id.is_some()
@@ -239,28 +226,6 @@ pub fn model_summary_description(settings: &ModelSettings) -> String {
     } else {
         "默认模型待配置".to_owned()
     }
-}
-
-pub fn validate_git_url(url: &str) -> Result<(), AppError> {
-    if url.is_empty() {
-        return Err(AppError::bad_request("Git 链接不能为空"));
-    }
-    if url.starts_with('-') {
-        return Err(AppError::bad_request("Git 链接不能以 '-' 开头"));
-    }
-    // Reject shell metacharacters
-    if url.contains(';') || url.contains('|') || url.contains('&') || url.contains('`') {
-        return Err(AppError::bad_request("Git 链接包含非法字符"));
-    }
-    // Only allow http://, https://, and git@
-    let is_valid = url.starts_with("http://")
-        || url.starts_with("https://")
-        || url.starts_with("git@")
-        || cfg!(test);
-    if !is_valid {
-        return Err(AppError::bad_request("Git 链接协议不支持"));
-    }
-    Ok(())
 }
 
 pub fn validate_model_settings(
@@ -302,36 +267,6 @@ pub fn clarification_has_answer(
                     .is_some_and(|text| !text.trim().is_empty())
         }
     }
-}
-
-pub async fn remove_dir_if_exists(path: &Path) -> Result<(), AppError> {
-    match tokio::fs::remove_dir_all(path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(AppError::Io(error)),
-    }
-}
-
-pub async fn clone_git_repo(git_url: &str, repo_dir: &Path) -> Result<(), AppError> {
-    let repo_dir = normalize_local_path(repo_dir)?;
-    let output = tokio::process::Command::new("git")
-        .arg("clone")
-        .arg(git_url)
-        .arg(&repo_dir)
-        .output()
-        .await?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    let message = if stderr.is_empty() {
-        "Git clone 失败".to_owned()
-    } else {
-        format!("Git clone 失败：{stderr}")
-    };
-    Err(AppError::bad_request(message))
 }
 
 pub async fn write_json(path: &Path, data: &AppData) -> Result<(), AppError> {
@@ -397,8 +332,8 @@ pub fn format_clarification_answer(
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_windows_path_value;
-    use std::path::PathBuf;
+    use super::{normalize_windows_path_value, resolve_git_root};
+    use std::{path::PathBuf, process::Command};
 
     #[test]
     fn windows_extended_local_path_becomes_drive_path() {
@@ -420,5 +355,35 @@ mod tests {
     fn windows_unc_paths_are_rejected() {
         assert!(normalize_windows_path_value(r"\\server\share\repo").is_err());
         assert!(normalize_windows_path_value(r"\\?\UNC\server\share\repo").is_err());
+    }
+
+    #[test]
+    fn git_root_is_discovered_but_explicit_subdirectory_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(temp.path())
+            .status()
+            .unwrap()
+            .success());
+        let child = temp.path().join("nested");
+        std::fs::create_dir(&child).unwrap();
+
+        assert_eq!(
+            resolve_git_root(None, &child).unwrap(),
+            std::fs::canonicalize(temp.path()).unwrap()
+        );
+        assert!(resolve_git_root(Some(&child), &child).is_err());
+        assert_eq!(
+            resolve_git_root(Some(temp.path()), &child).unwrap(),
+            std::fs::canonicalize(temp.path()).unwrap()
+        );
+    }
+
+    #[test]
+    fn non_git_directory_is_rejected_without_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(resolve_git_root(None, temp.path()).is_err());
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
     }
 }

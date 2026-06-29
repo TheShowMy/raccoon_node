@@ -28,7 +28,10 @@ pub async fn list_repo_files(
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             if entry.file_type().await?.is_dir() {
-                if matches!(name.as_str(), ".git" | "node_modules" | "target" | "dist") {
+                if matches!(
+                    name.as_str(),
+                    ".git" | ".raccoon-node" | "node_modules" | "target" | "dist"
+                ) {
                     continue;
                 }
                 stack.push(path);
@@ -57,6 +60,18 @@ pub async fn list_repo_files(
 
 pub async fn read_repo_file(repo_path: &Path, relative_path: &str) -> Result<String, AppError> {
     let repo_path = normalize_local_path(repo_path)?;
+    let first = Path::new(relative_path.trim())
+        .components()
+        .next()
+        .and_then(|component| match component {
+            Component::Normal(name) => name.to_str(),
+            _ => None,
+        });
+    if matches!(first, Some(".git" | ".raccoon-node")) {
+        return Err(AppError::bad_request(
+            "不能引用 Git 或 raccoon-node 内部文件",
+        ));
+    }
     let path = resolve_relative_path(&repo_path, relative_path)?;
     let metadata = tokio::fs::metadata(&path)
         .await
@@ -351,6 +366,27 @@ mod tests {
         );
         assert!(read_repo_file(&repo, "../secret").await.is_err());
         assert!(read_repo_file(&repo, ".").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn internal_project_data_is_neither_listed_nor_readable() {
+        let temp = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir(temp.path().join(".raccoon-node"))
+            .await
+            .unwrap();
+        tokio::fs::write(temp.path().join(".raccoon-node/app.json"), b"secret")
+            .await
+            .unwrap();
+        tokio::fs::write(temp.path().join("visible.txt"), b"visible")
+            .await
+            .unwrap();
+
+        let files = list_repo_files(temp.path(), "").await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "visible.txt");
+        assert!(read_repo_file(temp.path(), ".raccoon-node/app.json")
+            .await
+            .is_err());
     }
 
     #[test]

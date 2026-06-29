@@ -10,63 +10,28 @@ import {
   type ProjectChatResponse,
   type FileReference,
   type ImageAttachment,
+  type ThemeMode,
 } from "../types/api";
 
-type StartData = {
-  projects: Project[];
-  settings_summary: { title: string; description: string };
-  model_summary: { title: string; description: string };
-  model_settings: ModelSettings;
-};
-
-let fetchStartPromise: Promise<StartData> | null = null;
-
-export async function fetchStart(): Promise<StartData> {
-  if (fetchStartPromise) {
-    return fetchStartPromise;
-  }
-  fetchStartPromise = (async () => {
-    const response = await fetch("/api/start");
-    if (!response.ok) {
-      throw new Error("读取 start 数据失败");
-    }
-    return response.json() as Promise<StartData>;
-  })();
-  try {
-    return await fetchStartPromise;
-  } finally {
-    fetchStartPromise = null;
-  }
-}
-
-export async function createProject(
-  name: string,
-  gitUrl: string,
-): Promise<void> {
-  const response = await fetch("/api/projects", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, git_url: gitUrl }),
-  });
+export async function getCurrentProject(): Promise<{
+  project: Project;
+  theme: ThemeMode;
+}> {
+  const response = await fetch("/api/project/current");
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
     } | null;
-    throw new Error(body?.message ?? "创建项目失败");
+    throw new Error(body?.message ?? "读取当前项目失败");
   }
-}
-
-export async function deleteProject(projectId: string): Promise<void> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}`,
-    { method: "DELETE" },
-  );
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    throw new Error(body?.message ?? "删除项目失败");
+  const current = (await response.json()) as {
+    project: Project;
+    theme: unknown;
+  };
+  if (current.theme !== "dark" && current.theme !== "light") {
+    throw new Error("后端返回了无效主题");
   }
+  return { project: current.project, theme: current.theme };
 }
 
 export async function getProjectCanvas(

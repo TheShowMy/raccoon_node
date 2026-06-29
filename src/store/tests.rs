@@ -588,7 +588,7 @@ async fn stale_pi_session_cleanup_keeps_requirement_and_task_references() {
     let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
         .await
         .unwrap();
-    let session_dir = store.data_root.join("pi-sessions");
+    let session_dir = store.data_root.join("sessions");
     tokio::fs::create_dir_all(&session_dir).await.unwrap();
     let requirement_session = session_dir.join("requirement.jsonl");
     let task_session = session_dir.join("task.jsonl");
@@ -625,6 +625,54 @@ async fn stale_pi_session_cleanup_keeps_requirement_and_task_references() {
     assert!(task_session.exists());
     assert!(!stale_session.exists());
     assert!(ignored_file.exists());
+}
+
+#[tokio::test]
+async fn project_store_uses_flat_data_directories_and_current_project() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(temp_dir.path())
+        .status()
+        .unwrap()
+        .success());
+    let data_root = temp_dir.path().join(".raccoon-node");
+    let store = JsonStore::open_project(data_root.join("app.json"), temp_dir.path().to_path_buf())
+        .await
+        .unwrap();
+
+    assert_eq!(store.data.projects.len(), 1);
+    assert_eq!(store.data.projects[0].id, super::CURRENT_PROJECT_ID);
+    assert_eq!(
+        Path::new(&store.data.projects[0].local_path),
+        std::fs::canonicalize(temp_dir.path()).unwrap()
+    );
+    for directory in ["sessions", "worktrees", "attachments"] {
+        assert!(data_root.join(directory).is_dir());
+    }
+    assert!(!data_root.join("projects").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn project_store_rejects_data_directory_symlink_escape() {
+    let project = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(project.path())
+        .status()
+        .unwrap()
+        .success());
+    std::os::unix::fs::symlink(outside.path(), project.path().join(".raccoon-node")).unwrap();
+
+    assert!(JsonStore::open_project(
+        project.path().join(".raccoon-node/app.json"),
+        project.path().to_path_buf(),
+    )
+    .await
+    .is_err());
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
 }
 
 #[tokio::test]

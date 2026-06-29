@@ -1,22 +1,23 @@
 use axum::{
-    http::{header, HeaderValue, Method},
+    http::{header, HeaderValue, Method, StatusCode},
     routing::{delete, get, post},
     Router,
 };
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::broadcast;
-use tower_http::{
-    cors::CorsLayer,
-    services::{ServeDir, ServeFile},
-};
+use tower_http::cors::CorsLayer;
 
 pub mod handlers;
 
+async fn api_not_found() -> StatusCode {
+    StatusCode::NOT_FOUND
+}
+
 use crate::api::handlers::{
-    append_requirement_message, cancel_requirement_analysis, confirm_requirement, create_project,
-    create_requirement, delete_project, delete_requirement, get_model_settings,
+    append_requirement_message, cancel_requirement_analysis, confirm_requirement,
+    create_requirement, delete_requirement, get_current_project, get_model_settings,
     get_project_attachment, get_project_canvas, get_project_chat, get_project_files,
-    get_requirement_conversation, get_start, plan_requirement_execution, project_chat_events,
+    get_requirement_conversation, plan_requirement_execution, project_chat_events,
     put_model_settings, requirement_events, rerun_review, reset_project_chat, retry_failed_node,
     retry_from_node, send_project_chat_message, spawn_startup_requirement_scheduler,
     submit_requirement_clarifications, upload_project_attachment,
@@ -25,8 +26,12 @@ use crate::pi_rpc::PiRpcModelProvider;
 use crate::store::JsonStore;
 use crate::AppState;
 
-pub async fn build_app(data_path: PathBuf, public_dir: PathBuf) -> Router {
-    let mut store = JsonStore::open(data_path)
+pub async fn build_app(
+    data_path: PathBuf,
+    project_root: PathBuf,
+    theme: String,
+) -> (Router, AppState) {
+    let mut store = JsonStore::open_project(data_path, project_root)
         .await
         .expect("failed to initialize json store");
     let startup_requirement_ids = store
@@ -41,26 +46,26 @@ pub async fn build_app(data_path: PathBuf, public_dir: PathBuf) -> Router {
     let model_provider = PiRpcModelProvider::start(store.data_root.clone()).await;
     build_app_with_startup_requirements(
         store,
-        public_dir,
         Arc::new(model_provider),
         startup_requirement_ids,
+        theme,
     )
 }
 
 pub fn build_app_with_model_provider(
     store: JsonStore,
-    public_dir: PathBuf,
+    _public_dir: PathBuf,
     model_provider: Arc<dyn crate::models::ModelProvider>,
 ) -> Router {
-    build_app_with_startup_requirements(store, public_dir, model_provider, Vec::new())
+    build_app_with_startup_requirements(store, model_provider, Vec::new(), "dark".to_owned()).0
 }
 
 fn build_app_with_startup_requirements(
     store: JsonStore,
-    public_dir: PathBuf,
     model_provider: Arc<dyn crate::models::ModelProvider>,
     startup_requirement_ids: Vec<String>,
-) -> Router {
+    theme: String,
+) -> (Router, AppState) {
     let (event_tx, _) = broadcast::channel(256);
     let (project_chat_tx, _) = broadcast::channel(256);
     let state = AppState {
@@ -68,13 +73,12 @@ fn build_app_with_startup_requirements(
         model_provider,
         requirement_events: event_tx,
         project_chat_events: project_chat_tx,
+        theme,
         project_scheduler_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
 
     let api = Router::new()
-        .route("/start", get(get_start))
-        .route("/projects", post(create_project))
-        .route("/projects/{id}", delete(delete_project))
+        .route("/project/current", get(get_current_project))
         .route("/projects/{id}/canvas", get(get_project_canvas))
         .route("/projects/{id}/files", get(get_project_files))
         .route(
@@ -131,10 +135,8 @@ fn build_app_with_startup_requirements(
             "/settings/models",
             get(get_model_settings).put(put_model_settings),
         )
+        .fallback(api_not_found)
         .with_state(state.clone());
-
-    let static_files =
-        ServeDir::new(&public_dir).fallback(ServeFile::new(public_dir.join("index.html")));
 
     let allowed_origins: Vec<HeaderValue> = if cfg!(debug_assertions) {
         vec![
@@ -146,13 +148,13 @@ fn build_app_with_startup_requirements(
     };
     let app = Router::new()
         .nest("/api", api)
-        .fallback_service(static_files)
+        .fallback(crate::assets::serve)
         .layer(
             CorsLayer::new()
                 .allow_origin(allowed_origins)
                 .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
                 .allow_headers([header::CONTENT_TYPE]),
         );
-    spawn_startup_requirement_scheduler(state, startup_requirement_ids);
-    app
+    spawn_startup_requirement_scheduler(state.clone(), startup_requirement_ids);
+    (app, state)
 }

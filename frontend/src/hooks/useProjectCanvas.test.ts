@@ -65,17 +65,7 @@ const initialRequirement = createRequirement("failed");
 const initialCanvas = createCanvas(initialRequirement);
 
 function renderProjectCanvas(setError = vi.fn()) {
-  const setCurrentCanvas = vi.fn();
-  const setSelectedProjectId = vi.fn();
-  const result = renderHook(() =>
-    useProjectCanvas(
-      project.id,
-      "project",
-      setError,
-      setCurrentCanvas,
-      setSelectedProjectId,
-    ),
-  );
+  const result = renderHook(() => useProjectCanvas(project.id, setError));
   return { ...result, setError };
 }
 

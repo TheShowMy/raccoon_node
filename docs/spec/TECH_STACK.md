@@ -2,10 +2,13 @@
 
 ## 栈
 
-- 后端：Rust 2021、Axum、Tokio、tower-http、serde/JSON、chrono、tracing。
+- 后端：Rust 2021（MSRV 1.86）、Axum、Tokio、serde/JSON、rusqlite、chrono、tracing。
 - 前端：React、TypeScript、Vite、React Flow（`@xyflow/react`）、lucide-react、Tailwind CSS。
-- 存储：本地 JSON，开发期 `data/app.json`，生产期 `build/data/app.json`。
-- Git：后端调用系统 `git clone`；认证依赖本机 Git 环境。
+- CLI/TUI：clap、ratatouille、crossterm。
+- 静态资源：Vite 产物通过 rust-embed 嵌入 `raccoon` 单二进制。
+- 存储：`<git_root>/.raccoon-node/app.json` 为主存储，`data.db` 为 write-through
+  恢复存储。
+- Git：当前 Git 仓库即唯一项目；后端使用系统 Git 管理任务 worktree。
 - LLM：只通过 Pi Agent RPC，后端启动持久 `pi --mode rpc` 子进程，stdin/stdout JSONL 通信。
 
 ## 目录
@@ -14,15 +17,19 @@
 - 前端入口：`frontend/src/main.tsx`
 - 前端样式：`frontend/src/styles.css`，使用 Tailwind CSS，保留少量 React Flow 全局覆盖。
 - 构建脚本：`scripts/build.mjs`
-- 项目仓库：`<data_root>/projects/<project_id>/repo`
-- Pi Agent RPC 会话目录：`<data_root>/pi-sessions`
-- 打包输出：`build/`
+- 项目仓库：当前 Git 根目录，固定项目 ID `current`
+- 项目配置：`<git_root>/.raccoon-node/config.toml`
+- 应用数据：`<git_root>/.raccoon-node/app.json`、`data.db`
+- Pi Agent RPC 会话：`<git_root>/.raccoon-node/sessions/`
+- 任务 worktree：`<git_root>/.raccoon-node/worktrees/`
+- 附件：`<git_root>/.raccoon-node/attachments/`
+- 本地打包输出：`build/bin/raccoon`（Windows 为 `raccoon.exe`）
 
 ## 命令
 
-- `npm run dev`：启动后端和 Vite。
-- `npm run build`：生成 `build/bin`、`build/public`、`build/data`。
-- `npm run check`：前端类型检查 + Rust 测试。
+- `npm run dev`：在当前 Git 仓库启动后端和 Vite。
+- `npm run build`：构建前端并生成嵌入静态资源的 release 单二进制。
+- `npm run check`：前端类型检查、测试、构建和 Rust 检查。
 - `pre-commit run --all-files`：完整提交前检查。
 
 ## 检查
@@ -33,10 +40,21 @@
 
 ## 约束
 
-- start 画布使用 React Flow 节点和按需连线；项目 item 使用 `project-list` 子流程节点。
+- 只允许在有效 Git 仓库中运行；显式 `--project-root` 必须就是 Git 根目录。
+- 根页面直接加载固定 `current` 项目画布，不提供 start 画布或项目增删。
+- `.raccoon-node/` 必须加入仓库 `.gitignore`，且运行数据不得逃逸该目录。
 - 所有 LLM、模型列表、模型选择和后续 Agent 能力必须基于 Pi Agent RPC。
 - 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。
 - 禁止直接读写 Pi Agent 的 auth/settings 文件；本项目只保存自身三档模型设置。
-- 删除项目只能删除当前数据目录内资源。
+- Pi 工作目录只能是 Git 根目录或 `.raccoon-node/worktrees/` 中的受管 worktree。
+- 清理操作只能删除 `.raccoon-node/` 内受管资源，禁止删除用户仓库。
 - 前端不处理 Git 密码、token、SSH key。
-- 不提交 `build/`、`target/`、`node_modules/`、`frontend/dist/`、`data/`、`*.tsbuildinfo`。
+- 不提交 `build/`、`target/`、`node_modules/`、`frontend/dist/`、
+  `.raccoon-node/`、`data/`、`*.tsbuildinfo`。
+
+## 分发
+
+- npm：主包 `raccoon-node`，按平台可选依赖分发二进制。
+- crates.io：crate `raccoon-node`，安装后的命令为 `raccoon`。
+- GitHub Release：提供 darwin-arm64、linux-x64、win32-x64 压缩包与 SHA256。
+- 当前不支持 Intel Mac、Linux ARM64、musl 或 Windows ARM64。

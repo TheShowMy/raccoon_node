@@ -1,24 +1,54 @@
-/// Generate TypeScript types from Rust models using ts-rs.
-/// Run with: `RACCOON_GEN_TS=1 cargo build`
 fn main() {
-    // Only generate when explicitly requested.
-    if std::env::var("RACCOON_GEN_TS").is_err() {
-        return;
+    println!("cargo:rerun-if-env-changed=RACCOON_SKIP_FRONTEND_BUILD");
+    println!("cargo:rerun-if-env-changed=RACCOON_GEN_TS");
+    println!("cargo:rerun-if-changed=frontend/index.html");
+    println!("cargo:rerun-if-changed=frontend/package.json");
+    println!("cargo:rerun-if-changed=frontend/package-lock.json");
+    println!("cargo:rerun-if-changed=frontend/src");
+    println!("cargo:rerun-if-changed=frontend/vite.config.ts");
+
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"),
+    );
+    let frontend = root.join("frontend");
+
+    // 发布 crate 只携带预构建 dist，不携带前端源码。
+    if std::env::var_os("RACCOON_SKIP_FRONTEND_BUILD").is_none()
+        && frontend.join("package.json").is_file()
+    {
+        let status = if let (Some(node), Some(npm_cli)) = (
+            std::env::var_os("npm_node_execpath"),
+            std::env::var_os("npm_execpath"),
+        ) {
+            std::process::Command::new(node)
+                .arg(npm_cli)
+                .args(["run", "build"])
+                .current_dir(&frontend)
+                .status()
+        } else if cfg!(windows) {
+            std::process::Command::new("cmd")
+                .args(["/C", "npm", "run", "build"])
+                .current_dir(&frontend)
+                .status()
+        } else {
+            std::process::Command::new("npm")
+                .args(["run", "build"])
+                .current_dir(&frontend)
+                .status()
+        }
+        .expect("failed to start frontend build; install Node.js 20+ and npm");
+
+        assert!(status.success(), "frontend build failed");
     }
 
-    let out_dir = std::path::PathBuf::from(
-        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"),
-    )
-    .join("frontend")
-    .join("src")
-    .join("types");
+    assert!(
+        frontend.join("dist/index.html").is_file(),
+        "frontend/dist is missing; run `npm --prefix frontend run build`"
+    );
 
-    std::fs::create_dir_all(&out_dir).expect("failed to create frontend/src/types");
-
-    // ts-rs generates types for types annotated with #[derive(TS)].
-    // The actual generation happens in a binary or test configured in Cargo.toml.
-    // For now we just create the directory; annotate models with #[derive(TS)]
-    // and then run `RACCOON_GEN_TS=1 cargo test --test gen_types` to emit.
-    println!("cargo:rerun-if-env-changed=RACCOON_GEN_TS");
-    println!("cargo:rerun-if-changed=src/models.rs");
+    if std::env::var_os("RACCOON_GEN_TS").is_some() {
+        std::fs::create_dir_all(frontend.join("src/types"))
+            .expect("failed to create frontend/src/types");
+        println!("cargo:rerun-if-changed=src/models.rs");
+    }
 }

@@ -97,14 +97,26 @@ function params(
 ): BuildProjectNodesParams {
   return {
     projectCanvas,
-    selectedProjectId: projectCanvas.project.id,
-    startProjects: [projectCanvas.project],
+    project: projectCanvas.project,
     selectedDagRequirement,
     selectedDagRequirementId: selectedDagRequirement?.id ?? null,
     collapsedTaskGroups: new Set(),
     requirementActionBusyId: null,
     requirementActionError: null,
-    backToStartCanvas: () => {},
+    modelSettingsOpen: false,
+    draftModelSettings: {
+      low: { model_id: null, thinking_level: "low" },
+      medium: { model_id: null, thinking_level: "medium" },
+      high: { model_id: null, thinking_level: "high" },
+    },
+    models: [],
+    modelRpcStatus: "idle",
+    modelError: null,
+    savingModels: false,
+    setModelSettingsOpen: () => {},
+    toggleModelSettings: () => {},
+    updateModelTier: () => {},
+    saveModelSettings: async () => {},
     closeDag: () => {},
     selectDagRequirement: () => {},
     planRequirement: async () => {},
@@ -127,8 +139,7 @@ describe("buildProjectNodes", () => {
     const structure = buildProjectNodes(params(canvas, selectedRequirement));
     const chatParams = {
       projectCanvas: canvas,
-      selectedProjectId: canvas.project.id,
-      startProjects: [canvas.project],
+      project: canvas.project,
       requirementConversation: null,
       requirementInput: "",
       requirementBusy: false,
@@ -170,7 +181,7 @@ describe("buildProjectNodes", () => {
     );
   });
 
-  it("places compact project actions side by side with back on the left", () => {
+  it("places GitHub and model actions at the top of the project canvas", () => {
     const canvas: ProjectCanvasData = {
       project: project(),
       active_requirement: null,
@@ -179,21 +190,37 @@ describe("buildProjectNodes", () => {
     };
 
     const nodes = buildProjectNodes(params(canvas, null));
-    const back = nodes.find((node) => node.id === "project-back")!;
     const github = nodes.find((node) => node.id === "project-github")!;
+    const model = nodes.find((node) => node.id === "model-settings")!;
     const completed = nodes.find(
       (node) => node.id === "completed-requirements",
     )!;
 
-    expect(back.position).toEqual({ x: -350, y: 20 });
-    expect(github.position).toEqual({ x: -197, y: 20 });
-    expect(back.width).toBe(137);
+    expect(github.position).toEqual({ x: -350, y: 20 });
+    expect(model.position).toEqual({ x: -197, y: 20 });
     expect(github.width).toBe(137);
-    expect(back.height).toBe(90);
     expect(github.height).toBe(90);
-    expect((github.position.x ?? 0) + (github.width ?? 0)).toBe(
-      (completed.position.x ?? 0) + (completed.width ?? 0),
+    expect(model.width).toBe(137);
+    expect(model.height).toBe(90);
+    expect(model.data.kind).toBe("summary");
+    expect(completed.position).toEqual({ x: -350, y: 140 });
+  });
+
+  it("opens model configuration from the project canvas", () => {
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [],
+      completed_requirements: [],
+    };
+    const buildParams = params(canvas, null);
+    buildParams.modelSettingsOpen = true;
+
+    const modelConfig = buildProjectNodes(buildParams).find(
+      (node) => node.id === "model-config",
     );
+
+    expect(modelConfig?.data.kind).toBe("model-config");
   });
 
   it("places the DAG entry to the right of the project requirement list", () => {

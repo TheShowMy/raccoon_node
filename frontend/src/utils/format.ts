@@ -10,7 +10,6 @@ import {
   type StreamEvent,
   type ProjectChatEvent,
   type ModelSettings,
-  type ThemeMode,
   type ModelTierKey,
   type ModelTierSetting,
   type ThinkingLevel,
@@ -360,19 +359,6 @@ export function buildClarificationAnswerPayload(
   };
 }
 
-export function readStoredTheme(): ThemeMode {
-  if (typeof window === "undefined") {
-    return "dark";
-  }
-  return window.localStorage.getItem("raccoon-node-theme") === "light"
-    ? "light"
-    : "dark";
-}
-
-export function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
 export function formatCompactNumber(value: number): string {
   if (value >= 100_000_000) {
     return `${(value / 100_000_000).toFixed(1)}亿`;
@@ -381,11 +367,4 @@ export function formatCompactNumber(value: number): string {
     return `${(value / 10_000).toFixed(1)}万`;
   }
   return value.toLocaleString("zh-CN");
-}
-
-export function getProjectListHeight(projectCount: number) {
-  if (projectCount === 0) {
-    return 220;
-  }
-  return 148 + projectCount * 86 + (projectCount - 1) * 12 + 28;
 }

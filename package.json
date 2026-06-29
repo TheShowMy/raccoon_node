@@ -1,14 +1,18 @@
 {
-  "name": "raccoon-node",
-  "version": "0.1.0",
+  "name": "raccoon-node-workspace",
+  "version": "0.2.0",
   "private": true,
+  "workspaces": [
+    "packages/raccoon-node"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },
   "scripts": {
     "dev": "concurrently -k -n backend,frontend -c cyan,green \"cargo run\" \"npm --prefix frontend run dev\"",
     "build": "node scripts/build.mjs",
-    "check": "npm --prefix frontend run check && cargo test"
+    "check": "node scripts/check.mjs",
+    "check:versions": "node scripts/check-versions.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

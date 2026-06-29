@@ -1,0 +1,22 @@
+{
+  "name": "raccoon-node",
+  "version": "0.2.0",
+  "description": "Local Git project canvas powered by Pi Agent RPC",
+  "license": "MIT",
+  "repository": "github:TheShowMy/raccoon_node",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "raccoon": "bin/raccoon-node.js"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "optionalDependencies": {
+    "raccoon-node-darwin-arm64": "0.2.0",
+    "raccoon-node-linux-x64": "0.2.0",
+    "raccoon-node-win32-x64": "0.2.0"
+  }
+}

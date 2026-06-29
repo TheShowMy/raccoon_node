@@ -4,7 +4,8 @@
 
 ## 项目
 
-raccoon_node：Rust + React Flow 的本地节点画布项目。当前包含 start 画布、Git 项目添加、克隆和删除。
+raccoon_node：Rust + React Flow 的本地 Git 仓库节点画布。当前运行目录中的 Git
+仓库就是唯一项目，不提供项目列表、克隆或删除功能。
 LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc` 子进程并使用 stdin/stdout JSONL 通信。
 
 ## 必读文档
@@ -18,13 +19,14 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 - 修改 Rust/Axum/Tokio/API/JSON 存储。
 - 修改 React/Vite/React Flow/节点 UI。
 - 修改 LLM、模型设置、Pi Agent RPC 或 Agent 能力。
-- 修改 Git clone、项目删除、`data/` 资源规则。
+- 修改 Git 根解析、`.raccoon-node/` 资源或 worktree 规则。
+- 修改 CLI、TUI、单二进制嵌入或 npm/crates.io/GitHub Release 发布流程。
 - 修改 pre-commit 或验证流程。
 
 ## 常用命令
 
 - 开发：`npm run dev`
-- 打包：`npm run build`
+- 打包：`npm run build`（生成 `build/bin/raccoon`）
 - 基础检查：`npm run check`
 - 完整检查：`pre-commit run --all-files`
 
@@ -34,20 +36,26 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 - 路径必须使用 `Path` / `PathBuf` 和平台 API 处理，禁止手工拼接 `/`、`\` 或假设盘符格式。
 - Windows `canonicalize` 可能返回 `\\?\C:\...`；路径传入 `pi.cmd`、Git、GH 或其他外部进程前，必须转换为普通本地磁盘绝对路径。
 - 当前仅支持 Windows 本地磁盘路径；UNC 路径（`\\server\share`、`\\?\UNC\...`）必须明确拒绝，禁止静默回退到其他目录。
-- Pi Agent 子进程的 `current_dir` 必须是对应项目 repo 或任务 worktree；新会话完成后必须校验 session JSONL 首行 `cwd` 与预期目录一致。
+- Pi Agent 子进程的 `current_dir` 必须是当前 Git 根目录或
+  `.raccoon-node/worktrees/` 内的受管 worktree；新会话完成后必须校验
+  session JSONL 首行 `cwd` 与预期目录一致。
 - Windows `.cmd` / `.bat` 不能按原生可执行文件假设处理；Node 构建脚本优先使用 `process.execPath + npm_execpath`，确需 shell 时必须显式使用 `cmd.exe` 并避免字符串拼接。
 - npm、pre-commit 和构建命令禁止依赖 Bash 专用语法；文档中的 Windows 示例必须使用 PowerShell 语法。
 - Windows 路径相关测试至少覆盖普通盘符、`\\?\` 扩展路径、UNC 拒绝、保留文件名和超长路径组件。
 
 ## 硬约束
 
-- 项目资源只允许位于当前数据目录：`<data_root>/projects/<project_id>/repo`。
+- 只允许在有效 Git 仓库中运行；`--project-root` 必须直接指向 Git 根目录。
+- 项目 ID 固定为 `current`，项目源码就是 Git 根目录，不复制或移动用户仓库。
+- 运行数据只允许位于 `<git_root>/.raccoon-node/`；会话、worktree 和附件分别位于
+  `sessions/`、`worktrees/`、`attachments/`。
 - 所有 LLM 相关功能必须基于 Pi Agent RPC，禁止绕过 `pi --mode rpc`。
 - 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。
 - 禁止直接读写 Pi Agent 的 auth/settings 文件。
-- 删除项目只能删除当前数据目录内的项目资源。
+- 删除和清理只能作用于 `.raccoon-node/` 内的受管资源，绝不能删除 Git 根目录或用户源码。
 - 前端不处理 Git 密码、token、SSH key。
-- 不提交 `build/`、`target/`、`node_modules/`、`frontend/dist/`、`data/`、`*.tsbuildinfo`。
+- 不提交 `build/`、`target/`、`node_modules/`、`frontend/dist/`、
+  `.raccoon-node/`、`data/`、`*.tsbuildinfo`。
 - 提交代码绝对不能跳过 pre-commit，禁止 `git commit --no-verify`。
 - pre-commit 失败必须修复根因，不允许注释、删除或屏蔽钩子绕过。
 - 每次执行 `git commit` 或 `git push` 前，必须得到用户的明确要求或确认；未获明确授权前绝不主动提交。

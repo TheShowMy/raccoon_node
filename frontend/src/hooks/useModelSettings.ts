@@ -7,7 +7,7 @@ import type {
 import { getModelSettings, saveModelSettings } from "../api/client";
 import { readError, DEFAULT_MODEL_SETTINGS } from "../utils/format";
 
-export function useModelSettings(onSaved: () => Promise<void>) {
+export function useModelSettings() {
   const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const [models, setModels] = useState(
     [] as { id: string; name: string; provider: string; reasoning: boolean }[],
@@ -69,14 +69,13 @@ export function useModelSettings(onSaved: () => Promise<void>) {
       setDraftModelSettings(data.settings);
       setModelRpcStatus(data.rpc_status);
       setModelError(data.rpc_error);
-      await onSaved();
       setModelSettingsOpen(false);
     } catch (reason) {
       setModelError(readError(reason));
     } finally {
       setSavingModels(false);
     }
-  }, [draftModelSettings, onSaved]);
+  }, [draftModelSettings]);
 
   return {
     modelSettingsOpen,

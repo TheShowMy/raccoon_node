@@ -6,13 +6,11 @@ import {
 } from "./App";
 
 const start: ProjectViewportSnapshot = {
-  currentCanvas: "start",
   projectLoaded: false,
   selectedDagRequirementId: null,
 };
 
 const project: ProjectViewportSnapshot = {
-  currentCanvas: "project",
   projectLoaded: true,
   selectedDagRequirementId: null,
 };
@@ -21,18 +19,16 @@ describe("project viewport action", () => {
   it("remounts React Flow when project canvas data becomes ready", () => {
     expect(
       getReactFlowKey({
-        currentCanvas: "project",
-        selectedProjectId: "project-1",
+        projectId: "current",
         projectLoaded: false,
       }),
-    ).toBe("project-project-1-loading");
+    ).toBe("project-current-loading");
     expect(
       getReactFlowKey({
-        currentCanvas: "project",
-        selectedProjectId: "project-1",
+        projectId: "current",
         projectLoaded: true,
       }),
-    ).toBe("project-project-1-ready");
+    ).toBe("project-current-ready");
     expect(getProjectViewportAction(start, project)).toBeNull();
   });
 

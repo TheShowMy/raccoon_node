@@ -1,7 +1,17 @@
-use tokio::sync::RwLock;
+use std::{
+    io::{self, IsTerminal, Write},
+    net::{IpAddr, SocketAddr},
+    sync::mpsc,
+};
+
+use clap::Parser;
+use tokio::sync::{oneshot, RwLock};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub mod api;
+pub mod assets;
+pub mod cli;
+pub mod config;
 pub mod db;
 pub mod error;
 pub mod file_refs;
@@ -10,12 +20,15 @@ pub mod pi_rpc;
 pub mod project_chat;
 pub mod requirement_analysis;
 pub mod requirement_execution;
+pub mod setup;
 pub mod store;
+pub mod tui;
 pub mod utils;
 
+use crate::cli::Cli;
+use crate::config::AppConfig;
 use crate::models::{ModelProvider, ProjectChatEventBus, RequirementEventBus};
-use crate::store::JsonStore;
-use crate::utils::{data_file_path, public_dir_path, server_addr};
+use crate::{store::JsonStore, tui::DashboardAction};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -23,36 +36,231 @@ pub struct AppState {
     pub model_provider: std::sync::Arc<dyn ModelProvider>,
     pub requirement_events: RequirementEventBus,
     pub project_chat_events: ProjectChatEventBus,
+    pub theme: String,
     pub project_scheduler_locks: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
     >,
 }
 
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "raccoon_node=info,tower_http=info".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+#[derive(Clone)]
+struct LogWriter(mpsc::Sender<String>);
 
-    let data_path = data_file_path();
-    let public_dir = public_dir_path();
-    let app = api::build_app(data_path, public_dir).await;
-    let addr = server_addr();
-    if addr.ip().is_unspecified() {
-        tracing::warn!(
-            "RACCOON_HOST is set to 0.0.0.0 — the server is listening on all network interfaces"
-        );
+struct LogLineWriter(mpsc::Sender<String>);
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogWriter {
+    type Writer = LogLineWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        LogLineWriter(self.0.clone())
     }
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("failed to bind server address");
+}
 
-    tracing::info!("server listening on http://{addr}");
-    axum::serve(listener, app).await.expect("server failed");
+impl Write for LogLineWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let line = String::from_utf8_lossy(bytes).trim_end().to_owned();
+        if !line.is_empty() {
+            let _ = self.0.send(line);
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    let cwd = std::env::current_dir()?;
+    // Git 校验必须先于任何项目文件写入。
+    let project_root = crate::utils::resolve_git_root(cli.project_root.as_deref(), &cwd)
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    let data_root = project_root.join(".raccoon-node");
+    crate::utils::ensure_child_path(&project_root, &data_root)
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    let config_path = data_root.join("config.toml");
+    if std::fs::symlink_metadata(&config_path)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(".raccoon-node/config.toml 不能是符号链接".into());
+    }
+    let use_tui = !cli.no_tui && io::stdin().is_terminal() && io::stdout().is_terminal();
+
+    if !setup::pi_available() {
+        if !use_tui
+            || !tui::confirm(
+                "Pi Agent",
+                "未找到 Pi Agent。是否执行 npm install -g --ignore-scripts @earendil-works/pi-coding-agent？",
+            )?
+        {
+            return Err("未找到 Pi Agent。请按 https://pi.dev 安装后重试。".into());
+        }
+        setup::install_pi()?;
+    }
+
+    let mut saved_config = match AppConfig::load(&config_path)? {
+        Some(config) => config,
+        None if use_tui => {
+            tui::edit_config(AppConfig::default(), "首次配置")?.ok_or("首次配置已取消")?
+        }
+        None => AppConfig::default(),
+    };
+    setup::ensure_data_layout(&data_root)?;
+    setup::ensure_gitignore(&project_root)?;
+    saved_config.save(&config_path)?;
+
+    let (log_tx, log_rx) = mpsc::channel();
+    let filter =
+        || tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
+    if use_tui {
+        tracing_subscriber::registry()
+            .with(filter())
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(LogWriter(log_tx.clone())),
+            )
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(filter())
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(io::stderr),
+            )
+            .init();
+    }
+
+    let mut opened = false;
+    loop {
+        let effective = effective_config(&saved_config, &cli);
+        let addr = SocketAddr::new(effective.host.parse::<IpAddr>()?, effective.port);
+        if addr.ip().is_unspecified() {
+            tracing::warn!("服务正在监听所有网络接口；当前 API 没有身份验证");
+        }
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let (app, state) = api::build_app(
+            data_root.join("app.json"),
+            project_root.clone(),
+            effective.theme.as_str().to_owned(),
+        )
+        .await;
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let mut server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+        });
+        let browser_url = format!("http://127.0.0.1:{}", effective.port);
+        tracing::info!("server listening on {browser_url}");
+        if use_tui && !cli.no_open && !opened {
+            if let Err(error) = webbrowser::open(&browser_url) {
+                tracing::warn!("无法打开浏览器：{error}");
+            }
+            opened = true;
+        }
+
+        if !use_tui {
+            tokio::select! {
+                result = &mut server => result??,
+                _ = tokio::signal::ctrl_c() => {}
+            }
+            state.model_provider.shutdown().await?;
+            return Ok(());
+        }
+
+        let mut restart = false;
+        loop {
+            match tui::run_dashboard(&browser_url, &log_rx)? {
+                DashboardAction::Quit => break,
+                DashboardAction::Restart => {
+                    if runtime_busy(&state).await {
+                        tracing::warn!("存在运行中的 Agent 任务，完成或取消后才能重启");
+                        continue;
+                    }
+                    restart = true;
+                    break;
+                }
+                DashboardAction::Open => {
+                    if let Err(error) = webbrowser::open(&browser_url) {
+                        tracing::warn!("无法打开浏览器：{error}");
+                    }
+                }
+                DashboardAction::Settings => {
+                    if runtime_busy(&state).await {
+                        tracing::warn!("存在运行中的 Agent 任务，完成或取消后才能修改运行设置");
+                        continue;
+                    }
+                    let Some(updated) = tui::edit_config(saved_config.clone(), "运行设置")?
+                    else {
+                        continue;
+                    };
+                    updated.save(&config_path)?;
+                    saved_config = updated;
+                    match state.model_provider.available_models().await {
+                        Ok(models) => {
+                            let current = state.store.read().await.data.model_settings.clone();
+                            if let Some(settings) = tui::edit_models(&models, current)? {
+                                state
+                                    .store
+                                    .write()
+                                    .await
+                                    .save_model_settings(settings, &models)
+                                    .await?;
+                            }
+                        }
+                        Err(error) => tracing::warn!("无法读取 Pi 模型：{error}"),
+                    }
+                    restart = true;
+                    break;
+                }
+            }
+        }
+        let _ = shutdown_tx.send(());
+        match tokio::time::timeout(std::time::Duration::from_secs(3), &mut server).await {
+            Ok(result) => result??,
+            Err(_) => {
+                server.abort();
+                let _ = server.await;
+            }
+        }
+        state.model_provider.shutdown().await?;
+        drop(state);
+        if !restart {
+            return Ok(());
+        }
+    }
+}
+
+fn effective_config(saved: &AppConfig, cli: &Cli) -> AppConfig {
+    let mut effective = saved.clone();
+    if let Some(host) = &cli.host {
+        effective.host.clone_from(host);
+    }
+    if let Some(port) = cli.port {
+        effective.port = port;
+    }
+    effective
+}
+
+async fn runtime_busy(state: &AppState) -> bool {
+    use crate::models::RequirementStatus;
+
+    let store = state.store.read().await;
+    store.data.project_chats.iter().any(|chat| chat.running)
+        || store.data.requirements.iter().any(|requirement| {
+            matches!(
+                requirement.status,
+                RequirementStatus::Analyzing
+                    | RequirementStatus::Planning
+                    | RequirementStatus::Queued
+                    | RequirementStatus::Running
+            )
+        })
 }
 
 #[cfg(test)]
@@ -337,95 +545,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn creates_project_and_rejects_invalid_names() {
+    async fn current_project_api_replaces_start_and_project_mutations() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("app.json");
-        let mut store = JsonStore::open(path).await.unwrap();
-
-        let project = store
-            .create_project(
-                "Demo Project".to_owned(),
-                temp_git_repo(temp_dir.path()).to_string_lossy().to_string(),
-            )
+        let mut store = JsonStore::open(temp_dir.path().join("app.json"))
             .await
             .unwrap();
-        assert_eq!(project.name, "Demo Project");
-        assert!(project.id.starts_with("demo-project-"));
-        assert!(Path::new(&project.local_path).ends_with("repo"));
-
-        let empty = store
-            .create_project(
-                "   ".to_owned(),
-                temp_git_repo(temp_dir.path()).to_string_lossy().to_string(),
-            )
-            .await
-            .unwrap_err();
-        assert!(matches!(empty, AppError::BadRequest(_)));
-
-        let empty_git = store
-            .create_project("No Git".to_owned(), "   ".to_owned())
-            .await
-            .unwrap_err();
-        assert!(matches!(empty_git, AppError::BadRequest(_)));
-
-        let duplicate = store
-            .create_project(
-                "demo project".to_owned(),
-                temp_git_repo(temp_dir.path()).to_string_lossy().to_string(),
-            )
-            .await
-            .unwrap_err();
-        assert!(matches!(duplicate, AppError::BadRequest(_)));
-    }
-
-    #[tokio::test]
-    async fn clone_failure_does_not_write_project() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("app.json");
-        let mut store = JsonStore::open(path).await.unwrap();
-
-        let error = store
-            .create_project("Broken".to_owned(), "/missing/repo.git".to_owned())
-            .await
-            .unwrap_err();
-
-        assert!(matches!(error, AppError::BadRequest(_)));
-        assert!(store.data.projects.is_empty());
-        assert!(!store.data_root.join("projects").join("broken").exists());
-    }
-
-    #[tokio::test]
-    async fn deletes_project_record_and_local_directory() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("app.json");
-        let mut store = JsonStore::open(path).await.unwrap();
-        let repo = temp_git_repo(temp_dir.path());
-
-        let project = store
-            .create_project("Delete Me".to_owned(), repo.to_string_lossy().to_string())
-            .await
-            .unwrap();
-        let project_dir = store.project_dir(&project.id).unwrap();
-        assert!(project_dir.exists());
-        store.project_chat_response(&project.id).await.unwrap();
-        assert_eq!(store.data.project_chats.len(), 1);
-
-        store.delete_project(&project.id).await.unwrap();
-
-        assert!(store.data.projects.is_empty());
-        assert!(store.data.project_chats.is_empty());
-        assert!(!project_dir.exists());
-
-        let missing = store.delete_project("missing").await.unwrap_err();
-        assert!(matches!(missing, AppError::NotFound(_)));
-    }
-
-    #[tokio::test]
-    async fn serves_start_and_create_project_api() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let store = JsonStore::open(temp_dir.path().join("data/app.json"))
-            .await
-            .unwrap();
+        store.data.projects = vec![test_project("current")];
         let app = build_app_with_model_provider(
             store,
             PathBuf::from("frontend/dist"),
@@ -436,56 +561,37 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/api/start")
+                    .uri("/api/project/current")
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["project"]["id"], "current");
+        assert_eq!(body["theme"], "dark");
 
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/projects")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({
-                            "name": "Alpha",
-                            "git_url": temp_git_repo(temp_dir.path()).to_string_lossy()
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let project: Project = serde_json::from_slice(&body).unwrap();
-        assert_eq!(project.name, "Alpha");
-
-        let store = JsonStore::open(temp_dir.path().join("data/app.json"))
-            .await
-            .unwrap();
-        let response = build_app_with_model_provider(
-            store,
-            PathBuf::from("frontend/dist"),
-            fake_provider(vec![test_model("test/model", "Test Model")]),
-        )
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/projects/{}", project.id))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        for (method, path) in [
+            ("GET", "/api/start"),
+            ("POST", "/api/projects"),
+            ("DELETE", "/api/projects/current"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
     }
 
     #[tokio::test]
@@ -1128,25 +1234,6 @@ mod tests {
         assert_eq!(output.clarifications[0].options.len(), 2);
     }
 
-    fn temp_git_repo(root: &Path) -> PathBuf {
-        let bare = root.join(format!(
-            "repo-{}.git",
-            Utc::now().timestamp_nanos_opt().unwrap()
-        ));
-        let output = std::process::Command::new("git")
-            .arg("init")
-            .arg("--bare")
-            .arg(&bare)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "failed to init temp git repo: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        bare
-    }
-
     #[test]
     fn prompt_includes_user_input_boundaries() {
         let now = Utc::now();
@@ -1369,37 +1456,13 @@ mod tests {
         assert!(crate::utils::ensure_child_path(&root, &child).is_ok());
     }
 
-    #[test]
-    fn resolves_project_working_dir_from_legacy_relative_paths() {
-        let temp = tempfile::tempdir().unwrap();
-        let data_root = temp.path().join("data");
-        let repo = data_root.join("projects").join("project-1").join("repo");
-        std::fs::create_dir_all(&repo).unwrap();
-
-        let data_prefixed =
-            crate::pi_rpc::resolve_project_working_dir(&data_root, "data/projects/project-1/repo")
-                .unwrap();
-        assert_eq!(data_prefixed, repo);
-
-        let data_relative =
-            crate::pi_rpc::resolve_project_working_dir(&data_root, "projects/project-1/repo")
-                .unwrap();
-        assert_eq!(data_relative, repo);
-    }
-
     #[tokio::test]
     async fn concurrent_create_requirement_no_data_loss() {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("app.json");
         let mut store = JsonStore::open(path.clone()).await.unwrap();
-
-        let project = store
-            .create_project(
-                "Demo".to_owned(),
-                temp_git_repo(temp_dir.path()).to_string_lossy().to_string(),
-            )
-            .await
-            .unwrap();
+        let project = test_project("current");
+        store.data.projects.push(project.clone());
 
         let store = Arc::new(RwLock::new(store));
         let mut handles = Vec::new();
@@ -1425,21 +1488,5 @@ mod tests {
 
         let store = JsonStore::open(path).await.unwrap();
         assert_eq!(store.data.requirements.len(), 5);
-    }
-
-    #[tokio::test]
-    async fn rejects_project_id_with_path_traversal() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("app.json");
-        let mut store = JsonStore::open(path).await.unwrap();
-
-        let err = store
-            .create_project(
-                "../etc/passwd".to_owned(),
-                temp_git_repo(temp_dir.path()).to_string_lossy().to_string(),
-            )
-            .await
-            .unwrap_err();
-        assert!(matches!(err, AppError::BadRequest(_)));
     }
 }
