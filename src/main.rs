@@ -155,10 +155,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .await
         });
-        let browser_url = format!("http://127.0.0.1:{}", effective.port);
-        tracing::info!("server listening on {browser_url}");
+        let server_url = format!("http://127.0.0.1:{}", effective.port);
+        let browser_url = cli.dev_frontend.as_deref().unwrap_or(&server_url);
+        tracing::info!(
+            "server listening on {server_url}{}",
+            if cli.dev_frontend.is_some() {
+                format!(" — 前端由 {browser_url} 代理（HMR）")
+            } else {
+                String::new()
+            },
+        );
         if use_tui && !cli.no_open && !opened {
-            if let Err(error) = webbrowser::open(&browser_url) {
+            if let Err(error) = webbrowser::open(browser_url) {
                 tracing::warn!("无法打开浏览器：{error}");
             }
             opened = true;
@@ -175,7 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut restart = false;
         loop {
-            match tui::run_dashboard(&browser_url, &log_rx)? {
+            match tui::run_dashboard(browser_url, &log_rx)? {
                 DashboardAction::Quit => break,
                 DashboardAction::Restart => {
                     if runtime_busy(&state).await {
@@ -186,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 }
                 DashboardAction::Open => {
-                    if let Err(error) = webbrowser::open(&browser_url) {
+                    if let Err(error) = webbrowser::open(browser_url) {
                         tracing::warn!("无法打开浏览器：{error}");
                     }
                 }

@@ -24,4 +24,9 @@ pub struct Cli {
     /// Git 仓库根目录；必须直接指向仓库根
     #[arg(long)]
     pub project_root: Option<PathBuf>,
+
+    /// 开发模式下前端 URL（例：http://localhost:5173），启用后服务端不再提供嵌入的前端资源，
+    /// 而是将前端请求代理到此地址，获得 HMR 热更新体验。
+    #[arg(long)]
+    pub dev_frontend: Option<String>,
 }
