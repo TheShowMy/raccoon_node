@@ -29,4 +29,12 @@ pub struct Cli {
     /// 而是将前端请求代理到此地址，获得 HMR 热更新体验。
     #[arg(long)]
     pub dev_frontend: Option<String>,
+
+    /// 开发模式下由后端管理 Vite dev server，并将 Vite 日志显示到 TUI。
+    #[arg(long)]
+    pub dev_managed_vite: bool,
+
+    /// Vite 前端目录；仅与 --dev-managed-vite 一起使用。
+    #[arg(long)]
+    pub dev_frontend_dir: Option<PathBuf>,
 }

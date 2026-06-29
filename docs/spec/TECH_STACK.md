@@ -4,7 +4,7 @@
 
 - 后端：Rust 2021（MSRV 1.86）、Axum、Tokio、serde/JSON、rusqlite、chrono、tracing。
 - 前端：React、TypeScript、Vite、React Flow（`@xyflow/react`）、lucide-react、Tailwind CSS。
-- CLI/TUI：clap、ratatouille、crossterm。
+- CLI/TUI：clap、ratatui、crossterm。
 - 静态资源：Vite 产物通过 rust-embed 嵌入 `raccoon` 单二进制。
 - 存储：`<git_root>/.raccoon-node/app.json` 为主存储，`data.db` 为 write-through
   恢复存储。
@@ -27,7 +27,7 @@
 
 ## 命令
 
-- `npm run dev`：在当前 Git 仓库启动后端和 Vite。
+- `npm run dev`：启动后端 TUI，并由后端管理 Vite dev server；TUI 分别显示后端日志和 Vite 日志。
 - `npm run build`：构建前端并生成嵌入静态资源的 release 单二进制。
 - `npm run check`：前端类型检查、测试、构建和 Rust 检查。
 - `pre-commit run --all-files`：完整提交前检查。

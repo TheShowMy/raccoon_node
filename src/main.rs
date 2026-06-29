@@ -13,6 +13,7 @@ pub mod assets;
 pub mod cli;
 pub mod config;
 pub mod db;
+pub mod dev_vite;
 pub mod error;
 pub mod file_refs;
 pub mod models;
@@ -86,6 +87,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(".raccoon-node/config.toml 不能是符号链接".into());
     }
     let use_tui = !cli.no_tui && io::stdin().is_terminal() && io::stdout().is_terminal();
+    if cli.dev_managed_vite {
+        if cli.dev_frontend.is_none() {
+            return Err("--dev-managed-vite 必须与 --dev-frontend 一起使用".into());
+        }
+        if cli.dev_frontend_dir.is_none() {
+            return Err("--dev-managed-vite 必须提供 --dev-frontend-dir".into());
+        }
+    }
 
     if !setup::pi_available() {
         if !use_tui
@@ -101,9 +110,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut saved_config = match AppConfig::load(&config_path)? {
         Some(config) => config,
-        None if use_tui => {
-            tui::edit_config(AppConfig::default(), "首次配置")?.ok_or("首次配置已取消")?
-        }
+        None if use_tui => tui::edit_config(
+            AppConfig::default(),
+            "首次配置",
+            tui::ConfigEditContext::default(),
+        )?
+        .ok_or("首次配置已取消")?,
         None => AppConfig::default(),
     };
     setup::ensure_data_layout(&data_root)?;
@@ -157,6 +169,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         let server_url = format!("http://127.0.0.1:{}", effective.port);
         let browser_url = cli.dev_frontend.as_deref().unwrap_or(&server_url);
+        let managed_vite = if cli.dev_managed_vite {
+            let frontend_dir = cli
+                .dev_frontend_dir
+                .as_deref()
+                .ok_or("--dev-managed-vite 必须提供 --dev-frontend-dir")?;
+            Some(dev_vite::start(frontend_dir, &server_url)?)
+        } else {
+            None
+        };
         tracing::info!(
             "server listening on {server_url}{}",
             if cli.dev_frontend.is_some() {
@@ -165,6 +186,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 String::new()
             },
         );
+        if cli.dev_managed_vite {
+            tracing::info!("Vite dev server 由后端管理，日志显示在 TUI 的 Vite 面板");
+        }
         if use_tui && !cli.no_open && !opened {
             if let Err(error) = webbrowser::open(browser_url) {
                 tracing::warn!("无法打开浏览器：{error}");
@@ -177,13 +201,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 result = &mut server => result??,
                 _ = tokio::signal::ctrl_c() => {}
             }
+            if let Some(vite) = managed_vite {
+                vite.shutdown().await;
+            }
             state.model_provider.shutdown().await?;
             return Ok(());
         }
 
         let mut restart = false;
         loop {
-            match tui::run_dashboard(browser_url, &log_rx)? {
+            match tui::run_dashboard(
+                browser_url,
+                &log_rx,
+                managed_vite.as_ref().map(|vite| vite.logs()),
+            )? {
                 DashboardAction::Quit => break,
                 DashboardAction::Restart => {
                     if runtime_busy(&state).await {
@@ -203,7 +234,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         tracing::warn!("存在运行中的 Agent 任务，完成或取消后才能修改运行设置");
                         continue;
                     }
-                    let Some(updated) = tui::edit_config(saved_config.clone(), "运行设置")?
+                    let Some(updated) = tui::edit_config(
+                        saved_config.clone(),
+                        "运行设置",
+                        tui::ConfigEditContext {
+                            host_overridden: cli.host.is_some(),
+                            port_overridden: cli.port.is_some(),
+                        },
+                    )?
                     else {
                         continue;
                     };
@@ -227,6 +265,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 }
             }
+        }
+        if let Some(vite) = managed_vite {
+            vite.shutdown().await;
         }
         let _ = shutdown_tx.send(());
         match tokio::time::timeout(std::time::Duration::from_secs(3), &mut server).await {

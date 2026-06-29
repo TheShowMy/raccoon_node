@@ -76,11 +76,11 @@ raccoon --project-root /path/to/repository
 TUI 快捷键：
 
 - `o`：打开浏览器
-- `s`：设置主题、监听地址、端口和三档模型
+- `s`：设置主题、监听地址、端口和三档模型；端口行通过数字输入编辑，保存后服务重启生效
 - `r`：重启服务
 - `q`：优雅退出
 
-配置优先级为 CLI 参数 > `.raccoon-node/config.toml` > 默认值。
+配置优先级为 CLI 参数 > `.raccoon-node/config.toml` > 默认值。如果本次启动带有 `--host` 或 `--port`，TUI 保存的对应配置会在下次不带该 CLI 参数启动时生效。
 
 ## 项目数据
 
@@ -140,7 +140,7 @@ npm run dev
 
 启动后浏览器自动打开 `http://localhost:5173`，前端 HMR 生效，API 请求自动代理到
 后端 `http://127.0.0.1:3001`。如果不设 `RACCOON_PROJECT_ROOT`，默认使用当前项目
-根目录。
+根目录。开发模式默认启动 TUI；后端会管理 Vite dev server，TUI 日志区分为后端日志和 Vite 日志两个面板，避免 Vite 输出与 TUI 共用控制台。退出 TUI 会同时关闭 Vite；修改端口并保存后，后端和 Vite 会一起重启，Vite proxy 会指向新的后端端口。
 
 ### 生产构建
 

@@ -332,7 +332,7 @@ pub fn format_clarification_answer(
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_windows_path_value, resolve_git_root};
+    use super::{normalize_local_path, normalize_windows_path_value, resolve_git_root};
     use std::{path::PathBuf, process::Command};
 
     #[test]
@@ -371,12 +371,12 @@ mod tests {
 
         assert_eq!(
             resolve_git_root(None, &child).unwrap(),
-            std::fs::canonicalize(temp.path()).unwrap()
+            normalize_local_path(&std::fs::canonicalize(temp.path()).unwrap()).unwrap()
         );
         assert!(resolve_git_root(Some(&child), &child).is_err());
         assert_eq!(
             resolve_git_root(Some(temp.path()), &child).unwrap(),
-            std::fs::canonicalize(temp.path()).unwrap()
+            normalize_local_path(&std::fs::canonicalize(temp.path()).unwrap()).unwrap()
         );
     }
 

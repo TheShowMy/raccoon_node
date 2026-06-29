@@ -645,7 +645,8 @@ async fn project_store_uses_flat_data_directories_and_current_project() {
     assert_eq!(store.data.projects[0].id, super::CURRENT_PROJECT_ID);
     assert_eq!(
         Path::new(&store.data.projects[0].local_path),
-        std::fs::canonicalize(temp_dir.path()).unwrap()
+        crate::utils::normalize_local_path(&std::fs::canonicalize(temp_dir.path()).unwrap())
+            .unwrap()
     );
     for directory in ["sessions", "worktrees", "attachments"] {
         assert!(data_root.join(directory).is_dir());

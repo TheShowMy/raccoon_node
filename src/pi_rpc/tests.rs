@@ -69,7 +69,7 @@ fn pi_working_directory_is_limited_to_project_root_or_managed_worktree() {
 
     assert_eq!(
         resolve_project_working_dir(&data_root, &project.to_string_lossy()).unwrap(),
-        std::fs::canonicalize(&project).unwrap()
+        crate::utils::normalize_local_path(&std::fs::canonicalize(&project).unwrap()).unwrap()
     );
     assert!(resolve_project_working_dir(&data_root, &temp.path().to_string_lossy()).is_err());
     assert!(resolve_project_working_dir(&data_root, "relative").is_err());
