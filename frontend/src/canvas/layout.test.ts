@@ -136,4 +136,17 @@ describe("canvas task layout", () => {
       layout.positions.get(code.id)!.x,
     );
   });
+
+  it("only enlarges failed review nodes for recovery actions", () => {
+    expect(
+      getTaskGroupChildSize(
+        task("rejected", [], "review_sub_agent", { status: "rejected" }),
+      ),
+    ).toEqual({ width: 140, height: 52 });
+    expect(
+      getTaskGroupChildSize(
+        task("failed", [], "review_sub_agent", { status: "failed" }),
+      ),
+    ).toEqual({ width: 180, height: 86 });
+  });
 });

@@ -114,7 +114,7 @@ export function getTaskGroupChildSize(
   task: RequirementExecutionTask,
 ): TaskSize {
   if (task.kind === "review_sub_agent" || task.kind === "review") {
-    return task.status === "failed" || task.status === "rejected"
+    return task.status === "failed"
       ? { width: 180, height: 86 }
       : { width: 140, height: 52 };
   }

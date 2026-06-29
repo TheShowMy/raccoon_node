@@ -234,7 +234,7 @@ function TaskRecoveryActions({
           重试
         </button>
       ) : null}
-      {isReviewTask(task) && isRecoverable(task.status) ? (
+      {isReviewTask(task) && task.status === "failed" ? (
         <button
           type="button"
           disabled={busy}
@@ -244,7 +244,7 @@ function TaskRecoveryActions({
           重跑
         </button>
       ) : null}
-      {isRecoverable(task.status) ? (
+      {task.status === "failed" ? (
         <button
           type="button"
           disabled={busy}
@@ -547,11 +547,11 @@ function DetailItem({
 }
 
 function hasTaskRecoveryActions(task: RequirementExecutionTask) {
-  return task.status === "failed" || isRecoverable(task.status);
+  return task.status === "failed";
 }
 
 function isRecoverableReviewTask(task: RequirementExecutionTask) {
-  return isReviewTask(task) && isRecoverable(task.status);
+  return isReviewTask(task) && task.status === "failed";
 }
 
 function isReviewTask(task: RequirementExecutionTask) {
@@ -560,10 +560,6 @@ function isReviewTask(task: RequirementExecutionTask) {
     task.kind === "review_sub_agent" ||
     task.kind === "review_summary"
   );
-}
-
-function isRecoverable(status: RequirementExecutionTask["status"]) {
-  return status === "failed" || status === "rejected";
 }
 
 function recoveryStageText(task: RequirementExecutionTask) {

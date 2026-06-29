@@ -155,7 +155,7 @@ describe("RequirementTaskNode", () => {
     expect(document.body.querySelector("dialog")).toBeNull();
   });
 
-  it("only shows recovery actions for failed or rejected states", () => {
+  it("only shows recovery actions for failed states", () => {
     const failedTask = task({
       status: "failed",
       error: "执行失败",
@@ -182,19 +182,12 @@ describe("RequirementTaskNode", () => {
     expect(screen.queryByRole("button", { name: "重跑" })).toBeNull();
     unmount();
 
-    const rejected = renderNode({
+    renderNode({
       nodeTask: rejectedReview,
       nodeRole: "review_sub_agent",
     });
-    const inlineActions = rejected.container.querySelector<HTMLElement>(
-      ".task-node__inline-actions",
-    )!;
-    expect(
-      within(inlineActions).getByRole("button", { name: "重跑" }),
-    ).toBeInTheDocument();
-    expect(
-      within(inlineActions).getByRole("button", { name: "从此恢复" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重跑" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "从此恢复" })).toBeNull();
     expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
   });
 
@@ -243,7 +236,7 @@ describe("RequirementTaskNode", () => {
     expect(screen.queryByRole("button", { name: "从此恢复" })).toBeNull();
   });
 
-  it("shows an expand affordance when collapsed groups contain recoverable reviews", () => {
+  it("does not show an expand affordance for rejected reviews", () => {
     renderNode({
       nodeRole: "group",
       collapsed: true,
@@ -257,9 +250,7 @@ describe("RequirementTaskNode", () => {
       ],
     });
 
-    expect(
-      screen.getByRole("button", { name: "展开处理" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "展开处理" })).toBeNull();
   });
 
   it("marks group, code, and review nodes with task status classes", () => {
