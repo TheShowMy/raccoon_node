@@ -284,21 +284,12 @@ impl ModelProvider for PiRpcModelProvider {
         events: Option<ProjectChatEventEmitter>,
     ) -> ProjectChatFuture<'_> {
         Box::pin(async move {
-            let (working_dir, head) =
-                prepare_project_chat_workspace(&self.data_root, &input).await?;
+            let working_dir =
+                resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
             let client = PiRpcClient::start(&self.session_dir, &working_dir).await?;
             let output = client.ask_project_chat(input, events).await;
             client.shutdown().await;
-            let cleanup = clean_project_chat_workspace(&working_dir, &head).await;
-            match (output, cleanup) {
-                (Ok(output), Ok(())) => Ok(output),
-                (Ok(_), Err(error)) => Err(error),
-                (Err(error), Ok(())) => Err(error),
-                (Err(error), Err(cleanup_error)) => {
-                    tracing::warn!("项目问答 worktree 清理失败：{cleanup_error}");
-                    Err(error)
-                }
-            }
+            output
         })
     }
 

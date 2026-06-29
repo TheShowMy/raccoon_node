@@ -145,6 +145,7 @@ describe("buildProjectNodes", () => {
       sendRequirementMessage: async () => {},
       setProjectChatInput: () => {},
       sendProjectChatMessage: async () => {},
+      resetProjectChat: async () => {},
       updateClarificationAnswer: () => {},
       submitClarifications: async () => {},
       confirmRequirement: async () => {},

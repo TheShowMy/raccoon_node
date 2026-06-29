@@ -132,13 +132,7 @@ export default function RequirementConversationWorkbench({
             disabled={busy}
             aria-label="放弃当前需求"
             title="放弃当前需求"
-            onClick={() => {
-              if (
-                window.confirm("确定要放弃当前需求？已输入的内容将不会保留。")
-              ) {
-                onAbandon();
-              }
-            }}
+            onClick={onAbandon}
           >
             <X size={15} />
           </button>

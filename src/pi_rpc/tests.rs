@@ -4,7 +4,7 @@ use super::*;
 use super::{
     attach_session_usage, build_pr_merge_args, commit_task_changes, dependency_commits_for_task,
     ensure_head_matches, generated_branch_names, is_terminal_agent_end, parse_default_branch,
-    parse_session_header_cwd, safe_worktree_name,
+    parse_session_header_cwd, safe_worktree_name, session_header_matches_working_dir,
 };
 use crate::models::{
     RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
@@ -30,6 +30,17 @@ fn session_header_requires_absolute_cwd() {
         parse_session_header_cwd(&header).unwrap(),
         std::env::current_dir().unwrap()
     );
+}
+
+#[test]
+fn restored_session_must_match_the_client_working_directory() {
+    let cwd = std::env::current_dir().unwrap();
+    let matching = json!({ "type": "session", "cwd": cwd }).to_string();
+    let other = json!({ "type": "session", "cwd": cwd.join("other") }).to_string();
+
+    assert!(session_header_matches_working_dir(&matching, &cwd));
+    assert!(!session_header_matches_working_dir(&other, &cwd));
+    assert!(!session_header_matches_working_dir("invalid", &cwd));
 }
 
 #[test]

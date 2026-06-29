@@ -405,8 +405,21 @@ impl PiRpcClient {
         if let Some(session_file) = session_file {
             let session_path = self.resolve_session_path(session_file)?;
             if tokio::fs::try_exists(&session_path).await? {
-                self.switch_session(path_str(&session_path)?).await?;
-                return Ok(true);
+                let mut header = String::new();
+                BufReader::new(tokio::fs::File::open(&session_path).await?)
+                    .read_line(&mut header)
+                    .await?;
+                if session_header_matches_working_dir(&header, &self.working_dir) {
+                    self.switch_session(path_str(&session_path)?).await?;
+                    return Ok(true);
+                }
+                tracing::warn!(
+                    session_file,
+                    expected_cwd = %self.working_dir.display(),
+                    "Pi Agent 会话工作目录不匹配，将创建新会话"
+                );
+                self.new_session().await?;
+                return Ok(false);
             }
             tracing::warn!(
                 session_file,

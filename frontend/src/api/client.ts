@@ -99,6 +99,22 @@ export async function getProjectChat(
   return response.json();
 }
 
+export async function resetProjectChat(
+  projectId: string,
+): Promise<ProjectChatResponse> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/chat`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "关闭项目问答失败");
+  }
+  return response.json();
+}
+
 export async function getProjectFiles(
   projectId: string,
   search: string,

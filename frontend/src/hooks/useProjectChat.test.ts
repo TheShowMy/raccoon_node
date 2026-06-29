@@ -2,12 +2,17 @@
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getProjectChat, sendProjectChatMessage } from "../api/client";
+import {
+  getProjectChat,
+  resetProjectChat,
+  sendProjectChatMessage,
+} from "../api/client";
 import type { ProjectChatEvent, ProjectChatResponse } from "../types/api";
 import { useProjectChat } from "./useProjectChat";
 
 vi.mock("../api/client", () => ({
   getProjectChat: vi.fn(),
+  resetProjectChat: vi.fn(),
   sendProjectChatMessage: vi.fn(),
 }));
 
@@ -48,6 +53,7 @@ describe("useProjectChat", () => {
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.mocked(getProjectChat).mockResolvedValue(response);
+    vi.mocked(resetProjectChat).mockResolvedValue(response);
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -156,6 +162,18 @@ describe("useProjectChat", () => {
     });
     expect(result.current.projectChatInput).toBe("");
     expect(result.current.projectChat?.messages).toHaveLength(1);
+  });
+
+  it("closes the current project chat and clears local transient state", async () => {
+    const { result } = renderHook(() => useProjectChat("project-1"));
+    await waitFor(() => expect(result.current.projectChat).toEqual(response));
+
+    act(() => result.current.setProjectChatInput("未发送内容"));
+    await act(async () => result.current.closeProjectChat());
+
+    expect(resetProjectChat).toHaveBeenCalledWith("project-1");
+    expect(result.current.projectChatInput).toBe("");
+    expect(result.current.projectChat).toEqual(response);
   });
 
   it("does not restore stale chat after switching projects", async () => {

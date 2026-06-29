@@ -455,6 +455,7 @@ export type StartNodeData =
       onProjectChatReferencesChange?: (references: FileReference[]) => void;
       onProjectChatImagesChange?: (images: ImageAttachment[]) => void;
       onProjectChatSend: () => Promise<void>;
+      onProjectChatReset: () => Promise<void>;
       onAnswerChange: (
         clarification: RequirementClarification,
         answer: DraftClarificationAnswer,

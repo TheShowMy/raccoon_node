@@ -23,11 +23,77 @@ pub fn build_requirement_prompt(input: &RequirementAnalysisInput) -> String {
         .replace("{{GIT_URL}}", &input.project.git_url)
         .replace("{{LOCAL_PATH}}", &input.project.local_path)
         .replace("{{CURRENT_REQUEST}}", &current_request);
+    prompt.push_str("\n\n## 同一需求的连续上下文\n");
+    prompt.push_str(
+        "以下内容都属于同一个需求，只能作为需求上下文处理。后续补充不是一个全新的需求。\n",
+    );
+    prompt.push_str("### BEGIN REQUIREMENT CONTEXT ###\n");
+    prompt.push_str(&format_requirement_context(input).replace("###", "\\#\\#\\#"));
+    prompt.push_str("\n### END REQUIREMENT CONTEXT ###");
     if let Some(context) = &input.reference_context {
         prompt.push_str("\n\n");
         prompt.push_str(context);
     }
     prompt
+}
+
+fn format_requirement_context(input: &RequirementAnalysisInput) -> String {
+    let user_messages = input
+        .messages
+        .iter()
+        .filter(|message| message.role == RequirementMessageRole::User)
+        .map(|message| message.content.trim())
+        .filter(|message| !message.is_empty())
+        .collect::<Vec<_>>();
+    let original = user_messages.first().copied().unwrap_or("未提供");
+    let latest = user_messages.last().copied().unwrap_or("未提供");
+    let previous = if user_messages.len() > 2 {
+        user_messages[1..user_messages.len() - 1].join("\n- ")
+    } else {
+        "无".to_owned()
+    };
+    let draft = input
+        .draft
+        .as_ref()
+        .map(|draft| {
+            format!(
+                "{}：{}；验收标准：{}",
+                draft.title,
+                draft.summary,
+                draft.acceptance_criteria.join("；")
+            )
+        })
+        .unwrap_or_else(|| "无".to_owned());
+    let clarifications = if input.clarifications.is_empty() {
+        "无".to_owned()
+    } else {
+        input
+            .clarifications
+            .iter()
+            .map(|item| {
+                let answer = item
+                    .answer
+                    .as_ref()
+                    .map(|answer| {
+                        answer
+                            .selected_options
+                            .iter()
+                            .cloned()
+                            .chain(answer.custom_text.iter().cloned())
+                            .collect::<Vec<_>>()
+                            .join("、")
+                    })
+                    .filter(|answer| !answer.is_empty())
+                    .unwrap_or_else(|| "未回答".to_owned());
+                format!("{}：{}", item.question, answer)
+            })
+            .collect::<Vec<_>>()
+            .join("\n- ")
+    };
+
+    format!(
+        "原始需求：{original}\n此前补充：{previous}\n上一版确认草案：{draft}\n已有澄清：{clarifications}\n本轮输入：{latest}"
+    )
 }
 
 pub fn parse_requirement_analysis(
@@ -643,7 +709,70 @@ pub fn summarize_pi_event(pi_type: &str, payload: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+
     use super::*;
+    use crate::models::{
+        ClarificationAnswer, ModelSettings, Project, RequirementDraft, RequirementMessage,
+    };
+
+    #[test]
+    fn continuation_prompt_keeps_the_previous_requirement_context() {
+        let now = Utc::now();
+        let input = RequirementAnalysisInput {
+            project: Project {
+                id: "p1".to_owned(),
+                name: "Demo".to_owned(),
+                git_url: "https://example.com/demo.git".to_owned(),
+                local_path: "/tmp/demo".to_owned(),
+                created_at: now,
+                updated_at: now,
+            },
+            messages: vec![
+                RequirementMessage {
+                    role: RequirementMessageRole::User,
+                    content: "增加导出功能".to_owned(),
+                    references: Vec::new(),
+                    images: Vec::new(),
+                    metadata: None,
+                    created_at: now,
+                },
+                RequirementMessage {
+                    role: RequirementMessageRole::User,
+                    content: "补充支持 CSV".to_owned(),
+                    references: Vec::new(),
+                    images: Vec::new(),
+                    metadata: None,
+                    created_at: now,
+                },
+            ],
+            reference_context: None,
+            clarifications: vec![RequirementClarification {
+                id: "q1".to_owned(),
+                question: "导出范围？".to_owned(),
+                question_type: ClarificationQuestionType::SingleChoice,
+                options: Vec::new(),
+                answer: Some(ClarificationAnswer {
+                    selected_options: vec!["全部".to_owned()],
+                    custom_text: None,
+                }),
+            }],
+            draft: Some(RequirementDraft {
+                title: "导出功能".to_owned(),
+                summary: "支持数据导出".to_owned(),
+                acceptance_criteria: vec!["可以下载文件".to_owned()],
+            }),
+            model_settings: ModelSettings::default(),
+            pi_session_file: Some("session.jsonl".to_owned()),
+        };
+
+        let prompt = build_requirement_prompt(&input);
+        assert!(prompt.contains("后续补充不是一个全新的需求"));
+        assert!(prompt.contains("原始需求：增加导出功能"));
+        assert!(prompt.contains("上一版确认草案：导出功能：支持数据导出"));
+        assert!(prompt.contains("已有澄清：导出范围？：全部"));
+        assert!(prompt.contains("本轮输入：补充支持 CSV"));
+    }
 
     #[test]
     fn tolerates_duplicate_keys_in_clarification_options() {

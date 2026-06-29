@@ -113,6 +113,7 @@ export interface BuildProjectChatNodeParams {
   setProjectChatReferences?: (references: FileReference[]) => void;
   setProjectChatImages?: (images: ImageAttachment[]) => void;
   sendProjectChatMessage: () => Promise<void>;
+  resetProjectChat: () => Promise<void>;
   updateClarificationAnswer: (
     clarification: import("../types/api").RequirementClarification,
     answer: DraftClarificationAnswer,
@@ -431,6 +432,7 @@ export function buildProjectChatNode({
   setProjectChatReferences = () => {},
   setProjectChatImages = () => {},
   sendProjectChatMessage,
+  resetProjectChat,
   updateClarificationAnswer,
   submitClarifications,
   confirmRequirement,
@@ -481,6 +483,7 @@ export function buildProjectChatNode({
         onProjectChatReferencesChange: setProjectChatReferences,
         onProjectChatImagesChange: setProjectChatImages,
         onProjectChatSend: sendProjectChatMessage,
+        onProjectChatReset: resetProjectChat,
         onAnswerChange: updateClarificationAnswer,
         onSubmitClarifications: submitClarifications,
         onConfirm: confirmRequirement,

@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getProjectChat, sendProjectChatMessage } from "../api/client";
+import {
+  getProjectChat,
+  resetProjectChat,
+  sendProjectChatMessage,
+} from "../api/client";
 import type {
   FileReference,
   ImageAttachment,
@@ -144,6 +148,25 @@ export function useProjectChat(projectId: string | null) {
     projectId,
   ]);
 
+  const closeProjectChat = useCallback(async () => {
+    if (!projectId || projectChatBusy || projectChat?.running) return;
+
+    setProjectChatBusy(true);
+    setProjectChatError(null);
+    try {
+      const data = await resetProjectChat(projectId);
+      setProjectChat(data);
+      setProjectChatInput("");
+      setProjectChatReferences([]);
+      setProjectChatImages([]);
+      setProjectChatEvents([]);
+    } catch (reason) {
+      setProjectChatError(readError(reason));
+    } finally {
+      setProjectChatBusy(false);
+    }
+  }, [projectChat?.running, projectChatBusy, projectId]);
+
   return {
     projectChat,
     projectChatInput,
@@ -156,5 +179,6 @@ export function useProjectChat(projectId: string | null) {
     setProjectChatReferences,
     setProjectChatImages,
     sendProjectChat,
+    closeProjectChat,
   };
 }

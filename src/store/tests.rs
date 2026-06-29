@@ -10,10 +10,10 @@ use super::{
 };
 use crate::error::AppError;
 use crate::models::{
-    Project, Requirement, RequirementDraft, RequirementExecutionPlan, RequirementExecutionTask,
-    RequirementMessage, RequirementMessageRole, RequirementModelTier, RequirementRecoveryStage,
-    RequirementReviewStatus, RequirementStatus, RequirementTaskExecutionOutput,
-    RequirementTaskKind, RequirementTaskStatus,
+    Project, ProjectChatMessage, ProjectChatMessageRole, Requirement, RequirementDraft,
+    RequirementExecutionPlan, RequirementExecutionTask, RequirementMessage, RequirementMessageRole,
+    RequirementModelTier, RequirementRecoveryStage, RequirementReviewStatus, RequirementStatus,
+    RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
 };
 
 #[test]
@@ -615,6 +615,47 @@ async fn stale_pi_session_cleanup_keeps_requirement_and_task_references() {
     assert!(task_session.exists());
     assert!(!stale_session.exists());
     assert!(ignored_file.exists());
+}
+
+#[tokio::test]
+async fn resetting_project_chat_clears_context_and_rejects_running_chat() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let now = Utc::now();
+    store.data.projects.push(Project {
+        id: "project".to_owned(),
+        name: "project".to_owned(),
+        git_url: "https://example.com/project.git".to_owned(),
+        local_path: store
+            .data_root
+            .join("projects/project/repo")
+            .to_string_lossy()
+            .to_string(),
+        created_at: now,
+        updated_at: now,
+    });
+    store.project_chat_response("project").await.unwrap();
+    let chat = &mut store.data.project_chats[0];
+    chat.messages.push(ProjectChatMessage {
+        role: ProjectChatMessageRole::User,
+        content: "问题".to_owned(),
+        references: Vec::new(),
+        images: Vec::new(),
+        metadata: None,
+        created_at: now,
+    });
+    chat.error = Some("旧错误".to_owned());
+    chat.pi_session_file = Some("old.jsonl".to_owned());
+
+    let response = store.reset_project_chat("project").await.unwrap();
+    assert!(response.messages.is_empty());
+    assert!(response.error.is_none());
+    assert!(store.data.project_chats[0].pi_session_file.is_none());
+
+    store.data.project_chats[0].running = true;
+    assert!(store.reset_project_chat("project").await.is_err());
 }
 
 fn requirement(id: &str) -> Requirement {

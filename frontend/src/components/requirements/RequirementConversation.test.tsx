@@ -269,7 +269,7 @@ describe("RequirementConversationWorkbench", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("shows an abandon button for unfinished conversations and confirms before calling onAbandon", () => {
+  it("requests abandoning an unfinished conversation", () => {
     const requirement = testRequirement();
     requirement.status = "clarifying";
     const onAbandon = vi.fn();
@@ -314,14 +314,7 @@ describe("RequirementConversationWorkbench", () => {
     });
     expect(abandonButton).toBeInTheDocument();
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    fireEvent.click(abandonButton);
-    expect(onAbandon).not.toHaveBeenCalled();
-
-    confirmSpy.mockReturnValue(true);
     fireEvent.click(abandonButton);
     expect(onAbandon).toHaveBeenCalledTimes(1);
-
-    confirmSpy.mockRestore();
   });
 });

@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquare } from "lucide-react";
+import { createPortal } from "react-dom";
+import { AlertTriangle, MessageSquare, X } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import {
   buildBubbleStreamFromEvents,
@@ -14,73 +15,149 @@ import LiveProcessCard from "../ui/LiveProcessCard";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 type ActiveCard = "requirement" | "project";
+type ConfirmAction = "abandon-requirement" | "reset-project-chat";
 
 export default function RequirementChatNode({ data }: { data: ChatData }) {
+  const stackRef = useRef<HTMLDivElement>(null);
   const [activeCard, setActiveCard] = useState<ActiveCard>("requirement");
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(
+    null,
+  );
   const conversation =
     data.conversation?.id === data.requirement?.id ? data.conversation : null;
   const prompt = data.promptDismissed ? null : (conversation?.prompt ?? null);
 
   useEffect(() => setActiveCard("requirement"), [data.project.id]);
+  useEffect(() => setConfirmAction(null), [data.project.id]);
+
+  function handleCardKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const target = event.target;
+    const fromComposer =
+      (target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLInputElement) &&
+      target.closest(".rq-composer");
+    if (
+      event.key !== "Tab" ||
+      (event.target !== event.currentTarget && !fromComposer)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    const next = activeCard === "requirement" ? "project" : "requirement";
+    setActiveCard(next);
+    requestAnimationFrame(() => {
+      const input = stackRef.current?.querySelector<HTMLTextAreaElement>(
+        `[data-chat-card="${next}"] textarea:not(:disabled)`,
+      );
+      (input ?? stackRef.current)?.focus();
+    });
+  }
+
+  async function confirm() {
+    const action = confirmAction;
+    setConfirmAction(null);
+    if (action === "abandon-requirement") {
+      data.onAbandon();
+    } else if (action === "reset-project-chat") {
+      await data.onProjectChatReset();
+    }
+  }
 
   return (
-    <div className="chat-card-stack" data-active-card={activeCard}>
-      <ChatCard
-        title="需求会话"
-        active={activeCard === "requirement"}
-        onActivate={() => setActiveCard("requirement")}
+    <>
+      <div
+        ref={stackRef}
+        className="chat-card-stack nodrag"
+        data-active-card={activeCard}
+        tabIndex={0}
+        aria-label="需求会话与项目问答"
+        onKeyDown={handleCardKeyDown}
       >
-        <RequirementConversationWorkbench
-          conversation={conversation}
-          requirement={data.requirement}
-          projectName={data.project.name}
-          projectId={data.project.id}
-          prompt={prompt}
-          promptDismissed={data.promptDismissed}
-          input={data.input}
-          references={data.references ?? []}
-          images={data.images ?? []}
-          busy={data.busy}
-          error={data.error}
-          streamEvents={data.streamEvents}
-          answers={data.answers}
-          onInputChange={data.onInputChange}
-          onReferencesChange={data.onReferencesChange ?? (() => {})}
-          onImagesChange={data.onImagesChange ?? (() => {})}
-          onSend={data.onSend}
-          onAnswerChange={data.onAnswerChange}
-          onSubmitClarifications={data.onSubmitClarifications}
-          onConfirm={data.onConfirm}
-          onContinueEditing={data.onContinueEditing}
-          onCancel={data.onCancel}
-          onAbandon={data.onAbandon}
-        />
-      </ChatCard>
+        <ChatCard
+          card="requirement"
+          title="需求会话"
+          active={activeCard === "requirement"}
+          onActivate={() => setActiveCard("requirement")}
+        >
+          <RequirementConversationWorkbench
+            conversation={conversation}
+            requirement={data.requirement}
+            projectName={data.project.name}
+            projectId={data.project.id}
+            prompt={prompt}
+            promptDismissed={data.promptDismissed}
+            input={data.input}
+            references={data.references ?? []}
+            images={data.images ?? []}
+            busy={data.busy}
+            error={data.error}
+            streamEvents={data.streamEvents}
+            answers={data.answers}
+            onInputChange={data.onInputChange}
+            onReferencesChange={data.onReferencesChange ?? (() => {})}
+            onImagesChange={data.onImagesChange ?? (() => {})}
+            onSend={data.onSend}
+            onAnswerChange={data.onAnswerChange}
+            onSubmitClarifications={data.onSubmitClarifications}
+            onConfirm={data.onConfirm}
+            onContinueEditing={data.onContinueEditing}
+            onCancel={data.onCancel}
+            onAbandon={() => setConfirmAction("abandon-requirement")}
+          />
+        </ChatCard>
 
-      <ChatCard
-        title="项目问答"
-        active={activeCard === "project"}
-        onActivate={() => setActiveCard("project")}
-      >
-        <ProjectChatWorkbench data={data} />
-      </ChatCard>
-    </div>
+        <ChatCard
+          card="project"
+          title="项目问答"
+          active={activeCard === "project"}
+          onActivate={() => setActiveCard("project")}
+        >
+          <ProjectChatWorkbench
+            data={data}
+            onReset={() => setConfirmAction("reset-project-chat")}
+          />
+        </ChatCard>
+      </div>
+      <ConfirmDialog
+        open={confirmAction !== null}
+        title={
+          confirmAction === "abandon-requirement"
+            ? "放弃当前需求？"
+            : "关闭项目问答？"
+        }
+        description={
+          confirmAction === "abandon-requirement"
+            ? "当前需求及已输入内容将被删除，此操作无法撤销。"
+            : "当前问答消息和模型上下文将被清空，此操作无法撤销。"
+        }
+        confirmLabel={
+          confirmAction === "abandon-requirement" ? "确认放弃" : "确认关闭"
+        }
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={() => void confirm()}
+      />
+    </>
   );
 }
 
 function ChatCard({
+  card,
   title,
   active,
   onActivate,
   children,
 }: {
+  card: ActiveCard;
   title: string;
   active: boolean;
   onActivate: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <section className={`chat-stack-card ${active ? "is-active" : ""}`}>
+    <section
+      className={`chat-stack-card ${active ? "is-active" : ""}`}
+      data-chat-card={card}
+    >
       <button
         className="chat-stack-card__switch nodrag"
         type="button"
@@ -101,7 +178,13 @@ function ChatCard({
   );
 }
 
-function ProjectChatWorkbench({ data }: { data: ChatData }) {
+function ProjectChatWorkbench({
+  data,
+  onReset,
+}: {
+  data: ChatData;
+  onReset: () => void;
+}) {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const running = data.projectChat?.running ?? false;
   const error = data.projectChatError ?? data.projectChat?.error ?? null;
@@ -159,6 +242,16 @@ function ProjectChatWorkbench({ data }: { data: ChatData }) {
             {data.project.name} · {running ? "Pi Agent 处理中" : "随时可问"}
           </span>
         </div>
+        <button
+          type="button"
+          className="node-header__action"
+          disabled={data.projectChatBusy || running}
+          aria-label="关闭项目问答会话"
+          title="关闭项目问答会话"
+          onClick={onReset}
+        >
+          <X size={15} />
+        </button>
       </div>
 
       <div className="rq-workbench project-chat-workbench">
@@ -252,5 +345,68 @@ function ProjectChatWorkbench({ data }: { data: ChatData }) {
         />
       </div>
     </>
+  );
+}
+
+function ConfirmDialog({
+  open,
+  title,
+  description,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open && !dialog.open) {
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+    } else if (!open && dialog.open) {
+      if (typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+    }
+  }, [open]);
+
+  if (!open) return null;
+
+  return createPortal(
+    <dialog
+      ref={dialogRef}
+      className="chat-confirm-dialog"
+      onClose={onCancel}
+      onClick={onCancel}
+    >
+      <section
+        className="node-card chat-confirm-dialog__panel"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="chat-confirm-dialog__icon">
+          <AlertTriangle size={22} />
+        </div>
+        <div>
+          <strong>{title}</strong>
+          <p>{description}</p>
+        </div>
+        <div className="chat-confirm-dialog__actions">
+          <button type="button" onClick={onCancel}>
+            取消
+          </button>
+          <button type="button" className="is-danger" onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </section>
+    </dialog>,
+    document.body,
   );
 }

@@ -196,6 +196,14 @@ pub async fn get_project_chat(
     Ok(Json(store.project_chat_response(&id).await?))
 }
 
+pub async fn reset_project_chat(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<ProjectChatResponse>, AppError> {
+    let mut store = state.store.write().await;
+    Ok(Json(store.reset_project_chat(&id).await?))
+}
+
 pub async fn send_project_chat_message(
     State(state): State<AppState>,
     AxumPath(project_id): AxumPath<String>,

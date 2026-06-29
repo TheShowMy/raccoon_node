@@ -247,6 +247,7 @@
 
   .chat-card-stack {
     @apply relative h-full w-full;
+    outline: none;
   }
 
   .chat-stack-card {
@@ -277,7 +278,7 @@
   }
 
   .chat-stack-card__switch {
-    @apply absolute top-0 right-0 bottom-0 z-10 flex w-6 cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-[10px] font-bold;
+    @apply absolute top-0 right-0 bottom-0 z-10 flex cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-[10px] font-bold;
     color: var(--text-soft);
   }
 
@@ -1190,6 +1191,68 @@
     backdrop-filter: blur(10px);
   }
 
+  .chat-confirm-dialog {
+    position: fixed;
+    inset: 0;
+    width: min(420px, calc(100vw - 32px));
+    max-width: min(420px, calc(100vw - 32px));
+    height: fit-content;
+    margin: auto;
+    overflow: visible;
+    border: 0;
+    padding: 0;
+    background: transparent;
+  }
+
+  .chat-confirm-dialog::backdrop {
+    background: color-mix(in srgb, var(--canvas-bg) 62%, transparent);
+    backdrop-filter: blur(10px);
+  }
+
+  .chat-confirm-dialog__panel {
+    @apply grid w-full gap-4 p-5;
+    grid-template-columns: auto minmax(0, 1fr);
+    transition: none;
+  }
+
+  .chat-confirm-dialog__panel:hover {
+    transform: none;
+  }
+
+  .chat-confirm-dialog__icon {
+    @apply flex h-10 w-10 items-center justify-center rounded-xl border;
+    border-color: color-mix(in srgb, var(--accent-danger) 34%, transparent);
+    background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
+    color: var(--accent-danger);
+  }
+
+  .chat-confirm-dialog__panel strong {
+    @apply text-sm;
+    color: var(--text-strong);
+  }
+
+  .chat-confirm-dialog__panel p {
+    @apply mt-2 mb-0 text-xs leading-relaxed;
+    color: var(--text-soft);
+  }
+
+  .chat-confirm-dialog__actions {
+    @apply col-span-2 flex justify-end gap-2;
+  }
+
+  .chat-confirm-dialog__actions button {
+    @apply cursor-pointer rounded-[10px] border px-3 py-2 text-xs font-bold transition;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--panel-bg) 76%, transparent);
+    color: var(--text-strong);
+  }
+
+  .chat-confirm-dialog__actions button.is-danger {
+    border-color: color-mix(in srgb, var(--accent-danger) 40%, transparent);
+    background: var(--accent-danger);
+    color: white;
+  }
+
   .task-detail-dialog__panel {
     width: 100%;
     max-height: calc(100vh - 48px);
@@ -1375,6 +1438,15 @@
   .rq-transcript {
     @apply min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-[188px];
     overscroll-behavior: contain;
+    cursor: text;
+    user-select: text;
+  }
+
+  .rq-message__body,
+  .rq-process__body,
+  .rq-process-step pre {
+    cursor: text;
+    user-select: text;
   }
 
   .rq-transcript,

@@ -509,6 +509,25 @@ impl JsonStore {
         Ok(response)
     }
 
+    pub async fn reset_project_chat(
+        &mut self,
+        project_id: &str,
+    ) -> Result<ProjectChatResponse, AppError> {
+        self.ensure_project_chat(project_id).await?;
+        let index = self.project_chat_index(project_id)?;
+        let chat = &mut self.data.project_chats[index];
+        if chat.running {
+            return Err(AppError::bad_request("项目问答正在回答，暂时无法关闭会话"));
+        }
+        chat.messages.clear();
+        chat.error = None;
+        chat.pi_session_file = None;
+        chat.updated_at = Utc::now();
+        let response = project_chat_response_from(chat);
+        self.write_persist().await?;
+        Ok(response)
+    }
+
     async fn ensure_project_chat(&mut self, project_id: &str) -> Result<(), AppError> {
         if !self
             .data
@@ -656,6 +675,8 @@ impl JsonStore {
             &images,
         )
         .await?;
+        let previous_clarifications = self.data.requirements[index].clarifications.clone();
+        let previous_draft = self.data.requirements[index].draft.clone();
         let now = Utc::now();
         {
             let requirement = &mut self.data.requirements[index];
@@ -683,8 +704,8 @@ impl JsonStore {
                 project,
                 messages: requirement.messages,
                 reference_context,
-                clarifications: requirement.clarifications,
-                draft: requirement.draft,
+                clarifications: previous_clarifications,
+                draft: previous_draft,
                 model_settings: self.data.model_settings.clone(),
                 pi_session_file: requirement.pi_session_file,
             },

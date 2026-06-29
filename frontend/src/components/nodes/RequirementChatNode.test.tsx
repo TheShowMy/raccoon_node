@@ -35,6 +35,7 @@ function data(projectId: string, overrides: Partial<ChatData> = {}): ChatData {
     onSend: vi.fn(),
     onProjectChatInputChange: vi.fn(),
     onProjectChatSend: vi.fn(),
+    onProjectChatReset: vi.fn(),
     onAnswerChange: vi.fn(),
     onSubmitClarifications: vi.fn(),
     onConfirm: vi.fn(),
@@ -61,6 +62,71 @@ describe("RequirementChatNode", () => {
 
     view.rerender(<RequirementChatNode data={data("project-2")} />);
     expect(requirementSwitch.closest("section")).toHaveClass("is-active");
+  });
+
+  it("switches cards with Tab from the stacked node or chat input", () => {
+    render(<RequirementChatNode data={data("project-1")} />);
+    const stack = screen.getByLabelText("需求会话与项目问答");
+    const projectSwitch = screen.getByRole("button", {
+      name: "切换到项目问答",
+    });
+    const input = screen.getByPlaceholderText("继续描述你的需求...");
+
+    fireEvent.keyDown(stack, { key: "Tab" });
+    expect(projectSwitch.closest("section")).toHaveClass("is-active");
+
+    fireEvent.keyDown(stack, { key: "Tab", shiftKey: true });
+    expect(projectSwitch.closest("section")).not.toHaveClass("is-active");
+
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(projectSwitch.closest("section")).toHaveClass("is-active");
+  });
+
+  it("uses the styled confirmation dialog for abandoning requirements", () => {
+    const requirement = {
+      id: "requirement-1",
+      project_id: "project-1",
+      title: "需求",
+      original_message: "需求",
+      status: "clarifying" as const,
+      messages: [],
+      clarification_round: 0,
+      clarifications: [],
+      draft: null,
+      execution_plan: null,
+      pi_session_file: null,
+      error: null,
+      queued_at: null,
+      created_at: "2026-06-25T00:00:00Z",
+      updated_at: "2026-06-25T00:00:00Z",
+    };
+    const onAbandon = vi.fn();
+    render(
+      <RequirementChatNode
+        data={data("project-1", { requirement, onAbandon })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "放弃当前需求" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("放弃当前需求？");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(onAbandon).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "放弃当前需求" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认放弃" }));
+    expect(onAbandon).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms closing project chat and delegates the reset", () => {
+    const onProjectChatReset = vi.fn().mockResolvedValue(undefined);
+    render(
+      <RequirementChatNode data={data("project-1", { onProjectChatReset })} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "切换到项目问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭项目问答会话" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("关闭项目问答？");
+    fireEvent.click(screen.getByRole("button", { name: "确认关闭" }));
+    expect(onProjectChatReset).toHaveBeenCalledTimes(1);
   });
 
   it("renders project chat as conversation bubbles and hides raw Pi payload", () => {
