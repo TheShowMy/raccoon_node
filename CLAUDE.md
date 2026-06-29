@@ -5,19 +5,23 @@
 ## 项目
 
 raccoon_node：Rust + React Flow 的本地 Git 仓库节点画布。当前运行目录中的 Git
-仓库就是唯一项目，不提供项目列表、克隆或删除功能。
+仓库就是唯一项目，固定项目 ID 为 `current`，不提供项目列表、克隆或删除功能。
+当前功能包括项目问答、需求澄清、FIFO 任务 DAG 执行、失败/重启恢复、三档模型设置和本地 TUI。
 LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc` 子进程并使用 stdin/stdout JSONL 通信。
 
 ## 必读文档
 
-- 技术栈：[docs/spec/TECH_STACK.md](docs/spec/TECH_STACK.md)
+- 架构与硬约束：[docs/spec/TECH_STACK.md](docs/spec/TECH_STACK.md)
+- 使用、CLI/TUI、安装和分发：[README.md](README.md)
+- API、项目问答、需求和任务流：[docs/api/README.md](docs/api/README.md)
 
-以下情况编码前必须查看技术栈文档：
+以下情况编码前必须查看相关文档：
 
 - 新增模块、调整目录或改构建脚本。
 - 引入、移除或升级依赖。
-- 修改 Rust/Axum/Tokio/API/JSON 存储。
+- 修改 Rust/Axum/Tokio/API、`app.json` / `data.db` 存储或恢复逻辑。
 - 修改 React/Vite/React Flow/节点 UI。
+- 修改项目问答、需求澄清、FIFO 队列、任务 DAG 或恢复流程。
 - 修改 LLM、模型设置、Pi Agent RPC 或 Agent 能力。
 - 修改 Git 根解析、`.raccoon-node/` 资源或 worktree 规则。
 - 修改 CLI、TUI、单二进制嵌入或 npm/crates.io/GitHub Release 发布流程。
@@ -26,8 +30,9 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 ## 常用命令
 
 - 开发：`npm run dev`
-- 打包：`npm run build`（生成 `build/bin/raccoon`）
+- 打包：`npm run build`（生成 `build/bin/raccoon`，Windows 为 `raccoon.exe`）
 - 基础检查：`npm run check`
+- 版本一致性检查：`npm run check:versions`
 - 完整检查：`pre-commit run --all-files`
 
 ## Windows 兼容
@@ -47,11 +52,13 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 
 - 只允许在有效 Git 仓库中运行；`--project-root` 必须直接指向 Git 根目录。
 - 项目 ID 固定为 `current`，项目源码就是 Git 根目录，不复制或移动用户仓库。
-- 运行数据只允许位于 `<git_root>/.raccoon-node/`；会话、worktree 和附件分别位于
-  `sessions/`、`worktrees/`、`attachments/`。
-- 所有 LLM 相关功能必须基于 Pi Agent RPC，禁止绕过 `pi --mode rpc`。
+- 运行数据只允许位于 `<git_root>/.raccoon-node/`；配置、主存储、恢复存储、会话、worktree 和附件分别位于
+  `config.toml`、`app.json`、`data.db`、`sessions/`、`worktrees/`、`attachments/`。
+- `.raccoon-node/app.json` 是主存储，`.raccoon-node/data.db` 是 write-through 恢复存储；旧版 `data/`、`build/data/`、`pi-sessions/` 不迁移、不读取，也不删除。
+- 生产构建是嵌入前端静态资源的 `build/bin/raccoon` 单二进制，不依赖外置 `public` 或数据目录。
+- 所有 LLM、模型列表、模型选择和 Agent 能力必须基于 Pi Agent RPC，禁止绕过 `pi --mode rpc`。
 - 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。
-- 禁止直接读写 Pi Agent 的 auth/settings 文件。
+- 禁止直接读写 Pi Agent 的 auth/settings 文件；本项目只保存自身三档模型设置。
 - 删除和清理只能作用于 `.raccoon-node/` 内的受管资源，绝不能删除 Git 根目录或用户源码。
 - 前端不处理 Git 密码、token、SSH key。
 - 不提交 `build/`、`target/`、`node_modules/`、`frontend/dist/`、
