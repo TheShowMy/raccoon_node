@@ -102,6 +102,7 @@ function params(
     selectedDagRequirementId: selectedDagRequirement?.id ?? null,
     collapsedTaskGroups: new Set(),
     requirementActionBusyId: null,
+    recoveringTaskGroupIds: new Set(),
     requirementActionError: null,
     settingsView: "closed",
     basicSettings: null,
@@ -128,9 +129,7 @@ function params(
     closeDag: () => {},
     selectDagRequirement: () => {},
     planRequirement: async () => {},
-    retryFailedNode: async () => {},
-    retryFromNode: async () => {},
-    rerunReview: async () => {},
+    recoverTaskGroup: async () => {},
     toggleTaskGroupCollapsed: () => {},
   };
 }
@@ -325,12 +324,11 @@ describe("buildProjectNodes", () => {
     });
   });
 
-  it("disables every recovery action while the requirement is running", () => {
+  it("only marks the recovering top-level task as busy", () => {
     const selectedRequirement = requirement([
       task("implementation", "implementation", { status: "failed" }),
       task("merge", "branch_merge", { status: "failed" }),
     ]);
-    selectedRequirement.status = "running";
     const canvas: ProjectCanvasData = {
       project: project(),
       active_requirement: selectedRequirement,
@@ -338,16 +336,26 @@ describe("buildProjectNodes", () => {
       completed_requirements: [],
     };
 
-    const taskNodes = buildProjectNodes(
-      params(canvas, selectedRequirement),
-    ).filter((node) => node.data.kind === "requirement-task");
+    const buildParams = params(canvas, selectedRequirement);
+    buildParams.recoveringTaskGroupIds.add("requirement:implementation");
+    const taskNodes = buildProjectNodes(buildParams).filter(
+      (node) => node.data.kind === "requirement-task",
+    );
+    const implementationNodes = taskNodes.filter(
+      (node) =>
+        node.id === "requirement-task-group-implementation" ||
+        node.parentId === "requirement-task-group-implementation",
+    );
+    const mergeNode = taskNodes.find(
+      (node) => node.id === "requirement-task-merge",
+    )!;
 
-    expect(taskNodes.length).toBeGreaterThan(1);
     expect(
-      taskNodes.every(
+      implementationNodes.every(
         (node) => node.data.kind === "requirement-task" && node.data.busy,
       ),
     ).toBe(true);
+    expect(mergeNode.data).toMatchObject({ busy: false });
   });
 
   it("keeps the first task 130px to the right of the DAG", () => {
@@ -425,7 +433,7 @@ describe("buildProjectNodes", () => {
     }
   });
 
-  it("expands recoverable compact review child nodes", () => {
+  it("keeps compact review child size stable when failed", () => {
     const implementation = task("implementation");
     const failedReview = task("review-1", "review_sub_agent", {
       status: "failed",
@@ -456,8 +464,8 @@ describe("buildProjectNodes", () => {
     )!;
 
     expect({ width: failed.width, height: failed.height }).toEqual({
-      width: 180,
-      height: 86,
+      width: 140,
+      height: 52,
     });
     expect({ width: completed.width, height: completed.height }).toEqual({
       width: 140,

@@ -291,7 +291,12 @@ impl ModelProvider for PiRpcModelProvider {
         Box::pin(async move {
             let (working_dir, branch_name, worktree_path) =
                 prepare_task_workspace(&self.data_root, &input).await?;
-            let client = PiRpcClient::start(&self.session_dir, &working_dir).await?;
+            let no_session = input.task.kind == RequirementTaskKind::ReviewSubAgent;
+            let client = if no_session {
+                PiRpcClient::start_no_session(&working_dir).await?
+            } else {
+                PiRpcClient::start(&self.session_dir, &working_dir).await?
+            };
             let mut input = input;
             if input.task.branch_name.is_none() {
                 input.task.branch_name = branch_name;
@@ -303,13 +308,23 @@ impl ModelProvider for PiRpcModelProvider {
             let mut output = match client.execute_requirement_task(input.clone(), events).await {
                 Ok(output) => output,
                 Err(error) => {
-                    let session_file = match error.pi_session_file() {
-                        Some(path) => Some(path.to_owned()),
-                        None => client.get_session_file().await.ok().flatten(),
+                    let session_file = if no_session {
+                        None
+                    } else {
+                        match error.pi_session_file() {
+                            Some(path) => Some(path.to_owned()),
+                            None => client.get_session_file().await.ok().flatten(),
+                        }
                     };
+                    if no_session {
+                        client.shutdown().await;
+                    }
                     return Err(AppError::task_execution(error.to_string(), session_file));
                 }
             };
+            if no_session {
+                client.shutdown().await;
+            }
             if input.task.kind == RequirementTaskKind::MergeReview
                 && output.review_status == Some(RequirementReviewStatus::Approved)
             {

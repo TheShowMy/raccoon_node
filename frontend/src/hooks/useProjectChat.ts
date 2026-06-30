@@ -71,7 +71,10 @@ export function useProjectChat(projectId: string | null) {
         if (!isProjectChatEvent(parsed) || parsed.project_id !== projectId) {
           return;
         }
-        setProjectChatEvents((current) => [...current, parsed]);
+        setProjectChatEvents((current) => {
+          const next = [...current, parsed];
+          return next.length > 100 ? next.slice(next.length - 100) : next;
+        });
         const finalEvent = [
           "project_chat_completed",
           "project_chat_failed",

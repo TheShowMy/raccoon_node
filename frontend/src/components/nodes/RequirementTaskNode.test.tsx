@@ -60,6 +60,8 @@ function renderNode({
   reviews = [],
   streamEvents = [],
   collapsed = false,
+  busy = false,
+  onRecoverTaskGroup = vi.fn(),
 }: {
   nodeTask?: RequirementExecutionTask;
   nodeRole?:
@@ -71,6 +73,8 @@ function renderNode({
   reviews?: RequirementExecutionTask[];
   streamEvents?: StreamEvent[];
   collapsed?: boolean;
+  busy?: boolean;
+  onRecoverTaskGroup?: (requirementId: string, taskId: string) => Promise<void>;
 } = {}) {
   const renderWithEvents = (events: StreamEvent[]) => (
     <RequirementTaskEventsProvider requirementId="req-1" events={events}>
@@ -81,11 +85,9 @@ function renderNode({
           requirementId: "req-1",
           task: nodeTask,
           reviews,
-          busy: false,
+          busy,
           collapsed,
-          onRetryFailedNode: vi.fn(),
-          onRetryFromNode: vi.fn(),
-          onRerunReview: vi.fn(),
+          onRecoverTaskGroup,
         }}
       />
     </RequirementTaskEventsProvider>
@@ -155,7 +157,7 @@ describe("RequirementTaskNode", () => {
     expect(document.body.querySelector("dialog")).toBeNull();
   });
 
-  it("only shows recovery actions for failed states", () => {
+  it("does not show recovery actions on child nodes", () => {
     const failedTask = task({
       status: "failed",
       error: "执行失败",
@@ -175,10 +177,9 @@ describe("RequirementTaskNode", () => {
       reviews: [rejectedReview],
     });
 
-    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "从此恢复" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "恢复" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "从此恢复" })).toBeNull();
     expect(screen.queryByRole("button", { name: "重跑" })).toBeNull();
     unmount();
 
@@ -191,7 +192,7 @@ describe("RequirementTaskNode", () => {
     expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
   });
 
-  it("shows all recovery actions on failed compact review nodes", () => {
+  it("shows one recovery action on a failed group and targets the group task", () => {
     const failedReview = task({
       id: "review-task-1",
       kind: "review_sub_agent",
@@ -200,43 +201,36 @@ describe("RequirementTaskNode", () => {
       review_angle: "安全",
       error: "审核执行失败",
     });
+    const onRecoverTaskGroup = vi.fn().mockResolvedValue(undefined);
 
-    const { container } = renderNode({
-      nodeTask: failedReview,
-      nodeRole: "review_sub_agent",
-    });
-
-    const inlineActions = container.querySelector<HTMLElement>(
-      ".task-node__inline-actions",
-    )!;
-    expect(
-      within(inlineActions).getByRole("button", { name: "重试" }),
-    ).toBeInTheDocument();
-    expect(
-      within(inlineActions).getByRole("button", { name: "重跑" }),
-    ).toBeInTheDocument();
-    expect(
-      within(inlineActions).getByRole("button", { name: "从此恢复" }),
-    ).toBeInTheDocument();
-  });
-
-  it("does not show recovery actions on completed compact review nodes", () => {
     renderNode({
-      nodeTask: task({
-        id: "review-task-1",
-        kind: "review_sub_agent",
-        status: "completed",
-        review_for: "task-1",
-      }),
-      nodeRole: "review_sub_agent",
+      nodeTask: task(),
+      nodeRole: "group",
+      reviews: [failedReview],
+      collapsed: true,
+      onRecoverTaskGroup,
     });
 
+    expect(screen.getByText("失败")).toBeInTheDocument();
+    const recover = screen.getByRole("button", { name: "恢复" });
+    fireEvent.click(recover);
+    expect(onRecoverTaskGroup).toHaveBeenCalledWith("req-1", "task-1");
     expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
     expect(screen.queryByRole("button", { name: "重跑" })).toBeNull();
     expect(screen.queryByRole("button", { name: "从此恢复" })).toBeNull();
   });
 
-  it("does not show an expand affordance for rejected reviews", () => {
+  it("shows one recovery action on a failed standalone task", () => {
+    renderNode({
+      nodeTask: task({ kind: "branch_merge", status: "failed" }),
+      nodeRole: "external",
+      busy: true,
+    });
+
+    expect(screen.getByRole("button", { name: "恢复" })).toBeDisabled();
+  });
+
+  it("does not show recovery for rejected reviews", () => {
     renderNode({
       nodeRole: "group",
       collapsed: true,
@@ -250,7 +244,7 @@ describe("RequirementTaskNode", () => {
       ],
     });
 
-    expect(screen.queryByRole("button", { name: "展开处理" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "恢复" })).toBeNull();
   });
 
   it("marks group, code, and review nodes with task status classes", () => {

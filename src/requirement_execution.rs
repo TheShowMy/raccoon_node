@@ -17,12 +17,10 @@ pub fn effective_model_tier(kind: RequirementTaskKind) -> RequirementModelTier {
         RequirementTaskKind::Implementation | RequirementTaskKind::ReviewSummary => {
             RequirementModelTier::Low
         }
-        RequirementTaskKind::Review | RequirementTaskKind::ReviewSubAgent => {
-            RequirementModelTier::Medium
-        }
-        RequirementTaskKind::BranchMerge | RequirementTaskKind::MergeReview => {
-            RequirementModelTier::High
-        }
+        RequirementTaskKind::Review
+        | RequirementTaskKind::ReviewSubAgent
+        | RequirementTaskKind::BranchMerge => RequirementModelTier::Medium,
+        RequirementTaskKind::MergeReview => RequirementModelTier::High,
     }
 }
 
@@ -64,14 +62,7 @@ JSON 格式：
 - 并行阶段之后的任务必须等待该阶段全部任务完成，禁止只依赖其中一个并行任务形成单分支串行链。
 - 会修改相同文件的任务禁止并行；应合并为一个任务，确需拆分时必须明确串行依赖。
 - DAG 必须按“阶段”拆分：串行阶段完成后可以进入一个并行阶段；并行阶段的所有任务全部完成并由系统自动合并后，才能进入下一阶段。
-- 禁止生成 `task-a`、`task-b` 并行，但后续 `task-c` 只依赖 `task-a` 的结构；`task-c` 必须同时依赖该并行阶段的全部任务。
-- 例如目标结构为 `task-1 → task-2 → [task-3, task-4, task-5] → 系统合并 → task-6 → [task-7, task-8] → 系统合并 → [task-9, task-10] → 系统合并 → 最终审核` 时：
-  - task-1 的 depends_on 为 []，task-2 的 depends_on 为 ["task-1"]。
-  - task-3、task-4、task-5 的 depends_on 必须完全相同，均为 ["task-2"]。
-  - task-6 的 depends_on 必须为 ["task-3", "task-4", "task-5"]。
-  - task-7、task-8 的 depends_on 必须完全相同，均为 ["task-6"]。
-  - task-9、task-10 的 depends_on 必须完全相同，均为 ["task-7", "task-8"]。
-  - 不要在 tasks 中生成合并任务；系统会在每个并行阶段后自动插入分支合并节点，并在最后执行最终审核和提交 PR。
+- 例如：`task-1 → task-2 → [task-3, task-4, task-5]（并行）→ 系统合并 → task-6 → [task-7, task-8]（并行）→ 系统合并 → 最终审核`；并行组内每个任务的 depends_on 必须完全相同；不要在 tasks 中生成合并任务，系统自动补齐。
 - 禁止生成纯审核、纯校验、纯检查、纯原因分析任务。
 - check.js、残留字符串检查、代码质量检查只能作为实现任务的验证标准，不能单独成任务。
 - 简单命名、文案、单点修改优先生成 1 个实现任务。
@@ -80,8 +71,7 @@ JSON 格式：
 - 每个任务必须能产生独立、可审查的 diff；如果两个功能天然必须一起实现，就合并成一个任务，不要硬拆。
 - description 必须明确写出：本任务只做什么、明确不做什么、完成后如何验证。
 - description 不要重复前置任务已经保证的验收标准，只需明确当前任务边界和验证方式。
-- 骨架/基础结构任务只能创建必要容器和占位，不得提前实现后续任务中的搜索、复制、语法高亮、数据填充、业务逻辑等功能。
-- 后续任务的功能不得被前置任务提前实现；如果某功能已包含在前置任务中，就不要再拆成后续实现任务。
+- 严禁前置任务提前实现后续任务的功能；骨架/基础结构任务只创建必要容器，不实现业务逻辑。
 
 ## 确认需求草案
 {draft}
@@ -143,11 +133,40 @@ pub fn parse_requirement_plan(text: &str) -> Result<RequirementExecutionPlan, Ap
     Ok(RequirementExecutionPlan { summary, tasks })
 }
 
+fn build_review_sub_agent_prompt(
+    requirement: &Requirement,
+    task: &RequirementExecutionTask,
+) -> String {
+    let (draft_title, draft_summary) = requirement
+        .draft
+        .as_ref()
+        .map(|d| (d.title.as_str(), d.summary.as_str()))
+        .unwrap_or(("（无标题）", "（无摘要）"));
+    let angle = task.review_angle.as_deref().unwrap_or("综合审核");
+    format!(
+        r#"代码审核（{angle}）。只审核 git diff --cached 的改动，无暂存改动则直接通过，不要修改代码。
+
+需求：{draft_title}——{draft_summary}
+
+只输出 JSON，不要 Markdown：
+{json_contract}
+"#,
+        angle = angle,
+        draft_title = draft_title,
+        draft_summary = draft_summary,
+        json_contract = task_output_json_contract(RequirementTaskKind::ReviewSubAgent),
+    )
+}
+
 pub fn build_requirement_task_prompt(
     requirement: &Requirement,
     plan: &RequirementExecutionPlan,
     task: &RequirementExecutionTask,
 ) -> String {
+    if task.kind == RequirementTaskKind::ReviewSubAgent {
+        return build_review_sub_agent_prompt(requirement, task);
+    }
+
     let draft = requirement
         .draft
         .as_ref()
@@ -215,13 +234,7 @@ pub fn build_requirement_task_prompt(
                 task.review_angle.as_deref().unwrap_or("综合审核")
             ),
         ),
-        RequirementTaskKind::ReviewSubAgent => (
-            "代码审核 Sub Agent",
-            format!(
-                "请只审核当前工作区暂存区（git diff --cached）的改动，不要审核旧提交，不要修改代码。\n若无暂存改动，直接通过。\n审核角度：{}",
-                task.review_angle.as_deref().unwrap_or("综合审核")
-            ),
-        ),
+        RequirementTaskKind::ReviewSubAgent => unreachable!("ReviewSubAgent uses build_review_sub_agent_prompt"),
         RequirementTaskKind::ReviewSummary => (
             "代码审核汇总 Agent",
             format!(
@@ -258,24 +271,16 @@ JSON 格式：
 {completed}
 
 ## 当前任务
-- id：{task_id}
 - 标题：{task_title}
 - 描述：{task_description}
 - 目标文件：{target_files}
-- 节点类型：{task_kind:?}
-- 审核目标：{review_for}
-- 审核角度：{review_angle}
 {extra}
 {failure_context}
 "#,
         role = role,
         json_contract = json_contract,
-        task_id = task.id,
         task_title = task.title,
         task_description = task.description,
-        task_kind = task.kind,
-        review_for = task.review_for.as_deref().unwrap_or("无"),
-        review_angle = task.review_angle.as_deref().unwrap_or("无"),
         extra = extra,
         failure_context = failure_context,
         target_files = if task.target_files.is_empty() {
@@ -1087,7 +1092,7 @@ mod tests {
         assert!(prompt.contains("并行阶段之后的任务必须等待该阶段全部任务完成"));
         assert!(prompt.contains("会修改相同文件的任务禁止并行"));
         assert!(prompt.contains("DAG 必须按“阶段”拆分"));
-        assert!(prompt.contains("task-6 的 depends_on 必须为 [\"task-3\", \"task-4\", \"task-5\"]"));
+        assert!(prompt.contains("并行组内每个任务的 depends_on 必须完全相同"));
         assert!(prompt.contains("不要在 tasks 中生成合并任务"));
     }
 
@@ -1234,8 +1239,8 @@ mod tests {
         assert!(fixing_prompt.contains("必须针对审核反馈产生实际代码修改"));
 
         let review_prompt = build_requirement_task_prompt(&requirement, &plan, &review);
-        assert!(review_prompt.contains("只审核当前工作区暂存区（git diff --cached）的改动"));
-        assert!(review_prompt.contains("不要审核旧提交"));
+        assert!(review_prompt.contains("只审核 git diff --cached"));
+        assert!(review_prompt.contains("不要修改代码"));
     }
 
     fn test_requirement(title: &str) -> Requirement {

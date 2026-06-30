@@ -11,6 +11,8 @@ pub struct PiRpcClient {
     pub session_dir: PathBuf,
     pub working_dir: PathBuf,
     pub cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// True when started with `--no-session`; skips session creation and validation.
+    pub no_session: bool,
 }
 
 impl PiRpcClient {
@@ -40,6 +42,95 @@ impl PiRpcClient {
         }
 
         Err(last_error.unwrap_or_else(|| AppError::internal("未知错误")))
+    }
+
+    pub async fn start_no_session(working_dir: &Path) -> Result<Self, AppError> {
+        let working_dir = normalize_local_path(working_dir)?;
+        let candidates: Vec<&str> = if cfg!(target_os = "windows") {
+            vec!["pi.cmd", "pi.exe", "pi"]
+        } else {
+            vec!["pi"]
+        };
+        let mut last_error = None;
+        for program in &candidates {
+            match Self::start_with_program_no_session(program, &working_dir).await {
+                Ok(client) => {
+                    tracing::info!("started Pi Agent RPC (no-session) using {}", program);
+                    return Ok(client);
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        "failed to start Pi Agent RPC (no-session) with {}: {}",
+                        program,
+                        error
+                    );
+                    last_error = Some(error);
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| AppError::internal("未知错误")))
+    }
+
+    async fn start_with_program_no_session(
+        program: &str,
+        working_dir: &Path,
+    ) -> Result<Self, AppError> {
+        let mut command = if cfg!(windows) && program.ends_with(".cmd") {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/D", "/S", "/C", program]);
+            command
+        } else {
+            Command::new(program)
+        };
+        let mut child = command
+            .arg("--mode")
+            .arg("rpc")
+            .arg("--no-session")
+            .arg("--no-context-files")
+            .current_dir(working_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| AppError::internal("无法打开 Pi Agent RPC stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AppError::internal("无法打开 Pi Agent RPC stdout"))?;
+
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                }
+            });
+        }
+
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let client = Self {
+            io: tokio::sync::Mutex::new(PiRpcIo {
+                stdin,
+                stdout: BufReader::new(stdout),
+                child,
+                cancelled: cancelled.clone(),
+            }),
+            session_dir: PathBuf::new(),
+            working_dir: working_dir.to_path_buf(),
+            cancelled,
+            no_session: true,
+        };
+        client.drain_startup_noise().await?;
+        Ok(client)
     }
 
     async fn start_with_program(
@@ -100,6 +191,7 @@ impl PiRpcClient {
             session_dir: session_dir.to_path_buf(),
             working_dir: working_dir.to_path_buf(),
             cancelled,
+            no_session: false,
         };
         client.drain_startup_noise().await?;
         Ok(client)
@@ -453,6 +545,10 @@ impl PiRpcClient {
     }
 
     async fn restore_or_new_session(&self, session_file: Option<&str>) -> Result<bool, AppError> {
+        if self.no_session {
+            // --no-session mode: Pi Agent starts fresh; no session commands needed.
+            return Ok(false);
+        }
         if let Some(session_file) = session_file {
             let session_path = self.resolve_session_path(session_file)?;
             if tokio::fs::try_exists(&session_path).await? {
@@ -532,6 +628,9 @@ impl PiRpcClient {
     }
 
     async fn validate_session_working_dir(&self) -> Result<(), AppError> {
+        if self.no_session {
+            return Ok(());
+        }
         let session_file = self
             .get_session_file()
             .await?

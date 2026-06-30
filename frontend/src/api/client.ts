@@ -266,18 +266,21 @@ export async function planRequirementExecution(
   return response.json();
 }
 
-export function retryFailedNode(
+export async function recoverTaskGroup(
   requirementId: string,
   taskId: string,
 ): Promise<ProjectCanvasData> {
-  return postTaskAction(requirementId, taskId, "retry", "重试失败节点失败");
-}
-
-export function retryFromNode(
-  requirementId: string,
-  taskId: string,
-): Promise<ProjectCanvasData> {
-  return postTaskAction(requirementId, taskId, "retry-from", "从节点恢复失败");
+  const response = await fetch(
+    `/api/requirements/${encodeURIComponent(requirementId)}/tasks/${encodeURIComponent(taskId)}/recover`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "恢复任务失败");
+  }
+  return response.json();
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -317,32 +320,6 @@ export async function deleteRequirement(
       message?: string;
     } | null;
     throw new Error(body?.message ?? "删除需求失败");
-  }
-  return response.json();
-}
-
-export function rerunReview(
-  requirementId: string,
-  taskId: string,
-): Promise<ProjectCanvasData> {
-  return postTaskAction(requirementId, taskId, "rerun-review", "重跑审核失败");
-}
-
-async function postTaskAction(
-  requirementId: string,
-  taskId: string,
-  action: string,
-  fallbackMessage: string,
-): Promise<ProjectCanvasData> {
-  const response = await fetch(
-    `/api/requirements/${encodeURIComponent(requirementId)}/tasks/${encodeURIComponent(taskId)}/${action}`,
-    { method: "POST" },
-  );
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    throw new Error(body?.message ?? fallbackMessage);
   }
   return response.json();
 }

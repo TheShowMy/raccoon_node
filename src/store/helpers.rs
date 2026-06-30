@@ -268,35 +268,6 @@ fn reject_reviewed_task(
     Ok(())
 }
 
-fn downstream_task_ids(
-    plan: &RequirementExecutionPlan,
-    task_id: &str,
-) -> Result<Vec<String>, AppError> {
-    if !plan.tasks.iter().any(|task| task.id == task_id) {
-        return Err(AppError::bad_request("执行任务不存在"));
-    }
-    let mut affected = Vec::new();
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for task in &plan.tasks {
-            let downstream = task
-                .depends_on
-                .iter()
-                .any(|dependency| dependency == task_id)
-                || task
-                    .depends_on
-                    .iter()
-                    .any(|dependency| affected.iter().any(|id| id == dependency));
-            if downstream && !affected.iter().any(|id| id == &task.id) {
-                affected.push(task.id.clone());
-                changed = true;
-            }
-        }
-    }
-    Ok(affected)
-}
-
 fn reset_recovery_state(task: &mut crate::models::RequirementExecutionTask) {
     task.execution_failure_count = 0;
     task.review_rejection_count = 0;
@@ -372,17 +343,11 @@ fn project_chat_response_from(chat: &ProjectChat) -> ProjectChatResponse {
     }
 }
 
-fn ensure_no_running_tasks(plan: &RequirementExecutionPlan) -> Result<(), AppError> {
-    if plan
-        .tasks
+fn execution_can_progress(plan: &RequirementExecutionPlan) -> bool {
+    plan.tasks
         .iter()
         .any(|task| task.status == RequirementTaskStatus::Running)
-    {
-        return Err(AppError::bad_request(
-            "需求正在执行，请等待当前任务结束后再恢复",
-        ));
-    }
-    Ok(())
+        || runnable_task_indexes(plan).is_ok_and(|indexes| !indexes.is_empty())
 }
 
 fn short_failure_summary(error: &AppError) -> String {

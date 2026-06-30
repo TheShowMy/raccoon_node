@@ -137,7 +137,7 @@ describe("canvas task layout", () => {
     );
   });
 
-  it("only enlarges failed review nodes for recovery actions", () => {
+  it("keeps review node size stable when status changes", () => {
     expect(
       getTaskGroupChildSize(
         task("rejected", [], "review_sub_agent", { status: "rejected" }),
@@ -147,6 +147,6 @@ describe("canvas task layout", () => {
       getTaskGroupChildSize(
         task("failed", [], "review_sub_agent", { status: "failed" }),
       ),
-    ).toEqual({ width: 180, height: 86 });
+    ).toEqual({ width: 140, height: 52 });
   });
 });

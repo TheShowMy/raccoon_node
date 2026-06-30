@@ -1302,6 +1302,7 @@ impl JsonStore {
             .iter()
             .position(|task| task.id == task_id)
             .ok_or_else(|| AppError::bad_request("执行任务不存在"))?;
+        let task_final_failure;
 
         match output {
             Ok(output) => {
@@ -1484,6 +1485,18 @@ impl JsonStore {
                     | RequirementTaskKind::BranchMerge
                     | RequirementTaskKind::MergeReview => {}
                 }
+                task_final_failure = match task_kind {
+                    RequirementTaskKind::Review | RequirementTaskKind::ReviewSummary => plan.tasks
+                        [task_index]
+                        .review_for
+                        .as_deref()
+                        .and_then(|review_for| plan.tasks.iter().find(|task| task.id == review_for))
+                        .is_some_and(|task| task.status == RequirementTaskStatus::Failed),
+                    RequirementTaskKind::MergeReview => {
+                        plan.tasks[task_index].status == RequirementTaskStatus::Rejected
+                    }
+                    _ => plan.tasks[task_index].status == RequirementTaskStatus::Failed,
+                };
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::Assistant,
@@ -1503,18 +1516,29 @@ impl JsonStore {
                         created_at: now,
                     });
                 }
-                if plan.tasks.iter().any(|task| {
+                let has_failed_task = plan
+                    .tasks
+                    .iter()
+                    .any(|task| task.status == RequirementTaskStatus::Failed);
+                let merge_review_rejected = plan.tasks.iter().any(|task| {
+                    task.kind == RequirementTaskKind::MergeReview
+                        && task.status == RequirementTaskStatus::Rejected
+                });
+                if (has_failed_task || merge_review_rejected) && execution_can_progress(plan) {
+                    requirement.status = RequirementStatus::Running;
+                    requirement.error = None;
+                } else if plan.tasks.iter().any(|task| {
                     task.kind == RequirementTaskKind::Implementation
                         && task.status == RequirementTaskStatus::Failed
                 }) {
                     requirement.status = RequirementStatus::Failed;
                     requirement.error = Some("审核多次未通过，需求执行已停止".to_owned());
-                } else if plan.tasks.iter().any(|task| {
-                    task.kind == RequirementTaskKind::MergeReview
-                        && task.status == RequirementTaskStatus::Rejected
-                }) {
+                } else if merge_review_rejected {
                     requirement.status = RequirementStatus::Failed;
                     requirement.error = Some("最终合并审核未通过".to_owned());
+                } else if has_failed_task {
+                    requirement.status = RequirementStatus::Failed;
+                    requirement.error = Some("部分任务执行失败".to_owned());
                 } else if plan.tasks.iter().any(|task| {
                     task.kind == RequirementTaskKind::MergeReview
                         && task.status == RequirementTaskStatus::Completed
@@ -1537,12 +1561,14 @@ impl JsonStore {
                 if let Some(session_file) = error.pi_session_file() {
                     task.pi_session_file = Some(session_file.to_owned());
                 }
-                if register_execution_failure(
+                let will_retry = register_execution_failure(
                     task,
                     &short_failure_summary(&error),
                     &error.to_string(),
                     retryable,
-                ) {
+                );
+                task_final_failure = !will_retry;
+                if will_retry || execution_can_progress(plan) {
                     requirement.status = RequirementStatus::Running;
                     requirement.error = None;
                 } else {
@@ -1552,7 +1578,7 @@ impl JsonStore {
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::System,
-                    content: if requirement.status == RequirementStatus::Running {
+                    content: if will_retry {
                         format!("任务「{}」执行失败，将按恢复策略重试：{error}", task_title)
                     } else {
                         format!("任务「{}」执行失败：{error}", task_title)
@@ -1565,55 +1591,17 @@ impl JsonStore {
             }
         }
         self.write_persist().await?;
-        Ok(
-            if self.data.requirements[index].status == RequirementStatus::Failed {
-                TaskExecutionDisposition::FinalFailure
-            } else {
-                TaskExecutionDisposition::Continue
-            },
-        )
-    }
-
-    pub async fn retry_failed_node(
-        &mut self,
-        requirement_id: &str,
-        task_id: &str,
-    ) -> Result<String, AppError> {
-        let index = self.requirement_index(requirement_id)?;
-        let project_id = self.data.requirements[index].project_id.clone();
-        let requirement = &mut self.data.requirements[index];
-        let plan = requirement
-            .execution_plan
-            .as_mut()
-            .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
-        ensure_no_running_tasks(plan)?;
-        let task = plan
-            .tasks
-            .iter_mut()
-            .find(|task| task.id == task_id)
-            .ok_or_else(|| AppError::bad_request("执行任务不存在"))?;
-        if task.status != RequirementTaskStatus::Failed {
-            return Err(AppError::bad_request("只能重试失败节点"));
-        }
-        task.status = if task.kind == RequirementTaskKind::Implementation {
-            RequirementTaskStatus::Fixing
+        Ok(if task_final_failure {
+            TaskExecutionDisposition::FinalFailure
         } else {
-            RequirementTaskStatus::Pending
-        };
-        task.error = None;
-        task.execution_warning = None;
-        reset_recovery_state(task);
-        requirement.status = RequirementStatus::Running;
-        requirement.error = None;
-        requirement.updated_at = Utc::now();
-        self.write_persist().await?;
-        Ok(project_id)
+            TaskExecutionDisposition::Continue
+        })
     }
 
-    pub async fn retry_from_node(
+    pub async fn recover_task_group(
         &mut self,
         requirement_id: &str,
-        task_id: &str,
+        top_level_task_id: &str,
     ) -> Result<String, AppError> {
         let index = self.requirement_index(requirement_id)?;
         let project_id = self.data.requirements[index].project_id.clone();
@@ -1622,69 +1610,74 @@ impl JsonStore {
             .execution_plan
             .as_mut()
             .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
-        ensure_no_running_tasks(plan)?;
-        let affected = downstream_task_ids(plan, task_id)?;
-        for task in &mut plan.tasks {
-            if task.id == task_id || affected.iter().any(|id| id == &task.id) {
-                task.status = RequirementTaskStatus::Pending;
-                task.review_status = RequirementReviewStatus::Pending;
-                task.error = None;
-                task.execution_warning = None;
-                task.result_summary = None;
-                reset_recovery_state(task);
-            }
-        }
-        requirement.status = RequirementStatus::Running;
-        requirement.error = None;
-        requirement.updated_at = Utc::now();
-        self.write_persist().await?;
-        Ok(project_id)
-    }
-
-    pub async fn rerun_review(
-        &mut self,
-        requirement_id: &str,
-        task_id: &str,
-    ) -> Result<String, AppError> {
-        let index = self.requirement_index(requirement_id)?;
-        let project_id = self.data.requirements[index].project_id.clone();
-        let requirement = &mut self.data.requirements[index];
-        let plan = requirement
-            .execution_plan
-            .as_mut()
-            .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
-        ensure_no_running_tasks(plan)?;
-        let task = plan
+        let top_level = plan
             .tasks
-            .iter_mut()
-            .find(|task| task.id == task_id)
+            .iter()
+            .find(|task| task.id == top_level_task_id)
+            .cloned()
             .ok_or_else(|| AppError::bad_request("执行任务不存在"))?;
         if !matches!(
-            task.kind,
-            RequirementTaskKind::Review
-                | RequirementTaskKind::ReviewSubAgent
-                | RequirementTaskKind::ReviewSummary
+            top_level.kind,
+            RequirementTaskKind::Implementation
+                | RequirementTaskKind::BranchMerge
+                | RequirementTaskKind::MergeReview
         ) {
-            return Err(AppError::bad_request("只能重跑审核节点"));
+            return Err(AppError::bad_request("只能恢复顶层任务节点"));
         }
-        let rerun_kind = task.kind;
-        let review_for = task.review_for.clone();
-        task.status = RequirementTaskStatus::Pending;
-        task.review_status = RequirementReviewStatus::Pending;
-        task.error = None;
-        task.execution_warning = None;
-        reset_recovery_state(task);
-        if rerun_kind == RequirementTaskKind::ReviewSubAgent {
-            for candidate in &mut plan.tasks {
-                if candidate.kind == RequirementTaskKind::ReviewSummary
-                    && candidate.review_for == review_for
-                {
-                    candidate.status = RequirementTaskStatus::Pending;
-                    candidate.review_status = RequirementReviewStatus::Pending;
-                    candidate.error = None;
-                    reset_recovery_state(candidate);
-                }
+
+        let in_group = |task: &crate::models::RequirementExecutionTask| {
+            task.id == top_level_task_id
+                || (top_level.kind == RequirementTaskKind::Implementation
+                    && task.review_for.as_deref() == Some(top_level_task_id))
+        };
+        if plan
+            .tasks
+            .iter()
+            .any(|task| in_group(task) && task.status == RequirementTaskStatus::Running)
+        {
+            return Err(AppError::bad_request("目标任务组正在执行"));
+        }
+        if !plan
+            .tasks
+            .iter()
+            .any(|task| in_group(task) && task.status == RequirementTaskStatus::Failed)
+        {
+            return Err(AppError::bad_request("目标任务组没有失败节点"));
+        }
+
+        let implementation_failed = top_level.kind == RequirementTaskKind::Implementation
+            && top_level.status == RequirementTaskStatus::Failed;
+        let failed_sub_agent = plan.tasks.iter().any(|task| {
+            task.review_for.as_deref() == Some(top_level_task_id)
+                && task.kind == RequirementTaskKind::ReviewSubAgent
+                && task.status == RequirementTaskStatus::Failed
+        });
+        for task in &mut plan.tasks {
+            let reset = if implementation_failed {
+                in_group(task)
+            } else {
+                (in_group(task) && task.status == RequirementTaskStatus::Failed)
+                    || failed_sub_agent
+                        && task.kind == RequirementTaskKind::ReviewSummary
+                        && task.review_for.as_deref() == Some(top_level_task_id)
+            };
+            if !reset {
+                continue;
             }
+            task.status = if task.id == top_level_task_id
+                && task.kind == RequirementTaskKind::Implementation
+            {
+                RequirementTaskStatus::Fixing
+            } else {
+                RequirementTaskStatus::Pending
+            };
+            task.review_status = RequirementReviewStatus::Pending;
+            task.error = None;
+            task.execution_warning = None;
+            task.result_summary = None;
+            task.last_review_feedback = None;
+            task.trace = None;
+            reset_recovery_state(task);
         }
         requirement.status = RequirementStatus::Running;
         requirement.error = None;
@@ -1719,21 +1712,6 @@ impl JsonStore {
     pub fn requirement_status(&self, requirement_id: &str) -> Result<RequirementStatus, AppError> {
         let index = self.requirement_index(requirement_id)?;
         Ok(self.data.requirements[index].status)
-    }
-
-    pub async fn reset_running_execution_tasks(
-        &mut self,
-        requirement_id: &str,
-    ) -> Result<(), AppError> {
-        let index = self.requirement_index(requirement_id)?;
-        if let Some(plan) = self.data.requirements[index].execution_plan.as_mut() {
-            for task in &mut plan.tasks {
-                if task.status == RequirementTaskStatus::Running {
-                    task.status = RequirementTaskStatus::Pending;
-                }
-            }
-        }
-        self.write_persist().await
     }
 
     pub fn requirement_index(&self, requirement_id: &str) -> Result<usize, AppError> {

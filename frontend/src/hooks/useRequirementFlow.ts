@@ -241,7 +241,11 @@ export function useRequirementFlow(
         if (parsed.requirement_id !== observedRequirementId) {
           return;
         }
-        setRequirementStreamEvents((current) => [...current, parsed]);
+        setRequirementStreamEvents((current) => {
+          const next = [...current, parsed];
+          // Cap at 100 to prevent unbounded growth causing React Flow slowdowns
+          return next.length > 100 ? next.slice(next.length - 100) : next;
+        });
 
         const transient =
           parsed.event === "coordinator_started" ||
@@ -249,10 +253,12 @@ export function useRequirementFlow(
           parsed.event === "coordinator_time_warning" ||
           parsed.event === "pi_event";
         if (!transient) {
-          void Promise.all([
-            loadProjectCanvas(selectedProjectId),
-            loadRequirementConversation(parsed.requirement_id),
-          ]).catch((reason) => setRequirementError(readError(reason)));
+          // Canvas structure is kept up-to-date by the 2500ms setInterval poll;
+          // calling loadProjectCanvas here on every task event caused the DAG
+          // useMemo to rebuild on every SSE message, making dragging sluggish.
+          void loadRequirementConversation(parsed.requirement_id).catch(
+            (reason) => setRequirementError(readError(reason)),
+          );
         }
       } catch (error) {
         console.error("EventSource message parse error", error, event.data);
@@ -282,12 +288,7 @@ export function useRequirementFlow(
     }
 
     return () => source.close();
-  }, [
-    loadRequirementConversation,
-    loadProjectCanvas,
-    observedRequirementId,
-    selectedProjectId,
-  ]);
+  }, [loadRequirementConversation, observedRequirementId, selectedProjectId]);
 
   return {
     requirementInput,

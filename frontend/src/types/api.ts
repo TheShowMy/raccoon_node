@@ -461,12 +461,10 @@ export type StartNodeData =
       busy: boolean;
       collapsed?: boolean;
       onToggleCollapsed?: (requirementId: string, taskId: string) => void;
-      onRetryFailedNode: (
+      onRecoverTaskGroup: (
         requirementId: string,
         taskId: string,
       ) => Promise<void>;
-      onRetryFromNode: (requirementId: string, taskId: string) => Promise<void>;
-      onRerunReview: (requirementId: string, taskId: string) => Promise<void>;
     }
   | {
       kind: "token-usage";

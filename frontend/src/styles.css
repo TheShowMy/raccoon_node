@@ -1041,10 +1041,6 @@
     );
   }
 
-  .task-node__recovery-actions {
-    @apply flex flex-wrap items-center gap-1;
-  }
-
   .task-node__summary {
     @apply min-h-0 overflow-hidden text-ellipsis whitespace-nowrap;
   }
@@ -1099,14 +1095,14 @@
     @apply h-full items-center;
   }
 
-  .task-node__handle-review {
-    @apply ml-auto inline-flex cursor-pointer items-center justify-center rounded-lg border px-2 py-1 text-[10px] font-bold transition;
+  .task-node__recover {
+    @apply inline-flex cursor-pointer items-center justify-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
     border-color: color-mix(in srgb, var(--accent-warning) 46%, transparent);
     background: color-mix(in srgb, var(--accent-warning) 14%, transparent);
     color: var(--accent-warning);
   }
 
-  .task-node__handle-review:hover {
+  .task-node__recover:hover:not(:disabled) {
     background: color-mix(in srgb, var(--accent-warning) 22%, transparent);
     color: var(--text-strong);
   }
@@ -1137,27 +1133,6 @@
 
   .task-node--review_sub_agent .task-node__head {
     @apply items-center gap-1.5;
-  }
-
-  .task-node--review_sub_agent.task-node--has-recovery-actions
-    .task-node__head {
-    @apply items-start;
-  }
-
-  .task-node__inline-actions {
-    @apply mt-1 flex flex-wrap items-center gap-1;
-  }
-
-  .task-node__inline-actions button {
-    @apply inline-flex cursor-pointer items-center gap-1 rounded-[7px] border px-1.5 py-0.5 text-[9px] font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
-    border-color: var(--card-border);
-    color: var(--text-soft);
-    background: color-mix(in srgb, var(--panel-bg) 74%, transparent);
-  }
-
-  .task-node__inline-actions button:hover:not(:disabled) {
-    border-color: var(--accent-model);
-    color: var(--text-strong);
   }
 
   .task-node--review_sub_agent .node-icon {

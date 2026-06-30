@@ -18,8 +18,8 @@ use crate::api::handlers::{
     create_requirement, delete_requirement, get_basic_settings, get_current_project,
     get_model_settings, get_project_attachment, get_project_canvas, get_project_chat,
     get_project_files, get_requirement_conversation, plan_requirement_execution,
-    project_chat_events, put_basic_settings, put_model_settings, requirement_events, rerun_review,
-    reset_project_chat, retry_failed_node, retry_from_node, send_project_chat_message,
+    project_chat_events, put_basic_settings, put_model_settings, recover_task_group,
+    requirement_events, reset_project_chat, send_project_chat_message,
     spawn_startup_requirement_scheduler, submit_requirement_clarifications,
     upload_project_attachment,
 };
@@ -152,16 +152,8 @@ fn build_app_with_startup_requirements(
         .route("/requirements/{id}/confirm", post(confirm_requirement))
         .route("/requirements/{id}/plan", post(plan_requirement_execution))
         .route(
-            "/requirements/{id}/tasks/{task_id}/retry",
-            post(retry_failed_node),
-        )
-        .route(
-            "/requirements/{id}/tasks/{task_id}/retry-from",
-            post(retry_from_node),
-        )
-        .route(
-            "/requirements/{id}/tasks/{task_id}/rerun-review",
-            post(rerun_review),
+            "/requirements/{id}/tasks/{task_id}/recover",
+            post(recover_task_group),
         )
         .route(
             "/requirements/{id}/cancel",

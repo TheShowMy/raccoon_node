@@ -49,14 +49,6 @@ impl Drop for ExecutionGuard {
     }
 }
 
-fn execution_is_active(requirement_id: &str) -> bool {
-    ACTIVE_EXECUTIONS
-        .get_or_init(|| Mutex::new(HashSet::new()))
-        .lock()
-        .expect("execution lock poisoned")
-        .contains(requirement_id)
-}
-
 pub async fn get_current_project(
     State(state): State<AppState>,
 ) -> Result<Json<CurrentProjectResponse>, AppError> {
@@ -388,48 +380,13 @@ pub async fn plan_requirement_execution(
     Ok(Json(store.project_canvas(&project_id)?))
 }
 
-pub async fn retry_failed_node(
+pub async fn recover_task_group(
     State(state): State<AppState>,
     AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    if execution_is_active(&requirement_id) {
-        return Err(AppError::bad_request("需求正在执行，请稍后再重试"));
-    }
     let project_id = {
         let mut store = state.store.write().await;
-        store.retry_failed_node(&requirement_id, &task_id).await?
-    };
-    spawn_project_scheduler(state.clone(), project_id.clone());
-    let store = state.store.read().await;
-    Ok(Json(store.project_canvas(&project_id)?))
-}
-
-pub async fn retry_from_node(
-    State(state): State<AppState>,
-    AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
-) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    if execution_is_active(&requirement_id) {
-        return Err(AppError::bad_request("需求正在执行，请稍后再恢复"));
-    }
-    let project_id = {
-        let mut store = state.store.write().await;
-        store.retry_from_node(&requirement_id, &task_id).await?
-    };
-    spawn_project_scheduler(state.clone(), project_id.clone());
-    let store = state.store.read().await;
-    Ok(Json(store.project_canvas(&project_id)?))
-}
-
-pub async fn rerun_review(
-    State(state): State<AppState>,
-    AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
-) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    if execution_is_active(&requirement_id) {
-        return Err(AppError::bad_request("需求正在执行，请稍后再重跑审核"));
-    }
-    let project_id = {
-        let mut store = state.store.write().await;
-        store.rerun_review(&requirement_id, &task_id).await?
+        store.recover_task_group(&requirement_id, &task_id).await?
     };
     spawn_project_scheduler(state.clone(), project_id.clone());
     let store = state.store.read().await;
@@ -762,22 +719,14 @@ async fn run_requirement_execution(state: AppState, requirement_id: String) -> R
             return status;
         }
 
-        let mut final_failure_seen = false;
         match running_tasks.join_next().await {
-            Some(Ok(TaskExecutionDisposition::Continue)) => {}
-            Some(Ok(TaskExecutionDisposition::FinalFailure)) | Some(Err(_)) => {
-                final_failure_seen = true;
+            Some(Ok(
+                TaskExecutionDisposition::Continue | TaskExecutionDisposition::FinalFailure,
+            )) => {}
+            Some(Err(error)) => {
+                tracing::error!(requirement_id, %error, "task execution join failed");
             }
             None => {}
-        }
-
-        if final_failure_seen {
-            // 不 abort，让兄弟任务自然结束
-            while running_tasks.join_next().await.is_some() {}
-            let mut store = state.store.write().await;
-            let _ = store.reset_running_execution_tasks(&requirement_id).await;
-            emitter.emit("execution_failed", "需求执行失败。");
-            return RequirementStatus::Failed;
         }
     }
 }
@@ -828,7 +777,10 @@ fn spawn_execution_tasks(
                 {
                     Ok(disposition) => disposition,
                     Err(error) => {
-                        emitter.emit("execution_failed", &format!("保存任务结果失败：{error}"));
+                        emitter.emit(
+                            "execution_task_failed",
+                            &format!("保存任务结果失败：{error}"),
+                        );
                         return TaskExecutionDisposition::FinalFailure;
                     }
                 };
@@ -841,7 +793,7 @@ fn spawn_execution_tasks(
             } else if disposition == TaskExecutionDisposition::Continue {
                 emitter.emit("execution_task_retrying", "任务执行失败，已安排自动恢复。");
             } else {
-                emitter.emit("execution_failed", "任务执行失败。");
+                emitter.emit("execution_task_failed", "任务执行失败。");
             }
             disposition
         });

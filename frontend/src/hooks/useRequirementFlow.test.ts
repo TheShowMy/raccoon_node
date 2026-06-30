@@ -155,7 +155,10 @@ describe("useRequirementFlow", () => {
 
     await waitFor(() => {
       expect(result.current.requirementStreamEvents).toHaveLength(1);
-      expect(loadProjectCanvas).toHaveBeenCalledWith("project-1");
+      // loadProjectCanvas is intentionally NOT called from the SSE handler;
+      // canvas updates are handled by the 2500ms setInterval poll to avoid
+      // rebuilding the DAG on every task event (performance fix).
+      expect(loadProjectCanvas).not.toHaveBeenCalled();
       expect(getRequirementConversation).toHaveBeenCalledWith(requirement.id);
     });
   });

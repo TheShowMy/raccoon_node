@@ -75,6 +75,7 @@ export interface BuildProjectNodesParams {
   selectedDagRequirementId: string | null;
   collapsedTaskGroups: Set<string>;
   requirementActionBusyId: string | null;
+  recoveringTaskGroupIds: Set<string>;
   requirementActionError: string | null;
   settingsView: SettingsView;
   basicSettings: BasicSettings | null;
@@ -97,9 +98,7 @@ export interface BuildProjectNodesParams {
   closeDag: () => void;
   selectDagRequirement: (requirement: Requirement) => void;
   planRequirement: (requirement: Requirement) => Promise<void>;
-  retryFailedNode: (requirementId: string, taskId: string) => Promise<void>;
-  retryFromNode: (requirementId: string, taskId: string) => Promise<void>;
-  rerunReview: (requirementId: string, taskId: string) => Promise<void>;
+  recoverTaskGroup: (requirementId: string, taskId: string) => Promise<void>;
   toggleTaskGroupCollapsed: (requirementId: string, taskId: string) => void;
 }
 
@@ -149,6 +148,7 @@ export function buildProjectNodes({
   selectedDagRequirementId,
   collapsedTaskGroups,
   requirementActionBusyId,
+  recoveringTaskGroupIds,
   requirementActionError,
   settingsView,
   basicSettings,
@@ -171,9 +171,7 @@ export function buildProjectNodes({
   closeDag,
   selectDagRequirement,
   planRequirement,
-  retryFailedNode,
-  retryFromNode,
-  rerunReview,
+  recoverTaskGroup,
   toggleTaskGroupCollapsed,
 }: BuildProjectNodesParams): Node<StartNodeData>[] {
   const project = projectCanvas?.project ?? currentProject;
@@ -205,10 +203,9 @@ export function buildProjectNodes({
   const standaloneExecutionTasks = selectedTasks.filter(
     (task) => task.kind === "branch_merge" || task.kind === "merge_review",
   );
-  const recoveryBusy =
+  const recoveryBusy = (taskId: string) =>
     selectedDagRequirement !== null &&
-    (requirementActionBusyId === selectedDagRequirement.id ||
-      selectedDagRequirement.status === "running");
+    recoveringTaskGroupIds.has(`${selectedDagRequirement.id}:${taskId}`);
   const taskPosition = (
     taskId: string,
     fallback: TaskPosition = TASK_BASE_POSITION,
@@ -387,11 +384,9 @@ export function buildProjectNodes({
                   task,
                   reviews,
                   collapsed,
-                  busy: recoveryBusy,
+                  busy: recoveryBusy(task.id),
                   onToggleCollapsed: toggleTaskGroupCollapsed,
-                  onRetryFailedNode: retryFailedNode,
-                  onRetryFromNode: retryFromNode,
-                  onRerunReview: rerunReview,
+                  onRecoverTaskGroup: recoverTaskGroup,
                 },
               },
               ...(collapsed
@@ -413,10 +408,8 @@ export function buildProjectNodes({
                         requirementId: selectedDagRequirement.id,
                         task,
                         reviews,
-                        busy: recoveryBusy,
-                        onRetryFailedNode: retryFailedNode,
-                        onRetryFromNode: retryFromNode,
-                        onRerunReview: rerunReview,
+                        busy: recoveryBusy(task.id),
+                        onRecoverTaskGroup: recoverTaskGroup,
                       },
                     },
                     ...(summary
@@ -437,10 +430,8 @@ export function buildProjectNodes({
                               requirementId: selectedDagRequirement.id,
                               task: summary,
                               reviews: subAgents,
-                              busy: recoveryBusy,
-                              onRetryFailedNode: retryFailedNode,
-                              onRetryFromNode: retryFromNode,
-                              onRerunReview: rerunReview,
+                              busy: recoveryBusy(task.id),
+                              onRecoverTaskGroup: recoverTaskGroup,
                             },
                           },
                         ]
@@ -461,10 +452,8 @@ export function buildProjectNodes({
                         requirementId: selectedDagRequirement.id,
                         task: review,
                         reviews: [],
-                        busy: recoveryBusy,
-                        onRetryFailedNode: retryFailedNode,
-                        onRetryFromNode: retryFromNode,
-                        onRerunReview: rerunReview,
+                        busy: recoveryBusy(task.id),
+                        onRecoverTaskGroup: recoverTaskGroup,
                       },
                     })),
                   ]),
@@ -486,10 +475,8 @@ export function buildProjectNodes({
                 requirementId: selectedDagRequirement.id,
                 task,
                 reviews: [],
-                busy: recoveryBusy,
-                onRetryFailedNode: retryFailedNode,
-                onRetryFromNode: retryFromNode,
-                onRerunReview: rerunReview,
+                busy: recoveryBusy(task.id),
+                onRecoverTaskGroup: recoverTaskGroup,
               },
             };
           }),

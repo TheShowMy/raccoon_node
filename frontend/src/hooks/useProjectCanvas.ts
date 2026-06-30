@@ -3,9 +3,7 @@ import type { ProjectCanvasData, Requirement } from "../types/api";
 import {
   getProjectCanvas,
   planRequirementExecution,
-  retryFailedNode as apiRetryFailedNode,
-  retryFromNode as apiRetryFromNode,
-  rerunReview as apiRerunReview,
+  recoverTaskGroup as apiRecoverTaskGroup,
   cancelRequirementAnalysis as apiCancelRequirementAnalysis,
   deleteRequirement as apiDeleteRequirement,
 } from "../api/client";
@@ -78,6 +76,9 @@ export function useProjectCanvas(
   const [requirementActionBusyId, setRequirementActionBusyId] = useState<
     string | null
   >(null);
+  const [recoveringTaskGroupIds, setRecoveringTaskGroupIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [requirementActionError, setRequirementActionError] = useState<
     string | null
   >(null);
@@ -110,6 +111,7 @@ export function useProjectCanvas(
       setProjectCanvas(null);
       setSelectedDagRequirementId(null);
       setRequirementActionBusyId(null);
+      setRecoveringTaskGroupIds(new Set());
       setRequirementActionError(null);
       return;
     }
@@ -225,46 +227,26 @@ export function useProjectCanvas(
     [setError],
   );
 
-  const runTaskRecoveryAction = useCallback(
-    async (
-      requirementId: string,
-      taskId: string,
-      action: (
-        requirementId: string,
-        taskId: string,
-      ) => Promise<ProjectCanvasData>,
-    ) => {
-      setRequirementActionBusyId(requirementId);
+  const recoverTaskGroup = useCallback(
+    async (requirementId: string, taskId: string) => {
+      const key = `${requirementId}:${taskId}`;
+      setRecoveringTaskGroupIds((current) => new Set(current).add(key));
       setRequirementActionError(null);
       try {
-        const data = await action(requirementId, taskId);
+        const data = await apiRecoverTaskGroup(requirementId, taskId);
         setProjectCanvas(data);
         setSelectedDagRequirementId(requirementId);
       } catch (reason) {
         setRequirementActionError(readError(reason));
       } finally {
-        setRequirementActionBusyId(null);
+        setRecoveringTaskGroupIds((current) => {
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
       }
     },
     [],
-  );
-
-  const retryFailedNode = useCallback(
-    (requirementId: string, taskId: string) =>
-      runTaskRecoveryAction(requirementId, taskId, apiRetryFailedNode),
-    [runTaskRecoveryAction],
-  );
-
-  const retryFromNode = useCallback(
-    (requirementId: string, taskId: string) =>
-      runTaskRecoveryAction(requirementId, taskId, apiRetryFromNode),
-    [runTaskRecoveryAction],
-  );
-
-  const rerunReview = useCallback(
-    (requirementId: string, taskId: string) =>
-      runTaskRecoveryAction(requirementId, taskId, apiRerunReview),
-    [runTaskRecoveryAction],
   );
 
   const cancelRequirementAnalysis = useCallback(
@@ -302,13 +284,12 @@ export function useProjectCanvas(
     collapsedTaskGroups,
     toggleTaskGroupCollapsed,
     requirementActionBusyId,
+    recoveringTaskGroupIds,
     requirementActionError,
     selectDagRequirement,
     closeDag,
     planRequirement,
-    retryFailedNode,
-    retryFromNode,
-    rerunReview,
+    recoverTaskGroup,
     cancelRequirementAnalysis,
     abandonRequirement,
   };

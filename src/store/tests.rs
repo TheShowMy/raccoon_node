@@ -378,6 +378,254 @@ fn execution_failures_have_a_finite_escalation_path() {
 }
 
 #[tokio::test]
+async fn final_failure_keeps_parallel_branch_running_until_all_progress_stops() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let mut active = requirement("requirement");
+    active.execution_plan = Some(RequirementExecutionPlan {
+        summary: "plan".to_owned(),
+        tasks: vec![
+            task(
+                "task-a",
+                RequirementTaskKind::Implementation,
+                RequirementTaskStatus::Running,
+            ),
+            task(
+                "task-b",
+                RequirementTaskKind::Implementation,
+                RequirementTaskStatus::Running,
+            ),
+        ],
+    });
+    store.data.requirements.push(active);
+
+    let first = store
+        .apply_task_execution_result(
+            "requirement",
+            "task-a",
+            Err(AppError::bad_request("不可重试")),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first, TaskExecutionDisposition::FinalFailure);
+    assert_eq!(
+        store.data.requirements[0].status,
+        RequirementStatus::Running
+    );
+
+    let second = store
+        .apply_task_execution_result(
+            "requirement",
+            "task-b",
+            Err(AppError::bad_request("不可重试")),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second, TaskExecutionDisposition::FinalFailure);
+    assert_eq!(store.data.requirements[0].status, RequirementStatus::Failed);
+}
+
+#[tokio::test]
+async fn failed_implementation_groups_recover_independently_and_keep_resources() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let mut implementation_a = task(
+        "task-a",
+        RequirementTaskKind::Implementation,
+        RequirementTaskStatus::Failed,
+    );
+    implementation_a.pi_session_file = Some("task-a.jsonl".to_owned());
+    implementation_a.worktree_path = Some("/tmp/task-a".to_owned());
+    implementation_a.branch_name = Some("task-a".to_owned());
+    let review_a = task_with_dependencies(
+        "review-a",
+        RequirementTaskKind::ReviewSubAgent,
+        RequirementTaskStatus::Completed,
+        vec!["task-a"],
+        Some("task-a"),
+    );
+    let implementation_b = task(
+        "task-b",
+        RequirementTaskKind::Implementation,
+        RequirementTaskStatus::Failed,
+    );
+    let mut failed = requirement("requirement");
+    failed.status = RequirementStatus::Failed;
+    failed.execution_plan = Some(RequirementExecutionPlan {
+        summary: "plan".to_owned(),
+        tasks: vec![
+            implementation_a,
+            review_a,
+            implementation_b,
+            task_with_dependencies(
+                "downstream",
+                RequirementTaskKind::BranchMerge,
+                RequirementTaskStatus::Completed,
+                vec!["task-a"],
+                None,
+            ),
+        ],
+    });
+    store.data.requirements.push(failed);
+
+    store
+        .recover_task_group("requirement", "task-a")
+        .await
+        .unwrap();
+    let plan = store.data.requirements[0].execution_plan.as_ref().unwrap();
+    assert_eq!(plan.tasks[0].status, RequirementTaskStatus::Fixing);
+    assert_eq!(plan.tasks[1].status, RequirementTaskStatus::Pending);
+    assert_eq!(plan.tasks[2].status, RequirementTaskStatus::Failed);
+    assert_eq!(plan.tasks[3].status, RequirementTaskStatus::Completed);
+    assert_eq!(
+        plan.tasks[0].pi_session_file.as_deref(),
+        Some("task-a.jsonl")
+    );
+    assert_eq!(plan.tasks[0].worktree_path.as_deref(), Some("/tmp/task-a"));
+    assert_eq!(plan.tasks[0].branch_name.as_deref(), Some("task-a"));
+
+    store
+        .recover_task_group("requirement", "task-b")
+        .await
+        .unwrap();
+    let plan = store.data.requirements[0].execution_plan.as_ref().unwrap();
+    assert_eq!(plan.tasks[0].status, RequirementTaskStatus::Fixing);
+    assert_eq!(plan.tasks[2].status, RequirementTaskStatus::Fixing);
+}
+
+#[tokio::test]
+async fn recovering_failed_reviews_keeps_successes_and_resets_summary_for_sub_agent() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let implementation = task(
+        "implementation",
+        RequirementTaskKind::Implementation,
+        RequirementTaskStatus::AwaitingReview,
+    );
+    let successful_review = task_with_dependencies(
+        "successful-review",
+        RequirementTaskKind::ReviewSubAgent,
+        RequirementTaskStatus::Completed,
+        vec!["implementation"],
+        Some("implementation"),
+    );
+    let failed_review = task_with_dependencies(
+        "failed-review",
+        RequirementTaskKind::ReviewSubAgent,
+        RequirementTaskStatus::Failed,
+        vec!["implementation"],
+        Some("implementation"),
+    );
+    let summary = task_with_dependencies(
+        "summary",
+        RequirementTaskKind::ReviewSummary,
+        RequirementTaskStatus::Completed,
+        vec!["successful-review", "failed-review"],
+        Some("implementation"),
+    );
+    let mut failed = requirement("requirement");
+    failed.status = RequirementStatus::Failed;
+    failed.execution_plan = Some(RequirementExecutionPlan {
+        summary: "plan".to_owned(),
+        tasks: vec![implementation, successful_review, failed_review, summary],
+    });
+    store.data.requirements.push(failed);
+
+    store
+        .recover_task_group("requirement", "implementation")
+        .await
+        .unwrap();
+    let plan = store.data.requirements[0].execution_plan.as_ref().unwrap();
+    assert_eq!(plan.tasks[0].status, RequirementTaskStatus::AwaitingReview);
+    assert_eq!(plan.tasks[1].status, RequirementTaskStatus::Completed);
+    assert_eq!(plan.tasks[2].status, RequirementTaskStatus::Pending);
+    assert_eq!(plan.tasks[3].status, RequirementTaskStatus::Pending);
+}
+
+#[tokio::test]
+async fn rejected_reviews_are_not_manually_recoverable() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let implementation = task(
+        "implementation",
+        RequirementTaskKind::Implementation,
+        RequirementTaskStatus::Fixing,
+    );
+    let rejected_review = task_with_dependencies(
+        "review",
+        RequirementTaskKind::Review,
+        RequirementTaskStatus::Rejected,
+        vec!["implementation"],
+        Some("implementation"),
+    );
+    let mut active = requirement("requirement");
+    active.execution_plan = Some(RequirementExecutionPlan {
+        summary: "plan".to_owned(),
+        tasks: vec![implementation, rejected_review],
+    });
+    store.data.requirements.push(active);
+
+    let error = store
+        .recover_task_group("requirement", "implementation")
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("没有失败节点"));
+}
+
+#[tokio::test]
+async fn merge_nodes_can_recover_while_another_group_is_running() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let mut active = requirement("requirement");
+    active.execution_plan = Some(RequirementExecutionPlan {
+        summary: "plan".to_owned(),
+        tasks: vec![
+            task(
+                "implementation",
+                RequirementTaskKind::Implementation,
+                RequirementTaskStatus::Running,
+            ),
+            task(
+                "branch-merge",
+                RequirementTaskKind::BranchMerge,
+                RequirementTaskStatus::Failed,
+            ),
+            task(
+                "merge-review",
+                RequirementTaskKind::MergeReview,
+                RequirementTaskStatus::Failed,
+            ),
+        ],
+    });
+    store.data.requirements.push(active);
+
+    store
+        .recover_task_group("requirement", "branch-merge")
+        .await
+        .unwrap();
+    store
+        .recover_task_group("requirement", "merge-review")
+        .await
+        .unwrap();
+
+    let plan = store.data.requirements[0].execution_plan.as_ref().unwrap();
+    assert_eq!(plan.tasks[0].status, RequirementTaskStatus::Running);
+    assert_eq!(plan.tasks[1].status, RequirementTaskStatus::Pending);
+    assert_eq!(plan.tasks[2].status, RequirementTaskStatus::Pending);
+}
+
+#[tokio::test]
 async fn startup_recovery_persists_interrupted_tasks_and_returns_all_running_requirements() {
     let temp_dir = tempfile::tempdir().unwrap();
     let path = temp_dir.path().join("data/app.json");

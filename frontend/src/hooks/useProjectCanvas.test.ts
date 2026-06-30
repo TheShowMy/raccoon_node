@@ -1,11 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  getProjectCanvas,
-  rerunReview,
-  retryFailedNode,
-  retryFromNode,
-} from "../api/client";
+import { getProjectCanvas, recoverTaskGroup } from "../api/client";
 import type {
   ProjectCanvasData,
   Requirement,
@@ -16,9 +11,7 @@ import { useProjectCanvas } from "./useProjectCanvas";
 vi.mock("../api/client", () => ({
   getProjectCanvas: vi.fn(),
   planRequirementExecution: vi.fn(),
-  retryFailedNode: vi.fn(),
-  retryFromNode: vi.fn(),
-  rerunReview: vi.fn(),
+  recoverTaskGroup: vi.fn(),
 }));
 
 const project = {
@@ -75,42 +68,33 @@ describe("useProjectCanvas task recovery actions", () => {
     vi.mocked(getProjectCanvas).mockResolvedValue(initialCanvas);
   });
 
-  it.each([
-    ["retryFailedNode", retryFailedNode],
-    ["retryFromNode", retryFromNode],
-    ["rerunReview", rerunReview],
-  ] as const)(
-    "%s 调用对应 API 并用返回值更新画布",
-    async (actionName, apiAction) => {
-      const updatedCanvas = createCanvas(
-        createRequirement("running", `${actionName} 后的需求`),
-      );
-      vi.mocked(apiAction).mockResolvedValue(updatedCanvas);
-      const { result } = renderProjectCanvas();
+  it("恢复任务组并用返回值更新画布", async () => {
+    const updatedCanvas = createCanvas(createRequirement("running"));
+    vi.mocked(recoverTaskGroup).mockResolvedValue(updatedCanvas);
+    const { result } = renderProjectCanvas();
 
-      await waitFor(() => {
-        expect(result.current.projectCanvas).toBe(initialCanvas);
-      });
+    await waitFor(() => {
+      expect(result.current.projectCanvas).toBe(initialCanvas);
+    });
 
-      act(() => {
-        result.current.selectDagRequirement(initialRequirement);
-      });
+    act(() => {
+      result.current.selectDagRequirement(initialRequirement);
+    });
 
-      await act(async () => {
-        await result.current[actionName]("requirement-1", "task-1");
-      });
+    await act(async () => {
+      await result.current.recoverTaskGroup("requirement-1", "task-1");
+    });
 
-      expect(apiAction).toHaveBeenCalledTimes(1);
-      expect(apiAction).toHaveBeenCalledWith("requirement-1", "task-1");
-      expect(result.current.selectedDagRequirementId).toBe("requirement-1");
-      expect(result.current.projectCanvas).toBe(updatedCanvas);
-      expect(result.current.requirementActionBusyId).toBeNull();
-      expect(result.current.requirementActionError).toBeNull();
-    },
-  );
+    expect(recoverTaskGroup).toHaveBeenCalledTimes(1);
+    expect(recoverTaskGroup).toHaveBeenCalledWith("requirement-1", "task-1");
+    expect(result.current.selectedDagRequirementId).toBe("requirement-1");
+    expect(result.current.projectCanvas).toBe(updatedCanvas);
+    expect(result.current.recoveringTaskGroupIds.size).toBe(0);
+    expect(result.current.requirementActionError).toBeNull();
+  });
 
   it("API 失败时保持画布和选中需求，并只设置操作错误", async () => {
-    vi.mocked(retryFailedNode).mockRejectedValue(new Error("节点恢复失败"));
+    vi.mocked(recoverTaskGroup).mockRejectedValue(new Error("节点恢复失败"));
     const setError = vi.fn();
     const { result } = renderProjectCanvas(setError);
 
@@ -124,24 +108,23 @@ describe("useProjectCanvas task recovery actions", () => {
     setError.mockClear();
 
     await act(async () => {
-      await result.current.retryFailedNode("requirement-1", "task-1");
+      await result.current.recoverTaskGroup("requirement-1", "task-1");
     });
 
-    expect(retryFailedNode).toHaveBeenCalledTimes(1);
-    expect(retryFailedNode).toHaveBeenCalledWith("requirement-1", "task-1");
+    expect(recoverTaskGroup).toHaveBeenCalledTimes(1);
+    expect(recoverTaskGroup).toHaveBeenCalledWith("requirement-1", "task-1");
     expect(result.current.projectCanvas).toBe(initialCanvas);
     expect(result.current.selectedDagRequirementId).toBe("requirement-1");
     expect(result.current.requirementActionError).toBe("节点恢复失败");
-    expect(result.current.requirementActionBusyId).toBeNull();
+    expect(result.current.recoveringTaskGroupIds.size).toBe(0);
     expect(setError).not.toHaveBeenCalled();
   });
 
-  it("恢复请求期间设置 busy，完成后清空", async () => {
-    let resolveAction!: (data: ProjectCanvasData) => void;
-    vi.mocked(retryFromNode).mockReturnValue(
-      new Promise((resolve) => {
-        resolveAction = resolve;
-      }),
+  it("多个任务组恢复时分别维护 busy，互不禁用", async () => {
+    const resolvers = new Map<string, (data: ProjectCanvasData) => void>();
+    vi.mocked(recoverTaskGroup).mockImplementation(
+      (_requirementId, taskId) =>
+        new Promise((resolve) => resolvers.set(taskId, resolve)),
     );
     const { result } = renderProjectCanvas();
 
@@ -149,18 +132,35 @@ describe("useProjectCanvas task recovery actions", () => {
       expect(result.current.projectCanvas).toBe(initialCanvas);
     });
 
-    let recovery!: Promise<void>;
+    let firstRecovery!: Promise<void>;
+    let secondRecovery!: Promise<void>;
     act(() => {
-      recovery = result.current.retryFromNode("requirement-1", "task-1");
+      firstRecovery = result.current.recoverTaskGroup(
+        "requirement-1",
+        "task-1",
+      );
+      secondRecovery = result.current.recoverTaskGroup(
+        "requirement-1",
+        "task-2",
+      );
     });
-    expect(result.current.requirementActionBusyId).toBe("requirement-1");
+    expect(result.current.recoveringTaskGroupIds).toEqual(
+      new Set(["requirement-1:task-1", "requirement-1:task-2"]),
+    );
 
     await act(async () => {
-      resolveAction(initialCanvas);
-      await recovery;
+      resolvers.get("task-1")!(initialCanvas);
+      await firstRecovery;
     });
+    expect(result.current.recoveringTaskGroupIds).toEqual(
+      new Set(["requirement-1:task-2"]),
+    );
 
-    expect(result.current.requirementActionBusyId).toBeNull();
+    await act(async () => {
+      resolvers.get("task-2")!(initialCanvas);
+      await secondRecovery;
+    });
+    expect(result.current.recoveringTaskGroupIds.size).toBe(0);
   });
 
   it("planning 时轮询画布，并在终态停止", async () => {
