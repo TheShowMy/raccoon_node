@@ -205,6 +205,10 @@ export function buildProjectNodes({
   const standaloneExecutionTasks = selectedTasks.filter(
     (task) => task.kind === "branch_merge" || task.kind === "merge_review",
   );
+  const recoveryBusy =
+    selectedDagRequirement !== null &&
+    (requirementActionBusyId === selectedDagRequirement.id ||
+      selectedDagRequirement.status === "running");
   const taskPosition = (
     taskId: string,
     fallback: TaskPosition = TASK_BASE_POSITION,
@@ -383,7 +387,7 @@ export function buildProjectNodes({
                   task,
                   reviews,
                   collapsed,
-                  busy: requirementActionBusyId === selectedDagRequirement.id,
+                  busy: recoveryBusy,
                   onToggleCollapsed: toggleTaskGroupCollapsed,
                   onRetryFailedNode: retryFailedNode,
                   onRetryFromNode: retryFromNode,
@@ -409,8 +413,7 @@ export function buildProjectNodes({
                         requirementId: selectedDagRequirement.id,
                         task,
                         reviews,
-                        busy:
-                          requirementActionBusyId === selectedDagRequirement.id,
+                        busy: recoveryBusy,
                         onRetryFailedNode: retryFailedNode,
                         onRetryFromNode: retryFromNode,
                         onRerunReview: rerunReview,
@@ -434,9 +437,7 @@ export function buildProjectNodes({
                               requirementId: selectedDagRequirement.id,
                               task: summary,
                               reviews: subAgents,
-                              busy:
-                                requirementActionBusyId ===
-                                selectedDagRequirement.id,
+                              busy: recoveryBusy,
                               onRetryFailedNode: retryFailedNode,
                               onRetryFromNode: retryFromNode,
                               onRerunReview: rerunReview,
@@ -460,8 +461,7 @@ export function buildProjectNodes({
                         requirementId: selectedDagRequirement.id,
                         task: review,
                         reviews: [],
-                        busy:
-                          requirementActionBusyId === selectedDagRequirement.id,
+                        busy: recoveryBusy,
                         onRetryFailedNode: retryFailedNode,
                         onRetryFromNode: retryFromNode,
                         onRerunReview: rerunReview,
@@ -486,7 +486,7 @@ export function buildProjectNodes({
                 requirementId: selectedDagRequirement.id,
                 task,
                 reviews: [],
-                busy: requirementActionBusyId === selectedDagRequirement.id,
+                busy: recoveryBusy,
                 onRetryFailedNode: retryFailedNode,
                 onRetryFromNode: retryFromNode,
                 onRerunReview: rerunReview,

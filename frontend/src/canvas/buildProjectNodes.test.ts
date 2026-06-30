@@ -325,6 +325,31 @@ describe("buildProjectNodes", () => {
     });
   });
 
+  it("disables every recovery action while the requirement is running", () => {
+    const selectedRequirement = requirement([
+      task("implementation", "implementation", { status: "failed" }),
+      task("merge", "branch_merge", { status: "failed" }),
+    ]);
+    selectedRequirement.status = "running";
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: selectedRequirement,
+      queued_requirements: [],
+      completed_requirements: [],
+    };
+
+    const taskNodes = buildProjectNodes(
+      params(canvas, selectedRequirement),
+    ).filter((node) => node.data.kind === "requirement-task");
+
+    expect(taskNodes.length).toBeGreaterThan(1);
+    expect(
+      taskNodes.every(
+        (node) => node.data.kind === "requirement-task" && node.data.busy,
+      ),
+    ).toBe(true);
+  });
+
   it("keeps the first task 130px to the right of the DAG", () => {
     const selectedRequirement = requirement();
     const canvas: ProjectCanvasData = {
