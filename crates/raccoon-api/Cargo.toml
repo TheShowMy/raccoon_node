@@ -1,0 +1,33 @@
+[package]
+name = "raccoon-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+raccoon-chat.workspace = true
+raccoon-core.workspace = true
+raccoon-pi-rpc.workspace = true
+raccoon-requirement.workspace = true
+raccoon-store.workspace = true
+axum.workspace = true
+mime_guess.workspace = true
+rust-embed.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "sync", "time"] }
+tokio-stream = { workspace = true, features = ["sync"] }
+tower-http = { workspace = true, features = ["cors"] }
+tracing.workspace = true
+
+[features]
+test-utils = []
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+
+[lib]
+name = "raccoon_api"
+path = "src/lib.rs"

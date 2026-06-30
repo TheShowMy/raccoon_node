@@ -55,6 +55,7 @@ type Props = {
   ) => void;
   onSubmitClarifications: (requirement: Requirement) => Promise<void>;
   onConfirm: (requirement: Requirement) => Promise<void>;
+  onRetryAnalysis?: (requirement: Requirement) => Promise<void>;
   onContinueEditing: (requirement: Requirement) => void;
   onCancel: () => void;
   onAbandon: () => void;
@@ -81,6 +82,7 @@ export default function RequirementConversationWorkbench({
   onAnswerChange,
   onSubmitClarifications,
   onConfirm,
+  onRetryAnalysis = async () => {},
   onContinueEditing,
   onCancel,
   onAbandon,
@@ -147,6 +149,17 @@ export default function RequirementConversationWorkbench({
           error={error ?? conversation?.error ?? null}
           onCancel={onCancel}
         />
+
+        {requirement?.status === "failed" && !requirement.draft ? (
+          <button
+            type="button"
+            className="requirement-draft__confirm"
+            disabled={busy}
+            onClick={() => void onRetryAnalysis(requirement)}
+          >
+            重新分析
+          </button>
+        ) : null}
 
         {prompt && requirement ? (
           <RequirementPromptLayer>

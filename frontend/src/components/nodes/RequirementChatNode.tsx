@@ -100,6 +100,7 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
             onAnswerChange={data.onAnswerChange}
             onSubmitClarifications={data.onSubmitClarifications}
             onConfirm={data.onConfirm}
+            onRetryAnalysis={data.onRetryAnalysis}
             onContinueEditing={data.onContinueEditing}
             onCancel={data.onCancel}
             onAbandon={() => setConfirmAction("abandon-requirement")}

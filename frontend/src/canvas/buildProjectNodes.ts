@@ -136,6 +136,7 @@ export interface BuildProjectChatNodeParams {
   ) => void;
   submitClarifications: (requirement: Requirement) => Promise<void>;
   confirmRequirement: (requirement: Requirement) => Promise<void>;
+  retryRequirementAnalysis?: (requirement: Requirement) => Promise<void>;
   continueEditingRequirement: (requirement: Requirement) => void;
   cancelRequirementAnalysis: (requirementId: string) => Promise<void>;
   abandonRequirement: (requirementId: string) => Promise<void>;
@@ -516,6 +517,7 @@ export function buildProjectChatNode({
   updateClarificationAnswer,
   submitClarifications,
   confirmRequirement,
+  retryRequirementAnalysis = async () => {},
   continueEditingRequirement,
   cancelRequirementAnalysis,
   abandonRequirement,
@@ -564,6 +566,7 @@ export function buildProjectChatNode({
         onAnswerChange: updateClarificationAnswer,
         onSubmitClarifications: submitClarifications,
         onConfirm: confirmRequirement,
+        onRetryAnalysis: retryRequirementAnalysis,
         onContinueEditing: continueEditingRequirement,
         onCancel: () => cancelRequirementAnalysis(activeRequirementId),
         onAbandon: () => abandonRequirement(activeRequirementId),

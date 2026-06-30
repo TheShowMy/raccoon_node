@@ -17,6 +17,7 @@ vi.mock("../api/client", () => ({
   getRequirementConversation: vi.fn(),
   submitRequirementClarifications: vi.fn(),
   confirmRequirement: vi.fn(),
+  retryRequirementAnalysis: vi.fn(),
 }));
 
 const now = "2026-06-25T00:00:00Z";

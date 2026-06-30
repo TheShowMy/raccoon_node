@@ -234,6 +234,22 @@ export async function submitRequirementClarifications(
   return response.json();
 }
 
+export async function retryRequirementAnalysis(
+  requirementId: string,
+): Promise<ProjectCanvasData> {
+  const response = await fetch(
+    `/api/requirements/${encodeURIComponent(requirementId)}/retry-analysis`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "重新分析需求失败");
+  }
+  return response.json();
+}
+
 export async function confirmRequirement(
   requirementId: string,
 ): Promise<ProjectCanvasData> {

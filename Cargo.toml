@@ -1,15 +1,16 @@
 [package]
 name = "raccoon-node"
-version = "0.2.0"
-edition = "2021"
-rust-version = "1.86"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Local Git project canvas powered by Pi Agent RPC"
-license = "MIT"
-repository = "https://github.com/TheShowMy/raccoon_node"
+license.workspace = true
+repository.workspace = true
 readme = "README.md"
 keywords = ["agent", "git", "llm", "workflow"]
 include = [
     "/src/**",
+    "/crates/**",
     "/frontend/dist/**",
     "/prompts/**",
     "/Cargo.toml",
@@ -19,35 +20,73 @@ include = [
     "/LICENSE",
 ]
 
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+repository = "https://github.com/TheShowMy/raccoon_node"
+
+[workspace.dependencies]
+raccoon-api = { version = "0.2.0", path = "crates/raccoon-api" }
+raccoon-chat = { version = "0.2.0", path = "crates/raccoon-chat" }
+raccoon-core = { version = "0.2.0", path = "crates/raccoon-core" }
+raccoon-dev = { version = "0.2.0", path = "crates/raccoon-dev" }
+raccoon-pi-rpc = { version = "0.2.0", path = "crates/raccoon-pi-rpc" }
+raccoon-requirement = { version = "0.2.0", path = "crates/raccoon-requirement" }
+raccoon-store = { version = "0.2.0", path = "crates/raccoon-store" }
+raccoon-tui = { version = "0.2.0", path = "crates/raccoon-tui" }
+axum = "0.8"
+chrono = "0.4"
+clap = "4"
+crossterm = "0.28"
+mime_guess = "2"
+ratatui = "0.29"
+rusqlite = "0.32"
+rust-embed = "8"
+serde = "1"
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = "1"
+tokio-stream = "0.1"
+toml = "0.8"
+tower = "0.5"
+tower-http = "0.6"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = "0.3"
+webbrowser = "1"
+
 [[bin]]
 name = "raccoon"
 path = "src/main.rs"
 
 [dependencies]
-axum = "0.8"
-chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4", features = ["derive"] }
-crossterm = "0.28"
-# 新版 instability 要求 Rust 1.88。
-instability = "=0.3.10"
-mime_guess = "2"
-ratatui = "0.29"
-rusqlite = { version = "0.32", features = ["bundled"] }
-rust-embed = "8"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "process", "io-util", "time", "signal"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
-toml = "0.8"
-tower-http = { version = "0.6", features = ["cors"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-ts-rs = { version = "10", optional = true }
-webbrowser = "1"
+raccoon-api.workspace = true
+raccoon-core.workspace = true
+raccoon-dev.workspace = true
+raccoon-tui.workspace = true
+axum.workspace = true
+clap = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+webbrowser.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
-tower = { version = "0.5", features = ["util"] }
+chrono.workspace = true
+raccoon-api = { workspace = true, features = ["test-utils"] }
+raccoon-requirement.workspace = true
+raccoon-store.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tower = { workspace = true, features = ["util"] }
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.gz"

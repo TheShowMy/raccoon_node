@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   DraftClarificationAnswer,
   FileReference,
@@ -13,6 +13,7 @@ import {
   createRequirement,
   appendRequirementMessage,
   getRequirementConversation,
+  retryRequirementAnalysis,
   submitRequirementClarifications,
   confirmRequirement,
 } from "../api/client";
@@ -48,6 +49,10 @@ export function useRequirementFlow(
   const [requirementStreamEvents, setRequirementStreamEvents] = useState<
     StreamEvent[]
   >([]);
+  const requirementEventBufferRef = useRef<StreamEvent[]>([]);
+  const requirementFlushTimeoutRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const [requirementConversation, setRequirementConversation] =
     useState<RequirementConversation | null>(null);
   const [dismissedPromptRequirementId, setDismissedPromptRequirementId] =
@@ -218,14 +223,77 @@ export function useRequirementFlow(
     [loadRequirementConversation, observeRequirement, setProjectCanvas],
   );
 
+  const retryAnalysis = useCallback(
+    async (requirement: Requirement) => {
+      setRequirementBusy(true);
+      setRequirementError(null);
+      try {
+        const data = await retryRequirementAnalysis(requirement.id);
+        setProjectCanvas(data);
+        observeRequirement(requirement.id);
+      } catch (reason) {
+        setRequirementError(readError(reason));
+      } finally {
+        setRequirementBusy(false);
+      }
+    },
+    [observeRequirement, setProjectCanvas],
+  );
+
   const continueEditingRequirement = useCallback((requirement: Requirement) => {
     setDismissedPromptRequirementId(requirement.id);
   }, []);
 
   useEffect(() => {
     if (!observedRequirementId || !selectedProjectId) {
+      requirementEventBufferRef.current = [];
+      if (requirementFlushTimeoutRef.current !== null) {
+        clearTimeout(requirementFlushTimeoutRef.current);
+        requirementFlushTimeoutRef.current = null;
+      }
       return;
     }
+
+    const transientEvents = new Set([
+      "coordinator_started",
+      "coordinator_progress",
+      "coordinator_time_warning",
+      "pi_event",
+    ]);
+    const canvasRefreshEvents = new Set([
+      "clarifications_ready",
+      "draft_ready",
+    ]);
+
+    const flushRequirementEvents = () => {
+      requirementFlushTimeoutRef.current = null;
+      const batch = requirementEventBufferRef.current;
+      if (batch.length === 0) return;
+      requirementEventBufferRef.current = [];
+      setRequirementStreamEvents((current) => {
+        const next = [...current, ...batch];
+        return next.length > 100 ? next.slice(next.length - 100) : next;
+      });
+
+      if (batch.some((event) => !transientEvents.has(event.event))) {
+        void loadRequirementConversation(observedRequirementId).catch(
+          (reason) => setRequirementError(readError(reason)),
+        );
+      }
+      if (batch.some((event) => canvasRefreshEvents.has(event.event))) {
+        void loadProjectCanvas(selectedProjectId).catch((reason) =>
+          setRequirementError(readError(reason)),
+        );
+      }
+    };
+
+    const scheduleRequirementFlush = () => {
+      if (requirementFlushTimeoutRef.current !== null) return;
+      requirementFlushTimeoutRef.current = setTimeout(
+        flushRequirementEvents,
+        50,
+      );
+    };
 
     const source = new EventSource(
       `/api/requirements/${encodeURIComponent(observedRequirementId)}/events`,
@@ -241,25 +309,8 @@ export function useRequirementFlow(
         if (parsed.requirement_id !== observedRequirementId) {
           return;
         }
-        setRequirementStreamEvents((current) => {
-          const next = [...current, parsed];
-          // Cap at 100 to prevent unbounded growth causing React Flow slowdowns
-          return next.length > 100 ? next.slice(next.length - 100) : next;
-        });
-
-        const transient =
-          parsed.event === "coordinator_started" ||
-          parsed.event === "coordinator_progress" ||
-          parsed.event === "coordinator_time_warning" ||
-          parsed.event === "pi_event";
-        if (!transient) {
-          // Canvas structure is kept up-to-date by the 2500ms setInterval poll;
-          // calling loadProjectCanvas here on every task event caused the DAG
-          // useMemo to rebuild on every SSE message, making dragging sluggish.
-          void loadRequirementConversation(parsed.requirement_id).catch(
-            (reason) => setRequirementError(readError(reason)),
-          );
-        }
+        requirementEventBufferRef.current.push(parsed);
+        scheduleRequirementFlush();
       } catch (error) {
         console.error("EventSource message parse error", error, event.data);
       }
@@ -287,8 +338,20 @@ export function useRequirementFlow(
       source.addEventListener(eventName, handleEvent);
     }
 
-    return () => source.close();
-  }, [loadRequirementConversation, observedRequirementId, selectedProjectId]);
+    return () => {
+      if (requirementFlushTimeoutRef.current !== null) {
+        clearTimeout(requirementFlushTimeoutRef.current);
+        requirementFlushTimeoutRef.current = null;
+      }
+      requirementEventBufferRef.current = [];
+      source.close();
+    };
+  }, [
+    loadRequirementConversation,
+    loadProjectCanvas,
+    observedRequirementId,
+    selectedProjectId,
+  ]);
 
   return {
     requirementInput,
@@ -307,6 +370,7 @@ export function useRequirementFlow(
     submitClarifications,
     sendRequirementMessage,
     confirmRequirement: confirm,
+    retryRequirementAnalysis: retryAnalysis,
     continueEditingRequirement,
   };
 }

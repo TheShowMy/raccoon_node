@@ -163,34 +163,81 @@ describe("useProjectCanvas task recovery actions", () => {
     expect(result.current.recoveringTaskGroupIds.size).toBe(0);
   });
 
-  it("planning 时轮询画布，并在终态停止", async () => {
+  it.each(["completed", "failed"] as const)(
+    "queued 时持续轮询状态，并在 %s 终态停止",
+    async (terminalStatus) => {
+      vi.useFakeTimers();
+      try {
+        const queuedCanvas = createCanvas(createRequirement("queued"));
+        const planningCanvas = createCanvas(createRequirement("planning"));
+        const planReadyCanvas = createCanvas(createRequirement("plan_ready"));
+        const terminalCanvas = createCanvas(createRequirement(terminalStatus));
+        vi.mocked(getProjectCanvas)
+          .mockResolvedValueOnce(queuedCanvas)
+          .mockResolvedValueOnce(planningCanvas)
+          .mockResolvedValueOnce(planReadyCanvas)
+          .mockResolvedValueOnce(terminalCanvas);
+
+        const { result } = renderProjectCanvas();
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(result.current.projectCanvas).toBe(queuedCanvas);
+
+        await act(async () => {
+          vi.advanceTimersByTime(2500);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(getProjectCanvas).toHaveBeenCalledTimes(2);
+        expect(result.current.projectCanvas).toBe(planningCanvas);
+
+        await act(async () => {
+          vi.advanceTimersByTime(2500);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(getProjectCanvas).toHaveBeenCalledTimes(3);
+        expect(result.current.projectCanvas).toBe(planReadyCanvas);
+
+        await act(async () => {
+          vi.advanceTimersByTime(2500);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(getProjectCanvas).toHaveBeenCalledTimes(4);
+        expect(result.current.projectCanvas).toBe(terminalCanvas);
+
+        await act(async () => {
+          vi.advanceTimersByTime(3000);
+          await Promise.resolve();
+        });
+        expect(getProjectCanvas).toHaveBeenCalledTimes(4);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("规划失败阻塞 FIFO 队列时不轮询", async () => {
     vi.useFakeTimers();
     try {
-      const planningCanvas = createCanvas(createRequirement("planning"));
-      const completedCanvas = createCanvas(createRequirement("completed"));
-      vi.mocked(getProjectCanvas)
-        .mockResolvedValueOnce(planningCanvas)
-        .mockResolvedValueOnce(completedCanvas);
-
-      const { result } = renderProjectCanvas();
-      await act(async () => {
-        await Promise.resolve();
+      vi.mocked(getProjectCanvas).mockResolvedValue({
+        ...initialCanvas,
+        active_requirement: null,
+        queued_requirements: [
+          createRequirement("failed"),
+          { ...createRequirement("queued"), id: "requirement-2" },
+        ],
       });
-      expect(result.current.projectCanvas).toBe(planningCanvas);
 
+      renderProjectCanvas();
       await act(async () => {
-        vi.advanceTimersByTime(2500);
         await Promise.resolve();
-        await Promise.resolve();
-      });
-      expect(getProjectCanvas).toHaveBeenCalledTimes(2);
-      expect(result.current.projectCanvas).toBe(completedCanvas);
-
-      await act(async () => {
         vi.advanceTimersByTime(3000);
-        await Promise.resolve();
       });
-      expect(getProjectCanvas).toHaveBeenCalledTimes(2);
+
+      expect(getProjectCanvas).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

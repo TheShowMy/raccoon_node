@@ -42,9 +42,16 @@ pub fn install_pi() -> io::Result<()> {
 
 pub fn ensure_data_layout(data_root: &Path) -> io::Result<()> {
     fs::create_dir_all(data_root)?;
-    for directory in ["sessions", "worktrees", "attachments"] {
+    for directory in ["sessions", "worktrees", "attachments", "logs", "extensions"] {
         let directory = data_root.join(directory);
-        crate::utils::ensure_child_path(data_root, &directory)
+        if fs::symlink_metadata(&directory).is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{} 不能是符号链接", directory.display()),
+            ));
+        }
+        raccoon_core::utils::ensure_child_path(data_root, &directory)
             .map_err(|error| io::Error::other(error.to_string()))?;
         fs::create_dir_all(directory)?;
     }
@@ -143,5 +150,20 @@ mod tests {
         fs::create_dir(&data_root).unwrap();
         std::os::unix::fs::symlink(outside.path(), data_root.join("sessions")).unwrap();
         assert!(ensure_data_layout(&data_root).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_logs_and_extensions_even_inside_data_root() {
+        for directory in ["logs", "extensions"] {
+            let project = tempfile::tempdir().unwrap();
+            let data_root = project.path().join(".raccoon-node");
+            fs::create_dir_all(data_root.join("real")).unwrap();
+            std::os::unix::fs::symlink(data_root.join("real"), data_root.join(directory)).unwrap();
+
+            let error = ensure_data_layout(&data_root).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert!(error.to_string().contains(directory));
+        }
     }
 }

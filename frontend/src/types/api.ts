@@ -437,6 +437,7 @@ export type StartNodeData =
       ) => void;
       onSubmitClarifications: (requirement: Requirement) => Promise<void>;
       onConfirm: (requirement: Requirement) => Promise<void>;
+      onRetryAnalysis?: (requirement: Requirement) => Promise<void>;
       onContinueEditing: (requirement: Requirement) => void;
       onCancel: () => void;
       onAbandon: () => void;

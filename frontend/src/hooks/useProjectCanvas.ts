@@ -171,10 +171,16 @@ export function useProjectCanvas(
       (requirement) => requirement.id === selectedDagRequirementId,
     ) ?? null;
   const observedRequirementId = selectedDagRequirementId ?? activeRequirementId;
-  const shouldPollProjectCanvas = allProjectRequirements.some(
-    (requirement) =>
-      requirement.status === "planning" || requirement.status === "running",
+  const planningBlocked = projectCanvas?.queued_requirements.some(
+    (requirement) => requirement.status === "failed",
   );
+  const shouldPollProjectCanvas =
+    !planningBlocked &&
+    allProjectRequirements.some((requirement) =>
+      ["queued", "planning", "plan_ready", "running"].includes(
+        requirement.status,
+      ),
+    );
 
   useEffect(() => {
     if (!selectedProjectId || !shouldPollProjectCanvas) {

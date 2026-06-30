@@ -19,7 +19,7 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 
 - 新增模块、调整目录或改构建脚本。
 - 引入、移除或升级依赖。
-- 修改 Rust/Axum/Tokio/API、`app.json` / `data.db` 存储或恢复逻辑。
+- 修改 Rust/Axum/Tokio/API、SQLite、旧 `app.json` 迁移或恢复逻辑。
 - 修改 React/Vite/React Flow/节点 UI。
 - 修改项目问答、需求澄清、FIFO 队列、任务 DAG 或恢复流程。
 - 修改 LLM、模型设置、Pi Agent RPC 或 Agent 能力。
@@ -52,9 +52,19 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 
 - 只允许在有效 Git 仓库中运行；`--project-root` 必须直接指向 Git 根目录。
 - 项目 ID 固定为 `current`，项目源码就是 Git 根目录，不复制或移动用户仓库。
-- 运行数据只允许位于 `<git_root>/.raccoon-node/`；配置、主存储、恢复存储、会话、worktree 和附件分别位于
-  `config.toml`、`app.json`、`data.db`、`sessions/`、`worktrees/`、`attachments/`。
-- `.raccoon-node/app.json` 是主存储，`.raccoon-node/data.db` 是 write-through 恢复存储；旧版 `data/`、`build/data/`、`pi-sessions/` 不迁移、不读取，也不删除。
+- 运行数据只允许位于 `<git_root>/.raccoon-node/`；配置、SQLite 主存储、会话、
+  日志、受管插件、worktree 和附件分别位于 `config.toml`、`data.db`、
+  `sessions/`、`logs/`、`extensions/`、`worktrees/`、`attachments/`。
+- `.raccoon-node/data.db` 是唯一业务主存储；旧 `.raccoon-node/app.json`
+  只允许首次事务迁移，成功后原子改名为 `app.json.migrated` 且不自动删除，
+  后续启动不得读取。旧版 `data/`、`build/data/`、`pi-sessions/` 不迁移、
+  不读取，也不删除。
+- Pi session 保存完整模型上下文，不承担 FIFO、DAG、worktree 或恢复状态；
+  SQLite 保存业务投影与事务状态。
+- `.raccoon-node/extensions/` 只允许存放程序内置的受管 Pi extension；
+  项目 Pi RPC 必须隔离用户全局和项目插件。
+- `.raccoon-node/logs/` 中的文件日志按日滚动，最多保留 7 个文件；禁止记录
+  prompt、澄清答案、token 或完整工具输出。
 - 生产构建是嵌入前端静态资源的 `build/bin/raccoon` 单二进制，不依赖外置 `public` 或数据目录。
 - 所有 LLM、模型列表、模型选择和 Agent 能力必须基于 Pi Agent RPC，禁止绕过 `pi --mode rpc`。
 - 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。

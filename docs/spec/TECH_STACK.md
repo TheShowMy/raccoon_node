@@ -2,12 +2,12 @@
 
 ## 栈
 
-- 后端：Rust 2021（MSRV 1.86）、Axum、Tokio、serde/JSON、rusqlite、chrono、tracing。
+- 后端：Rust 2024（MSRV 1.96）、Axum、Tokio、serde/JSON、rusqlite、chrono、tracing。
 - 前端：React、TypeScript、Vite、React Flow（`@xyflow/react`）、lucide-react、Tailwind CSS。
 - CLI/TUI：clap、ratatui、crossterm。
 - 静态资源：Vite 产物通过 rust-embed 嵌入 `raccoon` 单二进制。
-- 存储：`<git_root>/.raccoon-node/app.json` 为主存储，`data.db` 为 write-through
-  恢复存储。
+- 存储：`<git_root>/.raccoon-node/data.db` 是唯一业务主存储；旧 `app.json`
+  首次成功导入后原子改名为 `app.json.migrated`。
 - Git：当前 Git 仓库即唯一项目；后端使用系统 Git 管理任务 worktree。
 - LLM：只通过 Pi Agent RPC，后端启动持久 `pi --mode rpc` 子进程，stdin/stdout JSONL 通信。
 
@@ -19,8 +19,11 @@
 - 构建脚本：`scripts/build.mjs`
 - 项目仓库：当前 Git 根目录，固定项目 ID `current`
 - 项目配置：`<git_root>/.raccoon-node/config.toml`
-- 应用数据：`<git_root>/.raccoon-node/app.json`、`data.db`
-- Pi Agent RPC 会话：`<git_root>/.raccoon-node/sessions/`
+- 应用数据：`<git_root>/.raccoon-node/data.db`
+- 旧数据迁移备份：`<git_root>/.raccoon-node/app.json.migrated`
+- Pi Agent RPC 完整模型上下文：`<git_root>/.raccoon-node/sessions/`
+- 每日滚动日志（最多 7 个文件）：`<git_root>/.raccoon-node/logs/`
+- 内置受管 Pi extension：`<git_root>/.raccoon-node/extensions/`
 - 任务 worktree：`<git_root>/.raccoon-node/worktrees/`
 - 附件：`<git_root>/.raccoon-node/attachments/`
 - 本地打包输出：`build/bin/raccoon`（Windows 为 `raccoon.exe`）
@@ -44,6 +47,10 @@
 - 根页面直接加载固定 `current` 项目画布，不提供 start 画布或项目增删。
 - `.raccoon-node/` 必须加入仓库 `.gitignore`，且运行数据不得逃逸该目录。
 - 所有 LLM、模型列表、模型选择和后续 Agent 能力必须基于 Pi Agent RPC。
+- 需求澄清和确认草案必须通过内置受管 Pi extension 的结构化工具提交；不得恢复
+  文本 JSON 提取。
+- 业务状态只以 SQLite 为准；Pi session 只保存完整模型历史，不承担 FIFO、DAG、
+  worktree 或恢复状态。
 - 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。
 - 禁止直接读写 Pi Agent 的 auth/settings 文件；本项目只保存自身三档模型设置。
 - Pi 工作目录只能是 Git 根目录或 `.raccoon-node/worktrees/` 中的受管 worktree。
