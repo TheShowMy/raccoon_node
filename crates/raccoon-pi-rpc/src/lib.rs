@@ -713,13 +713,25 @@ impl PiRpcClient {
         self.prompt_with_images(&build_requirement_prompt(&input), &input.prompt_images)
             .await?;
         let mut pi_events = Vec::new();
+        let mut last_emit = Instant::now();
+        let mut pending_event: Option<Value> = None;
+        let mut emit_event = |event: Value| {
+            if let Some(emitter) = &events {
+                emitter.emit_pi_event(event);
+            }
+        };
         self.wait_for_agent_end_with_events(
             Duration::from_secs(120), // first warning at 120s
             Duration::from_secs(600), // hard stop at 600s (10 min)
             &events,
             |event| {
-                if let Some(emitter) = &events {
-                    emitter.emit_pi_event(event.clone());
+                if events.is_some() {
+                    throttle_pi_event(
+                        event.clone(),
+                        &mut last_emit,
+                        &mut pending_event,
+                        &mut emit_event,
+                    );
                 }
                 pi_events.push(event);
             },
@@ -953,13 +965,25 @@ impl PiRpcClient {
         .await?;
         let mut pi_events = Vec::new();
         let no_requirement_events = None;
+        let mut last_emit = Instant::now();
+        let mut pending_event: Option<Value> = None;
+        let mut emit_event = |event: Value| {
+            if let Some(emitter) = &events {
+                emitter.emit_pi_event(event);
+            }
+        };
         self.wait_for_agent_end_with_events(
             Duration::from_secs(120),
             Duration::from_secs(600),
             &no_requirement_events,
             |event| {
-                if let Some(emitter) = &events {
-                    emitter.emit_pi_event(event.clone());
+                if events.is_some() {
+                    throttle_pi_event(
+                        event.clone(),
+                        &mut last_emit,
+                        &mut pending_event,
+                        &mut emit_event,
+                    );
                 }
                 pi_events.push(event);
             },
@@ -1234,9 +1258,21 @@ impl PiRpcClient {
     ) -> Result<raccoon_requirement::PiResponseExtraction, AppError> {
         self.prompt(prompt).await?;
         let mut pi_events = Vec::new();
-        self.wait_for_agent_end_with_events(warning_after, idle_timeout, events, |event| {
+        let mut last_emit = Instant::now();
+        let mut pending_event: Option<Value> = None;
+        let mut emit_event = |event: Value| {
             if let Some(emitter) = events {
-                emitter.emit_pi_event(event.clone());
+                emitter.emit_pi_event(event);
+            }
+        };
+        self.wait_for_agent_end_with_events(warning_after, idle_timeout, events, |event| {
+            if events.is_some() {
+                throttle_pi_event(
+                    event.clone(),
+                    &mut last_emit,
+                    &mut pending_event,
+                    &mut emit_event,
+                );
             }
             pi_events.push(event);
         })
@@ -1509,6 +1545,41 @@ fn value_has_non_empty_text(value: &Value) -> bool {
             false
         }
         _ => false,
+    }
+}
+
+/// Forward high-frequency Pi events to the frontend at most once every 50 ms.
+/// Lifecycle events (start/end/turn_end/agent_end) are emitted immediately,
+/// and any pending throttled event is flushed first so the UI never misses
+/// state transitions.
+fn throttle_pi_event<E>(
+    event: Value,
+    last_emit: &mut Instant,
+    pending: &mut Option<Value>,
+    emit: &mut E,
+) where
+    E: FnMut(Value),
+{
+    const INTERVAL: Duration = Duration::from_millis(50);
+    let event_type = event.get("type").and_then(Value::as_str);
+    let immediate = matches!(
+        event_type,
+        Some("agent_end" | "turn_end" | "tool_execution_start" | "tool_execution_end")
+    );
+    if immediate {
+        if let Some(previous) = pending.take() {
+            emit(previous);
+        }
+        emit(event);
+        *last_emit = Instant::now();
+    } else {
+        *pending = Some(event);
+        if last_emit.elapsed() >= INTERVAL {
+            if let Some(previous) = pending.take() {
+                emit(previous);
+            }
+            *last_emit = Instant::now();
+        }
     }
 }
 

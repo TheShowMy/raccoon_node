@@ -39,6 +39,10 @@ export function useProjectChat(projectId: string | null) {
   const [projectChatEvents, setProjectChatEvents] = useState<
     ProjectChatEvent[]
   >([]);
+  const chatEventBufferRef = useRef<ProjectChatEvent[]>([]);
+  const chatFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const loadProjectChat = useCallback(async (id: string) => {
     const data = await getProjectChat(id);
@@ -56,11 +60,50 @@ export function useProjectChat(projectId: string | null) {
     setProjectChatImages([]);
     setProjectChatError(null);
     setProjectChatEvents([]);
+    chatEventBufferRef.current = [];
+    if (chatFlushTimeoutRef.current !== null) {
+      clearTimeout(chatFlushTimeoutRef.current);
+      chatFlushTimeoutRef.current = null;
+    }
     if (!projectId) return;
 
     void loadProjectChat(projectId).catch((reason) =>
       setProjectChatError(readError(reason)),
     );
+
+    const finalEvents = new Set([
+      "project_chat_completed",
+      "project_chat_failed",
+      "chat_completed",
+      "chat_failed",
+      "completed",
+      "failed",
+    ]);
+
+    const flushChatEvents = () => {
+      chatFlushTimeoutRef.current = null;
+      const batch = chatEventBufferRef.current;
+      if (batch.length === 0) return;
+      chatEventBufferRef.current = [];
+      setProjectChatEvents((current) => {
+        const next = [...current, ...batch];
+        return next.length > 100 ? next.slice(next.length - 100) : next;
+      });
+      if (batch.some((event) => finalEvents.has(event.event))) {
+        void loadProjectChat(projectId)
+          .then(() => {
+            if (projectIdRef.current === projectId) {
+              setProjectChatEvents([]);
+            }
+          })
+          .catch((reason) => setProjectChatError(readError(reason)));
+      }
+    };
+
+    const scheduleChatFlush = () => {
+      if (chatFlushTimeoutRef.current !== null) return;
+      chatFlushTimeoutRef.current = setTimeout(flushChatEvents, 50);
+    };
 
     const source = new EventSource(
       `/api/projects/${encodeURIComponent(projectId)}/chat/events`,
@@ -71,27 +114,8 @@ export function useProjectChat(projectId: string | null) {
         if (!isProjectChatEvent(parsed) || parsed.project_id !== projectId) {
           return;
         }
-        setProjectChatEvents((current) => {
-          const next = [...current, parsed];
-          return next.length > 100 ? next.slice(next.length - 100) : next;
-        });
-        const finalEvent = [
-          "project_chat_completed",
-          "project_chat_failed",
-          "chat_completed",
-          "chat_failed",
-          "completed",
-          "failed",
-        ].includes(parsed.event);
-        if (finalEvent) {
-          void loadProjectChat(projectId)
-            .then(() => {
-              if (projectIdRef.current === projectId) {
-                setProjectChatEvents([]);
-              }
-            })
-            .catch((reason) => setProjectChatError(readError(reason)));
-        }
+        chatEventBufferRef.current.push(parsed);
+        scheduleChatFlush();
       } catch (error) {
         console.error(
           "Project chat EventSource parse error",
@@ -117,7 +141,14 @@ export function useProjectChat(projectId: string | null) {
     ]) {
       source.addEventListener(eventName, handleEvent);
     }
-    return () => source.close();
+    return () => {
+      if (chatFlushTimeoutRef.current !== null) {
+        clearTimeout(chatFlushTimeoutRef.current);
+        chatFlushTimeoutRef.current = null;
+      }
+      chatEventBufferRef.current = [];
+      source.close();
+    };
   }, [loadProjectChat, projectId]);
 
   const sendProjectChat = useCallback(async () => {

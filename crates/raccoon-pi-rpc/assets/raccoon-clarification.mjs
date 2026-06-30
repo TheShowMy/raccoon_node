@@ -86,6 +86,27 @@ function parseAnswers(text, questions) {
   });
 }
 
+function buildClarificationAnswerContent(questions, answers) {
+  const lines = ["用户已完成需求澄清。具体答案如下："];
+  for (let i = 0; i < questions.length; i++) {
+    const question = questions[i];
+    const answer = answers[i];
+    const selectedLabels = answer.selected_options
+      .map((value) => {
+        const option = question.options.find((o) => o.value === value);
+        return option ? option.label : value;
+      })
+      .join("、");
+    const customText = answer.custom_text ? `；补充说明：${answer.custom_text}` : "";
+    lines.push(`${i + 1}. ${question.question}：${selectedLabels}${customText}`);
+  }
+  lines.push("");
+  lines.push(
+    "请严格根据上述答案提交具体可执行的确认草案，禁止提交占位草案或要求用户再次选择。",
+  );
+  return lines.join("\n");
+}
+
 export default function (pi) {
   pi.registerCommand("raccoon-clarifications-v1", {
     description: "Raccoon 受管需求澄清协议 v1（能力标记）",
@@ -114,8 +135,9 @@ export default function (pi) {
         ...question,
         answer: answers[index],
       }));
+      const contentText = buildClarificationAnswerContent(params.questions, answers);
       return {
-        content: [{ type: "text", text: "用户已完成需求澄清，请据此提交确认草案。" }],
+        content: [{ type: "text", text: contentText }],
         details: {
           protocol: PROTOCOL,
           kind: "clarifications",
