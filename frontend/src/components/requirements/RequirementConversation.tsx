@@ -37,7 +37,6 @@ type Props = {
   projectName: string;
   projectId: string;
   prompt: RequirementConversationPrompt | null;
-  promptDismissed: boolean;
   input: string;
   references?: FileReference[];
   images?: ImageAttachment[];
@@ -67,7 +66,6 @@ export default function RequirementConversationWorkbench({
   projectName,
   projectId,
   prompt,
-  promptDismissed,
   input,
   references = [],
   images = [],
@@ -90,17 +88,15 @@ export default function RequirementConversationWorkbench({
   const running =
     conversation?.running ??
     (requirement ? requirement.status === "analyzing" : false);
-  const hasBlockingPrompt = Boolean(prompt);
+  const hasPrompt = Boolean(prompt);
   const canSend =
     !busy &&
     !running &&
-    !hasBlockingPrompt &&
     input.trim().length > 0 &&
     (!requirement ||
       ["analyzing", "clarifying", "draft_ready", "failed"].includes(
         requirement.status,
-      ) ||
-      promptDismissed);
+      ));
 
   async function submit() {
     if (canSend) {
@@ -190,14 +186,18 @@ export default function RequirementConversationWorkbench({
           images={images}
           onReferencesChange={onReferencesChange}
           onImagesChange={onImagesChange}
-          disabled={busy || running || hasBlockingPrompt}
+          disabled={busy || running}
           canSend={canSend}
           placeholder={
-            hasBlockingPrompt
-              ? "先处理上方卡片，或选择继续补充"
-              : running
-                ? "Coordinator 正在处理，过程会实时显示"
-                : "继续描述你的需求..."
+            running
+              ? "Coordinator 正在处理，过程会实时显示"
+              : prompt?.type === "clarification"
+                ? "可回答上方问题，也可以直接补充说明..."
+                : prompt?.type === "confirmation"
+                  ? "确认前可继续补充或要求修改..."
+                  : hasPrompt
+                    ? "继续补充当前需求..."
+                    : "继续描述你的需求..."
           }
           onChange={onInputChange}
           onSubmit={submit}

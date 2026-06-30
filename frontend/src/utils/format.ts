@@ -168,10 +168,32 @@ export function buildBubbleStreamFromTrace(trace: TraceData): LiveBubble[] {
 
 type PiStreamEvent = StreamEvent | ProjectChatEvent;
 
+type ToolOutputState = {
+  content: string;
+  lastChunk: string;
+};
+
+function mergeStreamText(
+  current: string,
+  incoming: string,
+  lastChunk = "",
+): { content: string; lastChunk: string } {
+  if (!incoming || incoming === lastChunk || current.endsWith(incoming)) {
+    return { content: current, lastChunk };
+  }
+  if (!current || incoming.startsWith(current)) {
+    return { content: incoming, lastChunk: incoming };
+  }
+  const separator =
+    current.endsWith("\n") || incoming.startsWith("\n") ? "" : "\n";
+  return { content: `${current}${separator}${incoming}`, lastChunk: incoming };
+}
+
 export function buildBubbleStreamFromEvents(
   events: PiStreamEvent[],
 ): LiveBubble[] {
   const bubbles: LiveBubble[] = [];
+  const toolOutputs = new Map<string, ToolOutputState>();
   let seq = 0;
 
   for (const event of events) {
@@ -210,14 +232,18 @@ export function buildBubbleStreamFromEvents(
       const toolName = String(
         payload?.toolName ?? payload?.tool_name ?? "tool",
       );
-      bubbles.push({
-        id: toolCallId,
-        type: "tool",
-        label: toolName,
-        content: "",
-        toolName,
-        status: "running",
-      });
+      if (
+        !bubbles.some((item) => item.id === toolCallId && item.type === "tool")
+      ) {
+        bubbles.push({
+          id: toolCallId,
+          type: "tool",
+          label: toolName,
+          content: "",
+          toolName,
+          status: "running",
+        });
+      }
       continue;
     }
 
@@ -225,21 +251,44 @@ export function buildBubbleStreamFromEvents(
       event.pi_type === "tool_execution_update" ||
       event.pi_type === "tool_execution_end"
     ) {
-      const toolCallId = String(payload?.toolCallId ?? payload?.tool_call_id);
-      const index = bubbles.findIndex(
+      const toolCallId = String(
+        payload?.toolCallId ?? payload?.tool_call_id ?? `tool-${seq++}`,
+      );
+      let index = bubbles.findIndex(
         (item) => item.id === toolCallId && item.type === "tool",
       );
-      if (index === -1) continue;
+      if (index === -1) {
+        bubbles.push({
+          id: toolCallId,
+          type: "tool",
+          label: String(payload?.toolName ?? payload?.tool_name ?? "tool"),
+          content: "",
+          toolName: String(payload?.toolName ?? payload?.tool_name ?? "tool"),
+          status: "running",
+        });
+        index = bubbles.length - 1;
+      }
       const bubble = bubbles[index];
       const output = extractToolOutput(payload);
-      const nextContent = output ? output : bubble.content;
+      const state = toolOutputs.get(toolCallId) ?? {
+        content: bubble.content,
+        lastChunk: "",
+      };
+      const merged = output
+        ? mergeStreamText(state.content, output, state.lastChunk)
+        : state;
+      toolOutputs.set(toolCallId, merged);
       const nextStatus =
         event.pi_type === "tool_execution_end"
           ? payload?.isError || payload?.is_error
             ? "error"
             : "done"
           : bubble.status;
-      bubbles[index] = { ...bubble, content: nextContent, status: nextStatus };
+      bubbles[index] = {
+        ...bubble,
+        content: merged.content,
+        status: nextStatus,
+      };
       continue;
     }
 

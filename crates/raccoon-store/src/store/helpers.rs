@@ -428,18 +428,45 @@ fn build_requirement_conversation(requirement: Requirement) -> RequirementConver
         }
     }
 
-    let prompt = match requirement.status {
-        RequirementStatus::Clarifying if !requirement.clarifications.is_empty() => {
-            Some(RequirementConversationPrompt::Clarification {
-                round: requirement.clarification_round,
-                questions: requirement.clarifications.clone(),
-            })
-        }
-        RequirementStatus::DraftReady => requirement
-            .draft
-            .clone()
-            .map(|draft| RequirementConversationPrompt::Confirmation { draft }),
-        _ => None,
+    let prompt = match &requirement.active_prompt {
+        Some(RequirementPromptState::Clarification {
+            prompt_id,
+            revision,
+            round,
+            questions,
+        }) => Some(RequirementConversationPrompt::Clarification {
+            round: *round,
+            questions: questions.clone(),
+            prompt_id: Some(prompt_id.clone()),
+            revision: Some(*revision),
+        }),
+        Some(RequirementPromptState::Confirmation {
+            prompt_id,
+            revision,
+            draft,
+        }) => Some(RequirementConversationPrompt::Confirmation {
+            draft: draft.clone(),
+            prompt_id: Some(prompt_id.clone()),
+            revision: Some(*revision),
+        }),
+        None => match requirement.status {
+            RequirementStatus::Clarifying if !requirement.clarifications.is_empty() => {
+                Some(RequirementConversationPrompt::Clarification {
+                    round: requirement.clarification_round,
+                    questions: requirement.clarifications.clone(),
+                    prompt_id: None,
+                    revision: None,
+                })
+            }
+            RequirementStatus::DraftReady => requirement.draft.clone().map(|draft| {
+                RequirementConversationPrompt::Confirmation {
+                    draft,
+                    prompt_id: None,
+                    revision: None,
+                }
+            }),
+            _ => None,
+        },
     };
 
     let running = matches!(

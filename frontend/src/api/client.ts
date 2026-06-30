@@ -216,13 +216,18 @@ export async function getRequirementConversation(
 export async function submitRequirementClarifications(
   requirementId: string,
   answers: ReturnType<typeof buildClarificationAnswerPayload>[],
+  prompt?: { prompt_id?: string; revision?: number },
 ): Promise<ProjectCanvasData> {
+  const body =
+    prompt?.prompt_id || prompt?.revision
+      ? { prompt_id: prompt.prompt_id, revision: prompt.revision, answers }
+      : answers;
   const response = await fetch(
     `/api/requirements/${encodeURIComponent(requirementId)}/clarifications`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(answers),
+      body: JSON.stringify(body),
     },
   );
   if (!response.ok) {
@@ -252,10 +257,15 @@ export async function retryRequirementAnalysis(
 
 export async function confirmRequirement(
   requirementId: string,
+  prompt?: { prompt_id?: string; revision?: number },
 ): Promise<ProjectCanvasData> {
   const response = await fetch(
     `/api/requirements/${encodeURIComponent(requirementId)}/confirm`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: prompt ? { "Content-Type": "application/json" } : undefined,
+      body: prompt ? JSON.stringify(prompt) : undefined,
+    },
   );
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {

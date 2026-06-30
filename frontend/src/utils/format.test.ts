@@ -116,6 +116,82 @@ describe("format utilities", () => {
     ]);
   });
 
+  it("keeps old tool output when updates are deltas", () => {
+    const events: StreamEvent[] = [
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "工具开始执行。",
+        pi_type: "tool_execution_start",
+        payload: { toolCallId: "tool-1", toolName: "Read" },
+      },
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "工具更新。",
+        pi_type: "tool_execution_update",
+        payload: {
+          toolCallId: "tool-1",
+          partialResult: { content: [{ text: "第一段" }] },
+        },
+      },
+      ...Array.from({ length: 120 }, (_, index) => ({
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "工具更新。",
+        pi_type: "tool_execution_update" as const,
+        payload: {
+          toolCallId: "tool-1",
+          partialResult: { content: [{ text: `第${index + 2}段` }] },
+        },
+      })),
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "工具执行完成。",
+        pi_type: "tool_execution_end",
+        payload: {
+          toolCallId: "tool-1",
+          result: { content: [{ text: "最后一段" }] },
+        },
+      },
+    ];
+
+    const tool = buildBubbleStreamFromEvents(events).find(
+      (bubble) => bubble.type === "tool",
+    );
+    expect(tool?.content).toContain("第一段");
+    expect(tool?.content).toContain("第121段");
+    expect(tool?.content).toContain("最后一段");
+    expect(tool?.status).toBe("done");
+  });
+
+  it("creates a tool bubble when update arrives without start", () => {
+    const events: StreamEvent[] = [
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "工具更新。",
+        pi_type: "tool_execution_update",
+        payload: {
+          toolCallId: "tool-late",
+          toolName: "Bash",
+          partialResult: { content: [{ text: "输出" }] },
+        },
+      },
+    ];
+
+    expect(buildBubbleStreamFromEvents(events)).toMatchObject([
+      {
+        id: "tool-late",
+        type: "tool",
+        label: "Bash",
+        content: "输出",
+        status: "running",
+      },
+    ]);
+  });
+
   it("extracts streaming answer text from text_delta events", () => {
     const events: ProjectChatEvent[] = [
       {

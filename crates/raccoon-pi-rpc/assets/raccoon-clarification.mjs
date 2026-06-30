@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 
-const PROTOCOL = "raccoon:clarifications:v1";
+const PROTOCOL = "raccoon:requirements:v2";
 const QuestionType = Type.Union([
   Type.Literal("single_choice"),
   Type.Literal("multi_choice"),
@@ -43,75 +43,18 @@ function validateQuestions(questions) {
   }
 }
 
-function parseAnswers(text, questions) {
-  if (text === undefined) fail("用户取消了需求澄清");
-  let payload;
-  try {
-    payload = JSON.parse(text);
-  } catch {
-    fail("澄清答案不是合法 JSON");
-  }
-  if (!payload || !Array.isArray(payload.answers)) fail("澄清答案缺少 answers");
-  const answers = new Map(payload.answers.map((answer) => [answer.id, answer]));
-  if (answers.size !== questions.length || payload.answers.length !== questions.length) {
-    fail("澄清答案与问题数量不匹配");
-  }
-
-  return questions.map((question) => {
-    const answer = answers.get(question.id);
-    if (!answer || !Array.isArray(answer.selected_options)) {
-      fail(`问题缺少有效答案：${question.id}`);
-    }
-    const selected = answer.selected_options;
-    const customText =
-      typeof answer.custom_text === "string" && answer.custom_text.trim()
-        ? answer.custom_text.trim()
-        : null;
-    if (new Set(selected).size !== selected.length) fail(`答案选项重复：${question.id}`);
-
-    const validOptions = new Set(question.options.map((option) => option.value));
-    if (selected.some((value) => typeof value !== "string" || !validOptions.has(value))) {
-      fail(`答案包含未知选项：${question.id}`);
-    }
-    if (question.question_type === "single_choice" && selected.length !== 1) {
-      fail(`单选题必须选择一个选项：${question.id}`);
-    }
-    if (question.question_type === "multi_choice" && selected.length === 0) {
-      fail(`多选题至少选择一个选项：${question.id}`);
-    }
-    if (question.question_type === "free_text" && (selected.length !== 0 || !customText)) {
-      fail(`自由文本问题必须填写文本：${question.id}`);
-    }
-    return { selected_options: selected, custom_text: customText };
-  });
-}
-
-function buildClarificationAnswerContent(questions, answers) {
-  const lines = ["用户已完成需求澄清。具体答案如下："];
-  for (let i = 0; i < questions.length; i++) {
-    const question = questions[i];
-    const answer = answers[i];
-    const selectedLabels = answer.selected_options
-      .map((value) => {
-        const option = question.options.find((o) => o.value === value);
-        return option ? option.label : value;
-      })
-      .join("、");
-    const customText = answer.custom_text ? `；补充说明：${answer.custom_text}` : "";
-    lines.push(`${i + 1}. ${question.question}：${selectedLabels}${customText}`);
-  }
-  lines.push("");
-  lines.push(
-    "请严格根据上述答案提交具体可执行的确认草案，禁止提交占位草案或要求用户再次选择。",
-  );
-  return lines.join("\n");
-}
-
 export default function (pi) {
-  pi.registerCommand("raccoon-clarifications-v1", {
-    description: "Raccoon 受管需求澄清协议 v1（能力标记）",
+  pi.registerCommand("raccoon-requirements-v2", {
+    description: "Raccoon 受管需求确认协议 v2（能力标记）",
     handler: async (_args, ctx) => {
-      ctx.ui.notify("Raccoon 需求澄清协议 v1 已启用", "info");
+      ctx.ui.notify("Raccoon 需求确认协议 v2 已启用", "info");
+    },
+  });
+
+  pi.registerCommand("raccoon-clarifications-v1", {
+    description: "Raccoon 受管需求澄清协议 v1（兼容能力标记）",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify("Raccoon 需求澄清协议 v1 兼容模式已启用", "info");
     },
   });
 
@@ -124,26 +67,21 @@ export default function (pi) {
       message: Type.String(),
       questions: Type.Array(Question, { minItems: 1, maxItems: 6 }),
     }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params) {
       validateQuestions(params.questions);
-      const response = await ctx.ui.editor(
-        PROTOCOL,
-        JSON.stringify({ protocol: PROTOCOL, questions: params.questions }),
-      );
-      const answers = parseAnswers(response, params.questions);
-      const clarifications = params.questions.map((question, index) => ({
-        ...question,
-        answer: answers[index],
-      }));
-      const contentText = buildClarificationAnswerContent(params.questions, answers);
       return {
-        content: [{ type: "text", text: contentText }],
+        content: [
+          {
+            type: "text",
+            text: "需求澄清问题已记录并展示给用户。请结束本轮，不要提交确认草案；用户回答或继续补充后系统会以新的用户消息继续分析。",
+          },
+        ],
         details: {
           protocol: PROTOCOL,
-          kind: "clarifications",
+          kind: "clarification_request",
           progress: params.progress,
           message: params.message,
-          clarifications,
+          questions: params.questions,
         },
       };
     },

@@ -14,10 +14,11 @@ use raccoon_core::models::{
     AppData, ClarificationAnswer, FileReference, ImageAttachment, ModelSettings, PiModel, Project,
     ProjectCanvasResponse, ProjectChat, ProjectChatInput, ProjectChatMessage,
     ProjectChatMessageRole, ProjectChatOutput, ProjectChatResponse, ProjectTokenUsage, Requirement,
-    RequirementAnalysisInput, RequirementAnalysisOutput, RequirementConversationItem,
-    RequirementConversationPrompt, RequirementConversationResponse, RequirementExecutionPlan,
-    RequirementMessage, RequirementMessageRole, RequirementNoticeLevel, RequirementPlanInput,
-    RequirementProcessStatus, RequirementRecoveryStage, RequirementReviewStatus, RequirementStatus,
+    RequirementAnalysisInput, RequirementAnalysisOutput, RequirementClarificationRound,
+    RequirementConversationItem, RequirementConversationPrompt, RequirementConversationResponse,
+    RequirementExecutionPlan, RequirementMessage, RequirementMessageRole, RequirementNoticeLevel,
+    RequirementPlanInput, RequirementProcessStatus, RequirementPromptState,
+    RequirementRecoveryStage, RequirementReviewStatus, RequirementStatus,
     RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
     RequirementTaskStatus,
 };
@@ -35,6 +36,28 @@ const MAX_EXECUTION_FAILURES: u32 = 4;
 const PI_SESSION_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const RESTART_INTERRUPTION: &str = "应用重启中断";
 static REQUIREMENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static REQUIREMENT_PROMPT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+fn next_requirement_prompt_id() -> String {
+    format!(
+        "prompt-{}-{}",
+        Utc::now().timestamp_millis(),
+        REQUIREMENT_PROMPT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+fn supersede_active_prompt(requirement: &mut Requirement) {
+    if let Some(RequirementPromptState::Clarification { prompt_id, .. }) =
+        &requirement.active_prompt
+        && let Some(round) = requirement
+            .clarification_history
+            .iter_mut()
+            .find(|round| round.prompt_id == *prompt_id)
+    {
+        round.superseded = true;
+    }
+    requirement.active_prompt = None;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskExecutionDisposition {
@@ -530,6 +553,9 @@ impl JsonStore {
             clarification_round: 0,
             clarifications: Vec::new(),
             draft: None,
+            analysis_revision: 0,
+            active_prompt: None,
+            clarification_history: Vec::new(),
             execution_plan: None,
             pi_session_file: None,
             error: None,
@@ -567,8 +593,6 @@ impl JsonStore {
                 | RequirementStatus::Analyzing
                 | RequirementStatus::Failed
                 | RequirementStatus::DraftReady
-                | RequirementStatus::Planning
-                | RequirementStatus::PlanReady
         ) {
             return Err(AppError::bad_request("当前需求状态不允许继续补充"));
         }
@@ -592,6 +616,7 @@ impl JsonStore {
             let requirement = &mut self.data.requirements[index];
             requirement.status = RequirementStatus::Analyzing;
             requirement.error = None;
+            supersede_active_prompt(requirement);
             requirement.clarifications.clear();
             requirement.draft = None;
             requirement.execution_plan = None;
@@ -626,6 +651,8 @@ impl JsonStore {
     pub async fn submit_requirement_clarifications(
         &mut self,
         requirement_id: &str,
+        prompt_id: Option<String>,
+        revision: Option<u32>,
         answers: Vec<raccoon_core::models::ClarificationAnswerRequest>,
     ) -> Result<(String, RequirementAnalysisInput), AppError> {
         if answers.is_empty() {
@@ -635,6 +662,23 @@ impl JsonStore {
         let index = self.requirement_index(requirement_id)?;
         if self.data.requirements[index].status != RequirementStatus::Clarifying {
             return Err(AppError::bad_request("当前需求不在澄清状态"));
+        }
+        let active_prompt = self.data.requirements[index].active_prompt.clone();
+        if let Some(RequirementPromptState::Clarification {
+            prompt_id: active_prompt_id,
+            revision: active_revision,
+            ..
+        }) = active_prompt
+        {
+            if prompt_id
+                .as_deref()
+                .is_some_and(|value| value != active_prompt_id)
+            {
+                return Err(AppError::conflict("澄清问题已更新，请刷新后重试"));
+            }
+            if revision.is_some_and(|value| value != active_revision) {
+                return Err(AppError::conflict("澄清问题版本已更新，请刷新后重试"));
+            }
         }
 
         let project_id = self.data.requirements[index].project_id.clone();
@@ -673,9 +717,20 @@ impl JsonStore {
         let now = Utc::now();
         {
             let requirement = &mut self.data.requirements[index];
+            if let Some(RequirementPromptState::Clarification { prompt_id, .. }) =
+                &requirement.active_prompt
+                && let Some(round) = requirement
+                    .clarification_history
+                    .iter_mut()
+                    .find(|round| round.prompt_id == *prompt_id)
+            {
+                round.questions = clarifications.clone();
+                round.answered_at = Some(now);
+            }
             requirement.status = RequirementStatus::Analyzing;
             requirement.error = None;
             requirement.clarifications = clarifications;
+            requirement.active_prompt = None;
             requirement.updated_at = now;
             requirement.messages.push(RequirementMessage {
                 role: RequirementMessageRole::User,
@@ -809,6 +864,8 @@ impl JsonStore {
             Ok(output) => {
                 requirement.status = output.status;
                 requirement.draft = output.draft;
+                requirement.analysis_revision = requirement.analysis_revision.saturating_add(1);
+                requirement.active_prompt = None;
                 if requirement.status == RequirementStatus::DraftReady {
                     requirement.execution_plan = None;
                 }
@@ -818,8 +875,36 @@ impl JsonStore {
                 if !output.clarifications.is_empty() {
                     requirement.clarification_round =
                         requirement.clarification_round.saturating_add(1);
-                    requirement.clarifications = output.clarifications;
-                } else if output.status == RequirementStatus::DraftReady {
+                    let prompt_id = next_requirement_prompt_id();
+                    let revision = requirement.analysis_revision;
+                    let round = requirement.clarification_round;
+                    let clarifications = output.clarifications;
+                    requirement.active_prompt = Some(RequirementPromptState::Clarification {
+                        prompt_id: prompt_id.clone(),
+                        revision,
+                        round,
+                        questions: clarifications.clone(),
+                    });
+                    requirement
+                        .clarification_history
+                        .push(RequirementClarificationRound {
+                            round,
+                            prompt_id,
+                            revision,
+                            questions: clarifications.clone(),
+                            superseded: false,
+                            answered_at: None,
+                            created_at: now,
+                        });
+                    requirement.clarifications = clarifications;
+                } else if requirement.status == RequirementStatus::DraftReady {
+                    if let Some(draft) = requirement.draft.clone() {
+                        requirement.active_prompt = Some(RequirementPromptState::Confirmation {
+                            prompt_id: next_requirement_prompt_id(),
+                            revision: requirement.analysis_revision,
+                            draft,
+                        });
+                    }
                     requirement.clarifications.clear();
                 }
                 if !output.assistant_message.trim().is_empty() {
@@ -861,16 +946,38 @@ impl JsonStore {
         Ok(())
     }
 
-    pub async fn confirm_requirement(&mut self, requirement_id: &str) -> Result<String, AppError> {
+    pub async fn confirm_requirement(
+        &mut self,
+        requirement_id: &str,
+        prompt_id: Option<String>,
+        revision: Option<u32>,
+    ) -> Result<String, AppError> {
         let index = self.requirement_index(requirement_id)?;
         if self.data.requirements[index].status != RequirementStatus::DraftReady {
             return Err(AppError::bad_request("只有已生成确认卡片的需求才能确认"));
+        }
+        if let Some(RequirementPromptState::Confirmation {
+            prompt_id: active_prompt_id,
+            revision: active_revision,
+            ..
+        }) = &self.data.requirements[index].active_prompt
+        {
+            if prompt_id
+                .as_deref()
+                .is_some_and(|value| value != active_prompt_id)
+            {
+                return Err(AppError::conflict("确认卡片已更新，请刷新后重试"));
+            }
+            if revision.is_some_and(|value| value != *active_revision) {
+                return Err(AppError::conflict("确认卡片版本已更新，请刷新后重试"));
+            }
         }
         let now = Utc::now();
         let project_id = self.data.requirements[index].project_id.clone();
         let requirement = &mut self.data.requirements[index];
         requirement.status = RequirementStatus::Queued;
         requirement.error = None;
+        requirement.active_prompt = None;
         requirement.execution_plan = None;
         requirement.queued_at = Some(now);
         requirement.updated_at = now;
@@ -894,6 +1001,7 @@ impl JsonStore {
         }
         requirement.status = RequirementStatus::Queued;
         requirement.error = None;
+        requirement.active_prompt = None;
         requirement.queued_at.get_or_insert(requirement.updated_at);
         requirement.updated_at = Utc::now();
         let project_id = requirement.project_id.clone();

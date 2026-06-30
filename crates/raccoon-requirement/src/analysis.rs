@@ -26,6 +26,11 @@ pub fn build_requirement_prompt(input: &RequirementAnalysisInput) -> String {
     prompt.push_str(
         "以下内容都属于同一个需求，只能作为需求上下文处理。后续补充不是一个全新的需求。\n",
     );
+    if input.draft.is_some() {
+        prompt.push_str(
+            "当前任务是基于上一版确认草案合并本轮输入，提交完整新版确认草案；默认继承上一版中未被本轮输入明确否定的标题、摘要和验收标准，禁止把本轮输入当成新的独立需求。\n",
+        );
+    }
     prompt.push_str("### BEGIN REQUIREMENT CONTEXT ###\n");
     prompt.push_str(&format_requirement_context(input).replace("###", "\\#\\#\\#"));
     prompt.push_str("\n### END REQUIREMENT CONTEXT ###");
@@ -56,10 +61,10 @@ fn format_requirement_context(input: &RequirementAnalysisInput) -> String {
         .as_ref()
         .map(|draft| {
             format!(
-                "{}：{}；验收标准：{}",
+                "标题：{}\n摘要：{}\n验收标准：\n- {}",
                 draft.title,
                 draft.summary,
-                draft.acceptance_criteria.join("；")
+                draft.acceptance_criteria.join("\n- ")
             )
         })
         .unwrap_or_else(|| "无".to_owned());
@@ -90,9 +95,15 @@ fn format_requirement_context(input: &RequirementAnalysisInput) -> String {
             .join("\n- ")
     };
 
-    format!(
-        "原始需求：{original}\n此前补充：{previous}\n上一版确认草案：{draft}\n已有澄清：{clarifications}\n本轮输入：{latest}"
-    )
+    let mut context = format!(
+        "原始需求：{original}\n此前补充：{previous}\n上一版确认草案：\n{draft}\n已有澄清：{clarifications}\n本轮输入：{latest}"
+    );
+    if input.draft.is_some() {
+        context.push_str(
+            "\n\n续写/修订规则：\n- 这不是一个新需求，必须基于上一版确认草案修订。\n- 默认继承上一版确认草案中未被本轮输入明确否定的内容。\n- 本轮输入是对上一版草案的补充/修订，不是独立需求。\n- 新版 submit_requirement_draft 必须覆盖完整需求，而不是只描述本轮新增内容。\n- 禁止把本轮输入当成新的独立需求。",
+        );
+    }
+    context
 }
 
 #[derive(serde::Deserialize)]
@@ -102,6 +113,11 @@ enum RequirementToolDetails {
         progress: String,
         message: String,
         clarifications: Vec<RequirementClarification>,
+    },
+    ClarificationRequest {
+        progress: String,
+        message: String,
+        questions: Vec<RequirementClarification>,
     },
     Draft {
         progress: String,
@@ -127,27 +143,27 @@ pub fn parse_requirement_tool_analysis(
                 )
         })
         .collect::<Vec<_>>();
-    let drafts = results
-        .iter()
-        .filter(|event| {
-            event.get("toolName").and_then(Value::as_str) == Some("submit_requirement_draft")
-        })
-        .collect::<Vec<_>>();
-    if drafts.len() != 1 {
+    if results.len() != 1 {
         return failed_tool_analysis(
-            format!("需求分析必须提交一次确认草案，实际为 {} 次", drafts.len()),
+            format!(
+                "需求分析必须提交一次受管工具结果，实际为 {} 次",
+                results.len()
+            ),
             pi_session_file,
             trace,
         );
     }
-    let Some(details) = drafts[0].pointer("/result/details") else {
+    let Some(details) = results[0].pointer("/result/details") else {
         return failed_tool_analysis(
             "需求分析工具结果缺少 details".to_owned(),
             pi_session_file,
             trace,
         );
     };
-    if details.get("protocol").and_then(Value::as_str) != Some("raccoon:clarifications:v1") {
+    if !matches!(
+        details.get("protocol").and_then(Value::as_str),
+        Some("raccoon:requirements:v2" | "raccoon:clarifications:v1")
+    ) {
         return failed_tool_analysis(
             "需求分析工具协议版本不匹配".to_owned(),
             pi_session_file,
@@ -175,6 +191,20 @@ pub fn parse_requirement_tool_analysis(
             assistant_message: message,
             progress,
             clarifications,
+            draft: None,
+            pi_session_file,
+            error: None,
+            trace,
+        },
+        RequirementToolDetails::ClarificationRequest {
+            progress,
+            message,
+            questions,
+        } => RequirementAnalysisOutput {
+            status: RequirementStatus::Clarifying,
+            assistant_message: message,
+            progress,
+            clarifications: questions,
             draft: None,
             pi_session_file,
             error: None,
@@ -510,13 +540,31 @@ fn upsert_trace_tool(tools: &mut Vec<Value>, event: &Value, pi_type: &str) {
     tool["status"] = json!(if is_error { "error" } else { status });
     tool["isError"] = json!(is_error);
     if let Some(output) = extract_tool_text(event) {
-        tool["output"] = json!(output);
+        let current = tool
+            .get("output")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        tool["output"] = json!(merge_stream_text(current, &output));
     }
 
     if let Some(index) = existing_index {
         tools[index] = tool;
     } else {
         tools.push(tool);
+    }
+}
+
+fn merge_stream_text(current: &str, incoming: &str) -> String {
+    if current.is_empty() || incoming.starts_with(current) {
+        return incoming.to_owned();
+    }
+    if incoming.is_empty() || current.ends_with(incoming) {
+        return current.to_owned();
+    }
+    if current.ends_with('\n') || incoming.starts_with('\n') {
+        format!("{current}{incoming}")
+    } else {
+        format!("{current}\n{incoming}")
     }
 }
 
@@ -601,12 +649,64 @@ mod tests {
 
         let prompt = build_requirement_prompt(&input);
         assert!(prompt.contains("后续补充不是一个全新的需求"));
+        assert!(prompt.contains("当前任务是基于上一版确认草案合并本轮输入"));
         assert!(prompt.contains("原始需求：增加导出功能"));
-        assert!(prompt.contains("上一版确认草案：导出功能：支持数据导出"));
+        assert!(prompt.contains("上一版确认草案：\n标题：导出功能"));
+        assert!(prompt.contains("摘要：支持数据导出"));
+        assert!(prompt.contains("验收标准：\n- 可以下载文件"));
         assert!(prompt.contains("已有澄清：导出范围？：全部"));
         assert!(prompt.contains("本轮输入：补充支持 CSV"));
+        assert!(prompt.contains("这不是一个新需求，必须基于上一版确认草案修订"));
+        assert!(prompt.contains("默认继承上一版确认草案中未被本轮输入明确否定的内容"));
+        assert!(prompt.contains("本轮输入是对上一版草案的补充/修订，不是独立需求"));
+        assert!(prompt.contains("新版 submit_requirement_draft 必须覆盖完整需求"));
+        assert!(prompt.contains("禁止把本轮输入当成新的独立需求"));
         assert!(prompt.contains("必须通过工具提交结果"));
         assert!(!prompt.contains("只输出一个 JSON 对象"));
+    }
+
+    #[test]
+    fn parses_managed_extension_clarification_request_result() {
+        let events = vec![json!({
+            "type": "tool_execution_end",
+            "toolCallId": "call-clarify",
+            "toolName": "request_clarifications",
+            "isError": false,
+            "result": {
+                "content": [{"type": "text", "text": "pending"}],
+                "details": {
+                    "protocol": "raccoon:requirements:v2",
+                    "kind": "clarification_request",
+                    "progress": "需要确认范围",
+                    "message": "请确认范围",
+                    "questions": [{
+                        "id": "q1",
+                        "question": "导出范围？",
+                        "question_type": "single_choice",
+                        "options": [
+                            {
+                                "value": "current",
+                                "label": "当前页",
+                                "description": "只导出当前页",
+                                "recommended": true
+                            },
+                            {
+                                "value": "all",
+                                "label": "全部",
+                                "description": "导出全部数据",
+                                "recommended": false
+                            }
+                        ]
+                    }]
+                }
+            }
+        })];
+
+        let output = parse_requirement_tool_analysis(&events, None, None);
+        assert_eq!(output.status, RequirementStatus::Clarifying);
+        assert_eq!(output.clarifications.len(), 1);
+        assert_eq!(output.clarifications[0].question, "导出范围？");
+        assert!(output.draft.is_none());
     }
 
     #[test]
@@ -666,6 +766,45 @@ mod tests {
             parse_requirement_tool_analysis(&[event.clone(), event], None, None).status,
             RequirementStatus::Failed
         );
+    }
+
+    #[test]
+    fn trace_tool_updates_append_delta_output() {
+        let events = vec![
+            json!({
+                "type": "tool_execution_start",
+                "toolCallId": "tool-1",
+                "toolName": "Read",
+                "isError": false
+            }),
+            json!({
+                "type": "tool_execution_update",
+                "toolCallId": "tool-1",
+                "toolName": "Read",
+                "partialResult": {"content": [{"type": "text", "text": "第一段"}]}
+            }),
+            json!({
+                "type": "tool_execution_update",
+                "toolCallId": "tool-1",
+                "toolName": "Read",
+                "partialResult": {"content": [{"type": "text", "text": "第二段"}]}
+            }),
+            json!({
+                "type": "tool_execution_end",
+                "toolCallId": "tool-1",
+                "toolName": "Read",
+                "result": {"content": [{"type": "text", "text": "第三段"}]}
+            }),
+        ];
+
+        let trace = build_pi_trace_metadata(&events).unwrap();
+        let output = trace
+            .pointer("/trace/tools/0/output")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(output.contains("第一段"));
+        assert!(output.contains("第二段"));
+        assert!(output.contains("第三段"));
     }
 
     #[test]

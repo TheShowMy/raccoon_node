@@ -760,7 +760,7 @@ impl PiRpcClient {
             .and_then(Value::as_array)
             .is_some_and(|commands| {
                 commands.iter().any(|command| {
-                    command.get("name").and_then(Value::as_str) == Some("raccoon-clarifications-v1")
+                    command.get("name").and_then(Value::as_str) == Some("raccoon-requirements-v2")
                 })
             });
         if !available {

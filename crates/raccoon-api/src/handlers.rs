@@ -15,12 +15,12 @@ use raccoon_core::file_refs::{
     content_type_value, list_repo_files, read_attachment, save_attachment,
 };
 use raccoon_core::models::{
-    AttachmentUploadRequest, BasicSettings, BasicSettingsUpdate, ClarificationAnswerRequest,
+    AttachmentUploadRequest, BasicSettings, BasicSettingsUpdate, ClarificationAnswerPayload,
     CurrentProjectResponse, FileReference, ImageAttachment, ModelSettings, ModelSettingsResponse,
     ProjectCanvasResponse, ProjectChatEventEmitter, ProjectChatMessageRequest, ProjectChatResponse,
-    RequirementAnalysisInput, RequirementClarification, RequirementConversationResponse,
-    RequirementEvent, RequirementEventEmitter, RequirementMessageRequest, RequirementStatus,
-    RequirementTaskExecutionInput, RpcStatus,
+    RequirementAnalysisInput, RequirementClarification, RequirementConfirmRequest,
+    RequirementConversationResponse, RequirementEvent, RequirementEventEmitter,
+    RequirementMessageRequest, RequirementStatus, RequirementTaskExecutionInput, RpcStatus,
 };
 use raccoon_store::{ProjectScheduleAction, TaskExecutionDisposition};
 
@@ -271,65 +271,21 @@ pub async fn append_requirement_message(
 pub async fn submit_requirement_clarifications(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
-    Json(payload): Json<Vec<ClarificationAnswerRequest>>,
+    Json(payload): Json<ClarificationAnswerPayload>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    let pending = state
-        .pending_requirement_interactions
-        .lock()
-        .await
-        .get(&requirement_id)
-        .cloned()
-        .ok_or_else(|| AppError::conflict("当前没有等待回答的澄清请求"))?;
+    let (prompt_id, revision, answers) = payload.into_parts();
     let (project_id, input) = {
         let mut store = state.store.write().await;
         store
-            .submit_requirement_clarifications(&requirement_id, payload)
+            .submit_requirement_clarifications(&requirement_id, prompt_id, revision, answers)
             .await?
     };
-    let answers = input
-        .clarifications
-        .iter()
-        .map(|clarification| {
-            serde_json::json!({
-                "id": clarification.id,
-                "selected_options": clarification
-                    .answer
-                    .as_ref()
-                    .map(|answer| answer.selected_options.clone())
-                    .unwrap_or_default(),
-                "custom_text": clarification
-                    .answer
-                    .as_ref()
-                    .and_then(|answer| answer.custom_text.clone()),
-            })
-        })
-        .collect::<Vec<_>>();
-    let response = serde_json::to_string(&serde_json::json!({ "answers": answers }))?;
-    if let Err(error) = state
-        .model_provider
-        .respond_requirement_interaction(
-            &pending.0,
-            &pending.1,
-            serde_json::Value::String(response),
-        )
-        .await
-    {
-        state
-            .pending_requirement_interactions
-            .lock()
-            .await
-            .remove(&requirement_id);
-        let mut store = state.store.write().await;
-        store
-            .apply_requirement_analysis(&requirement_id, Err(error))
-            .await?;
-        return Err(AppError::conflict("澄清会话已结束，请重新分析"));
-    }
     state
         .pending_requirement_interactions
         .lock()
         .await
         .remove(&requirement_id);
+    spawn_requirement_analysis(state.clone(), requirement_id, input);
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -427,10 +383,14 @@ pub async fn project_chat_events(
 pub async fn confirm_requirement(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
+    payload: Option<Json<RequirementConfirmRequest>>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
     let project_id = {
         let mut store = state.store.write().await;
-        store.confirm_requirement(&requirement_id).await?
+        store
+            .confirm_requirement(&requirement_id, payload.prompt_id, payload.revision)
+            .await?
     };
     spawn_project_scheduler(state.clone(), project_id.clone());
     let store = state.store.read().await;

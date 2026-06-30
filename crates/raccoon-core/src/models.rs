@@ -128,6 +128,12 @@ pub struct Requirement {
     pub clarifications: Vec<RequirementClarification>,
     pub draft: Option<RequirementDraft>,
     #[serde(default)]
+    pub analysis_revision: u32,
+    #[serde(default)]
+    pub active_prompt: Option<RequirementPromptState>,
+    #[serde(default)]
+    pub clarification_history: Vec<RequirementClarificationRound>,
+    #[serde(default)]
     pub execution_plan: Option<RequirementExecutionPlan>,
     #[serde(skip_serializing)]
     pub pi_session_file: Option<String>,
@@ -179,6 +185,35 @@ pub struct RequirementDraft {
     pub title: String,
     pub summary: String,
     pub acceptance_criteria: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RequirementPromptState {
+    Clarification {
+        prompt_id: String,
+        revision: u32,
+        round: u32,
+        questions: Vec<RequirementClarification>,
+    },
+    Confirmation {
+        prompt_id: String,
+        revision: u32,
+        draft: RequirementDraft,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RequirementClarificationRound {
+    pub round: u32,
+    pub prompt_id: String,
+    pub revision: u32,
+    pub questions: Vec<RequirementClarification>,
+    #[serde(default)]
+    pub superseded: bool,
+    #[serde(default)]
+    pub answered_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -438,9 +473,17 @@ pub enum RequirementConversationPrompt {
     Clarification {
         round: u32,
         questions: Vec<RequirementClarification>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prompt_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        revision: Option<u32>,
     },
     Confirmation {
         draft: RequirementDraft,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prompt_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        revision: Option<u32>,
     },
 }
 
@@ -794,6 +837,36 @@ pub struct ClarificationAnswerRequest {
     pub custom_text: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ClarificationAnswerPayload {
+    Legacy(Vec<ClarificationAnswerRequest>),
+    Versioned {
+        prompt_id: Option<String>,
+        revision: Option<u32>,
+        answers: Vec<ClarificationAnswerRequest>,
+    },
+}
+
+impl ClarificationAnswerPayload {
+    pub fn into_parts(self) -> (Option<String>, Option<u32>, Vec<ClarificationAnswerRequest>) {
+        match self {
+            Self::Legacy(answers) => (None, None, answers),
+            Self::Versioned {
+                prompt_id,
+                revision,
+                answers,
+            } => (prompt_id, revision, answers),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RequirementConfirmRequest {
+    pub prompt_id: Option<String>,
+    pub revision: Option<u32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -829,6 +902,9 @@ mod tests {
             clarification_round: 0,
             clarifications: Vec::new(),
             draft: None,
+            analysis_revision: 0,
+            active_prompt: None,
+            clarification_history: Vec::new(),
             execution_plan: None,
             pi_session_file: Some("/secret/session.json".to_owned()),
             error: None,

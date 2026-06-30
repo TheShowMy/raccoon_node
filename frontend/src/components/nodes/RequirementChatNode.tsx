@@ -25,7 +25,7 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
   );
   const conversation =
     data.conversation?.id === data.requirement?.id ? data.conversation : null;
-  const prompt = data.promptDismissed ? null : (conversation?.prompt ?? null);
+  const prompt = conversation?.prompt ?? null;
 
   useEffect(() => setActiveCard("requirement"), [data.project.id]);
   useEffect(() => setConfirmAction(null), [data.project.id]);
@@ -85,7 +85,6 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
             projectName={data.project.name}
             projectId={data.project.id}
             prompt={prompt}
-            promptDismissed={data.promptDismissed}
             input={data.input}
             references={data.references ?? []}
             images={data.images ?? []}

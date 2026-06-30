@@ -176,10 +176,14 @@ export type RequirementConversationPrompt =
       type: "clarification";
       round: number;
       questions: RequirementClarification[];
+      prompt_id?: string;
+      revision?: number;
     }
   | {
       type: "confirmation";
       draft: RequirementDraft;
+      prompt_id?: string;
+      revision?: number;
     };
 
 export type RequirementConversation = {

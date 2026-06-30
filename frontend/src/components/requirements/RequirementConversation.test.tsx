@@ -82,7 +82,6 @@ describe("RequirementConversationWorkbench", () => {
         projectName="alpha"
         projectId="project-1"
         prompt={null}
-        promptDismissed={false}
         input=""
         busy={false}
         error={null}
@@ -107,7 +106,7 @@ describe("RequirementConversationWorkbench", () => {
     expect(screen.getByText("分析登录边界")).toBeInTheDocument();
   });
 
-  it("renders prompt shelf as overlay and blocks composer", () => {
+  it("renders prompt shelf as overlay and keeps composer available", () => {
     const requirement = testRequirement();
     const prompt: RequirementConversationPrompt = {
       type: "clarification",
@@ -148,7 +147,6 @@ describe("RequirementConversationWorkbench", () => {
         projectName="alpha"
         projectId="project-1"
         prompt={prompt}
-        promptDismissed={false}
         input="补充说明"
         busy={false}
         error={null}
@@ -168,8 +166,8 @@ describe("RequirementConversationWorkbench", () => {
     expect(container.querySelector(".rq-prompt-layer")).not.toBeNull();
     expect(screen.getByText("澄清 · 第 1 轮")).toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText("先处理上方卡片，或选择继续补充"),
-    ).toBeDisabled();
+      screen.getByPlaceholderText("可回答上方问题，也可以直接补充说明..."),
+    ).not.toBeDisabled();
   });
 
   it("uses the combined confirmation and execution label", () => {
@@ -201,7 +199,6 @@ describe("RequirementConversationWorkbench", () => {
         projectName="alpha"
         projectId="project-1"
         prompt={prompt}
-        promptDismissed={false}
         input=""
         busy={false}
         error={null}
@@ -246,7 +243,6 @@ describe("RequirementConversationWorkbench", () => {
         projectName="alpha"
         projectId="project-1"
         prompt={null}
-        promptDismissed={false}
         input=""
         busy={false}
         error={null}
@@ -292,7 +288,6 @@ describe("RequirementConversationWorkbench", () => {
         projectName="alpha"
         projectId="project-1"
         prompt={null}
-        promptDismissed={false}
         input=""
         busy={false}
         error={null}

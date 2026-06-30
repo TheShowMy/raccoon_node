@@ -60,6 +60,9 @@ impl Database {
                 clarification_round INTEGER NOT NULL DEFAULT 0,
                 clarifications TEXT NOT NULL DEFAULT '[]',
                 draft TEXT,
+                analysis_revision INTEGER NOT NULL DEFAULT 0,
+                active_prompt TEXT,
+                clarification_history TEXT NOT NULL DEFAULT '[]',
                 execution_plan TEXT,
                 pi_session_file TEXT,
                 error TEXT,
@@ -111,6 +114,19 @@ impl Database {
         }
         add_column_if_missing(&tx, "requirements", "queued_at", "TEXT")?;
         add_column_if_missing(&tx, "requirements", "pi_session_file", "TEXT")?;
+        add_column_if_missing(
+            &tx,
+            "requirements",
+            "analysis_revision",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(&tx, "requirements", "active_prompt", "TEXT")?;
+        add_column_if_missing(
+            &tx,
+            "requirements",
+            "clarification_history",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
         tx.execute("DELETE FROM schema_version", [])?;
         tx.execute(
             "INSERT INTO schema_version (version) VALUES (?1)",
@@ -352,9 +368,10 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
     tx.execute(
         "INSERT INTO requirements
          (id, project_id, title, original_message, status, messages,
-          clarification_round, clarifications, draft, execution_plan, pi_session_file, error,
-          queued_at, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+          clarification_round, clarifications, draft, analysis_revision, active_prompt,
+          clarification_history, execution_plan, pi_session_file, error, queued_at, created_at,
+          updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(id) DO UPDATE SET
            project_id = excluded.project_id,
            title = excluded.title,
@@ -364,6 +381,9 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
            clarification_round = excluded.clarification_round,
            clarifications = excluded.clarifications,
            draft = excluded.draft,
+           analysis_revision = excluded.analysis_revision,
+           active_prompt = excluded.active_prompt,
+           clarification_history = excluded.clarification_history,
            execution_plan = excluded.execution_plan,
            pi_session_file = excluded.pi_session_file,
            error = excluded.error,
@@ -380,6 +400,9 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
             persisted.clarification_round,
             serde_json::to_string(&persisted.clarifications)?,
             optional_json(&persisted.draft)?,
+            persisted.analysis_revision,
+            optional_json(&persisted.active_prompt)?,
+            serde_json::to_string(&persisted.clarification_history)?,
             optional_json(&persisted.execution_plan)?,
             persisted.pi_session_file,
             persisted.error,
@@ -487,8 +510,9 @@ fn load_projects(conn: &Connection) -> Result<Vec<Project>, AppError> {
 fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
     let mut statement = conn.prepare(
         "SELECT id, project_id, title, original_message, status, messages,
-                clarification_round, clarifications, draft, execution_plan, pi_session_file,
-                error, queued_at, created_at, updated_at
+                clarification_round, clarifications, draft, analysis_revision, active_prompt,
+                clarification_history, execution_plan, pi_session_file, error, queued_at,
+                created_at, updated_at
          FROM requirements ORDER BY created_at, id",
     )?;
     let rows = statement.query_map([], |row| {
@@ -502,12 +526,15 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             row.get::<_, u32>(6)?,
             row.get::<_, String>(7)?,
             row.get::<_, Option<String>>(8)?,
-            row.get::<_, Option<String>>(9)?,
+            row.get::<_, u32>(9)?,
             row.get::<_, Option<String>>(10)?,
-            row.get::<_, Option<String>>(11)?,
+            row.get::<_, String>(11)?,
             row.get::<_, Option<String>>(12)?,
-            row.get::<_, String>(13)?,
-            row.get::<_, String>(14)?,
+            row.get::<_, Option<String>>(13)?,
+            row.get::<_, Option<String>>(14)?,
+            row.get::<_, Option<String>>(15)?,
+            row.get::<_, String>(16)?,
+            row.get::<_, String>(17)?,
         ))
     })?;
     let mut requirements = Vec::new();
@@ -522,6 +549,9 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             clarification_round,
             clarifications,
             draft,
+            analysis_revision,
+            active_prompt,
+            clarification_history,
             execution_plan,
             pi_session_file,
             error,
@@ -539,6 +569,12 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             clarification_round,
             clarifications: parse_json(&clarifications, "requirements.clarifications")?,
             draft: parse_optional_json(draft, "requirements.draft")?,
+            analysis_revision,
+            active_prompt: parse_optional_json(active_prompt, "requirements.active_prompt")?,
+            clarification_history: parse_json(
+                &clarification_history,
+                "requirements.clarification_history",
+            )?,
             execution_plan: parse_optional_json(execution_plan, "requirements.execution_plan")?,
             pi_session_file,
             error,

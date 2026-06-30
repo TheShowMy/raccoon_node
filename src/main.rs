@@ -1312,6 +1312,8 @@ mod tests {
         let (_, input) = store
             .submit_requirement_clarifications(
                 &requirement_id,
+                None,
+                None,
                 vec![ClarificationAnswerRequest {
                     clarification_id: "q1".to_owned(),
                     selected_options: vec!["small".to_owned()],
@@ -1423,6 +1425,9 @@ mod tests {
             clarification_round: 0,
             clarifications: Vec::new(),
             draft: None,
+            analysis_revision: 0,
+            active_prompt: None,
+            clarification_history: Vec::new(),
             execution_plan: None,
             pi_session_file: None,
             error: None,
@@ -1523,6 +1528,9 @@ mod tests {
             clarification_round: 0,
             clarifications: Vec::new(),
             draft: None,
+            analysis_revision: 0,
+            active_prompt: None,
+            clarification_history: Vec::new(),
             execution_plan: None,
             pi_session_file: Some("/data/pi-sessions/secret.json".to_owned()),
             error: None,

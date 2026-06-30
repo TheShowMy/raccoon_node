@@ -85,10 +85,7 @@ export function useProjectChat(projectId: string | null) {
       const batch = chatEventBufferRef.current;
       if (batch.length === 0) return;
       chatEventBufferRef.current = [];
-      setProjectChatEvents((current) => {
-        const next = [...current, ...batch];
-        return next.length > 100 ? next.slice(next.length - 100) : next;
-      });
+      setProjectChatEvents((current) => [...current, ...batch]);
       if (batch.some((event) => finalEvents.has(event.event))) {
         void loadProjectChat(projectId)
           .then(() => {
