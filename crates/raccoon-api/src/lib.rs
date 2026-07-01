@@ -10,6 +10,7 @@ use tower_http::cors::CorsLayer;
 mod assets;
 pub mod handlers;
 mod publication;
+pub mod terminal;
 
 async fn api_not_found() -> StatusCode {
     StatusCode::NOT_FOUND
@@ -17,13 +18,14 @@ async fn api_not_found() -> StatusCode {
 
 use crate::handlers::{
     append_requirement_message, cancel_requirement_analysis, confirm_requirement,
-    create_requirement, delete_requirement, get_basic_settings, get_current_project,
-    get_model_settings, get_project_attachment, get_project_canvas, get_project_chat,
-    get_project_files, get_requirement_conversation, get_requirement_task,
-    get_requirement_task_session, plan_requirement_execution, project_chat_events,
-    put_basic_settings, put_model_settings, recover_task_group, requirement_events,
+    create_project_terminal, create_requirement, delete_project_terminal, delete_requirement,
+    get_basic_settings, get_current_project, get_model_settings, get_project_attachment,
+    get_project_canvas, get_project_chat, get_project_files, get_requirement_conversation,
+    get_requirement_task, get_requirement_task_session, get_terminal_command_profiles,
+    list_project_terminals, plan_requirement_execution, project_chat_events, put_basic_settings,
+    put_model_settings, put_terminal_command_profiles, recover_task_group, requirement_events,
     reset_project_chat, retry_requirement_analysis, send_project_chat_message,
-    spawn_startup_requirement_scheduler, submit_requirement_clarifications,
+    spawn_startup_requirement_scheduler, submit_requirement_clarifications, terminal_websocket,
     upload_project_attachment,
 };
 use raccoon_pi_rpc::PiRpcModelProvider;
@@ -35,6 +37,7 @@ pub struct AppState {
     pub model_provider: std::sync::Arc<dyn raccoon_core::models::ModelProvider>,
     pub requirement_events: raccoon_core::models::RequirementEventBus,
     pub project_chat_events: raccoon_core::models::ProjectChatEventBus,
+    pub terminal_manager: std::sync::Arc<terminal::TerminalManager>,
     pub config: std::sync::Arc<tokio::sync::RwLock<raccoon_core::config::AppConfig>>,
     pub config_path: std::path::PathBuf,
     pub port_overridden: bool,
@@ -140,6 +143,7 @@ fn build_app_with_startup_requirements(
         model_provider,
         requirement_events: event_tx,
         project_chat_events: project_chat_tx,
+        terminal_manager: Arc::new(terminal::TerminalManager::new()),
         config,
         config_path,
         port_overridden,
@@ -171,6 +175,22 @@ fn build_app_with_startup_requirements(
             post(send_project_chat_message),
         )
         .route("/projects/{id}/chat/events", get(project_chat_events))
+        .route(
+            "/projects/{id}/terminals",
+            get(list_project_terminals).post(create_project_terminal),
+        )
+        .route(
+            "/projects/{id}/terminals/{terminal_id}",
+            delete(delete_project_terminal),
+        )
+        .route(
+            "/projects/{id}/terminals/{terminal_id}/ws",
+            get(terminal_websocket),
+        )
+        .route(
+            "/projects/{id}/terminal-commands",
+            get(get_terminal_command_profiles).put(put_terminal_command_profiles),
+        )
         .route("/projects/{id}/requirements", post(create_requirement))
         .route(
             "/requirements/{id}/messages",

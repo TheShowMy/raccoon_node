@@ -518,6 +518,9 @@ async fn init_repo(path: &Path) {
     super::git(path, &["config", "user.name", "Test"])
         .await
         .unwrap();
+    super::git(path, &["config", "core.autocrlf", "false"])
+        .await
+        .unwrap();
     tokio::fs::write(path.join("README.md"), "test\n")
         .await
         .unwrap();

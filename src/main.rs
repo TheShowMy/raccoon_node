@@ -646,7 +646,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             body,
-            json!({"theme": "dark", "port": 3001, "port_overridden": true})
+            json!({"theme": "dark", "host": "0.0.0.0", "port": 3001, "port_overridden": true})
         );
 
         let response = app

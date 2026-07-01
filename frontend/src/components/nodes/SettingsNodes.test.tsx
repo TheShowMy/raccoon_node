@@ -31,7 +31,12 @@ it("routes both setting cards and closes the list", () => {
 it("validates the native port input before saving", () => {
   let data = {
     kind: "basic-settings",
-    settings: { theme: "dark", port: 3000, port_overridden: false },
+    settings: {
+      theme: "dark",
+      host: "127.0.0.1",
+      port: 3000,
+      port_overridden: false,
+    },
     error: null,
     saving: false,
     onChange: vi.fn(),

@@ -23,7 +23,8 @@ use raccoon_core::models::{
     RequirementReviewStatus, RequirementReviewStep, RequirementStatus,
     RequirementTaskDetailResponse, RequirementTaskExecutionInput, RequirementTaskExecutionOutput,
     RequirementTaskKind, RequirementTaskSessionMessage, RequirementTaskSessionResponse,
-    RequirementTaskSessionTool, RequirementTaskStatus,
+    RequirementTaskSessionTool, RequirementTaskStatus, TerminalCommandProfile,
+    TerminalCommandProfileUpdate,
 };
 use raccoon_core::utils::commit_staged_changes;
 use raccoon_core::utils::effective_model_tier;
@@ -36,6 +37,9 @@ use raccoon_core::utils::{
 pub const CURRENT_PROJECT_ID: &str = "current";
 const MAX_REVIEW_REJECTIONS: u32 = 5;
 const MAX_EXECUTION_FAILURES: u32 = 4;
+const MAX_TERMINAL_COMMAND_PROFILES: usize = 20;
+const MAX_TERMINAL_COMMAND_NAME_LEN: usize = 64;
+const MAX_TERMINAL_COMMAND_LEN: usize = 4096;
 const PI_SESSION_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const RESTART_INTERRUPTION: &str = "应用重启中断";
 static REQUIREMENT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -216,6 +220,86 @@ impl JsonStore {
             raccoon_core::utils::model_summary_description(&self.data.model_settings);
         self.write_persist().await?;
         Ok(())
+    }
+
+    pub fn terminal_command_profiles(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<TerminalCommandProfile>, AppError> {
+        if !self
+            .data
+            .projects
+            .iter()
+            .any(|project| project.id == project_id)
+        {
+            return Err(AppError::not_found("项目不存在"));
+        }
+        Ok(self.data.terminal_command_profiles.clone())
+    }
+
+    pub async fn replace_terminal_command_profiles(
+        &mut self,
+        project_id: &str,
+        profiles: Vec<TerminalCommandProfileUpdate>,
+    ) -> Result<Vec<TerminalCommandProfile>, AppError> {
+        if !self
+            .data
+            .projects
+            .iter()
+            .any(|project| project.id == project_id)
+        {
+            return Err(AppError::not_found("项目不存在"));
+        }
+        if profiles.len() > MAX_TERMINAL_COMMAND_PROFILES {
+            return Err(AppError::bad_request(format!(
+                "终端启动命令最多只能保存 {MAX_TERMINAL_COMMAND_PROFILES} 条"
+            )));
+        }
+
+        let mut normalized = Vec::with_capacity(profiles.len());
+        let now = Utc::now();
+        for (index, profile) in profiles.into_iter().enumerate() {
+            let name = profile.name.trim().to_owned();
+            let command = profile.command.trim().to_owned();
+            if name.is_empty() {
+                return Err(AppError::bad_request("终端启动命令名称不能为空"));
+            }
+            if name.chars().count() > MAX_TERMINAL_COMMAND_NAME_LEN {
+                return Err(AppError::bad_request(format!(
+                    "终端启动命令名称不能超过 {MAX_TERMINAL_COMMAND_NAME_LEN} 个字符"
+                )));
+            }
+            if command.is_empty() {
+                return Err(AppError::bad_request("终端启动命令不能为空"));
+            }
+            if command.chars().count() > MAX_TERMINAL_COMMAND_LEN {
+                return Err(AppError::bad_request(format!(
+                    "终端启动命令不能超过 {MAX_TERMINAL_COMMAND_LEN} 个字符"
+                )));
+            }
+            let existing = profile.id.as_deref().and_then(|id| {
+                self.data
+                    .terminal_command_profiles
+                    .iter()
+                    .find(|candidate| candidate.id == id)
+            });
+            normalized.push(TerminalCommandProfile {
+                id: profile
+                    .id
+                    .filter(|id| !id.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        format!("terminal-command-{}-{}", now.timestamp_millis(), index + 1)
+                    }),
+                name,
+                command,
+                created_at: existing.map(|item| item.created_at).unwrap_or(now),
+                updated_at: now,
+            });
+        }
+
+        self.data.terminal_command_profiles = normalized;
+        self.write_persist().await?;
+        Ok(self.data.terminal_command_profiles.clone())
     }
 
     pub fn project_canvas(&self, project_id: &str) -> Result<ProjectCanvasResponse, AppError> {
@@ -2128,6 +2212,15 @@ impl JsonStore {
             return Err(AppError::not_found("项目不存在"));
         }
         Ok(self.data_root.clone())
+    }
+
+    pub fn project_root(&self, id: &str) -> Result<PathBuf, AppError> {
+        self.data
+            .projects
+            .iter()
+            .find(|project| project.id == id)
+            .map(|project| PathBuf::from(&project.local_path))
+            .ok_or_else(|| AppError::not_found("项目不存在"))
     }
 }
 

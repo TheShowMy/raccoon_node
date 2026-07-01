@@ -20,6 +20,7 @@ import { buildRequirementDagEdges } from "./canvas/edges";
 import {
   buildProjectChatNode,
   buildProjectNodes,
+  buildProjectTerminalNode,
   mergeProjectNodes,
 } from "./canvas/buildProjectNodes";
 import { useCurrentProject } from "./hooks/useCurrentProject";
@@ -27,6 +28,7 @@ import { useProjectCanvas } from "./hooks/useProjectCanvas";
 import { useRequirementFlow } from "./hooks/useRequirementFlow";
 import { useProjectChat } from "./hooks/useProjectChat";
 import { useModelSettings } from "./hooks/useModelSettings";
+import { useProjectTerminals } from "./hooks/useProjectTerminals";
 import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsContext";
 import {
   getVisibleSettingsViewport,
@@ -216,6 +218,8 @@ function minimapNodeColor(node: Node<StartNodeData>): string {
   switch (node.data.kind) {
     case "requirement-chat":
       return "#f97316";
+    case "project-terminal":
+      return "#14b8a6";
     case "requirement-list":
       return node.data.tone === "done" ? "#22c55e" : "#f59e0b";
     case "requirement-dag":
@@ -257,6 +261,10 @@ export default function App() {
   );
   const projectChat = useProjectChat(selectedProjectId);
   const models = useModelSettings(current.applyTheme);
+  const terminals = useProjectTerminals(
+    selectedProjectId,
+    models.basicSettings?.host === "0.0.0.0",
+  );
   const [nodeDragging, setNodeDragging] = useState(false);
   const requirementConversationEvents = project.selectedDagRequirementId
     ? EMPTY_STREAM_EVENTS
@@ -410,9 +418,50 @@ export default function App() {
     ],
   );
 
+  const projectTerminalNode = useMemo(
+    () =>
+      buildProjectTerminalNode({
+        projectCanvas: project.projectCanvas,
+        project: current.project,
+        collapsed: terminals.collapsed,
+        sessions: terminals.sessions,
+        activeSessionId: terminals.activeSessionId,
+        commandProfiles: terminals.commandProfiles,
+        busy: terminals.busy,
+        error: terminals.error,
+        terminalDisabled: models.basicSettings?.host === "0.0.0.0",
+        onToggleCollapsed: terminals.toggleCollapsed,
+        onCreateTerminal: terminals.createTerminal,
+        onCloseTerminal: terminals.closeTerminal,
+        onSelectTerminal: terminals.selectTerminal,
+        onSaveCommandProfiles: terminals.saveCommandProfiles,
+      }),
+    [
+      current.project,
+      models.basicSettings?.host,
+      project.projectCanvas,
+      terminals.activeSessionId,
+      terminals.busy,
+      terminals.closeTerminal,
+      terminals.collapsed,
+      terminals.commandProfiles,
+      terminals.createTerminal,
+      terminals.error,
+      terminals.saveCommandProfiles,
+      terminals.selectTerminal,
+      terminals.sessions,
+      terminals.toggleCollapsed,
+    ],
+  );
+
   const nodes = useMemo(
-    () => mergeProjectNodes(projectStructureNodes, projectChatNode),
-    [projectChatNode, projectStructureNodes],
+    () =>
+      mergeProjectNodes(
+        projectStructureNodes,
+        projectChatNode,
+        projectTerminalNode,
+      ),
+    [projectChatNode, projectStructureNodes, projectTerminalNode],
   );
 
   const edges = useMemo<Edge[]>(() => {

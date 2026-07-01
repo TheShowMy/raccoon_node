@@ -234,6 +234,202 @@
     transform: none;
   }
 
+  .node-card--project-terminal {
+    @apply w-[720px] min-h-0 overflow-hidden p-0;
+    box-shadow:
+      var(--shadow-card),
+      0 0 28px color-mix(in srgb, var(--accent-projects) 20%, transparent);
+  }
+
+  .node-card--project-terminal:hover {
+    transform: none;
+  }
+
+  .terminal-node {
+    @apply flex h-full w-full flex-col;
+  }
+
+  .terminal-node--collapsed {
+    @apply justify-center;
+  }
+
+  .terminal-node__collapsed-bar {
+    @apply flex h-full w-full items-center gap-3 border-0 bg-transparent px-4 text-left;
+    color: var(--text-strong);
+  }
+
+  .terminal-node__collapsed-copy {
+    @apply flex min-w-0 flex-1 items-center gap-2;
+  }
+
+  .terminal-node__collapsed-copy strong {
+    @apply shrink-0 text-sm;
+  }
+
+  .terminal-node__collapsed-copy small {
+    @apply truncate text-xs;
+    color: var(--text-soft);
+  }
+
+  .terminal-node__icon {
+    color: var(--accent-projects);
+  }
+
+  .terminal-node__error {
+    @apply max-w-[240px] truncate rounded-full border px-2 py-1 text-[11px];
+    border-color: color-mix(in srgb, var(--accent-danger) 38%, transparent);
+    color: var(--accent-danger);
+  }
+
+  .terminal-node__body {
+    @apply flex h-full min-h-0 flex-col gap-3 p-4;
+  }
+
+  .terminal-node__header {
+    @apply flex items-start justify-between gap-3;
+  }
+
+  .terminal-node__header strong {
+    @apply block text-sm;
+  }
+
+  .terminal-node__header span {
+    @apply block text-xs;
+    color: var(--text-soft);
+  }
+
+  .terminal-node__header-actions {
+    @apply flex items-center gap-2;
+  }
+
+  .terminal-node__header-actions button,
+  .terminal-node__profiles-actions button,
+  .terminal-node__manage-command {
+    @apply inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50;
+    border-color: var(--card-border-strong);
+    color: var(--text-soft);
+    background: color-mix(in srgb, var(--card-bg-hover) 74%, transparent);
+  }
+
+  .terminal-node__security {
+    @apply rounded-full border px-2 py-1 text-[11px];
+    border-color: color-mix(in srgb, var(--accent-danger) 38%, transparent);
+    color: var(--accent-danger) !important;
+  }
+
+  .terminal-node__commands {
+    @apply flex min-h-[32px] flex-wrap items-center gap-2;
+  }
+
+  .terminal-node__command-empty {
+    @apply text-xs;
+    color: var(--text-muted);
+  }
+
+  .terminal-node__command-chip {
+    @apply rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50;
+    border-color: color-mix(in srgb, var(--accent-projects) 34%, transparent);
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--accent-projects) 12%, transparent);
+  }
+
+  .terminal-node__profiles {
+    @apply max-h-[150px] overflow-y-auto rounded-2xl border p-3;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--card-bg-hover) 60%, transparent);
+  }
+
+  .terminal-node__profiles-head {
+    @apply mb-2 flex items-center justify-between text-sm;
+  }
+
+  .terminal-node__profiles-head button,
+  .terminal-node__profile-row button,
+  .terminal-node__tab-close {
+    @apply inline-flex items-center justify-center rounded-full border bg-transparent p-1;
+    border-color: var(--card-border);
+    color: var(--text-soft);
+  }
+
+  .terminal-node__profile-row {
+    @apply mb-2 grid grid-cols-[120px_1fr_auto] gap-2;
+  }
+
+  .terminal-node__profile-row input {
+    @apply min-w-0 rounded-xl border px-3 py-2 text-xs outline-none;
+    border-color: var(--card-border);
+    color: var(--text-strong);
+    background: rgba(2, 6, 23, 0.28);
+  }
+
+  .terminal-node__profiles-actions {
+    @apply flex justify-end gap-2;
+  }
+
+  .terminal-node__tabs {
+    @apply flex gap-2 overflow-x-auto pb-1;
+  }
+
+  .terminal-node__tabs > button {
+    @apply flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs;
+    border-color: var(--card-border);
+    color: var(--text-soft);
+    background: rgba(2, 6, 23, 0.2);
+  }
+
+  .terminal-node__tabs > button.is-active {
+    border-color: color-mix(in srgb, var(--accent-projects) 50%, transparent);
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--accent-projects) 13%, transparent);
+  }
+
+  .terminal-node__tabs small {
+    color: var(--text-muted);
+  }
+
+  .terminal-node__viewport {
+    @apply relative min-h-0 flex-1 overflow-hidden rounded-2xl border;
+    border-color: rgba(15, 23, 42, 0.86);
+    background: #020617;
+  }
+
+  .terminal-node__empty {
+    @apply flex h-full flex-col items-center justify-center gap-2 text-center text-sm;
+    color: var(--text-soft);
+  }
+
+  .terminal-node__empty strong {
+    color: var(--text-strong);
+  }
+
+  .terminal-session-view,
+  .terminal-session-view__host {
+    @apply h-full w-full min-h-0;
+  }
+
+  .terminal-session-view {
+    @apply relative overflow-hidden;
+  }
+
+  .terminal-session-view__host {
+    @apply overflow-hidden p-2;
+  }
+
+  .terminal-session-view__host .xterm {
+    @apply h-full;
+  }
+
+  .terminal-session-view__host .xterm-viewport {
+    overflow-y: auto !important;
+  }
+
+  .terminal-session-view__status {
+    @apply absolute right-3 bottom-3 rounded-full border px-3 py-1 text-xs;
+    border-color: var(--card-border-strong);
+    color: var(--text-soft);
+    background: rgba(15, 23, 42, 0.92);
+  }
+
   .chat-card-stack {
     @apply relative h-full w-full;
     outline: none;

@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 use raccoon_core::error::AppError;
 use raccoon_core::models::{
     AppData, ModelSettings, Project, ProjectChat, Requirement, RequirementStatus, SummaryNode,
+    TerminalCommandProfile,
 };
 
 const SCHEMA_VERSION: i64 = 2;
@@ -172,6 +173,11 @@ impl Database {
                 "model_settings",
                 ModelSettings::default(),
             )?,
+            terminal_command_profiles: setting_or_default::<Vec<TerminalCommandProfile>>(
+                &settings,
+                "terminal_command_profiles",
+                Vec::new(),
+            )?,
         })
     }
 
@@ -212,6 +218,13 @@ impl Database {
         }
         if previous.model_settings != next.model_settings {
             save_setting(&tx, "model_settings", &next.model_settings)?;
+        }
+        if previous.terminal_command_profiles != next.terminal_command_profiles {
+            save_setting(
+                &tx,
+                "terminal_command_profiles",
+                &next.terminal_command_profiles,
+            )?;
         }
 
         tx.commit()?;

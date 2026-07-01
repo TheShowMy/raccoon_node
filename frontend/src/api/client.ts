@@ -15,6 +15,9 @@ import {
   type RequirementTaskDetail,
   type RequirementTaskSession,
   type PublicationReadiness,
+  type TerminalCommandProfile,
+  type TerminalCommandProfileDraft,
+  type TerminalSession,
 } from "../types/api";
 
 export async function getCurrentProject(): Promise<{
@@ -93,6 +96,100 @@ export async function getTaskSession(
     throw new Error(body?.message ?? "读取任务会话失败");
   }
   return response.json();
+}
+
+export async function getProjectTerminals(
+  projectId: string,
+): Promise<TerminalSession[]> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/terminals`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取项目终端失败");
+  }
+  return response.json();
+}
+
+export async function createProjectTerminal(
+  projectId: string,
+  payload: { command?: string | null; title?: string | null },
+): Promise<TerminalSession> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/terminals`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "启动项目终端失败");
+  }
+  return response.json();
+}
+
+export async function deleteProjectTerminal(
+  projectId: string,
+  terminalId: string,
+): Promise<TerminalSession[]> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/terminals/${encodeURIComponent(terminalId)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "关闭项目终端失败");
+  }
+  return response.json();
+}
+
+export async function getTerminalCommandProfiles(
+  projectId: string,
+): Promise<TerminalCommandProfile[]> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/terminal-commands`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取终端启动命令失败");
+  }
+  return response.json();
+}
+
+export async function putTerminalCommandProfiles(
+  projectId: string,
+  profiles: TerminalCommandProfileDraft[],
+): Promise<TerminalCommandProfile[]> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/terminal-commands`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profiles }),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "保存终端启动命令失败");
+  }
+  return response.json();
+}
+
+export function terminalWebSocketUrl(projectId: string, terminalId: string) {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/api/projects/${encodeURIComponent(projectId)}/terminals/${encodeURIComponent(terminalId)}/ws`;
 }
 
 export async function getProjectChat(

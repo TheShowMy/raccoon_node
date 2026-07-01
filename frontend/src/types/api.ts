@@ -5,6 +5,7 @@ export type ThemeMode = "dark" | "light";
 
 export type BasicSettings = {
   theme: ThemeMode;
+  host: string;
   port: number;
   port_overridden: boolean;
 };
@@ -180,6 +181,47 @@ export type RequirementTaskSession = {
   messages: RequirementTaskSessionMessage[];
   truncated: boolean;
 };
+
+export type TerminalSessionStatus = "starting" | "running" | "exited";
+
+export type TerminalSession = {
+  id: string;
+  project_id: string;
+  title: string;
+  command: string | null;
+  status: TerminalSessionStatus;
+  exit_code: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TerminalCommandProfile = {
+  id: string;
+  name: string;
+  command: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TerminalCommandProfileDraft = {
+  id?: string;
+  name: string;
+  command: string;
+};
+
+export type TerminalServerMessage =
+  | { type: "output"; data: string }
+  | {
+      type: "status";
+      status: TerminalSessionStatus;
+      exit_code?: number | null;
+    }
+  | { type: "error"; message: string };
+
+export type TerminalClientMessage =
+  | { type: "input"; data: string }
+  | { type: "resize"; cols: number; rows: number }
+  | { type: "close" };
 
 export type Requirement = {
   id: string;
@@ -505,6 +547,27 @@ export type StartNodeData =
       onContinueEditing: (requirement: Requirement) => void;
       onCancel: () => void;
       onAbandon: () => void;
+    }
+  | {
+      kind: "project-terminal";
+      project: Project;
+      collapsed: boolean;
+      sessions: TerminalSession[];
+      activeSessionId: string | null;
+      commandProfiles: TerminalCommandProfile[];
+      busy: boolean;
+      error: string | null;
+      terminalDisabled: boolean;
+      onToggleCollapsed: () => void;
+      onCreateTerminal: (
+        command?: string | null,
+        title?: string | null,
+      ) => Promise<void>;
+      onCloseTerminal: (terminalId: string) => Promise<void>;
+      onSelectTerminal: (terminalId: string) => void;
+      onSaveCommandProfiles: (
+        profiles: TerminalCommandProfileDraft[],
+      ) => Promise<void>;
     }
   | {
       kind: "requirement-dag";

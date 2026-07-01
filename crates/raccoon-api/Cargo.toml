@@ -12,8 +12,10 @@ raccoon-core.workspace = true
 raccoon-pi-rpc.workspace = true
 raccoon-requirement.workspace = true
 raccoon-store.workspace = true
-axum.workspace = true
+axum = { workspace = true, features = ["ws"] }
+chrono.workspace = true
 mime_guess.workspace = true
+portable-pty.workspace = true
 rust-embed.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

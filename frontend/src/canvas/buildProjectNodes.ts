@@ -16,6 +16,9 @@ import type {
   RequirementExecutionTask,
   ProjectChatEvent,
   ProjectChatResponse,
+  TerminalCommandProfile,
+  TerminalCommandProfileDraft,
+  TerminalSession,
   StartNodeData,
   SettingsView,
   StreamEvent,
@@ -55,6 +58,7 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       "project-github": { width: 137, height: 90 },
       "requirement-list": { width: 290, height: 640 },
       "requirement-chat": { width: 720, height: 760 },
+      "project-terminal": { width: 720, height: 44 },
       "requirement-dag": DAG_NODE_SIZE,
       "requirement-task": { width: 252, height: 134 },
       "token-usage": { width: 290, height: 96 },
@@ -102,6 +106,28 @@ export interface BuildProjectNodesParams {
   planRequirement: (requirement: Requirement) => Promise<void>;
   recoverTaskGroup: (requirementId: string, taskId: string) => Promise<void>;
   toggleTaskGroupCollapsed: (requirementId: string, taskId: string) => void;
+}
+
+export interface BuildProjectTerminalNodeParams {
+  projectCanvas: ProjectCanvasData | null;
+  project: Project | null;
+  collapsed: boolean;
+  sessions: TerminalSession[];
+  activeSessionId: string | null;
+  commandProfiles: TerminalCommandProfile[];
+  busy: boolean;
+  error: string | null;
+  terminalDisabled: boolean;
+  onToggleCollapsed: () => void;
+  onCreateTerminal: (
+    command?: string | null,
+    title?: string | null,
+  ) => Promise<void>;
+  onCloseTerminal: (terminalId: string) => Promise<void>;
+  onSelectTerminal: (terminalId: string) => void;
+  onSaveCommandProfiles: (
+    profiles: TerminalCommandProfileDraft[],
+  ) => Promise<void>;
 }
 
 export interface BuildProjectChatNodeParams {
@@ -595,11 +621,62 @@ export function buildProjectChatNode({
   ])[0];
 }
 
+export function buildProjectTerminalNode({
+  projectCanvas,
+  project: currentProject,
+  collapsed,
+  sessions,
+  activeSessionId,
+  commandProfiles,
+  busy,
+  error,
+  terminalDisabled,
+  onToggleCollapsed,
+  onCreateTerminal,
+  onCloseTerminal,
+  onSelectTerminal,
+  onSaveCommandProfiles,
+}: BuildProjectTerminalNodeParams): Node<StartNodeData> | null {
+  const project = projectCanvas?.project ?? currentProject;
+  if (!project) return null;
+
+  return withDimensions([
+    {
+      id: "project-terminal",
+      type: "startNode",
+      position: { x: 0, y: 800 },
+      style: {
+        width: 720,
+        height: collapsed ? 44 : 420,
+      },
+      data: {
+        kind: "project-terminal",
+        project,
+        collapsed,
+        sessions,
+        activeSessionId,
+        commandProfiles,
+        busy,
+        error,
+        terminalDisabled,
+        onToggleCollapsed,
+        onCreateTerminal,
+        onCloseTerminal,
+        onSelectTerminal,
+        onSaveCommandProfiles,
+      },
+    },
+  ])[0];
+}
+
 export function mergeProjectNodes(
   structureNodes: Node<StartNodeData>[],
-  chatNode: Node<StartNodeData> | null,
+  ...extraNodes: Array<Node<StartNodeData> | null>
 ): Node<StartNodeData>[] {
-  return chatNode ? [...structureNodes, chatNode] : structureNodes;
+  return [
+    ...structureNodes,
+    ...extraNodes.filter((node): node is Node<StartNodeData> => Boolean(node)),
+  ];
 }
 
 export { buildRequirementDagEdges };

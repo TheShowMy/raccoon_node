@@ -1,9 +1,15 @@
 use axum::{
     Json,
     body::Body,
-    extract::{Path as AxumPath, Query, State},
+    extract::{
+        Path as AxumPath, Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     http::{Response, header},
-    response::sse::{Event, KeepAlive, Sse},
+    response::{
+        IntoResponse,
+        sse::{Event, KeepAlive, Sse},
+    },
 };
 use serde::Deserialize;
 use tokio::task::JoinSet;
@@ -22,6 +28,8 @@ use raccoon_core::models::{
     RequirementConversationResponse, RequirementEvent, RequirementEventEmitter,
     RequirementMessageRequest, RequirementStatus, RequirementTaskDetailResponse,
     RequirementTaskExecutionInput, RequirementTaskSessionResponse, RpcStatus,
+    TerminalClientMessage, TerminalCommandProfile, TerminalCommandProfilesUpdate,
+    TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
 };
 use raccoon_store::{ProjectScheduleAction, TaskExecutionDisposition};
 
@@ -77,6 +85,7 @@ pub async fn get_basic_settings(
     let config = state.config.read().await;
     Ok(Json(BasicSettings {
         theme: config.theme,
+        host: config.host.clone(),
         port: config.port,
         port_overridden: state.port_overridden,
     }))
@@ -104,6 +113,7 @@ pub async fn put_basic_settings(
 
     Ok(Json(BasicSettings {
         theme: config.theme,
+        host: config.host.clone(),
         port: config.port,
         port_overridden: state.port_overridden,
     }))
@@ -398,6 +408,155 @@ fn requirement_event_matches(
     query: &RequirementEventsQuery,
 ) -> bool {
     event.requirement_id == requirement_id && (query.include_pi_events || event.event != "pi_event")
+}
+
+pub async fn list_project_terminals(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> Result<Json<Vec<TerminalSession>>, AppError> {
+    {
+        let store = state.store.read().await;
+        store.project_root(&project_id)?;
+    }
+    Ok(Json(state.terminal_manager.list(&project_id)))
+}
+
+pub async fn create_project_terminal(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(payload): Json<TerminalLaunchRequest>,
+) -> Result<Json<TerminalSession>, AppError> {
+    ensure_terminal_allowed(&state).await?;
+    let project_root = {
+        let store = state.store.read().await;
+        store.project_root(&project_id)?
+    };
+    state.terminal_manager.cleanup_exited();
+    Ok(Json(state.terminal_manager.spawn(
+        &project_id,
+        project_root,
+        payload.command,
+        payload.title,
+        payload.rows,
+        payload.cols,
+    )?))
+}
+
+pub async fn delete_project_terminal(
+    State(state): State<AppState>,
+    AxumPath((project_id, terminal_id)): AxumPath<(String, String)>,
+) -> Result<Json<Vec<TerminalSession>>, AppError> {
+    state.terminal_manager.delete(&project_id, &terminal_id)?;
+    Ok(Json(state.terminal_manager.list(&project_id)))
+}
+
+pub async fn get_terminal_command_profiles(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> Result<Json<Vec<TerminalCommandProfile>>, AppError> {
+    let store = state.store.read().await;
+    Ok(Json(store.terminal_command_profiles(&project_id)?))
+}
+
+pub async fn put_terminal_command_profiles(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(payload): Json<TerminalCommandProfilesUpdate>,
+) -> Result<Json<Vec<TerminalCommandProfile>>, AppError> {
+    let mut store = state.store.write().await;
+    Ok(Json(
+        store
+            .replace_terminal_command_profiles(&project_id, payload.profiles)
+            .await?,
+    ))
+}
+
+pub async fn terminal_websocket(
+    State(state): State<AppState>,
+    AxumPath((project_id, terminal_id)): AxumPath<(String, String)>,
+    websocket: WebSocketUpgrade,
+) -> Result<impl IntoResponse, AppError> {
+    {
+        let store = state.store.read().await;
+        store.project_root(&project_id)?;
+    }
+    let session = state.terminal_manager.get(&terminal_id)?;
+    if session.metadata().project_id != project_id {
+        return Err(AppError::not_found("终端不存在"));
+    }
+    Ok(websocket.on_upgrade(move |socket| handle_terminal_socket(socket, session)))
+}
+
+async fn handle_terminal_socket(
+    mut socket: WebSocket,
+    session: std::sync::Arc<crate::terminal::TerminalSessionRuntime>,
+) {
+    let mut output_rx = session.subscribe();
+    let status_message = TerminalServerMessage::Status {
+        status: session.metadata().status,
+        exit_code: session.metadata().exit_code,
+    };
+    if let Ok(message) = serde_json::to_string(&status_message)
+        && socket.send(Message::Text(message.into())).await.is_err()
+    {
+        return;
+    }
+    loop {
+        tokio::select! {
+            output = output_rx.recv() => {
+                match output {
+                    Ok(message) => {
+                        match serde_json::to_string(&message) {
+                            Ok(data) => {
+                                if socket.send(Message::Text(data.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(error) => tracing::error!(error = %error, "terminal websocket event serialization failed"),
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            inbound = socket.recv() => {
+                let Some(Ok(message)) = inbound else { break; };
+                match message {
+                    Message::Text(text) => match serde_json::from_str::<TerminalClientMessage>(&text) {
+                        Ok(TerminalClientMessage::Input { data }) => session.input(data),
+                        Ok(TerminalClientMessage::Resize { cols, rows }) => session.resize(rows, cols),
+                        Ok(TerminalClientMessage::Close) => {
+                            session.shutdown();
+                            break;
+                        }
+                        Err(error) => {
+                            let message = TerminalServerMessage::Error { message: format!("终端消息格式无效：{error}") };
+                            if let Ok(data) = serde_json::to_string(&message) {
+                                let _ = socket.send(Message::Text(data.into())).await;
+                            }
+                        }
+                    },
+                    Message::Binary(_) => {}
+                    Message::Ping(data) => {
+                        if socket.send(Message::Pong(data)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Message::Pong(_) => {}
+                    Message::Close(_) => break,
+                }
+            }
+        }
+    }
+}
+
+async fn ensure_terminal_allowed(state: &AppState) -> Result<(), AppError> {
+    if state.config.read().await.host == "0.0.0.0" {
+        return Err(AppError::bad_request(
+            "当前服务监听 0.0.0.0，出于安全考虑已禁用项目终端",
+        ));
+    }
+    Ok(())
 }
 
 pub async fn project_chat_events(

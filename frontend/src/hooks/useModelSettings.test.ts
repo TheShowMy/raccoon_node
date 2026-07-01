@@ -15,6 +15,7 @@ beforeEach(() => vi.clearAllMocks());
 it("navigates settings in one mutually exclusive state", async () => {
   vi.mocked(getBasicSettings).mockResolvedValue({
     theme: "dark",
+    host: "127.0.0.1",
     port: 3000,
     port_overridden: false,
   });
@@ -37,11 +38,13 @@ it("navigates settings in one mutually exclusive state", async () => {
 it("applies a saved theme immediately and returns to the settings list", async () => {
   vi.mocked(getBasicSettings).mockResolvedValue({
     theme: "dark",
+    host: "127.0.0.1",
     port: 3000,
     port_overridden: false,
   });
   vi.mocked(saveBasicSettings).mockResolvedValue({
     theme: "light",
+    host: "127.0.0.1",
     port: 4321,
     port_overridden: false,
   });
@@ -52,6 +55,7 @@ it("applies a saved theme immediately and returns to the settings list", async (
   act(() =>
     result.current.updateBasicSettings({
       theme: "light",
+      host: "127.0.0.1",
       port: 4321,
       port_overridden: false,
     }),
@@ -71,6 +75,7 @@ it("rejects an invalid port before calling the API", async () => {
   act(() =>
     result.current.updateBasicSettings({
       theme: "dark",
+      host: "127.0.0.1",
       port: 0,
       port_overridden: false,
     }),

@@ -20,6 +20,8 @@ pub struct AppData {
     pub model_summary: SummaryNode,
     #[serde(default)]
     pub model_settings: ModelSettings,
+    #[serde(default)]
+    pub terminal_command_profiles: Vec<TerminalCommandProfile>,
 }
 
 impl Default for AppData {
@@ -37,6 +39,7 @@ impl Default for AppData {
                 description: "默认模型待配置".to_owned(),
             },
             model_settings: ModelSettings::default(),
+            terminal_command_profiles: Vec::new(),
         }
     }
 }
@@ -126,6 +129,7 @@ impl PublicationReadiness {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BasicSettings {
     pub theme: crate::config::Theme,
+    pub host: String,
     pub port: u16,
     pub port_overridden: bool,
 }
@@ -492,6 +496,78 @@ pub struct RequirementTaskSessionTool {
     pub output: String,
     pub diff: Option<String>,
     pub is_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TerminalCommandProfile {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalSessionStatus {
+    Starting,
+    Running,
+    Exited,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TerminalSession {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub command: Option<String>,
+    pub status: TerminalSessionStatus,
+    pub exit_code: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct TerminalLaunchRequest {
+    pub command: Option<String>,
+    pub title: Option<String>,
+    pub rows: Option<u16>,
+    pub cols: Option<u16>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct TerminalCommandProfilesUpdate {
+    pub profiles: Vec<TerminalCommandProfileUpdate>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct TerminalCommandProfileUpdate {
+    pub id: Option<String>,
+    pub name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TerminalServerMessage {
+    Output {
+        data: String,
+    },
+    Status {
+        status: TerminalSessionStatus,
+        exit_code: Option<i32>,
+    },
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TerminalClientMessage {
+    Input { data: String },
+    Resize { cols: u16, rows: u16 },
+    Close,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
