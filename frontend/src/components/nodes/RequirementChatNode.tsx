@@ -25,7 +25,7 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
   );
   const conversation =
     data.conversation?.id === data.requirement?.id ? data.conversation : null;
-  const prompt = conversation?.prompt ?? null;
+  const prompt = data.promptDismissed ? null : (conversation?.prompt ?? null);
 
   useEffect(() => setActiveCard("requirement"), [data.project.id]);
   useEffect(() => setConfirmAction(null), [data.project.id]);

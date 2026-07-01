@@ -27,7 +27,6 @@ function task(
     pi_session_file: null,
     branch_name: null,
     worktree_path: null,
-    commit_sha: null,
     review_for: null,
     review_angle: null,
     review_status: "pending",
@@ -48,6 +47,7 @@ function task(
     target_files: [],
     result_summary: null,
     error: null,
+    review_history: [],
     ...extra,
   };
 }

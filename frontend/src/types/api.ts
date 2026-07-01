@@ -83,6 +83,28 @@ export type RequirementRecoveryStage =
   | "high_tier_execution"
   | "exhausted";
 
+export type RequirementReviewHistoryStep = {
+  task_id: string;
+  angle: string;
+  status: RequirementReviewStatus;
+  summary: string;
+  failure_reason: string | null;
+  completed_at: string;
+};
+
+export type RequirementReviewHistoryRound = {
+  round: number;
+  implementation_attempt: number;
+  implementation_summary: string;
+  status: "reviewing" | "approved" | "rejected";
+  started_at: string;
+  completed_at: string | null;
+  reviews: RequirementReviewHistoryStep[];
+  summary: string | null;
+  summary_conclusion: RequirementReviewStatus | null;
+  failure_reason: string | null;
+};
+
 export type RequirementExecutionTask = {
   id: string;
   title: string;
@@ -94,7 +116,6 @@ export type RequirementExecutionTask = {
   pi_session_file: string | null;
   branch_name: string | null;
   worktree_path: string | null;
-  commit_sha: string | null;
   review_for: string | null;
   review_angle: string | null;
   review_status: RequirementReviewStatus;
@@ -115,6 +136,7 @@ export type RequirementExecutionTask = {
   target_files: string[];
   result_summary: string | null;
   error: string | null;
+  review_history: RequirementReviewHistoryRound[];
 };
 
 export type RequirementExecutionPlan = {
@@ -463,6 +485,7 @@ export type StartNodeData =
       requirementId: string;
       task: RequirementExecutionTask;
       reviews: RequirementExecutionTask[];
+      dependencies: RequirementExecutionTask[];
       busy: boolean;
       collapsed?: boolean;
       onToggleCollapsed?: (requirementId: string, taskId: string) => void;

@@ -248,6 +248,8 @@ pub struct RequirementExecutionTask {
     #[serde(default)]
     pub review_status: RequirementReviewStatus,
     #[serde(default)]
+    pub review_history: Vec<RequirementReviewRound>,
+    #[serde(default)]
     pub attempt: u32,
     #[serde(default)]
     pub execution_failure_count: u32,
@@ -278,6 +280,45 @@ pub struct RequirementExecutionTask {
     pub target_files: Vec<String>,
     pub result_summary: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RequirementReviewRound {
+    pub round: u32,
+    pub implementation_attempt: u32,
+    pub implementation_summary: String,
+    pub status: RequirementReviewRoundStatus,
+    pub started_at: DateTime<Utc>,
+    #[serde(default)]
+    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub reviews: Vec<RequirementReviewStep>,
+    #[serde(default)]
+    pub summary_conclusion: Option<RequirementReviewStatus>,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub failure_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RequirementReviewStep {
+    pub task_id: String,
+    pub angle: String,
+    pub status: RequirementReviewStatus,
+    pub summary: String,
+    #[serde(default)]
+    pub failure_reason: Option<String>,
+    pub completed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementReviewRoundStatus {
+    #[default]
+    Reviewing,
+    Approved,
+    Rejected,
 }
 
 fn default_task_timeout_seconds() -> u64 {
@@ -914,5 +955,20 @@ mod tests {
         };
         let json = serde_json::to_value(&requirement).unwrap();
         assert!(json.get("pi_session_file").is_none());
+    }
+
+    #[test]
+    fn execution_task_without_review_history_remains_compatible() {
+        let task: RequirementExecutionTask = serde_json::from_value(serde_json::json!({
+            "id": "task-1",
+            "title": "实现",
+            "description": "实现功能",
+            "status": "pending",
+            "result_summary": null,
+            "error": null
+        }))
+        .unwrap();
+
+        assert!(task.review_history.is_empty());
     }
 }

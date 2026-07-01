@@ -122,6 +122,44 @@ describe("useRequirementFlow", () => {
     expect(observeRequirement).toHaveBeenCalledWith(requirement.id);
   });
 
+  it("dismisses the prompt while continuing and resets it for another requirement", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    const textarea = document.createElement("textarea");
+    const card = document.createElement("div");
+    card.dataset.chatCard = "requirement";
+    card.append(textarea);
+    document.body.append(card);
+
+    const { result, rerender } = renderHook(
+      ({ activeRequirementId }) =>
+        useRequirementFlow(
+          "project-1",
+          activeRequirementId,
+          null,
+          vi.fn(),
+          vi.fn(),
+          vi.fn(),
+        ),
+      { initialProps: { activeRequirementId: requirement.id } },
+    );
+
+    act(() => {
+      result.current.continueEditingRequirement(requirement);
+    });
+
+    expect(result.current.dismissedPromptRequirementId).toBe(requirement.id);
+    expect(textarea).toHaveFocus();
+
+    rerender({ activeRequirementId: "requirement-2" });
+    await waitFor(() => {
+      expect(result.current.dismissedPromptRequirementId).toBeNull();
+    });
+    card.remove();
+  });
+
   it("ignores SSE events that do not belong to the observed requirement", async () => {
     const loadProjectCanvas = vi.fn().mockResolvedValue(canvas);
     const { result } = renderHook(() =>

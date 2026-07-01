@@ -384,6 +384,7 @@ export function buildProjectNodes({
                   requirementId: selectedDagRequirement.id,
                   task,
                   reviews,
+                  dependencies: [],
                   collapsed,
                   busy: recoveryBusy(task.id),
                   onToggleCollapsed: toggleTaskGroupCollapsed,
@@ -409,6 +410,7 @@ export function buildProjectNodes({
                         requirementId: selectedDagRequirement.id,
                         task,
                         reviews,
+                        dependencies: [],
                         busy: recoveryBusy(task.id),
                         onRecoverTaskGroup: recoverTaskGroup,
                       },
@@ -431,6 +433,7 @@ export function buildProjectNodes({
                               requirementId: selectedDagRequirement.id,
                               task: summary,
                               reviews: subAgents,
+                              dependencies: [],
                               busy: recoveryBusy(task.id),
                               onRecoverTaskGroup: recoverTaskGroup,
                             },
@@ -453,6 +456,7 @@ export function buildProjectNodes({
                         requirementId: selectedDagRequirement.id,
                         task: review,
                         reviews: [],
+                        dependencies: [],
                         busy: recoveryBusy(task.id),
                         onRecoverTaskGroup: recoverTaskGroup,
                       },
@@ -476,6 +480,12 @@ export function buildProjectNodes({
                 requirementId: selectedDagRequirement.id,
                 task,
                 reviews: [],
+                dependencies: task.depends_on.flatMap((dependencyId) => {
+                  const dependency = selectedTasks.find(
+                    (candidate) => candidate.id === dependencyId,
+                  );
+                  return dependency ? [dependency] : [];
+                }),
                 busy: recoveryBusy(task.id),
                 onRecoverTaskGroup: recoverTaskGroup,
               },

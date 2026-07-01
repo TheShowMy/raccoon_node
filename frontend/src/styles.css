@@ -920,6 +920,35 @@
     @apply grid;
   }
 
+  .dag-node__thinking {
+    @apply absolute right-0 bottom-0 left-0 flex h-8 items-center gap-2 border-t px-3;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--accent-model) 9%, var(--card-bg));
+  }
+
+  .dag-node__thinking-label {
+    @apply flex shrink-0 items-center gap-1 text-[10px] font-bold;
+    color: var(--accent-model);
+  }
+
+  .dag-node__thinking-label svg {
+    @apply animate-spin;
+  }
+
+  .dag-node__thinking-scroll {
+    @apply min-w-0 flex-1 overflow-x-auto text-[10px] whitespace-nowrap;
+    color: var(--text-soft);
+    scrollbar-width: none;
+  }
+
+  .dag-node__thinking-scroll::-webkit-scrollbar {
+    display: none;
+  }
+
+  .dag-node__thinking-text {
+    @apply inline-block min-w-full;
+  }
+
   .dag-node__body strong,
   .task-node__head strong {
     @apply text-[13px] font-bold;
@@ -1116,6 +1145,18 @@
 
   .task-node__collapse:hover {
     background: color-mix(in srgb, var(--accent-create) 18%, transparent);
+  }
+
+  .task-node__detail {
+    @apply inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold transition;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--panel-bg) 76%, transparent);
+    color: var(--text-soft);
+  }
+
+  .task-node__detail:hover {
+    border-color: var(--accent-model);
+    color: var(--text-strong);
   }
 
   .task-node--code .node-icon {
@@ -1399,6 +1440,102 @@
   .task-detail-dialog__flow strong {
     @apply min-w-0 truncate text-sm font-bold;
     color: var(--text-strong);
+  }
+
+  .task-detail-dialog__rounds,
+  .task-detail-dialog__round,
+  .task-detail-dialog__lane {
+    @apply grid gap-3;
+  }
+
+  .task-detail-dialog__round {
+    @apply rounded-[10px] border p-3;
+    border-color: var(--card-border);
+    background: var(--card-bg);
+  }
+
+  .task-detail-dialog__round > header {
+    @apply flex items-center justify-between gap-3;
+  }
+
+  .task-detail-dialog__round > header > span {
+    @apply rounded-full px-2 py-1 text-[10px] font-bold;
+    color: var(--text-soft);
+    background: var(--panel-bg);
+  }
+
+  .task-detail-dialog__round > header > .is-approved {
+    color: var(--success);
+  }
+
+  .task-detail-dialog__round > header > .is-rejected {
+    color: var(--accent-danger);
+  }
+
+  .task-detail-dialog__lanes {
+    @apply grid items-start gap-3;
+    grid-template-columns: minmax(0, 1fr) 88px minmax(0, 1fr);
+  }
+
+  .task-detail-dialog__lane > b {
+    @apply text-center text-xs;
+    color: var(--text-soft);
+  }
+
+  .task-detail-dialog__exchange {
+    @apply grid self-center gap-2 text-center text-[10px] font-bold whitespace-nowrap;
+    color: var(--accent-model);
+  }
+
+  .task-detail-dialog__step,
+  .task-detail-dialog__stage {
+    @apply min-w-0 rounded-[9px] border p-3;
+    border-color: var(--card-border);
+    background: var(--panel-bg);
+  }
+
+  .task-detail-dialog__step.is-approved,
+  .task-detail-dialog__stage.is-approved {
+    border-color: color-mix(in srgb, var(--success) 46%, transparent);
+  }
+
+  .task-detail-dialog__step.is-rejected,
+  .task-detail-dialog__stage.is-rejected {
+    border-color: color-mix(in srgb, var(--accent-danger) 52%, transparent);
+  }
+
+  .task-detail-dialog__step strong,
+  .task-detail-dialog__stage strong {
+    @apply text-xs font-bold;
+    color: var(--text-strong);
+  }
+
+  .task-detail-dialog__step p,
+  .task-detail-dialog__stage div {
+    @apply mt-1 break-words text-xs leading-relaxed;
+    color: var(--text-soft);
+  }
+
+  .task-detail-dialog__stage div {
+    @apply grid gap-1;
+  }
+
+  .task-detail-dialog__pipeline {
+    @apply grid items-center gap-2;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(
+        0,
+        1fr
+      );
+  }
+
+  .task-detail-dialog__pipeline--publish {
+    grid-template-columns:
+      minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto
+      minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .task-detail-dialog__pipeline > span {
+    color: var(--accent-model);
   }
 
   .task-detail-dialog__details {
@@ -2401,6 +2538,21 @@
     .task-detail-dialog__body,
     .task-detail-dialog__section {
       grid-template-columns: 1fr;
+    }
+
+    .task-detail-dialog__lanes,
+    .task-detail-dialog__pipeline,
+    .task-detail-dialog__pipeline--publish {
+      grid-template-columns: 1fr;
+    }
+
+    .task-detail-dialog__exchange {
+      @apply py-1;
+    }
+
+    .task-detail-dialog__pipeline > span {
+      justify-self: center;
+      transform: rotate(90deg);
     }
   }
 }

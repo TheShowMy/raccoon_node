@@ -18,7 +18,8 @@ use raccoon_core::models::{
     RequirementConversationItem, RequirementConversationPrompt, RequirementConversationResponse,
     RequirementExecutionPlan, RequirementMessage, RequirementMessageRole, RequirementNoticeLevel,
     RequirementPlanInput, RequirementProcessStatus, RequirementPromptState,
-    RequirementRecoveryStage, RequirementReviewStatus, RequirementStatus,
+    RequirementRecoveryStage, RequirementReviewRound, RequirementReviewRoundStatus,
+    RequirementReviewStatus, RequirementReviewStep, RequirementStatus,
     RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
     RequirementTaskStatus,
 };
@@ -1624,8 +1625,41 @@ impl JsonStore {
                 }
                 match task_kind {
                     RequirementTaskKind::Implementation => {
+                        begin_review_round(plan, task_id, effective_result_summary.clone(), now);
                         reset_review_for(plan, task_id);
                     }
+                    RequirementTaskKind::Review | RequirementTaskKind::ReviewSubAgent => {
+                        let review_status = review_update
+                            .or(effective_review_status)
+                            .unwrap_or(RequirementReviewStatus::Rejected);
+                        record_review_step(
+                            plan,
+                            task_id,
+                            review_status,
+                            effective_result_summary.clone(),
+                            (review_status == RequirementReviewStatus::Rejected)
+                                .then(|| effective_review_feedback.clone())
+                                .flatten(),
+                            now,
+                        );
+                    }
+                    RequirementTaskKind::ReviewSummary => {
+                        let review_status =
+                            review_update.unwrap_or(RequirementReviewStatus::Rejected);
+                        finish_review_round(
+                            plan,
+                            task_id,
+                            review_status,
+                            effective_result_summary.clone(),
+                            (review_status == RequirementReviewStatus::Rejected)
+                                .then(|| effective_review_feedback.clone())
+                                .flatten(),
+                            now,
+                        );
+                    }
+                    RequirementTaskKind::BranchMerge | RequirementTaskKind::MergeReview => {}
+                }
+                match task_kind {
                     RequirementTaskKind::Review | RequirementTaskKind::ReviewSummary => {
                         match review_update.unwrap_or(RequirementReviewStatus::Rejected) {
                             RequirementReviewStatus::Approved => {
@@ -1659,6 +1693,7 @@ impl JsonStore {
                         }
                     }
                     RequirementTaskKind::ReviewSubAgent
+                    | RequirementTaskKind::Implementation
                     | RequirementTaskKind::BranchMerge
                     | RequirementTaskKind::MergeReview => {}
                 }

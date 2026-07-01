@@ -28,7 +28,7 @@ pub fn build_requirement_prompt(input: &RequirementAnalysisInput) -> String {
     );
     if input.draft.is_some() {
         prompt.push_str(
-            "当前任务是基于上一版确认草案合并本轮输入，提交完整新版确认草案；默认继承上一版中未被本轮输入明确否定的标题、摘要和验收标准，禁止把本轮输入当成新的独立需求。\n",
+            "除非本轮用户明确要求先提供澄清项、候选方案或让其选择，否则当前任务是基于上一版确认草案合并本轮输入，提交完整新版确认草案；明确要求选择时必须优先调用 request_clarifications。默认继承上一版中未被本轮输入明确否定的标题、摘要和验收标准，禁止把本轮输入当成新的独立需求。\n",
         );
     }
     prompt.push_str("### BEGIN REQUIREMENT CONTEXT ###\n");
@@ -100,7 +100,7 @@ fn format_requirement_context(input: &RequirementAnalysisInput) -> String {
     );
     if input.draft.is_some() {
         context.push_str(
-            "\n\n续写/修订规则：\n- 这不是一个新需求，必须基于上一版确认草案修订。\n- 默认继承上一版确认草案中未被本轮输入明确否定的内容。\n- 本轮输入是对上一版草案的补充/修订，不是独立需求。\n- 新版 submit_requirement_draft 必须覆盖完整需求，而不是只描述本轮新增内容。\n- 禁止把本轮输入当成新的独立需求。",
+            "\n\n续写/修订规则：\n- 这不是一个新需求，必须基于上一版确认草案修订。\n- 如果本轮输入明确要求先给澄清项、候选方案或让用户选择，必须先调用 request_clarifications，选项不得提前写入确认草案。\n- 否则默认继承上一版确认草案中未被本轮输入明确否定的内容。\n- 本轮输入是对上一版草案的补充/修订，不是独立需求。\n- 新版 submit_requirement_draft 必须覆盖完整需求，而不是只描述本轮新增内容。\n- 禁止把本轮输入当成新的独立需求。",
         );
     }
     context
@@ -649,6 +649,7 @@ mod tests {
 
         let prompt = build_requirement_prompt(&input);
         assert!(prompt.contains("后续补充不是一个全新的需求"));
+        assert!(prompt.contains("除非本轮用户明确要求先提供澄清项、候选方案或让其选择"));
         assert!(prompt.contains("当前任务是基于上一版确认草案合并本轮输入"));
         assert!(prompt.contains("原始需求：增加导出功能"));
         assert!(prompt.contains("上一版确认草案：\n标题：导出功能"));
@@ -663,6 +664,47 @@ mod tests {
         assert!(prompt.contains("禁止把本轮输入当成新的独立需求"));
         assert!(prompt.contains("必须通过工具提交结果"));
         assert!(!prompt.contains("只输出一个 JSON 对象"));
+    }
+
+    #[test]
+    fn continuation_prompt_prioritizes_explicit_option_request() {
+        let now = Utc::now();
+        let input = RequirementAnalysisInput {
+            project: Project {
+                id: "p1".to_owned(),
+                name: "Demo".to_owned(),
+                git_url: String::new(),
+                local_path: "/tmp/demo".to_owned(),
+                created_at: now,
+                updated_at: now,
+            },
+            messages: vec![RequirementMessage {
+                role: RequirementMessageRole::User,
+                content: "先给我几个具体实施方案选项，我选择后再确定".to_owned(),
+                references: Vec::new(),
+                images: Vec::new(),
+                metadata: None,
+                created_at: now,
+            }],
+            reference_context: None,
+            prompt_images: Vec::new(),
+            clarifications: Vec::new(),
+            draft: Some(RequirementDraft {
+                title: "已有需求".to_owned(),
+                summary: "已有草案".to_owned(),
+                acceptance_criteria: vec!["保持现有行为".to_owned()],
+            }),
+            model_settings: ModelSettings::default(),
+            pi_session_file: Some("session.jsonl".to_owned()),
+        };
+
+        let prompt = build_requirement_prompt(&input);
+        assert!(prompt.contains("最高优先级"));
+        assert!(prompt.contains("即使已有上一版确认草案或能从仓库推断，也不得跳过"));
+        assert!(prompt.contains("候选方案只能作为 single_choice/multi_choice 的选项提交"));
+        assert!(prompt.contains("本轮输入：先给我几个具体实施方案选项，我选择后再确定"));
+        assert!(prompt.contains("明确要求选择时必须优先调用 request_clarifications"));
+        assert!(prompt.contains("选项不得提前写入确认草案"));
     }
 
     #[test]

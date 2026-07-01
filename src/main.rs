@@ -454,6 +454,7 @@ mod tests {
             review_for: review_for.map(str::to_owned),
             review_angle: review_for.map(|_| "综合审核".to_owned()),
             review_status: RequirementReviewStatus::Pending,
+            review_history: Vec::new(),
             attempt: 0,
             execution_failure_count: 0,
             review_rejection_count: 0,

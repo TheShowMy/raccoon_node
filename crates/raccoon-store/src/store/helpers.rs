@@ -152,6 +152,119 @@ fn rejected_review_sub_agent_feedback(
         })
 }
 
+fn begin_review_round(
+    plan: &mut RequirementExecutionPlan,
+    implementation_id: &str,
+    summary: String,
+    now: chrono::DateTime<Utc>,
+) {
+    let Some(task) = plan
+        .tasks
+        .iter_mut()
+        .find(|task| task.id == implementation_id)
+    else {
+        return;
+    };
+    task.review_history.push(RequirementReviewRound {
+        round: task.review_history.len() as u32 + 1,
+        implementation_attempt: task.attempt,
+        implementation_summary: summary,
+        status: RequirementReviewRoundStatus::Reviewing,
+        started_at: now,
+        completed_at: None,
+        reviews: Vec::new(),
+        summary_conclusion: None,
+        summary: None,
+        failure_reason: None,
+    });
+}
+
+fn record_review_step(
+    plan: &mut RequirementExecutionPlan,
+    review_task_id: &str,
+    status: RequirementReviewStatus,
+    summary: String,
+    failure_reason: Option<String>,
+    now: chrono::DateTime<Utc>,
+) {
+    let Some(review) = plan
+        .tasks
+        .iter()
+        .find(|task| task.id == review_task_id)
+    else {
+        return;
+    };
+    let Some(implementation_id) = review.review_for.clone() else {
+        return;
+    };
+    let angle = review
+        .review_angle
+        .clone()
+        .unwrap_or_else(|| review.title.clone());
+    let Some(round) = plan
+        .tasks
+        .iter_mut()
+        .find(|task| task.id == implementation_id)
+        .and_then(|task| task.review_history.last_mut())
+    else {
+        return;
+    };
+    let step = RequirementReviewStep {
+        task_id: review_task_id.to_owned(),
+        angle,
+        status,
+        summary,
+        failure_reason,
+        completed_at: now,
+    };
+    if let Some(previous) = round
+        .reviews
+        .iter_mut()
+        .find(|review| review.task_id == review_task_id)
+    {
+        *previous = step;
+    } else {
+        round.reviews.push(step);
+    }
+}
+
+fn finish_review_round(
+    plan: &mut RequirementExecutionPlan,
+    summary_task_id: &str,
+    conclusion: RequirementReviewStatus,
+    summary: String,
+    failure_reason: Option<String>,
+    now: chrono::DateTime<Utc>,
+) {
+    let Some(implementation_id) = plan
+        .tasks
+        .iter()
+        .find(|task| task.id == summary_task_id)
+        .and_then(|task| task.review_for.clone())
+    else {
+        return;
+    };
+    let Some(round) = plan
+        .tasks
+        .iter_mut()
+        .find(|task| task.id == implementation_id)
+        .and_then(|task| task.review_history.last_mut())
+    else {
+        return;
+    };
+    round.status = match conclusion {
+        RequirementReviewStatus::Approved => RequirementReviewRoundStatus::Approved,
+        RequirementReviewStatus::Rejected => RequirementReviewRoundStatus::Rejected,
+        RequirementReviewStatus::Pending => RequirementReviewRoundStatus::Reviewing,
+    };
+    round.summary_conclusion = Some(conclusion);
+    round.summary = Some(summary);
+    round.failure_reason = failure_reason;
+    if conclusion != RequirementReviewStatus::Pending {
+        round.completed_at = Some(now);
+    }
+}
+
 fn reset_review_for(plan: &mut RequirementExecutionPlan, task_id: &str) {
     for candidate in &mut plan.tasks {
         if candidate.review_for.as_deref() == Some(task_id) {

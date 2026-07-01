@@ -55,6 +55,8 @@ export function useRequirementFlow(
   > | null>(null);
   const [requirementConversation, setRequirementConversation] =
     useState<RequirementConversation | null>(null);
+  const [dismissedPromptRequirementId, setDismissedPromptRequirementId] =
+    useState<string | null>(null);
   const [clarificationAnswers, setClarificationAnswers] = useState<
     Record<string, DraftClarificationAnswer>
   >({});
@@ -71,6 +73,7 @@ export function useRequirementFlow(
   useEffect(() => {
     setRequirementStreamEvents([]);
     setClarificationAnswers({});
+    setDismissedPromptRequirementId(null);
     if (activeRequirementId) {
       void loadRequirementConversation(activeRequirementId).catch((reason) =>
         setRequirementError(readError(reason)),
@@ -88,6 +91,7 @@ export function useRequirementFlow(
       setRequirementError(null);
       setRequirementStreamEvents([]);
       setRequirementConversation(null);
+      setDismissedPromptRequirementId(null);
       setClarificationAnswers({});
     }
   }, [selectedProjectId]);
@@ -118,6 +122,7 @@ export function useRequirementFlow(
           });
       setRequirementStreamEvents([]);
       setClarificationAnswers({});
+      setDismissedPromptRequirementId(null);
       setProjectCanvas(data);
       if (data.active_requirement) {
         void loadRequirementConversation(data.active_requirement.id).catch(
@@ -182,6 +187,7 @@ export function useRequirementFlow(
         );
         setRequirementStreamEvents([]);
         setClarificationAnswers({});
+        setDismissedPromptRequirementId(null);
         setProjectCanvas(data);
         if (data.active_requirement) {
           void loadRequirementConversation(data.active_requirement.id).catch(
@@ -212,6 +218,7 @@ export function useRequirementFlow(
             ? requirementConversation.prompt
             : undefined;
         const data = await confirmRequirement(requirement.id, prompt);
+        setDismissedPromptRequirementId(null);
         setProjectCanvas(data);
         observeRequirement(requirement.id);
         if (data.active_requirement) {
@@ -252,18 +259,16 @@ export function useRequirementFlow(
     [observeRequirement, setProjectCanvas],
   );
 
-  const continueEditingRequirement = useCallback(
-    (_requirement: Requirement) => {
-      requestAnimationFrame(() => {
-        document
-          .querySelector<HTMLTextAreaElement>(
-            '[data-chat-card="requirement"] textarea:not(:disabled)',
-          )
-          ?.focus();
-      });
-    },
-    [],
-  );
+  const continueEditingRequirement = useCallback((requirement: Requirement) => {
+    setDismissedPromptRequirementId(requirement.id);
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLTextAreaElement>(
+          '[data-chat-card="requirement"] textarea:not(:disabled)',
+        )
+        ?.focus();
+    });
+  }, []);
 
   useEffect(() => {
     if (!observedRequirementId || !selectedProjectId) {
@@ -382,7 +387,7 @@ export function useRequirementFlow(
     requirementError,
     requirementStreamEvents,
     requirementConversation,
-    dismissedPromptRequirementId: null,
+    dismissedPromptRequirementId,
     clarificationAnswers,
     updateClarificationAnswer,
     submitClarifications,

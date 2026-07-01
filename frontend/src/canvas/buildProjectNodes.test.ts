@@ -42,7 +42,6 @@ function task(
     pi_session_file: null,
     branch_name: null,
     worktree_path: null,
-    commit_sha: null,
     review_for: null,
     review_angle: null,
     review_status: "pending",
@@ -63,6 +62,7 @@ function task(
     target_files: [],
     result_summary: null,
     error: null,
+    review_history: [],
     ...extra,
   };
 }
@@ -376,6 +376,31 @@ describe("buildProjectNodes", () => {
     expect(firstTask.position.x - (dag.position.x + (dag.width ?? 0))).toBe(
       130,
     );
+  });
+
+  it("injects resolved dependencies into standalone task details", () => {
+    const implementation = task("implementation", "implementation", {
+      title: "实现登录",
+    });
+    const merge = task("merge", "branch_merge", {
+      depends_on: ["implementation", "missing"],
+    });
+    const selectedRequirement = requirement([implementation, merge]);
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [selectedRequirement],
+      completed_requirements: [],
+    };
+
+    const mergeNode = buildProjectNodes(
+      params(canvas, selectedRequirement),
+    ).find((node) => node.id === "requirement-task-merge")!;
+
+    expect(mergeNode.data).toMatchObject({
+      kind: "requirement-task",
+      dependencies: [{ id: "implementation", title: "实现登录" }],
+    });
   });
 
   it("uses dependency layout for task children and keeps them in the group", () => {

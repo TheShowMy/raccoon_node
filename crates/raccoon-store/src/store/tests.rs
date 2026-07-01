@@ -88,8 +88,9 @@ use raccoon_core::error::AppError;
 use raccoon_core::models::{
     Project, ProjectChatMessage, ProjectChatMessageRole, Requirement, RequirementDraft,
     RequirementExecutionPlan, RequirementExecutionTask, RequirementMessage, RequirementMessageRole,
-    RequirementModelTier, RequirementRecoveryStage, RequirementReviewStatus, RequirementStatus,
-    RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
+    RequirementModelTier, RequirementRecoveryStage, RequirementReviewRoundStatus,
+    RequirementReviewStatus, RequirementStatus, RequirementTaskExecutionOutput,
+    RequirementTaskKind, RequirementTaskStatus,
 };
 
 #[test]
@@ -379,6 +380,129 @@ async fn successful_fix_clears_old_reviews_and_requeues_latest_review() {
     assert!(plan.tasks[1].pi_session_file.is_none());
     assert!(plan.tasks[1].last_review_feedback.is_none());
     assert_eq!(runnable_task_indexes(plan).unwrap(), vec![1]);
+}
+
+#[tokio::test]
+async fn review_history_persists_rejection_fix_and_approval_rounds() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let path = temp_dir.path().join("data/app.json");
+    let mut store = JsonStore::open(path.clone()).await.unwrap();
+    let implementation = task(
+        "implementation",
+        RequirementTaskKind::Implementation,
+        RequirementTaskStatus::Running,
+    );
+    let mut review = task_with_dependencies(
+        "review",
+        RequirementTaskKind::ReviewSubAgent,
+        RequirementTaskStatus::Pending,
+        vec!["implementation"],
+        Some("implementation"),
+    );
+    review.review_angle = Some("正确性".to_owned());
+    let summary = task_with_dependencies(
+        "summary",
+        RequirementTaskKind::ReviewSummary,
+        RequirementTaskStatus::Pending,
+        vec!["review"],
+        Some("implementation"),
+    );
+    let mut active = requirement("requirement");
+    active.execution_plan = Some(RequirementExecutionPlan {
+        summary: "plan".to_owned(),
+        tasks: vec![implementation, review, summary],
+    });
+    store.data.requirements.push(active);
+
+    store
+        .apply_task_execution_result(
+            "requirement",
+            "implementation",
+            Ok(task_output("首轮实现", None, None)),
+        )
+        .await
+        .unwrap();
+    store
+        .apply_task_execution_result(
+            "requirement",
+            "review",
+            Ok(task_output(
+                "发现边界问题",
+                Some(RequirementReviewStatus::Rejected),
+                Some("缺少边界校验"),
+            )),
+        )
+        .await
+        .unwrap();
+    store
+        .apply_task_execution_result(
+            "requirement",
+            "summary",
+            Ok(task_output(
+                "汇总完成",
+                Some(RequirementReviewStatus::Approved),
+                Some("无其他问题"),
+            )),
+        )
+        .await
+        .unwrap();
+    store
+        .apply_task_execution_result(
+            "requirement",
+            "implementation",
+            Ok(task_output("补充边界校验", None, None)),
+        )
+        .await
+        .unwrap();
+    store
+        .apply_task_execution_result(
+            "requirement",
+            "review",
+            Ok(task_output(
+                "边界校验完整",
+                Some(RequirementReviewStatus::Approved),
+                None,
+            )),
+        )
+        .await
+        .unwrap();
+    store
+        .apply_task_execution_result(
+            "requirement",
+            "summary",
+            Ok(task_output(
+                "审核通过",
+                Some(RequirementReviewStatus::Approved),
+                None,
+            )),
+        )
+        .await
+        .unwrap();
+
+    let reopened = JsonStore::open(path).await.unwrap();
+    let implementation = &reopened.data.requirements[0]
+        .execution_plan
+        .as_ref()
+        .unwrap()
+        .tasks[0];
+    assert_eq!(implementation.review_history.len(), 2);
+    let rejected = &implementation.review_history[0];
+    assert_eq!(rejected.round, 1);
+    assert_eq!(rejected.implementation_attempt, 1);
+    assert_eq!(rejected.status, RequirementReviewRoundStatus::Rejected);
+    assert_eq!(rejected.reviews[0].angle, "正确性");
+    assert_eq!(
+        rejected.reviews[0].failure_reason.as_deref(),
+        Some("缺少边界校验")
+    );
+    assert_eq!(rejected.failure_reason.as_deref(), Some("缺少边界校验"));
+    assert!(rejected.completed_at.is_some());
+    let approved = &implementation.review_history[1];
+    assert_eq!(approved.round, 2);
+    assert_eq!(approved.implementation_attempt, 2);
+    assert_eq!(approved.status, RequirementReviewRoundStatus::Approved);
+    assert_eq!(approved.summary.as_deref(), Some("审核通过"));
+    assert!(approved.failure_reason.is_none());
 }
 
 #[test]
@@ -1118,6 +1242,7 @@ fn task_with_dependencies(
         review_for: review_for.map(str::to_owned),
         review_angle: None,
         review_status: RequirementReviewStatus::Pending,
+        review_history: Vec::new(),
         attempt: 0,
         execution_failure_count: 0,
         review_rejection_count: 0,
@@ -1135,5 +1260,28 @@ fn task_with_dependencies(
         target_files: Vec::new(),
         result_summary: None,
         error: None,
+    }
+}
+
+fn task_output(
+    result_summary: &str,
+    review_status: Option<RequirementReviewStatus>,
+    review_feedback: Option<&str>,
+) -> RequirementTaskExecutionOutput {
+    RequirementTaskExecutionOutput {
+        result_summary: result_summary.to_owned(),
+        pi_session_file: None,
+        branch_name: None,
+        worktree_path: None,
+        review_status,
+        review_feedback: review_feedback.map(str::to_owned),
+        pull_request_url: None,
+        merged_into: None,
+        cleanup_summary: None,
+        execution_warning: None,
+        changed: None,
+        no_op_reason: None,
+        recovery_guidance: None,
+        trace: None,
     }
 }

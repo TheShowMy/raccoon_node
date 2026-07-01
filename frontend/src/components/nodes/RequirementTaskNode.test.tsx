@@ -20,7 +20,6 @@ function task(
     pi_session_file: null,
     branch_name: "rn/req/task-1",
     worktree_path: "/tmp/data/projects/p1/worktrees/task-1",
-    commit_sha: "abcdef1234567890",
     review_for: null,
     review_angle: null,
     review_status: "pending",
@@ -50,6 +49,7 @@ function task(
     target_files: ["src/main.rs"],
     result_summary: "登录已完成",
     error: null,
+    review_history: [],
     ...overrides,
   };
 }
@@ -58,6 +58,7 @@ function renderNode({
   nodeTask = task(),
   nodeRole,
   reviews = [],
+  dependencies = [],
   streamEvents = [],
   collapsed = false,
   busy = false,
@@ -71,6 +72,7 @@ function renderNode({
     | "review_sub_agent"
     | "external";
   reviews?: RequirementExecutionTask[];
+  dependencies?: RequirementExecutionTask[];
   streamEvents?: StreamEvent[];
   collapsed?: boolean;
   busy?: boolean;
@@ -85,6 +87,7 @@ function renderNode({
           requirementId: "req-1",
           task: nodeTask,
           reviews,
+          dependencies,
           busy,
           collapsed,
           onRecoverTaskGroup,
@@ -101,7 +104,7 @@ function renderNode({
 }
 
 describe("RequirementTaskNode", () => {
-  it("renders a fixed code node without embedded review cards", () => {
+  it("renders a fixed code node without embedded review cards or detail", () => {
     const review = task({
       id: "review-task-1",
       title: "审核登录",
@@ -129,14 +132,30 @@ describe("RequirementTaskNode", () => {
     expect(container).not.toHaveTextContent("执行失败");
     expect(screen.queryByRole("button", { name: "从此恢复" })).toBeNull();
     expect(screen.queryByRole("button", { name: "重跑" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "详情" })).toBeNull();
+  });
 
+  it("opens the implementation detail from the group only", () => {
+    const review = task({
+      id: "review-task-1",
+      title: "审核登录",
+      kind: "review_sub_agent",
+      status: "completed",
+      review_for: "task-1",
+      review_angle: "安全",
+      last_review_feedback: "通过",
+    });
+    const { container } = renderNode({
+      nodeRole: "group",
+      reviews: [review],
+    });
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
 
     const dialog = document.body.querySelector("dialog");
     expect(container.querySelector("dialog")).toBeNull();
     expect(dialog).toHaveAttribute("open");
     expect(screen.getByText("任务描述")).toBeInTheDocument();
-    expect(screen.getByText("节点交互")).toBeInTheDocument();
+    expect(screen.getByText("实现与审核")).toBeInTheDocument();
     expect(screen.getByText("执行过程")).toBeInTheDocument();
     expect(screen.getByText("补齐登录流程")).toBeInTheDocument();
     expect(screen.getByText("思考过程")).toBeInTheDocument();
@@ -147,7 +166,6 @@ describe("RequirementTaskNode", () => {
 
     expect(within(details!).getByText("分支")).toBeInTheDocument();
     expect(within(details!).getByText("rn/req/task-1")).toBeInTheDocument();
-    expect(within(details!).getByText("abcdef1234567890")).toBeInTheDocument();
     expect(
       within(details!).getByText("https://github.com/acme/repo/pull/1"),
     ).toBeInTheDocument();
@@ -278,14 +296,12 @@ describe("RequirementTaskNode", () => {
 
   it("shows execution warning on node and detail dialog", () => {
     renderNode({
-      nodeRole: "code",
+      nodeRole: "group",
       nodeTask: task({
         execution_warning:
           "未产生新提交：前置节点已实现。按 no-op 完成并进入审核。",
       }),
     });
-
-    expect(screen.getByText(/未产生新提交/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
     expect(screen.getByText("执行提示")).toBeInTheDocument();
@@ -311,7 +327,7 @@ describe("RequirementTaskNode", () => {
     expect(screen.getByText("高档模型接管")).toBeInTheDocument();
     group.unmount();
 
-    renderNode({ nodeRole: "code", nodeTask: recoveringTask });
+    renderNode({ nodeRole: "group", nodeTask: recoveringTask });
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
 
     expect(screen.getByText("恢复信息")).toBeInTheDocument();
@@ -449,5 +465,122 @@ describe("RequirementTaskNode", () => {
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
     expect(taskIdRead).toHaveBeenCalled();
     expect(screen.getByText("延迟读取事件")).toBeInTheDocument();
+  });
+
+  it("shows persisted implementation and review rounds in two lanes", () => {
+    renderNode({
+      nodeRole: "group",
+      nodeTask: task({
+        review_history: [
+          {
+            round: 1,
+            implementation_attempt: 1,
+            implementation_summary: "首次实现登录流程",
+            status: "rejected",
+            started_at: "2026-06-30T00:00:00Z",
+            completed_at: "2026-06-30T00:10:00Z",
+            reviews: [
+              {
+                task_id: "security-review",
+                angle: "安全审核",
+                status: "rejected",
+                summary: "发现权限缺口",
+                failure_reason: "缺少权限校验",
+                completed_at: "2026-06-30T00:08:00Z",
+              },
+            ],
+            summary: "退回修复",
+            summary_conclusion: "rejected",
+            failure_reason: "需补齐权限校验",
+          },
+          {
+            round: 2,
+            implementation_attempt: 2,
+            implementation_summary: "补齐权限校验",
+            status: "approved",
+            started_at: "2026-06-30T00:11:00Z",
+            completed_at: "2026-06-30T00:20:00Z",
+            reviews: [
+              {
+                task_id: "security-review",
+                angle: "安全审核",
+                status: "approved",
+                summary: "权限校验通过",
+                failure_reason: null,
+                completed_at: "2026-06-30T00:18:00Z",
+              },
+            ],
+            summary: "审核通过",
+            summary_conclusion: "approved",
+            failure_reason: null,
+          },
+        ],
+      }),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(screen.getByText("第 1 轮")).toBeInTheDocument();
+    expect(screen.getByText("第 2 轮")).toBeInTheDocument();
+    expect(screen.getAllByText("实现 Agent")).toHaveLength(2);
+    expect(screen.getAllByText("审核 Agent 组")).toHaveLength(2);
+    expect(screen.getAllByText("提交审核 →")).toHaveLength(2);
+    expect(screen.getByText("← 反馈退回")).toBeInTheDocument();
+    expect(screen.getByText("缺少权限校验")).toBeInTheDocument();
+    expect(screen.getByText("权限校验通过")).toBeInTheDocument();
+  });
+
+  it("shows dependency merge flow for branch merge details", () => {
+    renderNode({
+      nodeRole: "external",
+      nodeTask: task({
+        id: "merge",
+        kind: "branch_merge",
+        title: "合并功能分支",
+        result_summary: "已合并",
+      }),
+      dependencies: [
+        task({
+          id: "dependency",
+          title: "登录功能",
+          branch_name: "rn/login",
+        }),
+      ],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(
+      screen.getByRole("heading", { name: "分支合并" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("登录功能 · rn/login")).toBeInTheDocument();
+    expect(screen.getByText("合并结果")).toBeInTheDocument();
+  });
+
+  it("shows final review and publish stages", () => {
+    renderNode({
+      nodeRole: "external",
+      nodeTask: task({
+        id: "merge-review",
+        kind: "merge_review",
+        title: "最终审核发布",
+        status: "rejected",
+        review_status: "rejected",
+        result_summary: "最终检查未通过",
+      }),
+      dependencies: [task({ id: "merge", title: "合并功能分支" })],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(screen.getByText("审核发布")).toBeInTheDocument();
+    expect(screen.getByText("依赖汇入")).toBeInTheDocument();
+    expect(screen.getByText("最终审核")).toBeInTheDocument();
+    expect(screen.getByText("最终审核").closest("div")).toHaveClass(
+      "is-rejected",
+    );
+    expect(screen.getAllByText("PR").length).toBeGreaterThan(0);
+    expect(screen.getByText("合入目标分支")).toBeInTheDocument();
+    expect(screen.getByText("清理资源")).toBeInTheDocument();
   });
 });

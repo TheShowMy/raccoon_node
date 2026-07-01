@@ -15,6 +15,7 @@ import {
 import type {
   RequirementExecutionTask,
   RequirementRecoveryStage,
+  RequirementReviewStatus,
   StartNodeData,
   TraceUsage,
 } from "../../types/api";
@@ -65,60 +66,77 @@ export default function RequirementTaskNode({
   if (nodeRole === "group") {
     const CollapseIcon = data.collapsed ? ChevronRight : ChevronDown;
     return (
-      <div
-        className={`task-node task-node--group ${statusClass} ${
-          data.collapsed ? "task-node--collapsed" : ""
-        }`}
-      >
-        <div className="task-node__head">
-          <span className="node-icon">
-            {task.status === "running" ? (
-              <Loader2 size={18} className="spin-icon" />
-            ) : (
-              <CircleDot size={18} />
-            )}
-          </span>
-          <div>
-            <strong>{task.title}</strong>
-            <div className="task-node__status-list">
-              <span
-                className={`task-node__status task-node__status--${displayedStatus}`}
-              >
-                {taskStatusText[displayedStatus]}
-              </span>
-              {task.recovery_stage !== "none" ? (
-                <span className="task-node__recovery-status">
-                  {recoveryStageText(task)}
+      <>
+        <div
+          className={`task-node task-node--group ${statusClass} ${
+            data.collapsed ? "task-node--collapsed" : ""
+          }`}
+        >
+          <div className="task-node__head">
+            <span className="node-icon">
+              {task.status === "running" ? (
+                <Loader2 size={18} className="spin-icon" />
+              ) : (
+                <CircleDot size={18} />
+              )}
+            </span>
+            <div>
+              <strong>{task.title}</strong>
+              <div className="task-node__status-list">
+                <span
+                  className={`task-node__status task-node__status--${displayedStatus}`}
+                >
+                  {taskStatusText[displayedStatus]}
                 </span>
-              ) : null}
+                {task.recovery_stage !== "none" ? (
+                  <span className="task-node__recovery-status">
+                    {recoveryStageText(task)}
+                  </span>
+                ) : null}
+              </div>
             </div>
-          </div>
-          {groupFailed ? (
+            {groupFailed ? (
+              <button
+                type="button"
+                className="task-node__recover nowheel nodrag"
+                disabled={data.busy}
+                onClick={() =>
+                  void data.onRecoverTaskGroup(data.requirementId, task.id)
+                }
+              >
+                <RotateCcw size={13} />
+                恢复
+              </button>
+            ) : null}
             <button
               type="button"
-              className="task-node__recover nowheel nodrag"
-              disabled={data.busy}
-              onClick={() =>
-                void data.onRecoverTaskGroup(data.requirementId, task.id)
-              }
+              className="task-node__detail nowheel nodrag"
+              onClick={() => setDetailOpen(true)}
             >
-              <RotateCcw size={13} />
-              恢复
+              <Eye size={13} />
+              详情
             </button>
-          ) : null}
-          <button
-            type="button"
-            className="task-node__collapse nowheel nodrag"
-            onClick={() =>
-              data.onToggleCollapsed?.(data.requirementId, task.id)
-            }
-            aria-label={data.collapsed ? "展开任务组" : "折叠任务组"}
-            aria-expanded={!data.collapsed}
-          >
-            <CollapseIcon size={15} />
-          </button>
+            <button
+              type="button"
+              className="task-node__collapse nowheel nodrag"
+              onClick={() =>
+                data.onToggleCollapsed?.(data.requirementId, task.id)
+              }
+              aria-label={data.collapsed ? "展开任务组" : "折叠任务组"}
+              aria-expanded={!data.collapsed}
+            >
+              <CollapseIcon size={15} />
+            </button>
+          </div>
         </div>
-      </div>
+        <TaskDetailDialog
+          open={detailOpen}
+          task={task}
+          reviews={data.reviews}
+          dependencies={data.dependencies}
+          onClose={() => setDetailOpen(false)}
+        />
+      </>
     );
   }
   const Icon =
@@ -175,23 +193,25 @@ export default function RequirementTaskNode({
               {task.execution_warning}
             </small>
           ) : null}
-          {task.commit_sha ? (
-            <small>{task.commit_sha.slice(0, 8)}</small>
+          {nodeRole === "external" ? (
+            <div className="task-node__actions nowheel nodrag">
+              <button type="button" onClick={() => setDetailOpen(true)}>
+                <Eye size={13} />
+                详情
+              </button>
+            </div>
           ) : null}
-          <div className="task-node__actions nowheel nodrag">
-            <button type="button" onClick={() => setDetailOpen(true)}>
-              <Eye size={13} />
-              详情
-            </button>
-          </div>
         </div>
       </div>
-      <TaskDetailDialog
-        open={detailOpen}
-        task={task}
-        reviews={data.reviews}
-        onClose={() => setDetailOpen(false)}
-      />
+      {nodeRole === "external" ? (
+        <TaskDetailDialog
+          open={detailOpen}
+          task={task}
+          reviews={data.reviews}
+          dependencies={data.dependencies}
+          onClose={() => setDetailOpen(false)}
+        />
+      ) : null}
     </>
   );
 }
@@ -200,11 +220,13 @@ function TaskDetailDialog({
   open,
   task,
   reviews,
+  dependencies,
   onClose,
 }: {
   open: boolean;
   task: RequirementExecutionTask;
   reviews: RequirementExecutionTask[];
+  dependencies: RequirementExecutionTask[];
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -264,29 +286,11 @@ function TaskDetailDialog({
             <h3>任务描述</h3>
             <p className="task-detail-dialog__text">{task.description}</p>
           </section>
-          <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-            <h3>节点交互</h3>
-            <ol className="task-detail-dialog__flow">
-              <li>
-                <strong>代码节点</strong>
-                <span
-                  className={`task-node__status task-node__status--${task.status}`}
-                >
-                  {taskStatusText[task.status]}
-                </span>
-              </li>
-              {reviews.map((review) => (
-                <li key={review.id}>
-                  <strong>{review.review_angle ?? "综合审核"}</strong>
-                  <span
-                    className={`task-node__status task-node__status--${review.status}`}
-                  >
-                    {taskStatusText[review.status]}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          </section>
+          <TaskDetailFlow
+            task={task}
+            reviews={reviews}
+            dependencies={dependencies}
+          />
           <TaskExecutionTrace task={task} />
           {historicalTrace?.usage ? (
             <TaskUsage usage={historicalTrace.usage} />
@@ -326,7 +330,6 @@ function TaskDetailDialog({
               />
               <DetailItem label="分支" value={task.branch_name} />
               <DetailItem label="Worktree" value={task.worktree_path} mono />
-              <DetailItem label="提交" value={task.commit_sha} mono />
               <DetailItem
                 label="目标文件"
                 value={task.target_files.join("、")}
@@ -346,6 +349,323 @@ function TaskDetailDialog({
     </dialog>,
     document.body,
   );
+}
+
+function TaskDetailFlow({
+  task,
+  reviews,
+  dependencies,
+}: {
+  task: RequirementExecutionTask;
+  reviews: RequirementExecutionTask[];
+  dependencies: RequirementExecutionTask[];
+}) {
+  if (task.kind === "branch_merge") {
+    return <BranchMergeFlow task={task} dependencies={dependencies} />;
+  }
+  if (task.kind === "merge_review") {
+    return <MergeReviewFlow task={task} dependencies={dependencies} />;
+  }
+  return <ImplementationReviewFlow task={task} reviews={reviews} />;
+}
+
+function ImplementationReviewFlow({
+  task,
+  reviews,
+}: {
+  task: RequirementExecutionTask;
+  reviews: RequirementExecutionTask[];
+}) {
+  return (
+    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
+      <h3>实现与审核</h3>
+      {task.review_history.length > 0 ? (
+        <div className="task-detail-dialog__rounds">
+          {task.review_history.map((round) => (
+            <article
+              className="task-detail-dialog__round"
+              key={`${round.round}-${round.implementation_attempt}`}
+            >
+              <header>
+                <strong>第 {round.round} 轮</strong>
+                <span className={`is-${round.status}`}>
+                  {reviewRoundStatusText[round.status]}
+                </span>
+              </header>
+              <div className="task-detail-dialog__lanes">
+                <div className="task-detail-dialog__lane">
+                  <b>实现 Agent</b>
+                  <FlowStep
+                    title={
+                      round.implementation_attempt > 1
+                        ? `第 ${round.implementation_attempt} 次修复`
+                        : "完成实现"
+                    }
+                    detail={round.implementation_summary ?? "等待实现结果"}
+                    status={
+                      round.implementation_summary ? "approved" : "pending"
+                    }
+                  />
+                </div>
+                <ReviewExchange rejected={round.status === "rejected"} />
+                <div className="task-detail-dialog__lane">
+                  <b>审核 Agent 组</b>
+                  {round.reviews.length > 0 ? (
+                    round.reviews.map((review) => (
+                      <FlowStep
+                        key={review.task_id}
+                        title={review.angle || "综合审核"}
+                        detail={
+                          review.failure_reason ?? review.summary ?? "等待审核"
+                        }
+                        status={review.status}
+                      />
+                    ))
+                  ) : (
+                    <FlowStep
+                      title="等待审核"
+                      detail="审核 Agent 尚未返回结果"
+                      status="pending"
+                    />
+                  )}
+                  {round.summary || round.failure_reason ? (
+                    <FlowStep
+                      title="审核汇总"
+                      detail={
+                        round.failure_reason ?? round.summary ?? "等待审核汇总"
+                      }
+                      status={round.summary_conclusion ?? "pending"}
+                    />
+                  ) : null}
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <CurrentReviewFlow task={task} reviews={reviews} />
+      )}
+    </section>
+  );
+}
+
+function CurrentReviewFlow({
+  task,
+  reviews,
+}: {
+  task: RequirementExecutionTask;
+  reviews: RequirementExecutionTask[];
+}) {
+  return (
+    <div className="task-detail-dialog__lanes">
+      <div className="task-detail-dialog__lane">
+        <b>实现 Agent</b>
+        <FlowStep
+          title="当前实现"
+          detail={task.result_summary ?? task.description}
+          status={toReviewStatus(task.status)}
+        />
+      </div>
+      <ReviewExchange
+        rejected={task.status === "fixing" || task.status === "rejected"}
+      />
+      <div className="task-detail-dialog__lane">
+        <b>审核 Agent 组</b>
+        {reviews.length > 0 ? (
+          reviews.map((review) => (
+            <FlowStep
+              key={review.id}
+              title={review.review_angle ?? taskKindText[review.kind]}
+              detail={
+                review.last_review_feedback ??
+                review.result_summary ??
+                "等待审核"
+              }
+              status={toReviewStatus(review.status)}
+            />
+          ))
+        ) : (
+          <FlowStep title="等待审核" detail="尚无审核记录" status="pending" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BranchMergeFlow({
+  task,
+  dependencies,
+}: {
+  task: RequirementExecutionTask;
+  dependencies: RequirementExecutionTask[];
+}) {
+  const dependencyStatus: RequirementReviewStatus = dependencies.some(
+    (dependency) => ["failed", "rejected"].includes(dependency.status),
+  )
+    ? "rejected"
+    : dependencies.length > 0 &&
+        dependencies.every((dependency) =>
+          ["completed", "approved"].includes(dependency.status),
+        )
+      ? "approved"
+      : "pending";
+  return (
+    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
+      <h3>分支合并</h3>
+      <div className="task-detail-dialog__pipeline">
+        <FlowStage title="依赖分支" status={dependencyStatus}>
+          {dependencies.length > 0
+            ? dependencies.map((dependency) => (
+                <span key={dependency.id}>
+                  {dependency.title}
+                  {dependency.branch_name ? ` · ${dependency.branch_name}` : ""}
+                </span>
+              ))
+            : "等待依赖任务"}
+        </FlowStage>
+        <span aria-hidden="true">→</span>
+        <FlowStage title="合并" status={toReviewStatus(task.status)}>
+          {task.title}
+        </FlowStage>
+        <span aria-hidden="true">→</span>
+        <FlowStage title="合并结果" status={toReviewStatus(task.status)}>
+          {task.error ?? task.result_summary ?? "等待合并"}
+        </FlowStage>
+      </div>
+    </section>
+  );
+}
+
+function MergeReviewFlow({
+  task,
+  dependencies,
+}: {
+  task: RequirementExecutionTask;
+  dependencies: RequirementExecutionTask[];
+}) {
+  const dependencyStatus: RequirementReviewStatus = dependencies.some(
+    (dependency) => ["failed", "rejected"].includes(dependency.status),
+  )
+    ? "rejected"
+    : dependencies.length > 0 &&
+        dependencies.every((dependency) =>
+          ["completed", "approved"].includes(dependency.status),
+        )
+      ? "approved"
+      : "pending";
+  const reviewStatus =
+    task.review_status === "pending"
+      ? toReviewStatus(task.status)
+      : task.review_status;
+  const stages: Array<{
+    title: string;
+    detail: string;
+    status: RequirementReviewStatus;
+  }> = [
+    {
+      title: "依赖汇入",
+      detail:
+        dependencies.length > 0
+          ? dependencies.map((dependency) => dependency.title).join("、")
+          : "等待依赖任务",
+      status: dependencyStatus,
+    },
+    {
+      title: "最终审核",
+      detail: task.error ?? task.result_summary ?? "待执行",
+      status: reviewStatus,
+    },
+    {
+      title: "PR",
+      detail: task.pull_request_url ?? "待创建",
+      status: task.pull_request_url ? "approved" : "pending",
+    },
+    {
+      title: "合入目标分支",
+      detail: task.merged_into ?? "待合入",
+      status: task.merged_into ? "approved" : "pending",
+    },
+    {
+      title: "清理资源",
+      detail: task.cleanup_summary ?? "待清理",
+      status: task.cleanup_summary ? "approved" : "pending",
+    },
+  ];
+  return (
+    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
+      <h3>审核发布</h3>
+      <div className="task-detail-dialog__pipeline task-detail-dialog__pipeline--publish">
+        {stages.map((stage, index) => (
+          <React.Fragment key={stage.title}>
+            {index > 0 ? <span aria-hidden="true">→</span> : null}
+            <FlowStage title={stage.title} status={stage.status}>
+              {stage.detail}
+            </FlowStage>
+          </React.Fragment>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ReviewExchange({ rejected }: { rejected: boolean }) {
+  return (
+    <div
+      className="task-detail-dialog__exchange"
+      aria-label="提交审核与反馈退回"
+    >
+      <span>提交审核 →</span>
+      <span>{rejected ? "← 反馈退回" : "← 审核结论"}</span>
+    </div>
+  );
+}
+
+function FlowStage({
+  title,
+  status,
+  children,
+}: {
+  title: string;
+  status: RequirementReviewStatus;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`task-detail-dialog__stage is-${status}`}>
+      <strong>{title}</strong>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function FlowStep({
+  title,
+  detail,
+  status,
+}: {
+  title: string;
+  detail: string;
+  status: RequirementReviewStatus;
+}) {
+  return (
+    <div className={`task-detail-dialog__step is-${status}`}>
+      <strong>{title}</strong>
+      <p>{detail}</p>
+    </div>
+  );
+}
+
+const reviewRoundStatusText = {
+  reviewing: "审核中",
+  approved: "已通过",
+  rejected: "已退回",
+} as const;
+
+function toReviewStatus(
+  status: RequirementExecutionTask["status"],
+): RequirementReviewStatus {
+  if (status === "approved" || status === "completed") return "approved";
+  if (status === "rejected" || status === "failed") return "rejected";
+  return "pending";
 }
 
 function TaskExecutionTrace({ task }: { task: RequirementExecutionTask }) {

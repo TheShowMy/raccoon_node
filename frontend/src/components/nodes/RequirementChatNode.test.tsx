@@ -64,6 +64,69 @@ describe("RequirementChatNode", () => {
     expect(requirementSwitch.closest("section")).toHaveClass("is-active");
   });
 
+  it("hides a dismissed confirmation prompt", () => {
+    const activeRequirement = {
+      id: "requirement-1",
+      project_id: "project-1",
+      title: "需求",
+      original_message: "需求",
+      status: "draft_ready" as const,
+      messages: [],
+      clarification_round: 0,
+      clarifications: [],
+      draft: null,
+      execution_plan: null,
+      pi_session_file: null,
+      error: null,
+      created_at: "2026-06-25T00:00:00Z",
+      updated_at: "2026-06-25T00:00:00Z",
+    };
+    const activeConversation = {
+      id: activeRequirement.id,
+      project_id: activeRequirement.project_id,
+      title: activeRequirement.title,
+      status: activeRequirement.status,
+      running: false,
+      items: [],
+      prompt: {
+        type: "confirmation" as const,
+        draft: {
+          title: "需求草案",
+          summary: "需求摘要",
+          acceptance_criteria: ["通过验收"],
+        },
+      },
+      error: null,
+      updated_at: "2026-06-25T00:00:00Z",
+    };
+    const view = render(
+      <RequirementChatNode
+        data={data("project-1", {
+          requirement: activeRequirement,
+          conversation: activeConversation,
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "继续补充" }),
+    ).toBeInTheDocument();
+
+    view.rerender(
+      <RequirementChatNode
+        data={data("project-1", {
+          requirement: activeRequirement,
+          conversation: activeConversation,
+          promptDismissed: true,
+        })}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "继续补充" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("switches cards with Tab from the stacked node or chat input", () => {
     render(<RequirementChatNode data={data("project-1")} />);
     const stack = screen.getByLabelText("需求会话与项目问答");

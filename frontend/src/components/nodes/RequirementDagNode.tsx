@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { Handle, Position } from "@xyflow/react";
-import { GitBranch, X } from "lucide-react";
+import { GitBranch, LoaderCircle, X } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import { requirementStatusText } from "../../utils/format";
+import { useRequirementPlanningThinking } from "../../contexts/RequirementTaskEventsContext";
 
 export default function RequirementDagNode({
   data,
@@ -11,6 +12,15 @@ export default function RequirementDagNode({
 }) {
   const requirement = data.requirement;
   const plan = requirement.execution_plan;
+  const thinking = useRequirementPlanningThinking();
+  const thinkingScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (thinkingScrollRef.current) {
+      thinkingScrollRef.current.scrollLeft =
+        thinkingScrollRef.current.scrollWidth;
+    }
+  }, [thinking]);
 
   return (
     <>
@@ -34,10 +44,6 @@ export default function RequirementDagNode({
 
       <div className="dag-node__body">
         <strong>{requirement.title}</strong>
-        {plan ? <p>{plan.summary}</p> : null}
-        {!plan && requirement.status === "planning" ? (
-          <p>Coordinator 正在生成执行 DAG...</p>
-        ) : null}
         {!plan && requirement.status === "failed" ? (
           <p>执行 DAG 生成失败，可在右侧需求列表中重新生成。</p>
         ) : null}
@@ -52,6 +58,20 @@ export default function RequirementDagNode({
           </small>
         ) : null}
       </div>
+
+      {requirement.status === "planning" ? (
+        <div className="dag-node__thinking">
+          <span className="dag-node__thinking-label">
+            <LoaderCircle size={12} aria-hidden="true" />
+            思考
+          </span>
+          <div ref={thinkingScrollRef} className="dag-node__thinking-scroll">
+            <span className="dag-node__thinking-text">
+              {thinking || "思考中…"}
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       <Handle
         id="requirement-dag-entry"

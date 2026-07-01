@@ -61,7 +61,8 @@ export default function (pi) {
   pi.registerTool({
     name: "request_clarifications",
     label: "请求需求澄清",
-    description: "仅在仓库中无法推断且答案会改变实现时，批量请求用户澄清。",
+    description:
+      "用户明确要求先给澄清项、候选方案或让其选择时必须使用；否则仅在仓库中无法推断且答案会改变实现时使用。候选方案只能放在问题选项中，不得提前写入确认草案。",
     parameters: Type.Object({
       progress: Type.String(),
       message: Type.String(),

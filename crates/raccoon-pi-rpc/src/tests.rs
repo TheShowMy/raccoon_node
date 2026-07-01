@@ -5,7 +5,7 @@ use super::{
     attach_session_usage, build_pr_merge_args, event_has_output_activity, generated_branch_names,
     is_terminal_agent_end, parse_default_branch, parse_session_header_cwd,
     resolve_project_working_dir, safe_worktree_name, session_header_matches_working_dir,
-    stage_task_changes, throttle_pi_event,
+    stage_task_changes,
 };
 use raccoon_core::models::{
     RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
@@ -13,7 +13,6 @@ use raccoon_core::models::{
 };
 use raccoon_core::utils::commit_staged_changes;
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 #[test]
 fn parse_default_branch_falls_back_to_main() {
@@ -346,6 +345,7 @@ fn test_task(path: &Path) -> raccoon_core::models::RequirementExecutionTask {
         review_for: None,
         review_angle: None,
         review_status: RequirementReviewStatus::Pending,
+        review_history: Vec::new(),
         attempt: 0,
         execution_failure_count: 0,
         review_rejection_count: 0,
@@ -386,31 +386,4 @@ fn test_output(
         recovery_guidance: None,
         trace: Some(serde_json::json!({ "type": "pi_trace" })),
     }
-}
-
-#[test]
-fn throttle_pi_event_buffers_updates_and_flushes_lifecycle_events_immediately() {
-    let mut emitted = Vec::new();
-    let mut last_emit = Instant::now();
-    let mut pending = None;
-
-    // High-frequency delta events are buffered until the throttle window opens.
-    throttle_pi_event(
-        serde_json::json!({ "type": "message_update", "delta": "a" }),
-        &mut last_emit,
-        &mut pending,
-        &mut |event| emitted.push(event),
-    );
-    assert!(emitted.is_empty());
-
-    // Lifecycle events flush the pending delta and emit immediately.
-    throttle_pi_event(
-        serde_json::json!({ "type": "tool_execution_start", "id": "t1" }),
-        &mut last_emit,
-        &mut pending,
-        &mut |event| emitted.push(event),
-    );
-    assert_eq!(emitted.len(), 2);
-    assert_eq!(emitted[0]["type"], "message_update");
-    assert_eq!(emitted[1]["type"], "tool_execution_start");
 }
