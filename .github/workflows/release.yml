@@ -105,10 +105,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm --prefix frontend ci
       - run: npm --prefix frontend run build
-      - run: cargo publish --dry-run --locked
+      - run: cargo publish --dry-run --locked --allow-dirty
         env:
           RACCOON_SKIP_FRONTEND_BUILD: "1"
-      - run: cargo publish --locked
+      - run: cargo publish --locked --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           RACCOON_SKIP_FRONTEND_BUILD: "1"
