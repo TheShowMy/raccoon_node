@@ -16,7 +16,38 @@ function hasSameRequirementRevision(
   return (
     current?.id === next?.id &&
     current?.status === next?.status &&
-    current?.updated_at === next?.updated_at
+    current?.updated_at === next?.updated_at &&
+    hasSameExecutionPlanRevision(
+      current?.execution_plan ?? null,
+      next?.execution_plan ?? null,
+    )
+  );
+}
+
+function hasSameExecutionPlanRevision(
+  current: Requirement["execution_plan"],
+  next: Requirement["execution_plan"],
+) {
+  if (!current || !next) return current === next;
+  return (
+    current.summary === next.summary &&
+    current.tasks.length === next.tasks.length &&
+    current.tasks.every((task, index) => {
+      const candidate = next.tasks[index];
+      return (
+        task.id === candidate.id &&
+        task.status === candidate.status &&
+        task.review_status === candidate.review_status &&
+        task.attempt === candidate.attempt &&
+        task.recovery_stage === candidate.recovery_stage &&
+        task.result_summary === candidate.result_summary &&
+        task.error === candidate.error &&
+        Boolean(task.trace) === Boolean(candidate.trace) &&
+        task.review_history.length === candidate.review_history.length &&
+        task.target_files.length === candidate.target_files.length &&
+        Boolean(task.worktree_path) === Boolean(candidate.worktree_path)
+      );
+    })
   );
 }
 
@@ -84,27 +115,40 @@ export function useProjectCanvas(
   >(null);
   const projectCanvasRequest = useRef<{
     projectId: string;
+    dagRequirementId: string | null;
     promise: Promise<ProjectCanvasData>;
   } | null>(null);
 
-  const loadProjectCanvas = useCallback((projectId: string) => {
-    if (projectCanvasRequest.current?.projectId === projectId) {
-      return projectCanvasRequest.current.promise;
-    }
+  const loadProjectCanvas = useCallback(
+    (projectId: string, dagRequirementId: string | null = null) => {
+      if (
+        projectCanvasRequest.current?.projectId === projectId &&
+        projectCanvasRequest.current.dagRequirementId === dagRequirementId
+      ) {
+        return projectCanvasRequest.current.promise;
+      }
 
-    const promise = getProjectCanvas(projectId)
-      .then((data) => {
-        setProjectCanvas(data);
-        return data;
-      })
-      .finally(() => {
-        if (projectCanvasRequest.current?.promise === promise) {
-          projectCanvasRequest.current = null;
-        }
-      });
-    projectCanvasRequest.current = { projectId, promise };
-    return promise;
-  }, []);
+      const promise = getProjectCanvas(projectId, dagRequirementId)
+        .then((data) => {
+          if (projectCanvasRequest.current?.promise === promise) {
+            setProjectCanvas(data);
+          }
+          return data;
+        })
+        .finally(() => {
+          if (projectCanvasRequest.current?.promise === promise) {
+            projectCanvasRequest.current = null;
+          }
+        });
+      projectCanvasRequest.current = {
+        projectId,
+        dagRequirementId,
+        promise,
+      };
+      return promise;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -188,12 +232,18 @@ export function useProjectCanvas(
     }
 
     const timer = window.setInterval(() => {
-      void loadProjectCanvas(selectedProjectId).catch((reason) =>
-        setError(readError(reason)),
+      void loadProjectCanvas(selectedProjectId, selectedDagRequirementId).catch(
+        (reason) => setError(readError(reason)),
       );
-    }, 2500);
+    }, 15_000);
     return () => window.clearInterval(timer);
-  }, [loadProjectCanvas, selectedProjectId, setError, shouldPollProjectCanvas]);
+  }, [
+    loadProjectCanvas,
+    selectedDagRequirementId,
+    selectedProjectId,
+    setError,
+    shouldPollProjectCanvas,
+  ]);
 
   useEffect(() => {
     if (
@@ -207,15 +257,28 @@ export function useProjectCanvas(
     }
   }, [allProjectRequirements, projectCanvas, selectedDagRequirementId]);
 
-  const selectDagRequirement = useCallback((requirement: Requirement) => {
-    setRequirementActionError(null);
-    setSelectedDagRequirementId(requirement.id);
-  }, []);
+  const selectDagRequirement = useCallback(
+    (requirement: Requirement) => {
+      setRequirementActionError(null);
+      setSelectedDagRequirementId(requirement.id);
+      if (selectedProjectId) {
+        void loadProjectCanvas(selectedProjectId, requirement.id).catch(
+          (reason) => setRequirementActionError(readError(reason)),
+        );
+      }
+    },
+    [loadProjectCanvas, selectedProjectId],
+  );
 
   const closeDag = useCallback(() => {
     setRequirementActionError(null);
     setSelectedDagRequirementId(null);
-  }, []);
+    if (selectedProjectId) {
+      void loadProjectCanvas(selectedProjectId).catch((reason) =>
+        setRequirementActionError(readError(reason)),
+      );
+    }
+  }, [loadProjectCanvas, selectedProjectId]);
 
   const planRequirement = useCallback(
     async (requirement: Requirement) => {
@@ -224,13 +287,16 @@ export function useProjectCanvas(
       try {
         const data = await planRequirementExecution(requirement.id);
         setProjectCanvas(data);
+        if (selectedProjectId) {
+          await loadProjectCanvas(selectedProjectId, requirement.id);
+        }
       } catch (reason) {
         setError(readError(reason));
       } finally {
         setRequirementActionBusyId(null);
       }
     },
-    [setError],
+    [loadProjectCanvas, selectedProjectId, setError],
   );
 
   const recoverTaskGroup = useCallback(
@@ -242,6 +308,9 @@ export function useProjectCanvas(
         const data = await apiRecoverTaskGroup(requirementId, taskId);
         setProjectCanvas(data);
         setSelectedDagRequirementId(requirementId);
+        if (selectedProjectId) {
+          await loadProjectCanvas(selectedProjectId, requirementId);
+        }
       } catch (reason) {
         setRequirementActionError(readError(reason));
       } finally {
@@ -252,7 +321,7 @@ export function useProjectCanvas(
         });
       }
     },
-    [],
+    [loadProjectCanvas, selectedProjectId],
   );
 
   const cancelRequirementAnalysis = useCallback(

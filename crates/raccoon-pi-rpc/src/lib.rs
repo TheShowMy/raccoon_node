@@ -368,7 +368,7 @@ impl ModelProvider for PiRpcModelProvider {
                 && output.review_status == Some(RequirementReviewStatus::Approved)
             {
                 let publish = publish_merge_review(&self.data_root, &input, &output).await?;
-                output.pull_request_url = Some(publish.pull_request_url);
+                output.pull_request_url = publish.pull_request_url;
                 output.merged_into = Some(publish.merged_into);
                 output.cleanup_summary = Some(publish.cleanup_summary);
             }
@@ -1772,7 +1772,7 @@ async fn commit_task_changes(
 }
 
 struct PublishResult {
-    pull_request_url: String,
+    pull_request_url: Option<String>,
     merged_into: String,
     cleanup_summary: String,
 }
@@ -1793,46 +1793,101 @@ async fn publish_merge_review(
         .as_deref()
         .ok_or_else(|| AppError::internal("最终合并节点缺少 worktree_path"))?;
     let worktree = resolve_project_working_dir(data_root, worktree)?;
-    let commit = git(&worktree, &["rev-parse", "HEAD"])
-        .await?
-        .trim()
-        .to_owned();
-    let base_branch = default_branch(&repo).await?;
-
-    git(&repo, &["push", "-u", "origin", branch]).await?;
-    let pr_url = ensure_pull_request(&repo, &base_branch, branch, input).await?;
-    if !pull_request_is_merged(&repo, &pr_url).await {
-        let merge_args = build_pr_merge_args(&pr_url, &commit);
-        run_gh(
-            &repo,
-            &merge_args.iter().map(String::as_str).collect::<Vec<_>>(),
-        )
-        .await?;
-    }
-    git(&repo, &["fetch", "origin"]).await?;
-    git(&repo, &["checkout", &base_branch]).await?;
-    git(
-        &repo,
-        &["reset", "--hard", &format!("origin/{base_branch}")],
-    )
-    .await?;
-    let cleanup_summary = cleanup_requirement_branches(data_root, &repo, input).await;
+    let has_origin = repository_has_origin(&repo).await;
+    let (pull_request_url, base_branch) = if has_origin {
+        let commit = git(&worktree, &["rev-parse", "HEAD"])
+            .await?
+            .trim()
+            .to_owned();
+        let base_branch = default_branch(&repo).await?;
+        git(&repo, &["push", "-u", "origin", branch]).await?;
+        let pr_url = ensure_pull_request(&repo, &base_branch, branch, input).await?;
+        if !pull_request_is_merged(&repo, &pr_url).await {
+            let merge_args = build_pr_merge_args(&pr_url, &commit);
+            run_gh(
+                &repo,
+                &merge_args.iter().map(String::as_str).collect::<Vec<_>>(),
+            )
+            .await?;
+        }
+        sync_checked_out_remote_base(&repo, &base_branch).await?;
+        (Some(pr_url), base_branch)
+    } else {
+        let base_branch = local_merge_base(&repo).await?;
+        merge_local_branch(&repo, branch).await?;
+        (None, base_branch)
+    };
+    let cleanup_summary = cleanup_requirement_branches(data_root, &repo, input, has_origin).await;
 
     Ok(PublishResult {
-        pull_request_url: pr_url,
+        pull_request_url,
         merged_into: base_branch,
         cleanup_summary,
     })
 }
 
+async fn repository_has_origin(repo: &Path) -> bool {
+    git(repo, &["remote", "get-url", "origin"])
+        .await
+        .is_ok_and(|url| !url.trim().is_empty())
+}
+
+async fn local_merge_base(repo: &Path) -> Result<String, AppError> {
+    let branch = git(repo, &["symbolic-ref", "--short", "HEAD"])
+        .await
+        .map_err(|_| AppError::internal("本地合并失败：项目根工作区处于 detached HEAD"))?;
+    let status = git(repo, &["status", "--porcelain"]).await?;
+    if !status.trim().is_empty() {
+        return Err(AppError::internal(
+            "本地合并失败：项目根工作区存在未提交改动",
+        ));
+    }
+    Ok(branch.trim().to_owned())
+}
+
+async fn merge_local_branch(repo: &Path, branch: &str) -> Result<(), AppError> {
+    if let Err(error) = git(repo, &["merge", "--no-ff", "--no-edit", branch]).await {
+        let _ = git(repo, &["merge", "--abort"]).await;
+        return Err(error);
+    }
+    Ok(())
+}
+
+async fn sync_checked_out_remote_base(repo: &Path, base_branch: &str) -> Result<(), AppError> {
+    git(repo, &["fetch", "origin"]).await?;
+    let Ok(current_branch) = git(repo, &["symbolic-ref", "--short", "HEAD"]).await else {
+        return Ok(());
+    };
+    if current_branch.trim() != base_branch {
+        return Ok(());
+    }
+    let status = git(repo, &["status", "--porcelain"]).await?;
+    if !status.trim().is_empty() {
+        return Err(AppError::internal(
+            "PR 已合并，但本地目标分支存在未提交改动，无法安全同步",
+        ));
+    }
+    git(
+        repo,
+        &["merge", "--ff-only", &format!("origin/{base_branch}")],
+    )
+    .await?;
+    Ok(())
+}
+
 async fn default_branch(repo: &Path) -> Result<String, AppError> {
-    let output = git(
+    let cached = git(
         repo,
         &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
     )
     .await
     .unwrap_or_default();
-    Ok(parse_default_branch(&output))
+    if !cached.trim().is_empty() {
+        return Ok(parse_default_branch(&cached));
+    }
+    let remote = git(repo, &["ls-remote", "--symref", "origin", "HEAD"]).await?;
+    parse_remote_default_branch(&remote)
+        .ok_or_else(|| AppError::internal("无法确定 origin 的默认分支"))
 }
 
 fn parse_default_branch(output: &str) -> String {
@@ -1846,6 +1901,14 @@ fn parse_default_branch(output: &str) -> String {
     } else {
         branch.to_owned()
     }
+}
+
+fn parse_remote_default_branch(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        line.strip_prefix("ref: refs/heads/")
+            .and_then(|line| line.strip_suffix("\tHEAD"))
+            .map(str::to_owned)
+    })
 }
 
 async fn ensure_pull_request(
@@ -1921,6 +1984,7 @@ async fn cleanup_requirement_branches(
     data_root: &Path,
     repo: &Path,
     input: &RequirementTaskExecutionInput,
+    delete_remote: bool,
 ) -> String {
     let branches = generated_branch_names(
         input
@@ -1960,9 +2024,10 @@ async fn cleanup_requirement_branches(
         if git(repo, &["branch", "-D", &branch]).await.is_ok() {
             removed_local += 1;
         }
-        if git(repo, &["push", "origin", "--delete", &branch])
-            .await
-            .is_ok()
+        if delete_remote
+            && git(repo, &["push", "origin", "--delete", &branch])
+                .await
+                .is_ok()
         {
             removed_remote += 1;
         }

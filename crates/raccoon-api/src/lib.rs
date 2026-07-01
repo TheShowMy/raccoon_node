@@ -18,9 +18,10 @@ use crate::handlers::{
     append_requirement_message, cancel_requirement_analysis, confirm_requirement,
     create_requirement, delete_requirement, get_basic_settings, get_current_project,
     get_model_settings, get_project_attachment, get_project_canvas, get_project_chat,
-    get_project_files, get_requirement_conversation, plan_requirement_execution,
-    project_chat_events, put_basic_settings, put_model_settings, recover_task_group,
-    requirement_events, reset_project_chat, retry_requirement_analysis, send_project_chat_message,
+    get_project_files, get_requirement_conversation, get_requirement_task,
+    get_requirement_task_session, plan_requirement_execution, project_chat_events,
+    put_basic_settings, put_model_settings, recover_task_group, requirement_events,
+    reset_project_chat, retry_requirement_analysis, send_project_chat_message,
     spawn_startup_requirement_scheduler, submit_requirement_clarifications,
     upload_project_attachment,
 };
@@ -176,6 +177,14 @@ fn build_app_with_startup_requirements(
         )
         .route("/requirements/{id}/confirm", post(confirm_requirement))
         .route("/requirements/{id}/plan", post(plan_requirement_execution))
+        .route(
+            "/requirements/{id}/tasks/{task_id}",
+            get(get_requirement_task),
+        )
+        .route(
+            "/requirements/{id}/tasks/{task_id}/session",
+            get(get_requirement_task_session),
+        )
         .route(
             "/requirements/{id}/tasks/{task_id}/recover",
             post(recover_task_group),

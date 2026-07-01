@@ -93,6 +93,24 @@ describe("useProjectCanvas task recovery actions", () => {
     expect(result.current.requirementActionError).toBeNull();
   });
 
+  it("选择 DAG 时只请求该需求的轻量执行计划", async () => {
+    const { result } = renderProjectCanvas();
+    await waitFor(() => {
+      expect(result.current.projectCanvas).toBe(initialCanvas);
+    });
+
+    act(() => {
+      result.current.selectDagRequirement(initialRequirement);
+    });
+
+    await waitFor(() =>
+      expect(getProjectCanvas).toHaveBeenLastCalledWith(
+        project.id,
+        initialRequirement.id,
+      ),
+    );
+  });
+
   it("API 失败时保持画布和选中需求，并只设置操作错误", async () => {
     vi.mocked(recoverTaskGroup).mockRejectedValue(new Error("节点恢复失败"));
     const setError = vi.fn();
@@ -185,7 +203,7 @@ describe("useProjectCanvas task recovery actions", () => {
         expect(result.current.projectCanvas).toBe(queuedCanvas);
 
         await act(async () => {
-          vi.advanceTimersByTime(2500);
+          vi.advanceTimersByTime(15_000);
           await Promise.resolve();
           await Promise.resolve();
         });
@@ -193,7 +211,7 @@ describe("useProjectCanvas task recovery actions", () => {
         expect(result.current.projectCanvas).toBe(planningCanvas);
 
         await act(async () => {
-          vi.advanceTimersByTime(2500);
+          vi.advanceTimersByTime(15_000);
           await Promise.resolve();
           await Promise.resolve();
         });
@@ -201,7 +219,7 @@ describe("useProjectCanvas task recovery actions", () => {
         expect(result.current.projectCanvas).toBe(planReadyCanvas);
 
         await act(async () => {
-          vi.advanceTimersByTime(2500);
+          vi.advanceTimersByTime(15_000);
           await Promise.resolve();
           await Promise.resolve();
         });
@@ -209,7 +227,7 @@ describe("useProjectCanvas task recovery actions", () => {
         expect(result.current.projectCanvas).toBe(terminalCanvas);
 
         await act(async () => {
-          vi.advanceTimersByTime(3000);
+          vi.advanceTimersByTime(16_000);
           await Promise.resolve();
         });
         expect(getProjectCanvas).toHaveBeenCalledTimes(4);
@@ -262,7 +280,7 @@ describe("useProjectCanvas task recovery actions", () => {
       });
 
       act(() => {
-        vi.advanceTimersByTime(2500);
+        vi.advanceTimersByTime(15_000);
       });
       const duplicate = result.current.loadProjectCanvas(project.id);
 

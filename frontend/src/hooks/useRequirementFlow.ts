@@ -34,7 +34,10 @@ export function useRequirementFlow(
   activeRequirementId: string | null,
   observedRequirementId: string | null,
   setProjectCanvas: (data: ProjectCanvasData) => void,
-  loadProjectCanvas: (projectId: string) => Promise<ProjectCanvasData>,
+  loadProjectCanvas: (
+    projectId: string,
+    dagRequirementId?: string | null,
+  ) => Promise<ProjectCanvasData>,
   observeRequirement: (requirementId: string) => void,
 ) {
   const [requirementInput, setRequirementInput] = useState("");
@@ -280,6 +283,9 @@ export function useRequirementFlow(
       return;
     }
 
+    const dagSummaryMode =
+      activeRequirementId === null ||
+      observedRequirementId !== activeRequirementId;
     const transientEvents = new Set([
       "coordinator_started",
       "coordinator_progress",
@@ -289,6 +295,16 @@ export function useRequirementFlow(
     const canvasRefreshEvents = new Set([
       "clarifications_ready",
       "draft_ready",
+      "execution_plan_ready",
+      "execution_plan_failed",
+      "execution_started",
+      "execution_task_started",
+      "execution_task_completed",
+      "execution_task_failed",
+      "execution_task_retrying",
+      "execution_task_guided",
+      "execution_completed",
+      "execution_failed",
     ]);
 
     const flushRequirementEvents = () => {
@@ -296,17 +312,23 @@ export function useRequirementFlow(
       const batch = requirementEventBufferRef.current;
       if (batch.length === 0) return;
       requirementEventBufferRef.current = [];
-      setRequirementStreamEvents((current) => [...current, ...batch]);
+      if (!dagSummaryMode) {
+        setRequirementStreamEvents((current) => [...current, ...batch]);
+      }
 
-      if (batch.some((event) => !transientEvents.has(event.event))) {
+      if (
+        !dagSummaryMode &&
+        batch.some((event) => !transientEvents.has(event.event))
+      ) {
         void loadRequirementConversation(observedRequirementId).catch(
           (reason) => setRequirementError(readError(reason)),
         );
       }
       if (batch.some((event) => canvasRefreshEvents.has(event.event))) {
-        void loadProjectCanvas(selectedProjectId).catch((reason) =>
-          setRequirementError(readError(reason)),
-        );
+        void loadProjectCanvas(
+          selectedProjectId,
+          dagSummaryMode ? observedRequirementId : null,
+        ).catch((reason) => setRequirementError(readError(reason)));
       }
     };
 
@@ -319,7 +341,9 @@ export function useRequirementFlow(
     };
 
     const source = new EventSource(
-      `/api/requirements/${encodeURIComponent(observedRequirementId)}/events`,
+      `/api/requirements/${encodeURIComponent(observedRequirementId)}/events${
+        dagSummaryMode ? "?include_pi_events=false" : ""
+      }`,
     );
 
     const handleEvent = (event: MessageEvent<string>) => {
@@ -330,6 +354,9 @@ export function useRequirementFlow(
           return;
         }
         if (parsed.requirement_id !== observedRequirementId) {
+          return;
+        }
+        if (dagSummaryMode && parsed.event === "pi_event") {
           return;
         }
         requirementEventBufferRef.current.push(parsed);
@@ -355,6 +382,9 @@ export function useRequirementFlow(
       "execution_started",
       "execution_task_started",
       "execution_task_completed",
+      "execution_task_failed",
+      "execution_task_retrying",
+      "execution_task_guided",
       "execution_completed",
       "execution_failed",
     ]) {
@@ -370,6 +400,7 @@ export function useRequirementFlow(
       source.close();
     };
   }, [
+    activeRequirementId,
     loadRequirementConversation,
     loadProjectCanvas,
     observedRequirementId,

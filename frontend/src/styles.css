@@ -1612,6 +1612,65 @@
     }
   }
 
+  .task-session-messages {
+    @apply flex max-h-[360px] flex-col gap-3 overflow-y-auto;
+    overscroll-behavior: contain;
+  }
+
+  .task-session-message {
+    @apply rounded-lg border p-3 text-sm;
+    border-color: color-mix(in srgb, var(--text-secondary) 18%, transparent);
+    background: color-mix(in srgb, var(--canvas-bg) 80%, transparent);
+  }
+
+  .task-session-message--user {
+    border-left: 3px solid var(--accent-model);
+  }
+
+  .task-session-message--assistant {
+    border-left: 3px solid var(--success);
+  }
+
+  .task-session-message--system {
+    border-left: 3px solid var(--text-secondary);
+  }
+
+  .task-session-message__header {
+    @apply mb-2 flex items-center justify-between gap-2 text-xs;
+    color: var(--text-secondary);
+  }
+
+  .task-session-message__role {
+    @apply font-medium uppercase;
+  }
+
+  .task-session-message__content pre,
+  .task-session-message__thinking pre,
+  .task-session-message__tools pre {
+    @apply whitespace-pre-wrap break-words font-mono text-xs leading-relaxed;
+    color: var(--text-primary);
+  }
+
+  .task-session-message__content,
+  .task-session-message__thinking,
+  .task-session-message__tools {
+    @apply mt-2 rounded border p-2;
+    border-color: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+    background: color-mix(in srgb, var(--canvas-bg) 60%, transparent);
+  }
+
+  .task-session-message__content summary,
+  .task-session-message__thinking summary,
+  .task-session-message__tools summary {
+    @apply cursor-pointer text-xs font-medium;
+    color: var(--text-secondary);
+  }
+
+  .task-session-messages__toggle {
+    @apply mt-2 text-xs underline;
+    color: var(--accent-model);
+  }
+
   .rq-workbench {
     @apply relative mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[16px] border;
     border-color: color-mix(in srgb, var(--accent-model) 18%, transparent);
@@ -2569,6 +2628,13 @@
       var(--shadow-hover),
       0 0 40px color-mix(in srgb, var(--accent-warning) 36%, transparent);
   }
+}
+
+.canvas-shell--dragging .node-card--requirement-task,
+.canvas-shell--dragging .task-node__head,
+.canvas-shell--dragging .spin-icon,
+.canvas-shell--dragging .react-flow__edge.animated path {
+  animation-play-state: paused !important;
 }
 
 /* === Cancel analysis button === */

@@ -12,6 +12,8 @@ import {
   type ImageAttachment,
   type ThemeMode,
   type BasicSettings,
+  type RequirementTaskDetail,
+  type RequirementTaskSession,
 } from "../types/api";
 
 export async function getCurrentProject(): Promise<{
@@ -37,15 +39,51 @@ export async function getCurrentProject(): Promise<{
 
 export async function getProjectCanvas(
   projectId: string,
+  dagRequirementId?: string | null,
 ): Promise<ProjectCanvasData> {
+  const query = dagRequirementId
+    ? `?dag_requirement_id=${encodeURIComponent(dagRequirementId)}`
+    : "";
   const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/canvas`,
+    `/api/projects/${encodeURIComponent(projectId)}/canvas${query}`,
   );
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
     } | null;
     throw new Error(body?.message ?? "读取项目画布失败");
+  }
+  return response.json();
+}
+
+export async function getRequirementTask(
+  requirementId: string,
+  taskId: string,
+): Promise<RequirementTaskDetail> {
+  const response = await fetch(
+    `/api/requirements/${encodeURIComponent(requirementId)}/tasks/${encodeURIComponent(taskId)}`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取任务详情失败");
+  }
+  return response.json();
+}
+
+export async function getTaskSession(
+  requirementId: string,
+  taskId: string,
+): Promise<RequirementTaskSession> {
+  const response = await fetch(
+    `/api/requirements/${encodeURIComponent(requirementId)}/tasks/${encodeURIComponent(taskId)}/session`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取任务会话失败");
   }
   return response.json();
 }

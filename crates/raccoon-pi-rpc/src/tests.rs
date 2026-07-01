@@ -3,9 +3,10 @@ use super::*;
 
 use super::{
     attach_session_usage, build_pr_merge_args, event_has_output_activity, generated_branch_names,
-    is_terminal_agent_end, parse_default_branch, parse_session_header_cwd,
+    is_terminal_agent_end, local_merge_base, merge_local_branch, parse_default_branch,
+    parse_remote_default_branch, parse_session_header_cwd, repository_has_origin,
     resolve_project_working_dir, safe_worktree_name, session_header_matches_working_dir,
-    stage_task_changes,
+    stage_task_changes, sync_checked_out_remote_base,
 };
 use raccoon_core::models::{
     RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
@@ -19,6 +20,18 @@ fn parse_default_branch_falls_back_to_main() {
     assert_eq!(parse_default_branch("origin/main\n"), "main");
     assert_eq!(parse_default_branch("origin/trunk\n"), "trunk");
     assert_eq!(parse_default_branch(""), "main");
+}
+
+#[test]
+fn parses_remote_default_branch_without_guessing() {
+    assert_eq!(
+        parse_remote_default_branch(
+            "ref: refs/heads/trunk\tHEAD\nabc123\tHEAD\nabc123\trefs/heads/trunk\n"
+        )
+        .as_deref(),
+        Some("trunk")
+    );
+    assert_eq!(parse_remote_default_branch("abc123\tHEAD\n"), None);
 }
 
 #[test]
@@ -99,6 +112,188 @@ fn generated_branch_names_only_keeps_rn_branches() {
     assert_eq!(
         branches.into_iter().collect::<Vec<_>>(),
         vec!["rn/req/task"]
+    );
+}
+
+#[tokio::test]
+async fn origin_configuration_selects_remote_publication() {
+    let temp = tempfile::tempdir().unwrap();
+    init_repo(temp.path()).await;
+    assert!(!repository_has_origin(temp.path()).await);
+
+    super::git(
+        temp.path(),
+        &["remote", "add", "origin", "https://example.com/repo.git"],
+    )
+    .await
+    .unwrap();
+
+    assert!(repository_has_origin(temp.path()).await);
+}
+
+#[tokio::test]
+async fn local_merge_uses_clean_current_branch() {
+    let temp = tempfile::tempdir().unwrap();
+    init_repo(temp.path()).await;
+    let base = local_merge_base(temp.path()).await.unwrap();
+    super::git(temp.path(), &["checkout", "-b", "rn/req/merge-review"])
+        .await
+        .unwrap();
+    tokio::fs::write(temp.path().join("feature.txt"), "done\n")
+        .await
+        .unwrap();
+    super::git(temp.path(), &["add", "feature.txt"])
+        .await
+        .unwrap();
+    super::git(temp.path(), &["commit", "-m", "feature"])
+        .await
+        .unwrap();
+    super::git(temp.path(), &["checkout", &base]).await.unwrap();
+
+    merge_local_branch(temp.path(), "rn/req/merge-review")
+        .await
+        .unwrap();
+
+    assert_eq!(local_merge_base(temp.path()).await.unwrap(), base);
+    assert_eq!(
+        tokio::fs::read_to_string(temp.path().join("feature.txt"))
+            .await
+            .unwrap(),
+        "done\n"
+    );
+}
+
+#[tokio::test]
+async fn local_merge_rejects_dirty_or_detached_root() {
+    let temp = tempfile::tempdir().unwrap();
+    init_repo(temp.path()).await;
+    tokio::fs::write(temp.path().join("dirty.txt"), "dirty\n")
+        .await
+        .unwrap();
+    assert!(
+        local_merge_base(temp.path())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("未提交改动")
+    );
+    tokio::fs::remove_file(temp.path().join("dirty.txt"))
+        .await
+        .unwrap();
+    super::git(temp.path(), &["checkout", "--detach"])
+        .await
+        .unwrap();
+    assert!(
+        local_merge_base(temp.path())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("detached HEAD")
+    );
+}
+
+#[tokio::test]
+async fn local_merge_aborts_conflicts_without_losing_base_changes() {
+    let temp = tempfile::tempdir().unwrap();
+    init_repo(temp.path()).await;
+    let base = local_merge_base(temp.path()).await.unwrap();
+    super::git(temp.path(), &["checkout", "-b", "rn/req/merge-review"])
+        .await
+        .unwrap();
+    tokio::fs::write(temp.path().join("README.md"), "feature\n")
+        .await
+        .unwrap();
+    super::git(temp.path(), &["commit", "-am", "feature"])
+        .await
+        .unwrap();
+    super::git(temp.path(), &["checkout", &base]).await.unwrap();
+    tokio::fs::write(temp.path().join("README.md"), "base\n")
+        .await
+        .unwrap();
+    super::git(temp.path(), &["commit", "-am", "base"])
+        .await
+        .unwrap();
+
+    assert!(
+        merge_local_branch(temp.path(), "rn/req/merge-review")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(temp.path().join("README.md"))
+            .await
+            .unwrap(),
+        "base\n"
+    );
+    assert!(
+        super::git(temp.path(), &["rev-parse", "--verify", "MERGE_HEAD"])
+            .await
+            .is_err()
+    );
+    assert!(
+        super::git(temp.path(), &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .trim()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn remote_base_sync_only_fast_forwards_the_checked_out_branch() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    let remote = temp.path().join("origin.git");
+    let writer = temp.path().join("writer");
+    tokio::fs::create_dir(&repo).await.unwrap();
+    tokio::fs::create_dir(&remote).await.unwrap();
+    init_repo(&repo).await;
+    super::git(&remote, &["init", "--bare"]).await.unwrap();
+    let base = local_merge_base(&repo).await.unwrap();
+    super::git(
+        &repo,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    )
+    .await
+    .unwrap();
+    super::git(&repo, &["push", "-u", "origin", &base])
+        .await
+        .unwrap();
+    super::git(
+        temp.path(),
+        &["clone", remote.to_str().unwrap(), writer.to_str().unwrap()],
+    )
+    .await
+    .unwrap();
+    super::git(&writer, &["config", "user.email", "test@example.com"])
+        .await
+        .unwrap();
+    super::git(&writer, &["config", "user.name", "Test"])
+        .await
+        .unwrap();
+    super::git(&writer, &["checkout", &base]).await.unwrap();
+    tokio::fs::write(writer.join("remote.txt"), "remote\n")
+        .await
+        .unwrap();
+    super::git(&writer, &["add", "remote.txt"]).await.unwrap();
+    super::git(&writer, &["commit", "-m", "remote"])
+        .await
+        .unwrap();
+    super::git(&writer, &["push", "origin", &base])
+        .await
+        .unwrap();
+
+    sync_checked_out_remote_base(&repo, &base).await.unwrap();
+
+    assert_eq!(
+        super::git(&repo, &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .trim(),
+        super::git(&repo, &["rev-parse", &format!("origin/{base}")])
+            .await
+            .unwrap()
+            .trim()
     );
 }
 

@@ -1,10 +1,21 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RequirementTaskNode from "./RequirementTaskNode";
-import type { RequirementExecutionTask, StreamEvent } from "../../types/api";
-import { RequirementTaskEventsProvider } from "../../contexts/RequirementTaskEventsContext";
+import type { RequirementExecutionTask } from "../../types/api";
+import { getRequirementTask, getTaskSession } from "../../api/client";
+
+vi.mock("../../api/client", () => ({
+  getRequirementTask: vi.fn(),
+  getTaskSession: vi.fn(),
+}));
 
 function task(
   overrides: Partial<RequirementExecutionTask> = {},
@@ -59,7 +70,6 @@ function renderNode({
   nodeRole,
   reviews = [],
   dependencies = [],
-  streamEvents = [],
   collapsed = false,
   busy = false,
   onRecoverTaskGroup = vi.fn(),
@@ -73,37 +83,39 @@ function renderNode({
     | "external";
   reviews?: RequirementExecutionTask[];
   dependencies?: RequirementExecutionTask[];
-  streamEvents?: StreamEvent[];
   collapsed?: boolean;
   busy?: boolean;
   onRecoverTaskGroup?: (requirementId: string, taskId: string) => Promise<void>;
 } = {}) {
-  const renderWithEvents = (events: StreamEvent[]) => (
-    <RequirementTaskEventsProvider requirementId="req-1" events={events}>
-      <RequirementTaskNode
-        data={{
-          kind: "requirement-task",
-          nodeRole,
-          requirementId: "req-1",
-          task: nodeTask,
-          reviews,
-          dependencies,
-          busy,
-          collapsed,
-          onRecoverTaskGroup,
-        }}
-      />
-    </RequirementTaskEventsProvider>
+  return render(
+    <RequirementTaskNode
+      data={{
+        kind: "requirement-task",
+        nodeRole,
+        requirementId: "req-1",
+        task: nodeTask,
+        reviews,
+        dependencies,
+        busy,
+        collapsed,
+        onRecoverTaskGroup,
+      }}
+    />,
   );
-  const view = render(renderWithEvents(streamEvents));
-  return {
-    ...view,
-    updateEvents: (events: StreamEvent[]) =>
-      view.rerender(renderWithEvents(events)),
-  };
 }
 
 describe("RequirementTaskNode", () => {
+  beforeEach(() => {
+    vi.mocked(getRequirementTask).mockImplementation(
+      () => new Promise(() => {}),
+    );
+    vi.mocked(getTaskSession).mockImplementation(() => new Promise(() => {}));
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
   it("renders a fixed code node without embedded review cards or detail", () => {
     const review = task({
       id: "review-task-1",
@@ -156,9 +168,8 @@ describe("RequirementTaskNode", () => {
     expect(dialog).toHaveAttribute("open");
     expect(screen.getByText("任务描述")).toBeInTheDocument();
     expect(screen.getByText("实现与审核")).toBeInTheDocument();
-    expect(screen.getByText("执行过程")).toBeInTheDocument();
     expect(screen.getByText("补齐登录流程")).toBeInTheDocument();
-    expect(screen.getByText("思考过程")).toBeInTheDocument();
+    expect(screen.getByText("会话记录")).toBeInTheDocument();
 
     const details = document.body.querySelector("details");
     expect(details).not.toHaveAttribute("open");
@@ -381,90 +392,190 @@ describe("RequirementTaskNode", () => {
     expect(screen.getByText("累计调用数").nextSibling).toHaveTextContent(
       "3 次",
     );
-    expect(screen.getByText("input").nextSibling).toHaveTextContent("1,500");
-    expect(screen.getByText("output").nextSibling).toHaveTextContent("320");
-    expect(screen.getByText("cacheRead").nextSibling).toHaveTextContent(
-      "1,000",
+    expect(screen.getByText("输入 tokens").nextSibling).toHaveTextContent(
+      "1,500",
     );
-    expect(screen.getByText("cacheWrite").nextSibling).toHaveTextContent("240");
+    expect(screen.getByText("输出 tokens").nextSibling).toHaveTextContent(
+      "320",
+    );
+    expect(screen.getByText("缓存读取").nextSibling).toHaveTextContent("1,000");
+    expect(screen.getByText("缓存写入").nextSibling).toHaveTextContent("240");
     expect(screen.getByText("缓存命中率").nextSibling).toHaveTextContent(
       "40.0%",
     );
-    expect(screen.getByText("context tokens").nextSibling).toHaveTextContent(
+    expect(screen.getByText("上下文 tokens").nextSibling).toHaveTextContent(
       "12,000",
     );
-    expect(screen.getByText("context window").nextSibling).toHaveTextContent(
+    expect(screen.getByText("上下文窗口").nextSibling).toHaveTextContent(
       "128,000",
     );
-    expect(screen.getByText("context percent").nextSibling).toHaveTextContent(
+    expect(screen.getByText("上下文占比").nextSibling).toHaveTextContent(
       "9.4%",
     );
   });
 
-  it("shows live pi events for the current task before historical trace", () => {
+  it("does not request task details until the detail is open", async () => {
+    const detailed = task({ failure_summary: "按需加载的详情" });
+    vi.mocked(getRequirementTask).mockResolvedValue({
+      task: detailed,
+      reviews: [],
+      dependencies: [],
+    });
+    renderNode();
+
+    expect(getRequirementTask).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+    await waitFor(() =>
+      expect(getRequirementTask).toHaveBeenCalledWith("req-1", "task-1"),
+    );
+    expect(await screen.findByText("按需加载的详情")).toBeInTheDocument();
+  });
+
+  it("does not create an EventSource when opening the detail", () => {
+    class MockEventSource {
+      close = vi.fn();
+    }
+    vi.stubGlobal("EventSource", MockEventSource);
+    const EventSourceSpy = vi.spyOn(globalThis, "EventSource");
     renderNode({
-      streamEvents: [
-        {
-          requirement_id: "req-1",
-          task_id: "other-task",
-          event: "pi_event",
-          message: "其他任务",
-          pi_type: "message_update",
-          payload: {
-            assistantMessageEvent: {
-              type: "thinking_delta",
-              delta: "其他任务思考",
-            },
-          },
-        },
-        {
-          requirement_id: "req-1",
-          task_id: "task-1",
-          event: "pi_event",
-          message: "当前任务",
-          pi_type: "message_update",
-          payload: {
-            assistantMessageEvent: {
-              type: "thinking_delta",
-              delta: "实时执行思考",
-            },
-          },
-        },
-      ],
+      nodeTask: task({ status: "running" }),
     });
 
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
 
-    expect(screen.getByText("实时执行思考")).toBeInTheDocument();
-    expect(screen.queryByText("其他任务思考")).toBeNull();
+    expect(EventSourceSpy).not.toHaveBeenCalled();
+    EventSourceSpy.mockRestore();
+    vi.unstubAllGlobals();
   });
 
-  it("does not read task events until the detail is open", () => {
-    const taskIdRead = vi.fn(() => "task-1");
-    const event = {
-      requirement_id: "req-1",
-      get task_id() {
-        return taskIdRead();
-      },
-      event: "pi_event",
-      message: "当前任务",
-      pi_type: "message_update",
-      payload: {
-        assistantMessageEvent: {
-          type: "thinking_delta",
-          delta: "延迟读取事件",
-        },
-      },
-    } as StreamEvent;
+  it("requests task session when the detail opens", async () => {
+    vi.mocked(getTaskSession).mockResolvedValue({
+      messages: [],
+      truncated: false,
+    });
+    renderNode();
 
-    const view = renderNode();
-
-    expect(taskIdRead).not.toHaveBeenCalled();
-    view.updateEvents([event]);
-    expect(taskIdRead).not.toHaveBeenCalled();
+    expect(getTaskSession).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
-    expect(taskIdRead).toHaveBeenCalled();
-    expect(screen.getByText("延迟读取事件")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(getTaskSession).toHaveBeenCalledWith("req-1", "task-1"),
+    );
+  });
+
+  it("renders session messages collapsed by default and hides system messages", async () => {
+    vi.mocked(getTaskSession).mockResolvedValue({
+      messages: [
+        {
+          id: "msg-1",
+          role: "system",
+          text: "system prompt",
+          thinking: undefined,
+          tool_calls: [],
+          timestamp: "2026-07-01T03:00:00.000Z",
+        },
+        {
+          id: "msg-2",
+          role: "user",
+          text: "user request",
+          thinking: undefined,
+          tool_calls: [],
+          timestamp: "2026-07-01T03:01:00.000Z",
+        },
+        {
+          id: "msg-3",
+          role: "assistant",
+          text: "assistant reply",
+          thinking: "thinking content",
+          tool_calls: ['bash: {"command":"ls"}'],
+          timestamp: "2026-07-01T03:02:00.000Z",
+        },
+      ],
+      truncated: false,
+    });
+    renderNode();
+
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(await screen.findByText("会话记录")).toBeInTheDocument();
+    expect(screen.getByText("显示 1 条 system 消息")).toBeInTheDocument();
+
+    const contentDetails = screen
+      .getAllByText("消息内容")
+      .map((summary) => summary.closest("details"));
+    expect(contentDetails).toHaveLength(2);
+    expect(
+      contentDetails.every((details) => !details?.hasAttribute("open")),
+    ).toBe(true);
+
+    const thinkingSummary = screen.getByText("思考过程");
+    const thinkingDetails = thinkingSummary.closest("details");
+    expect(thinkingDetails).not.toHaveAttribute("open");
+
+    const toolSummary = screen.getByText("工具调用（1）");
+    const toolDetails = toolSummary.closest("details");
+    expect(toolDetails).not.toHaveAttribute("open");
+
+    fireEvent.click(screen.getByText("显示 1 条 system 消息"));
+    expect(await screen.findByText("system prompt")).toBeInTheDocument();
+
+    contentDetails[0]!.open = true;
+    expect(screen.getByText("user request")).toBeInTheDocument();
+
+    contentDetails[1]!.open = true;
+    expect(screen.getByText("assistant reply")).toBeInTheDocument();
+
+    thinkingDetails!.open = true;
+    expect(screen.getByText("thinking content")).toBeInTheDocument();
+
+    toolDetails!.open = true;
+    expect(screen.getByText('bash: {"command":"ls"}')).toBeInTheDocument();
+  });
+
+  it("shows session error when session loading fails", async () => {
+    vi.mocked(getTaskSession).mockRejectedValue(new Error("读取任务会话失败"));
+    renderNode();
+
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(await screen.findByText("读取任务会话失败")).toBeInTheDocument();
+  });
+
+  it("places session usage panel below task description", async () => {
+    vi.mocked(getTaskSession).mockResolvedValue({
+      messages: [],
+      truncated: false,
+    });
+    renderNode({
+      nodeTask: task({
+        trace: {
+          type: "pi_trace",
+          version: 1,
+          trace: {
+            thinking: "",
+            output: "",
+            tools: [],
+            statuses: [],
+            usage: {
+              sessionReused: false,
+              callCount: 1,
+              input: 100,
+              output: 50,
+              cacheRead: 0,
+              cacheWrite: 0,
+              context: { tokens: 150, window: 200000, percent: 0.1 },
+            },
+          },
+        },
+      }),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    const description = await screen.findByText("补齐登录流程");
+    const usage = await screen.findByRole("heading", { name: "会话统计" });
+    expect(description.compareDocumentPosition(usage)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
   it("shows persisted implementation and review rounds in two lanes", () => {
@@ -582,5 +693,27 @@ describe("RequirementTaskNode", () => {
     expect(screen.getAllByText("PR").length).toBeGreaterThan(0);
     expect(screen.getByText("合入目标分支")).toBeInTheDocument();
     expect(screen.getByText("清理资源")).toBeInTheDocument();
+  });
+
+  it("marks PR as unnecessary after a local repository merge", () => {
+    renderNode({
+      nodeRole: "external",
+      nodeTask: task({
+        id: "merge-review",
+        kind: "merge_review",
+        title: "最终审核发布",
+        pull_request_url: null,
+        merged_into: "main",
+      }),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(screen.getByText("本地仓库，无需 PR")).toBeInTheDocument();
+    expect(
+      screen
+        .getByText("本地仓库，无需 PR")
+        .closest(".task-detail-dialog__stage"),
+    ).toHaveClass("is-approved");
   });
 });

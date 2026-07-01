@@ -955,7 +955,7 @@ mod tests {
                 "task-usage",
                 "统计 token",
                 RequirementTaskKind::Implementation,
-                Vec::new(),
+                vec!["dependency".to_owned()],
                 None,
             );
             task.trace = Some(json!({
@@ -974,9 +974,23 @@ mod tests {
                     }
                 }
             }));
+            let dependency = test_execution_task(
+                "dependency",
+                "前置任务",
+                RequirementTaskKind::BranchMerge,
+                Vec::new(),
+                None,
+            );
+            let review = test_execution_task(
+                "review-usage",
+                "审核 token",
+                RequirementTaskKind::ReviewSubAgent,
+                vec!["task-usage".to_owned()],
+                Some("task-usage"),
+            );
             requirement.execution_plan = Some(RequirementExecutionPlan {
                 summary: "usage".to_owned(),
-                tasks: vec![task],
+                tasks: vec![dependency, task, review],
             });
         }
         store.data.requirements.push(test_requirement(
@@ -1013,6 +1027,42 @@ mod tests {
                 .all(|task| task.trace.is_none())
         );
         assert_eq!(canvas.completed_requirements[0].id, "done");
+
+        let summary = store.project_canvas_for_view(&project.id, None).unwrap();
+        assert!(
+            summary
+                .queued_requirements
+                .iter()
+                .all(|requirement| requirement.execution_plan.is_none())
+        );
+        let selected = store
+            .project_canvas_for_view(&project.id, Some("running"))
+            .unwrap();
+        let selected_task = selected
+            .queued_requirements
+            .iter()
+            .find(|requirement| requirement.id == "running")
+            .and_then(|requirement| requirement.execution_plan.as_ref())
+            .and_then(|plan| plan.tasks.iter().find(|task| task.id == "task-usage"))
+            .unwrap();
+        assert!(selected_task.trace.is_none());
+        assert!(selected_task.review_history.is_empty());
+        assert!(selected_task.target_files.is_empty());
+        assert!(
+            selected
+                .queued_requirements
+                .iter()
+                .filter(|requirement| requirement.id != "running")
+                .all(|requirement| requirement.execution_plan.is_none())
+        );
+
+        let detail = store
+            .requirement_task_detail("running", "task-usage")
+            .unwrap();
+        assert!(detail.task.trace.is_some());
+        assert_eq!(detail.task.target_files, vec!["src"]);
+        assert_eq!(detail.reviews[0].id, "review-usage");
+        assert_eq!(detail.dependencies[0].id, "dependency");
 
         let missing = store.project_canvas("missing").unwrap_err();
         assert!(matches!(missing, AppError::NotFound(_)));

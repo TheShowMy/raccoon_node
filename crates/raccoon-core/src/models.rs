@@ -439,6 +439,29 @@ pub struct ProjectCanvasResponse {
     pub token_usage: Option<ProjectTokenUsage>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequirementTaskDetailResponse {
+    pub task: RequirementExecutionTask,
+    pub reviews: Vec<RequirementExecutionTask>,
+    pub dependencies: Vec<RequirementExecutionTask>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequirementTaskSessionResponse {
+    pub messages: Vec<RequirementTaskSessionMessage>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequirementTaskSessionMessage {
+    pub id: String,
+    pub role: String,
+    pub text: String,
+    pub thinking: Option<String>,
+    pub tool_calls: Vec<String>,
+    pub timestamp: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectTokenUsage {
     pub input: u64,

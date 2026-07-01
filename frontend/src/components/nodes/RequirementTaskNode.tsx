@@ -16,17 +16,13 @@ import type {
   RequirementExecutionTask,
   RequirementRecoveryStage,
   RequirementReviewStatus,
+  RequirementTaskDetail,
+  RequirementTaskSession,
   StartNodeData,
   TraceUsage,
 } from "../../types/api";
-import { useRequirementTaskEvents } from "../../contexts/RequirementTaskEventsContext";
-import TraceBubble from "../ui/TraceBubble";
-import {
-  buildBubbleStreamFromEvents,
-  buildBubbleStreamFromTrace,
-  tierLabels,
-  traceFromMetadata,
-} from "../../utils/format";
+import { getRequirementTask, getTaskSession } from "../../api/client";
+import { readError, tierLabels, traceFromMetadata } from "../../utils/format";
 
 const taskStatusText: Record<RequirementExecutionTask["status"], string> = {
   pending: "待执行",
@@ -131,6 +127,7 @@ export default function RequirementTaskNode({
         </div>
         <TaskDetailDialog
           open={detailOpen}
+          requirementId={data.requirementId}
           task={task}
           reviews={data.reviews}
           dependencies={data.dependencies}
@@ -206,6 +203,7 @@ export default function RequirementTaskNode({
       {nodeRole === "external" ? (
         <TaskDetailDialog
           open={detailOpen}
+          requirementId={data.requirementId}
           task={task}
           reviews={data.reviews}
           dependencies={data.dependencies}
@@ -218,20 +216,76 @@ export default function RequirementTaskNode({
 
 function TaskDetailDialog({
   open,
+  requirementId,
   task,
   reviews,
   dependencies,
   onClose,
 }: {
   open: boolean;
+  requirementId: string;
   task: RequirementExecutionTask;
   reviews: RequirementExecutionTask[];
   dependencies: RequirementExecutionTask[];
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const historicalTrace = traceFromMetadata(task.trace);
-  const reviewFeedback = buildReviewFeedback(task, reviews);
+  const [detail, setDetail] = useState<RequirementTaskDetail | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [session, setSession] = useState<RequirementTaskSession | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const displayedTask = detail?.task ?? task;
+  const displayedReviews = detail?.reviews ?? reviews;
+  const displayedDependencies = detail?.dependencies ?? dependencies;
+  const historicalTrace = traceFromMetadata(displayedTask.trace);
+  const reviewFeedback = buildReviewFeedback(displayedTask, displayedReviews);
+
+  useEffect(() => {
+    if (!open) {
+      setDetail(null);
+      setDetailError(null);
+      setSession(null);
+      setSessionError(null);
+      setSessionLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadDetail = () =>
+      getRequirementTask(requirementId, task.id)
+        .then((data) => {
+          if (!cancelled) {
+            setDetail(data);
+            setDetailError(null);
+          }
+        })
+        .catch((reason) => {
+          if (!cancelled) setDetailError(readError(reason));
+        });
+    const loadSession = () => {
+      setSessionLoading(true);
+      return getTaskSession(requirementId, task.id)
+        .then((data) => {
+          if (!cancelled) {
+            setSession(data);
+            setSessionError(null);
+          }
+        })
+        .catch((reason) => {
+          if (!cancelled) setSessionError(readError(reason));
+        })
+        .finally(() => {
+          if (!cancelled) setSessionLoading(false);
+        });
+    };
+    void loadDetail();
+    void loadSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, requirementId, task.id]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -269,13 +323,13 @@ function TaskDetailDialog({
             <CircleDot size={22} />
           </span>
           <div>
-            <strong>{task.title}</strong>
-            <span>{taskKindText[task.kind]}详情</span>
+            <strong>{displayedTask.title}</strong>
+            <span>{taskKindText[displayedTask.kind]}详情</span>
           </div>
           <span
-            className={`task-node__status task-node__status--${task.status} task-detail-dialog__status`}
+            className={`task-node__status task-node__status--${displayedTask.status} task-detail-dialog__status`}
           >
-            {taskStatusText[task.status]}
+            {taskStatusText[displayedTask.status]}
           </span>
           <button type="button" onClick={onClose} aria-label="关闭详情">
             <X size={16} />
@@ -284,63 +338,82 @@ function TaskDetailDialog({
         <div className="task-detail-dialog__body">
           <section className="task-detail-dialog__section task-detail-dialog__section--wide">
             <h3>任务描述</h3>
-            <p className="task-detail-dialog__text">{task.description}</p>
+            <p className="task-detail-dialog__text">
+              {displayedTask.description}
+            </p>
           </section>
-          <TaskDetailFlow
-            task={task}
-            reviews={reviews}
-            dependencies={dependencies}
-          />
-          <TaskExecutionTrace task={task} />
           {historicalTrace?.usage ? (
             <TaskUsage usage={historicalTrace.usage} />
           ) : null}
+          {detailError ? (
+            <p className="task-detail-dialog__empty">{detailError}</p>
+          ) : null}
+          <TaskDetailFlow
+            task={displayedTask}
+            reviews={displayedReviews}
+            dependencies={displayedDependencies}
+          />
+          <TaskSessionMessages
+            session={session}
+            error={sessionError}
+            loading={sessionLoading}
+          />
           <section className="task-detail-dialog__section task-detail-dialog__section--wide">
             <h3>恢复信息</h3>
             <dl className="task-detail-dialog__info-list task-detail-dialog__info-list--embedded">
-              <DetailItem label="失败原因" value={task.error} danger />
-              <DetailItem label="失败摘要" value={task.failure_summary} />
+              <DetailItem label="失败原因" value={displayedTask.error} danger />
+              <DetailItem
+                label="失败摘要"
+                value={displayedTask.failure_summary}
+              />
               <DetailItem
                 label="执行失败次数"
-                value={String(task.execution_failure_count)}
+                value={String(displayedTask.execution_failure_count)}
               />
               <DetailItem
                 label="审核拒绝次数"
-                value={String(task.review_rejection_count)}
+                value={String(displayedTask.review_rejection_count)}
               />
               <DetailItem
                 label="恢复方案"
-                value={task.recovery_guidance}
+                value={displayedTask.recovery_guidance}
                 warning
               />
               <DetailItem
                 label="当前有效档位"
-                value={effectiveTierText(task)}
+                value={effectiveTierText(displayedTask)}
               />
             </dl>
           </section>
           <details className="task-detail-dialog__details">
             <summary>基础信息</summary>
             <dl className="task-detail-dialog__info-list">
-              <DetailItem label="结果" value={task.result_summary} />
+              <DetailItem label="结果" value={displayedTask.result_summary} />
               <DetailItem
                 label="执行提示"
-                value={task.execution_warning}
+                value={displayedTask.execution_warning}
                 warning
               />
-              <DetailItem label="分支" value={task.branch_name} />
-              <DetailItem label="Worktree" value={task.worktree_path} mono />
+              <DetailItem label="分支" value={displayedTask.branch_name} />
+              <DetailItem
+                label="Worktree"
+                value={displayedTask.worktree_path}
+                mono
+              />
               <DetailItem
                 label="目标文件"
-                value={task.target_files.join("、")}
+                value={displayedTask.target_files.join("、")}
               />
               <DetailItem
                 label="PR"
-                value={task.pull_request_url}
-                href={task.pull_request_url}
+                value={displayedTask.pull_request_url}
+                href={displayedTask.pull_request_url}
               />
-              <DetailItem label="合入分支" value={task.merged_into} />
-              <DetailItem label="清理结果" value={task.cleanup_summary} />
+              <DetailItem label="合入分支" value={displayedTask.merged_into} />
+              <DetailItem
+                label="清理结果"
+                value={displayedTask.cleanup_summary}
+              />
               <DetailItem label="审核意见" value={reviewFeedback} danger />
             </dl>
           </details>
@@ -557,6 +630,8 @@ function MergeReviewFlow({
     task.review_status === "pending"
       ? toReviewStatus(task.status)
       : task.review_status;
+  const localMergeCompleted =
+    task.pull_request_url === null && task.merged_into !== null;
   const stages: Array<{
     title: string;
     detail: string;
@@ -577,8 +652,11 @@ function MergeReviewFlow({
     },
     {
       title: "PR",
-      detail: task.pull_request_url ?? "待创建",
-      status: task.pull_request_url ? "approved" : "pending",
+      detail:
+        task.pull_request_url ??
+        (localMergeCompleted ? "本地仓库，无需 PR" : "待创建"),
+      status:
+        task.pull_request_url || localMergeCompleted ? "approved" : "pending",
     },
     {
       title: "合入目标分支",
@@ -668,29 +746,6 @@ function toReviewStatus(
   return "pending";
 }
 
-function TaskExecutionTrace({ task }: { task: RequirementExecutionTask }) {
-  const taskEvents = useRequirementTaskEvents(task.id);
-  const liveBubbles = buildBubbleStreamFromEvents(taskEvents);
-  const historicalTrace = traceFromMetadata(task.trace);
-  const traceBubbles =
-    liveBubbles.length > 0
-      ? liveBubbles
-      : historicalTrace
-        ? buildBubbleStreamFromTrace(historicalTrace)
-        : [];
-
-  return (
-    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-      <h3>执行过程</h3>
-      {traceBubbles.length > 0 ? (
-        <TraceBubble bubbles={traceBubbles} isLive={liveBubbles.length > 0} />
-      ) : (
-        <p className="task-detail-dialog__empty">暂无执行过程</p>
-      )}
-    </section>
-  );
-}
-
 function TaskUsage({ usage }: { usage: TraceUsage }) {
   const number = new Intl.NumberFormat("zh-CN");
   const cacheTotal = usage.input + usage.cacheRead;
@@ -712,19 +767,19 @@ function TaskUsage({ usage }: { usage: TraceUsage }) {
           <dd>{number.format(usage.callCount)} 次</dd>
         </div>
         <div>
-          <dt>input</dt>
+          <dt>输入 tokens</dt>
           <dd>{number.format(usage.input)}</dd>
         </div>
         <div>
-          <dt>output</dt>
+          <dt>输出 tokens</dt>
           <dd>{number.format(usage.output)}</dd>
         </div>
         <div>
-          <dt>cacheRead</dt>
+          <dt>缓存读取</dt>
           <dd>{number.format(usage.cacheRead)}</dd>
         </div>
         <div>
-          <dt>cacheWrite</dt>
+          <dt>缓存写入</dt>
           <dd>{number.format(usage.cacheWrite)}</dd>
         </div>
         <div>
@@ -732,18 +787,128 @@ function TaskUsage({ usage }: { usage: TraceUsage }) {
           <dd>{cacheHitRate}</dd>
         </div>
         <div>
-          <dt>context tokens</dt>
+          <dt>上下文 tokens</dt>
           <dd>{number.format(usage.context.tokens)}</dd>
         </div>
         <div>
-          <dt>context window</dt>
+          <dt>上下文窗口</dt>
           <dd>{number.format(usage.context.window)}</dd>
         </div>
         <div>
-          <dt>context percent</dt>
+          <dt>上下文占比</dt>
           <dd>{usage.context.percent.toFixed(1)}%</dd>
         </div>
       </dl>
+    </section>
+  );
+}
+
+function TaskSessionMessages({
+  session,
+  error,
+  loading,
+}: {
+  session: RequirementTaskSession | null;
+  error: string | null;
+  loading: boolean;
+}) {
+  const [showSystem, setShowSystem] = useState(false);
+  const roleLabels: Record<string, string> = {
+    user: "用户",
+    assistant: "助手",
+    system: "系统",
+    toolResult: "工具结果",
+  };
+
+  if (loading) {
+    return (
+      <section className="task-detail-dialog__section task-detail-dialog__section--wide">
+        <h3>会话记录</h3>
+        <p className="task-detail-dialog__empty">加载中…</p>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="task-detail-dialog__section task-detail-dialog__section--wide">
+        <h3>会话记录</h3>
+        <p className="task-detail-dialog__empty">{error}</p>
+      </section>
+    );
+  }
+
+  if (!session || session.messages.length === 0) {
+    return (
+      <section className="task-detail-dialog__section task-detail-dialog__section--wide">
+        <h3>会话记录</h3>
+        <p className="task-detail-dialog__empty">暂无会话记录</p>
+      </section>
+    );
+  }
+
+  const visibleMessages = showSystem
+    ? session.messages
+    : session.messages.filter((message) => message.role !== "system");
+  const hiddenCount = session.messages.length - visibleMessages.length;
+
+  return (
+    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
+      <h3>会话记录</h3>
+      <div className="task-session-messages">
+        {visibleMessages.map((message) => (
+          <article
+            key={message.id}
+            className={`task-session-message task-session-message--${message.role}`}
+          >
+            <header className="task-session-message__header">
+              <span className="task-session-message__role">
+                {roleLabels[message.role] ?? message.role}
+              </span>
+              <time dateTime={message.timestamp}>
+                {message.timestamp
+                  ? new Date(message.timestamp).toLocaleString("zh-CN")
+                  : "未知时间"}
+              </time>
+            </header>
+            {message.text ? (
+              <details className="task-session-message__content">
+                <summary>消息内容</summary>
+                <pre>{message.text}</pre>
+              </details>
+            ) : null}
+            {message.thinking ? (
+              <details className="task-session-message__thinking">
+                <summary>思考过程</summary>
+                <pre>{message.thinking}</pre>
+              </details>
+            ) : null}
+            {message.tool_calls?.length > 0 ? (
+              <details className="task-session-message__tools">
+                <summary>工具调用（{message.tool_calls.length}）</summary>
+                <ul>
+                  {message.tool_calls.map((tool, index) => (
+                    <li key={index}>
+                      <pre>{tool}</pre>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </article>
+        ))}
+      </div>
+      {hiddenCount > 0 ? (
+        <button
+          type="button"
+          className="task-session-messages__toggle"
+          onClick={() => setShowSystem((prev) => !prev)}
+        >
+          {showSystem
+            ? `隐藏 ${hiddenCount} 条 system 消息`
+            : `显示 ${hiddenCount} 条 system 消息`}
+        </button>
+      ) : null}
     </section>
   );
 }

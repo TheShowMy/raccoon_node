@@ -160,7 +160,7 @@ describe("useRequirementFlow", () => {
     card.remove();
   });
 
-  it("ignores SSE events that do not belong to the observed requirement", async () => {
+  it("keeps DAG summary events out of memory and refreshes on task boundaries", async () => {
     const loadProjectCanvas = vi.fn().mockResolvedValue(canvas);
     const { result } = renderHook(() =>
       useRequirementFlow(
@@ -173,6 +173,9 @@ describe("useRequirementFlow", () => {
       ),
     );
     const source = FakeEventSource.instances[0];
+    expect(source.url).toBe(
+      `/api/requirements/${requirement.id}/events?include_pi_events=false`,
+    );
 
     act(() => {
       source.emit("execution_started", {
@@ -185,20 +188,30 @@ describe("useRequirementFlow", () => {
     expect(loadProjectCanvas).not.toHaveBeenCalled();
 
     act(() => {
-      source.emit("execution_started", {
+      for (let index = 0; index < 1_000; index += 1) {
+        source.emit("pi_event", {
+          requirement_id: requirement.id,
+          task_id: "task-1",
+          event: "pi_event",
+          message: `event-${index}`,
+        });
+      }
+      source.emit("execution_task_started", {
         requirement_id: requirement.id,
-        event: "execution_started",
+        task_id: "task-1",
+        event: "execution_task_started",
         message: "started",
       });
     });
 
     await waitFor(() => {
-      expect(result.current.requirementStreamEvents).toHaveLength(1);
-      // loadProjectCanvas is intentionally NOT called from the SSE handler;
-      // canvas updates are handled by the 2500ms setInterval poll to avoid
-      // rebuilding the DAG on every task event (performance fix).
-      expect(loadProjectCanvas).not.toHaveBeenCalled();
-      expect(getRequirementConversation).toHaveBeenCalledWith(requirement.id);
+      expect(result.current.requirementStreamEvents).toEqual([]);
+      expect(loadProjectCanvas).toHaveBeenCalledTimes(1);
+      expect(loadProjectCanvas).toHaveBeenCalledWith(
+        "project-1",
+        requirement.id,
+      );
+      expect(getRequirementConversation).not.toHaveBeenCalled();
     });
   });
 });

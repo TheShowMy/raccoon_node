@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    io::BufRead,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime},
@@ -20,7 +21,8 @@ use raccoon_core::models::{
     RequirementPlanInput, RequirementProcessStatus, RequirementPromptState,
     RequirementRecoveryStage, RequirementReviewRound, RequirementReviewRoundStatus,
     RequirementReviewStatus, RequirementReviewStep, RequirementStatus,
-    RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
+    RequirementTaskDetailResponse, RequirementTaskExecutionInput, RequirementTaskExecutionOutput,
+    RequirementTaskKind, RequirementTaskSessionMessage, RequirementTaskSessionResponse,
     RequirementTaskStatus,
 };
 use raccoon_core::utils::commit_staged_changes;
@@ -335,6 +337,196 @@ impl JsonStore {
             completed_requirements,
             token_usage,
         })
+    }
+
+    pub fn project_canvas_for_view(
+        &self,
+        project_id: &str,
+        dag_requirement_id: Option<&str>,
+    ) -> Result<ProjectCanvasResponse, AppError> {
+        let mut canvas = self.project_canvas(project_id)?;
+        let mut selected_found = dag_requirement_id.is_none();
+        for requirement in canvas
+            .active_requirement
+            .iter_mut()
+            .chain(canvas.queued_requirements.iter_mut())
+            .chain(canvas.completed_requirements.iter_mut())
+        {
+            let is_selected = dag_requirement_id == Some(requirement.id.as_str());
+            if is_selected {
+                selected_found = true;
+            }
+            if !is_selected {
+                requirement.execution_plan = None;
+            } else if let Some(plan) = requirement.execution_plan.as_mut() {
+                for task in &mut plan.tasks {
+                    strip_task_detail(task, false, false);
+                }
+            }
+        }
+        if !selected_found {
+            return Err(AppError::not_found("需求不存在"));
+        }
+        Ok(canvas)
+    }
+
+    pub fn requirement_task_detail(
+        &self,
+        requirement_id: &str,
+        task_id: &str,
+    ) -> Result<RequirementTaskDetailResponse, AppError> {
+        let requirement = self
+            .data
+            .requirements
+            .iter()
+            .find(|requirement| requirement.id == requirement_id)
+            .ok_or_else(|| AppError::not_found("需求不存在"))?;
+        let plan = requirement
+            .execution_plan
+            .as_ref()
+            .ok_or_else(|| AppError::not_found("执行 DAG 不存在"))?;
+        let mut task = plan
+            .tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("任务不存在"))?;
+        strip_task_detail(&mut task, true, true);
+        let reviews = plan
+            .tasks
+            .iter()
+            .filter(|candidate| candidate.review_for.as_deref() == Some(task_id))
+            .cloned()
+            .map(|mut review| {
+                strip_task_detail(&mut review, true, false);
+                review
+            })
+            .collect();
+        let dependencies = task
+            .depends_on
+            .iter()
+            .filter_map(|dependency_id| {
+                plan.tasks
+                    .iter()
+                    .find(|candidate| candidate.id == *dependency_id)
+                    .cloned()
+            })
+            .map(|mut dependency| {
+                strip_task_detail(&mut dependency, true, false);
+                dependency
+            })
+            .collect();
+        Ok(RequirementTaskDetailResponse {
+            task,
+            reviews,
+            dependencies,
+        })
+    }
+
+    pub fn requirement_task_session_path(
+        &self,
+        requirement_id: &str,
+        task_id: &str,
+    ) -> Result<PathBuf, AppError> {
+        let requirement_index = self.requirement_index(requirement_id)?;
+        let plan = self.data.requirements[requirement_index]
+            .execution_plan
+            .as_ref()
+            .ok_or_else(|| AppError::not_found("执行 DAG 不存在"))?;
+        let task = plan
+            .tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .ok_or_else(|| AppError::not_found("任务不存在"))?;
+        let session_file = task
+            .pi_session_file
+            .as_deref()
+            .ok_or_else(|| AppError::not_found("任务没有会话记录"))?;
+        self.resolve_managed_session_path(session_file)
+    }
+
+    pub fn read_task_session_file(path: &Path) -> Result<RequirementTaskSessionResponse, AppError> {
+        let file = std::fs::File::open(path)
+            .map_err(|_| AppError::not_found("会话记录不存在或无法读取"))?;
+        let reader = std::io::BufReader::new(file);
+        let mut messages = Vec::new();
+        let mut skipped_lines = 0usize;
+
+        for line in reader.lines() {
+            let line = match line {
+                Ok(line) => line,
+                Err(_) => {
+                    skipped_lines += 1;
+                    continue;
+                }
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let value: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => {
+                    skipped_lines += 1;
+                    continue;
+                }
+            };
+            if value.get("type").and_then(|t| t.as_str()) != Some("message") {
+                continue;
+            }
+            let message = match value.get("message") {
+                Some(m) => m,
+                None => {
+                    skipped_lines += 1;
+                    continue;
+                }
+            };
+            let role = message
+                .get("role")
+                .and_then(|r| r.as_str())
+                .unwrap_or("unknown")
+                .to_owned();
+            let id = value
+                .get("id")
+                .and_then(|i| i.as_str())
+                .unwrap_or("")
+                .to_owned();
+            let timestamp = value
+                .get("timestamp")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_owned();
+            let (text, thinking, tool_calls) = parse_session_message_content(message);
+            messages.push(RequirementTaskSessionMessage {
+                id,
+                role,
+                text,
+                thinking,
+                tool_calls,
+                timestamp,
+            });
+        }
+
+        if skipped_lines > 0 {
+            tracing::warn!(
+                path = %path.display(),
+                skipped_lines,
+                "session file contained invalid or non-message lines"
+            );
+        }
+
+        Ok(RequirementTaskSessionResponse {
+            messages,
+            truncated: false,
+        })
+    }
+
+    pub fn requirement_task_session(
+        &self,
+        requirement_id: &str,
+        task_id: &str,
+    ) -> Result<RequirementTaskSessionResponse, AppError> {
+        let path = self.requirement_task_session_path(requirement_id, task_id)?;
+        Self::read_task_session_file(&path)
     }
 
     pub fn requirement_conversation(
@@ -2005,6 +2197,89 @@ fn aggregate_project_token_usage<'a>(
         usage.context_percent = usage.context_tokens as f64 * 100.0 / usage.context_window as f64;
     }
     Some(usage)
+}
+
+fn parse_session_message_content(message: &Value) -> (String, Option<String>, Vec<String>) {
+    let mut text_parts = Vec::new();
+    let mut thinking_parts = Vec::new();
+    let mut tool_calls = Vec::new();
+
+    match message.get("content") {
+        Some(Value::String(text)) => {
+            text_parts.push(text.clone());
+        }
+        Some(Value::Array(content)) => {
+            for block in content {
+                match block.get("type").and_then(|t| t.as_str()) {
+                    Some("text") => {
+                        if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                            text_parts.push(text.to_owned());
+                        }
+                    }
+                    Some("thinking") => {
+                        if let Some(thinking) = block.get("thinking").and_then(|t| t.as_str()) {
+                            thinking_parts.push(thinking.to_owned());
+                        }
+                    }
+                    Some("toolCall") | Some("tool_call") => {
+                        let name = block
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("未知工具");
+                        let arguments = block
+                            .get("arguments")
+                            .map(|a| a.to_string())
+                            .unwrap_or_else(|| "{}".to_owned());
+                        tool_calls.push(format!("{name}: {arguments}"));
+                    }
+                    Some("toolResult") | Some("tool_result") => {
+                        let tool_call_id = block
+                            .get("tool_call_id")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("未知工具");
+                        let output = block
+                            .get("output")
+                            .map(|a| a.to_string())
+                            .unwrap_or_else(|| "{}".to_owned());
+                        tool_calls.push(format!("工具结果（{tool_call_id}）: {output}"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let text = text_parts.join("\n");
+    let thinking = if thinking_parts.is_empty() {
+        None
+    } else {
+        Some(thinking_parts.join("\n"))
+    };
+    (text, thinking, tool_calls)
+}
+
+fn strip_task_detail(
+    task: &mut raccoon_core::models::RequirementExecutionTask,
+    keep_branch: bool,
+    keep_trace_and_files: bool,
+) {
+    task.pi_session_file = None;
+    task.worktree_path = None;
+    task.failure_summary = None;
+    task.recovery_guidance = None;
+    task.last_review_feedback = None;
+    task.pull_request_url = None;
+    task.merged_into = None;
+    task.cleanup_summary = None;
+    task.review_history.clear();
+    if !keep_branch {
+        task.branch_name = None;
+    }
+    if !keep_trace_and_files {
+        task.trace = None;
+        task.target_files.clear();
+    }
 }
 
 fn trace_usage(trace: &Value) -> Option<&Value> {

@@ -1075,6 +1075,139 @@ async fn stale_pi_session_cleanup_keeps_requirement_and_task_references() {
 }
 
 #[tokio::test]
+async fn requirement_task_session_parses_messages() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let session_dir = store.data_root.join("sessions");
+    tokio::fs::create_dir_all(&session_dir).await.unwrap();
+    let session_file = session_dir.join("task.jsonl");
+    tokio::fs::write(
+        &session_file,
+        r#"{"type":"session","id":"s1","timestamp":"2026-07-01T00:00:00Z"}
+{"type":"message","id":"m1","timestamp":"2026-07-01T00:01:00Z","message":{"role":"system","content":[{"type":"text","text":"system prompt"}]}}
+{"type":"message","id":"m2","timestamp":"2026-07-01T00:02:00Z","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"message","id":"m3","timestamp":"2026-07-01T00:03:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"thinking text"},{"type":"text","text":"reply"},{"type":"toolCall","name":"bash","arguments":{"command":"ls"}},{"type":"toolResult","tool_call_id":"bash","output":"file.txt"}]}}
+{"type":"not_a_message","id":"n1"}
+not valid json
+"#,
+    )
+    .await
+    .unwrap();
+
+    let mut active_task = task(
+        "task-1",
+        RequirementTaskKind::Implementation,
+        RequirementTaskStatus::Completed,
+    );
+    active_task.pi_session_file = Some(session_file.to_string_lossy().to_string());
+    let mut active = requirement("req-1");
+    active.execution_plan = Some(RequirementExecutionPlan {
+        summary: "plan".to_owned(),
+        tasks: vec![active_task],
+    });
+    store.data.requirements.push(active);
+
+    let session = store.requirement_task_session("req-1", "task-1").unwrap();
+    assert_eq!(session.messages.len(), 3);
+    assert!(session.messages.iter().any(|m| m.role == "system"));
+    let system = session
+        .messages
+        .iter()
+        .find(|m| m.role == "system")
+        .unwrap();
+    assert_eq!(system.text, "system prompt");
+    let user = session.messages.iter().find(|m| m.role == "user").unwrap();
+    assert_eq!(user.text, "hello");
+    let assistant = session
+        .messages
+        .iter()
+        .find(|m| m.role == "assistant")
+        .unwrap();
+    assert_eq!(assistant.text, "reply");
+    assert_eq!(assistant.thinking.as_deref(), Some("thinking text"));
+    assert_eq!(assistant.tool_calls.len(), 2);
+    assert!(
+        assistant
+            .tool_calls
+            .iter()
+            .any(|tool| tool.contains("bash"))
+    );
+    assert!(
+        assistant
+            .tool_calls
+            .iter()
+            .any(|tool| tool.contains("工具结果"))
+    );
+    assert!(
+        assistant
+            .tool_calls
+            .iter()
+            .any(|tool| tool.contains("file.txt"))
+    );
+    assert!(!session.truncated);
+}
+
+#[tokio::test]
+async fn requirement_task_session_rejects_missing_and_escaping_paths() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let session_dir = store.data_root.join("sessions");
+    tokio::fs::create_dir_all(&session_dir).await.unwrap();
+
+    let mut active_task = task(
+        "task-1",
+        RequirementTaskKind::Implementation,
+        RequirementTaskStatus::Completed,
+    );
+    active_task.pi_session_file = Some("../etc/passwd".to_owned());
+    let mut active = requirement("req-1");
+    active.execution_plan = Some(RequirementExecutionPlan {
+        summary: "plan".to_owned(),
+        tasks: vec![active_task],
+    });
+    store.data.requirements.push(active);
+
+    let error = store
+        .requirement_task_session("req-1", "task-1")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("路径必须位于数据目录内"));
+}
+
+#[tokio::test]
+async fn requirement_task_session_returns_not_found_when_file_missing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
+        .await
+        .unwrap();
+    let session_dir = store.data_root.join("sessions");
+    tokio::fs::create_dir_all(&session_dir).await.unwrap();
+
+    let mut active_task = task(
+        "task-1",
+        RequirementTaskKind::Implementation,
+        RequirementTaskStatus::Completed,
+    );
+    active_task.pi_session_file = Some("missing.jsonl".to_owned());
+    let mut active = requirement("req-1");
+    active.execution_plan = Some(RequirementExecutionPlan {
+        summary: "plan".to_owned(),
+        tasks: vec![active_task],
+    });
+    store.data.requirements.push(active);
+
+    let error = store
+        .requirement_task_session("req-1", "task-1")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("不存在"));
+}
+
+#[tokio::test]
 async fn project_store_uses_flat_data_directories_and_current_project() {
     let temp_dir = tempfile::tempdir().unwrap();
     assert!(

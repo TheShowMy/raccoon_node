@@ -20,7 +20,8 @@ use raccoon_core::models::{
     ProjectCanvasResponse, ProjectChatEventEmitter, ProjectChatMessageRequest, ProjectChatResponse,
     RequirementAnalysisInput, RequirementClarification, RequirementConfirmRequest,
     RequirementConversationResponse, RequirementEvent, RequirementEventEmitter,
-    RequirementMessageRequest, RequirementStatus, RequirementTaskExecutionInput, RpcStatus,
+    RequirementMessageRequest, RequirementStatus, RequirementTaskDetailResponse,
+    RequirementTaskExecutionInput, RequirementTaskSessionResponse, RpcStatus,
 };
 use raccoon_store::{ProjectScheduleAction, TaskExecutionDisposition};
 
@@ -110,9 +111,44 @@ pub async fn put_basic_settings(
 pub async fn get_project_canvas(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
+    Query(query): Query<ProjectCanvasQuery>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
     let store = state.store.read().await;
-    Ok(Json(store.project_canvas(&id)?))
+    Ok(Json(store.project_canvas_for_view(
+        &id,
+        query.dag_requirement_id.as_deref(),
+    )?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProjectCanvasQuery {
+    dag_requirement_id: Option<String>,
+}
+
+pub async fn get_requirement_task(
+    State(state): State<AppState>,
+    AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
+) -> Result<Json<RequirementTaskDetailResponse>, AppError> {
+    let store = state.store.read().await;
+    Ok(Json(
+        store.requirement_task_detail(&requirement_id, &task_id)?,
+    ))
+}
+
+pub async fn get_requirement_task_session(
+    State(state): State<AppState>,
+    AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
+) -> Result<Json<RequirementTaskSessionResponse>, AppError> {
+    let path = {
+        let store = state.store.read().await;
+        store.requirement_task_session_path(&requirement_id, &task_id)?
+    };
+    let response = tokio::task::spawn_blocking(move || {
+        raccoon_store::store::JsonStore::read_task_session_file(&path)
+    })
+    .await
+    .map_err(|_| AppError::internal("读取会话任务失败"))??;
+    Ok(Json(response))
 }
 
 #[derive(Debug, Deserialize)]
@@ -311,12 +347,13 @@ pub async fn retry_requirement_analysis(
 pub async fn requirement_events(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
+    Query(query): Query<RequirementEventsQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let stream =
         BroadcastStream::new(state.requirement_events.subscribe()).filter_map(move |result| {
             let requirement_id = requirement_id.clone();
             match result {
-                Ok(event) if event.requirement_id == requirement_id => {
+                Ok(event) if requirement_event_matches(&event, &requirement_id, &query) => {
                     let event_name = event.event.clone();
                     let data = match serde_json::to_string(&event) {
                         Ok(json) => json,
@@ -342,6 +379,24 @@ pub async fn requirement_events(
         });
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RequirementEventsQuery {
+    #[serde(default = "default_true")]
+    include_pi_events: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn requirement_event_matches(
+    event: &RequirementEvent,
+    requirement_id: &str,
+    query: &RequirementEventsQuery,
+) -> bool {
+    event.requirement_id == requirement_id && (query.include_pi_events || event.event != "pi_event")
 }
 
 pub async fn project_chat_events(
@@ -941,5 +996,39 @@ fn spawn_execution_tasks(
         });
     }
 }
+
+#[cfg(test)]
+mod event_filter_tests {
+    use super::*;
+
+    fn event(event: &str, task_id: Option<&str>) -> RequirementEvent {
+        RequirementEvent {
+            requirement_id: "requirement-1".to_owned(),
+            task_id: task_id.map(str::to_owned),
+            event: event.to_owned(),
+            message: "event".to_owned(),
+            pi_type: None,
+            payload: None,
+        }
+    }
+
+    #[test]
+    fn summary_stream_drops_pi_events() {
+        let query = RequirementEventsQuery {
+            include_pi_events: false,
+        };
+        assert!(!requirement_event_matches(
+            &event("pi_event", Some("task-1")),
+            "requirement-1",
+            &query,
+        ));
+        assert!(requirement_event_matches(
+            &event("execution_task_started", Some("task-1")),
+            "requirement-1",
+            &query,
+        ));
+    }
+}
+
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};

@@ -144,6 +144,26 @@ export type RequirementExecutionPlan = {
   tasks: RequirementExecutionTask[];
 };
 
+export type RequirementTaskDetail = {
+  task: RequirementExecutionTask;
+  reviews: RequirementExecutionTask[];
+  dependencies: RequirementExecutionTask[];
+};
+
+export type RequirementTaskSessionMessage = {
+  id: string;
+  role: string;
+  text: string;
+  thinking?: string;
+  tool_calls: string[];
+  timestamp: string;
+};
+
+export type RequirementTaskSession = {
+  messages: RequirementTaskSessionMessage[];
+  truncated: boolean;
+};
+
 export type Requirement = {
   id: string;
   project_id: string;

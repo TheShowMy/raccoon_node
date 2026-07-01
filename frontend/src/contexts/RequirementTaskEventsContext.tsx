@@ -22,16 +22,6 @@ export function RequirementTaskEventsProvider({
   );
 }
 
-export function useRequirementTaskEvents(taskId: string) {
-  const { requirementId, events } = useContext(RequirementTaskEventsContext);
-  return requirementId
-    ? events.filter(
-        (event) =>
-          event.requirement_id === requirementId && event.task_id === taskId,
-      )
-    : [];
-}
-
 export function useRequirementPlanningThinking() {
   const { requirementId, events } = useContext(RequirementTaskEventsContext);
   if (!requirementId) return "";

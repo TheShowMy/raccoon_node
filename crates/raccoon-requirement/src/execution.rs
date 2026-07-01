@@ -135,26 +135,20 @@ pub fn parse_requirement_plan(text: &str) -> Result<RequirementExecutionPlan, Ap
 }
 
 fn build_review_sub_agent_prompt(
-    requirement: &Requirement,
+    _requirement: &Requirement,
     task: &RequirementExecutionTask,
 ) -> String {
-    let (draft_title, draft_summary) = requirement
-        .draft
-        .as_ref()
-        .map(|d| (d.title.as_str(), d.summary.as_str()))
-        .unwrap_or(("（无标题）", "（无摘要）"));
     let angle = task.review_angle.as_deref().unwrap_or("综合审核");
     format!(
         r#"代码审核（{angle}）。只审核 git diff --cached 的改动，无暂存改动则直接通过，不要修改代码。
 
-需求：{draft_title}——{draft_summary}
+审核目标：{task_title}
 
 只输出 JSON，不要 Markdown：
 {json_contract}
 "#,
         angle = angle,
-        draft_title = draft_title,
-        draft_summary = draft_summary,
+        task_title = task.title,
         json_contract = task_output_json_contract(RequirementTaskKind::ReviewSubAgent),
     )
 }
@@ -168,11 +162,17 @@ pub fn build_requirement_task_prompt(
         return build_review_sub_agent_prompt(requirement, task);
     }
 
-    let draft = requirement
-        .draft
-        .as_ref()
-        .map(format_draft)
-        .unwrap_or_else(|| "当前需求没有确认草案。".to_owned());
+    let draft = if task.kind == RequirementTaskKind::Review
+        || task.kind == RequirementTaskKind::ReviewSummary
+    {
+        "本次审核范围见下方「当前任务」，不要要求实现其他未分配任务的内容。".to_owned()
+    } else {
+        requirement
+            .draft
+            .as_ref()
+            .map(format_draft)
+            .unwrap_or_else(|| "当前需求没有确认草案。".to_owned())
+    };
     let completed = plan
         .tasks
         .iter()
@@ -250,7 +250,7 @@ pub fn build_requirement_task_prompt(
         ),
         RequirementTaskKind::MergeReview => (
             "最终合并审核 Agent",
-            "请完成最终合并后的检查，至少运行 npm run check；必要时可以做最小修复。".to_owned(),
+            "当前独立工作区已包含所有审核通过的前置分支。请只在当前分支运行最终检查，至少运行 npm run check；必要时可以做最小修复。禁止 checkout、switch、merge、rebase、push 或执行 gh pr，最终发布由系统处理。".to_owned(),
         ),
     };
     let json_contract = task_output_json_contract(task.kind);
@@ -651,7 +651,7 @@ fn expand_execution_tasks(
     tasks.push(RequirementExecutionTask {
         id: "merge-review".to_owned(),
         title: "最终合并审核".to_owned(),
-        description: "合并所有审核通过的实现分支，运行最终检查并做最终审核。".to_owned(),
+        description: "在已汇集所有审核通过实现分支的独立分支上运行最终检查并审核。".to_owned(),
         depends_on: final_dependencies,
         kind: RequirementTaskKind::MergeReview,
         model_tier: RequirementModelTier::High,
@@ -1227,6 +1227,23 @@ mod tests {
     }
 
     #[test]
+    fn merge_review_prompt_forbids_publication_commands() {
+        let requirement = test_requirement("最终审核");
+        let mut task = test_task("merge-review", "最终合并审核", Vec::new());
+        task.kind = RequirementTaskKind::MergeReview;
+        let plan = RequirementExecutionPlan {
+            summary: "计划".to_owned(),
+            tasks: vec![task.clone()],
+        };
+
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &task);
+
+        assert!(prompt.contains("当前独立工作区已包含所有审核通过的前置分支"));
+        assert!(prompt.contains("禁止 checkout、switch、merge、rebase、push 或执行 gh pr"));
+        assert!(prompt.contains("最终发布由系统处理"));
+    }
+
+    #[test]
     fn fixing_and_review_prompts_pin_latest_feedback_and_commit() {
         let requirement = test_requirement("修复页面");
         let mut implementation = test_task("task-1", "修复实现", Vec::new());
@@ -1248,6 +1265,74 @@ mod tests {
         let review_prompt = build_requirement_task_prompt(&requirement, &plan, &review);
         assert!(review_prompt.contains("只审核 git diff --cached"));
         assert!(review_prompt.contains("不要修改代码"));
+    }
+
+    #[test]
+    fn review_prompts_are_scoped_to_reviewed_task_not_full_requirement() {
+        let mut requirement = test_requirement("全量需求");
+        if let Some(ref mut draft) = requirement.draft {
+            draft.title = "完整需求标题".to_owned();
+            draft.summary = "完整需求摘要：包含 A 和 B 两个子任务".to_owned();
+        }
+        let implementation = test_task("task-1", "修复道路回收", Vec::new());
+        let mut review_sub = test_task(
+            "review-sub-task-1-1",
+            "审核(正确性)：修复道路回收",
+            vec!["task-1".to_owned()],
+        );
+        review_sub.kind = RequirementTaskKind::ReviewSubAgent;
+        review_sub.review_for = Some("task-1".to_owned());
+        review_sub.review_angle = Some("正确性".to_owned());
+        let mut review = test_task(
+            "review-task-1",
+            "审核：修复道路回收",
+            vec!["task-1".to_owned()],
+        );
+        review.kind = RequirementTaskKind::Review;
+        review.review_for = Some("task-1".to_owned());
+        review.review_angle = Some("综合审核".to_owned());
+        let mut review_summary = test_task(
+            "review-summary-task-1",
+            "审核汇总：修复道路回收",
+            vec!["review-task-1".to_owned()],
+        );
+        review_summary.kind = RequirementTaskKind::ReviewSummary;
+        review_summary.review_for = Some("task-1".to_owned());
+        let plan = RequirementExecutionPlan {
+            summary: "计划".to_owned(),
+            tasks: vec![
+                implementation.clone(),
+                review_sub.clone(),
+                review.clone(),
+                review_summary.clone(),
+            ],
+        };
+
+        let sub_prompt = build_requirement_task_prompt(&requirement, &plan, &review_sub);
+        assert!(sub_prompt.contains("只审核 git diff --cached"));
+        assert!(sub_prompt.contains("审核目标：审核(正确性)：修复道路回收"));
+        assert!(
+            !sub_prompt.contains("完整需求摘要：包含 A 和 B 两个子任务"),
+            "ReviewSubAgent prompt must not see the full requirement draft"
+        );
+
+        let review_prompt = build_requirement_task_prompt(&requirement, &plan, &review);
+        assert!(review_prompt.contains("本次审核范围见下方「当前任务」"));
+        assert!(review_prompt.contains("当前任务"));
+        assert!(review_prompt.contains("修复道路回收"));
+        assert!(
+            !review_prompt.contains("完整需求摘要：包含 A 和 B 两个子任务"),
+            "Review prompt must not see the full requirement draft"
+        );
+
+        let summary_prompt = build_requirement_task_prompt(&requirement, &plan, &review_summary);
+        assert!(summary_prompt.contains("本次审核范围见下方「当前任务」"));
+        assert!(summary_prompt.contains("当前任务"));
+        assert!(summary_prompt.contains("修复道路回收"));
+        assert!(
+            !summary_prompt.contains("完整需求摘要：包含 A 和 B 两个子任务"),
+            "ReviewSummary prompt must not see the full requirement draft"
+        );
     }
 
     fn test_requirement(title: &str) -> Requirement {

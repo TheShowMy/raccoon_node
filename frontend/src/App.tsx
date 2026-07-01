@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Background,
   Controls,
@@ -14,7 +14,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
 
-import type { SettingsView, StartNodeData } from "./types/api";
+import type { SettingsView, StartNodeData, StreamEvent } from "./types/api";
 import StartNode from "./components/nodes/StartNode";
 import { buildRequirementDagEdges } from "./canvas/edges";
 import {
@@ -34,6 +34,7 @@ import {
 } from "./canvas/settingsViewport";
 
 const nodeTypes = { startNode: StartNode };
+const EMPTY_STREAM_EVENTS: StreamEvent[] = [];
 
 export type ProjectViewportSnapshot = {
   projectLoaded: boolean;
@@ -256,6 +257,10 @@ export default function App() {
   );
   const projectChat = useProjectChat(selectedProjectId);
   const models = useModelSettings(current.applyTheme);
+  const [nodeDragging, setNodeDragging] = useState(false);
+  const requirementConversationEvents = project.selectedDagRequirementId
+    ? EMPTY_STREAM_EVENTS
+    : requirement.requirementStreamEvents;
 
   const projectStructureNodes = useMemo(
     () =>
@@ -338,7 +343,7 @@ export default function App() {
         requirementImages: requirement.requirementImages,
         requirementBusy: requirement.requirementBusy,
         requirementError: requirement.requirementError,
-        requirementStreamEvents: requirement.requirementStreamEvents,
+        requirementStreamEvents: requirementConversationEvents,
         projectChat: projectChat.projectChat,
         projectChatInput: projectChat.projectChatInput,
         projectChatReferences: projectChat.projectChatReferences,
@@ -393,7 +398,7 @@ export default function App() {
       requirement.requirementImages,
       requirement.requirementInput,
       requirement.requirementReferences,
-      requirement.requirementStreamEvents,
+      requirementConversationEvents,
       requirement.sendRequirementMessage,
       requirement.setRequirementImages,
       requirement.setRequirementInput,
@@ -498,7 +503,9 @@ export default function App() {
               : "已连接"}
         </div>
       </section>
-      <section className="canvas-shell">
+      <section
+        className={`canvas-shell${nodeDragging ? " canvas-shell--dragging" : ""}`}
+      >
         <RequirementTaskEventsProvider
           requirementId={project.observedRequirementId}
           events={requirement.requirementStreamEvents}
@@ -517,6 +524,8 @@ export default function App() {
               minZoom={0.05}
               maxZoom={2}
               nodesDraggable
+              onNodeDragStart={() => setNodeDragging(true)}
+              onNodeDragStop={() => setNodeDragging(false)}
               nodesConnectable={false}
               elementsSelectable
               panOnScroll
