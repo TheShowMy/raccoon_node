@@ -24,6 +24,8 @@ async function run(command, args, timeout = 60_000) {
 
 await run(process.execPath, [npmCli, "--prefix", "frontend", "run", "check"]);
 await run(process.execPath, [npmCli, "--prefix", "frontend", "run", "test", "--", "--run"]);
+await run(process.execPath, [npmCli, "--prefix", "frontend", "run", "build"]);
 await run(process.execPath, ["--test", "packages/raccoon-node/test/binary.test.js"]);
+process.env.RACCOON_SKIP_FRONTEND_BUILD = "1";
 await run("cargo", ["test", "--no-run"], 0);
 await run("cargo", ["test"]);
