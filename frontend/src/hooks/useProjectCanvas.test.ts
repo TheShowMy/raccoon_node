@@ -18,7 +18,7 @@ const project = {
   id: "project-1",
   name: "Raccoon",
   git_url: "https://example.com/raccoon.git",
-  local_path: "/data/projects/project-1/repo",
+  local_path: "/home/user/projects/project-1/repo",
   created_at: "2026-06-24T00:00:00Z",
   updated_at: "2026-06-24T00:00:00Z",
 };

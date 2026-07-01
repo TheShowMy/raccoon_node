@@ -5,7 +5,6 @@
 /frontend/dist/
 /build/
 *.tsbuildinfo
-/data/
 /.raccoon-node/
 /.playwright-cli/
 /output/

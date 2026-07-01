@@ -225,7 +225,7 @@
 - [ ] 在 `docs/spec/TECH_STACK.md` 中注明当前 CORS 为开发阶段开放配置，后续按部署场景收紧
 - [ ] 默认 `RACCOON_HOST` 改为 `127.0.0.1`，保留 `0.0.0.0` 为显式配置
 - [ ] 校验 `git_url`：仅允许 `http://`、`https://`、`git@` 开头，拒绝 `-` 开头和空格
-- [ ] 校验 `pi_session_file`：限制在 `<data_root>/pi-sessions` 内
+- [ ] 校验 `pi_session_file`：限制在 `.raccoon-node/sessions/` 内
 - [ ] 修正 `frontend/package.json` 依赖分类和版本号
 - [ ] 提交 `Cargo.lock` 和 `frontend/package-lock.json`
 - [ ] 添加 `package.json engines` 和 `rust-toolchain.toml`

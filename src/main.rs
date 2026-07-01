@@ -613,8 +613,10 @@ mod tests {
     #[tokio::test]
     async fn basic_settings_api_persists_config_and_updates_runtime_theme() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("data/config.toml");
-        let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
+        let config_path = temp_dir.path().join(".raccoon-node/config.toml");
+        let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+            .await
+            .unwrap();
         store.data.projects = vec![test_project("current")];
         let app = build_app_with_model_provider_and_config(
             store,
@@ -713,7 +715,7 @@ mod tests {
     #[tokio::test]
     async fn project_chat_api_persists_messages() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_root = temp_dir.path().join("data");
+        let data_root = temp_dir.path().join(".raccoon-node");
         let mut store = JsonStore::open(data_root.clone()).await.unwrap();
         let project = test_project("alpha");
         store.data.projects.push(project.clone());
@@ -808,7 +810,9 @@ mod tests {
     #[tokio::test]
     async fn model_settings_api_returns_models_and_handles_rpc_error() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
+        let store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+            .await
+            .unwrap();
         let app = build_app_with_model_provider(
             store,
             PathBuf::from("frontend/dist"),
@@ -857,7 +861,7 @@ mod tests {
     #[tokio::test]
     async fn model_settings_save_validates_models_and_allows_reuse() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_root = temp_dir.path().join("data");
+        let data_root = temp_dir.path().join(".raccoon-node");
         let store = JsonStore::open(data_root.clone()).await.unwrap();
         let app = build_app_with_model_provider(
             store,
@@ -916,7 +920,7 @@ mod tests {
     #[tokio::test]
     async fn project_canvas_groups_requirements() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_root = temp_dir.path().join("data");
+        let data_root = temp_dir.path().join(".raccoon-node");
         let mut store = JsonStore::open(data_root).await.unwrap();
         let project = test_project("alpha");
         let now = Utc::now();
@@ -1065,7 +1069,7 @@ mod tests {
     #[tokio::test]
     async fn requirement_conversation_maps_items_and_clarification_prompt() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_root = temp_dir.path().join("data");
+        let data_root = temp_dir.path().join(".raccoon-node");
         let mut store = JsonStore::open(data_root).await.unwrap();
         let project = test_project("alpha");
         let now = Utc::now();
@@ -1125,7 +1129,7 @@ mod tests {
     #[tokio::test]
     async fn requirement_conversation_maps_confirmation_prompt() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_root = temp_dir.path().join("data");
+        let data_root = temp_dir.path().join(".raccoon-node");
         let mut store = JsonStore::open(data_root).await.unwrap();
         let project = test_project("alpha");
         let now = Utc::now();
@@ -1151,7 +1155,7 @@ mod tests {
     #[tokio::test]
     async fn requirement_api_creates_clarifies_plans_and_executes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_root = temp_dir.path().join("data");
+        let data_root = temp_dir.path().join(".raccoon-node");
         let mut store = JsonStore::open(data_root.clone()).await.unwrap();
         let project = test_project("alpha");
         store.data.projects.push(project.clone());
@@ -1253,7 +1257,7 @@ mod tests {
     #[tokio::test]
     async fn deletes_active_requirement_and_returns_empty_canvas() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_root = temp_dir.path().join("data");
+        let data_root = temp_dir.path().join(".raccoon-node");
         let mut store = JsonStore::open(data_root.clone()).await.unwrap();
         let project = test_project("alpha");
         store.data.projects.push(project.clone());
@@ -1298,7 +1302,7 @@ mod tests {
     #[tokio::test]
     async fn requirement_clarification_answers_resume_analysis() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_root = temp_dir.path().join("data");
+        let data_root = temp_dir.path().join(".raccoon-node");
         let mut store = JsonStore::open(data_root).await.unwrap();
         let project = test_project("alpha");
         store.data.projects.push(project.clone());
@@ -1577,7 +1581,7 @@ mod tests {
             active_prompt: None,
             clarification_history: Vec::new(),
             execution_plan: None,
-            pi_session_file: Some("/data/pi-sessions/secret.json".to_owned()),
+            pi_session_file: Some("/tmp/pi-sessions/secret.json".to_owned()),
             error: None,
             queued_at: None,
             created_at: now,
@@ -1590,7 +1594,7 @@ mod tests {
     #[test]
     fn ensure_child_path_allows_descendant() {
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("data");
+        let root = temp.path().join(".raccoon-node");
         std::fs::create_dir_all(&root).unwrap();
         let child = root.join("projects").join("foo");
         std::fs::create_dir_all(&child).unwrap();
@@ -1600,7 +1604,7 @@ mod tests {
     #[test]
     fn ensure_child_path_blocks_traversal() {
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("data");
+        let root = temp.path().join(".raccoon-node");
         std::fs::create_dir_all(&root).unwrap();
         let outside = temp.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
@@ -1613,7 +1617,7 @@ mod tests {
     #[test]
     fn ensure_child_path_allows_not_yet_existing_child() {
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("data");
+        let root = temp.path().join(".raccoon-node");
         std::fs::create_dir_all(&root).unwrap();
         let child = root.join("projects").join("new-project");
         assert!(raccoon_core::utils::ensure_child_path(&root, &child).is_ok());

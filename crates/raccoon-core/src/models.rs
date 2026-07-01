@@ -942,7 +942,7 @@ mod tests {
             id: "p1".to_owned(),
             name: "Project".to_owned(),
             git_url: "https://example.com/repo.git".to_owned(),
-            local_path: "/data/projects/p1/repo".to_owned(),
+            local_path: "/home/user/projects/p1/repo".to_owned(),
             created_at: now,
             updated_at: now,
         };
@@ -950,7 +950,7 @@ mod tests {
         assert_eq!(json["id"], "p1");
         assert_eq!(json["name"], "Project");
         assert_eq!(json["git_url"], "https://example.com/repo.git");
-        assert_eq!(json["local_path"], "/data/projects/p1/repo");
+        assert_eq!(json["local_path"], "/home/user/projects/p1/repo");
     }
 
     #[test]

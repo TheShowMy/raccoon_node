@@ -26,7 +26,7 @@
 ### 3. Pi RPC sessionPath 未校验
 
 - **文件**：`src/main.rs:1929-1935`
-- **描述**：`switch_session` 将 `session_path` 直接作为 `sessionPath` 字段发送给 Pi Agent，未校验路径是否位于 `data_root/pi-sessions` 内。
+- **描述**：`switch_session` 将 `session_path` 直接作为 `sessionPath` 字段发送给 Pi Agent，未校验路径是否位于 `.raccoon-node/sessions/` 内。
 - **攻击场景**：篡改 `pi_session_file` 字段为任意路径（如 `/etc/passwd` 或 `../../sensitive`），Pi Agent 可能读取或覆盖该路径。
 - **修复建议**：在 `switch_session` 调用前校验 `session_path` 是否位于 `data_root/pi-sessions` 目录内，拒绝越界路径。
 
@@ -133,7 +133,7 @@
 |--------|--------|
 | **P0（立即）** | 收紧 CORS 配置（`allow_origin` 限定本地/部署域名） |
 | **P0（立即）** | 校验 Git URL 格式（拒绝选项注入） |
-| **P0（立即）** | 校验 Pi session 路径（限制在 `pi-sessions` 目录内） |
+| **P0（立即）** | 校验 Pi session 路径（限制在 `.raccoon-node/sessions/` 目录内） |
 | **P0（立即）** | 增加最小认证机制（启动随机 token 或绑定 127.0.0.1） |
 | **P1（本周）** | 修复 `ensure_child_path` 绕过；Prompt Injection 防护；隐藏 `pi_session_file` 和 `local_path` |
 | **P2（本月）** | 统一错误消息避免泄露；添加 `cargo audit` 到 pre-commit；移除 `build.mjs` 的 `shell` 选项 |

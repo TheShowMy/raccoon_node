@@ -6,8 +6,7 @@
 - 前端：React、TypeScript、Vite、React Flow（`@xyflow/react`）、lucide-react、Tailwind CSS。
 - CLI/TUI：clap、ratatui、crossterm。
 - 静态资源：Vite 产物通过 rust-embed 嵌入 `raccoon` 单二进制。
-- 存储：`<git_root>/.raccoon-node/data.db` 是唯一业务主存储；旧 `app.json`
-  首次成功导入后原子改名为 `app.json.migrated`。
+- 存储：`<git_root>/.raccoon-node/data.db` 是唯一业务主存储。
 - Git：当前 Git 仓库即唯一项目；后端使用系统 Git 管理任务 worktree。
 - LLM：只通过 Pi Agent RPC，后端启动持久 `pi --mode rpc` 子进程，stdin/stdout JSONL 通信。
 
@@ -20,7 +19,6 @@
 - 项目仓库：当前 Git 根目录，固定项目 ID `current`
 - 项目配置：`<git_root>/.raccoon-node/config.toml`
 - 应用数据：`<git_root>/.raccoon-node/data.db`
-- 旧数据迁移备份：`<git_root>/.raccoon-node/app.json.migrated`
 - Pi Agent RPC 完整模型上下文：`<git_root>/.raccoon-node/sessions/`
 - 每日滚动日志（最多 7 个文件）：`<git_root>/.raccoon-node/logs/`
 - 内置受管 Pi extension：`<git_root>/.raccoon-node/extensions/`
@@ -57,7 +55,7 @@
 - 清理操作只能删除 `.raccoon-node/` 内受管资源，禁止删除用户仓库。
 - 前端不处理 Git 密码、token、SSH key。
 - 不提交 `build/`、`target/`、`node_modules/`、`frontend/dist/`、
-  `.raccoon-node/`、`data/`、`*.tsbuildinfo`。
+  `.raccoon-node/`、`*.tsbuildinfo`。
 
 ## 分发
 

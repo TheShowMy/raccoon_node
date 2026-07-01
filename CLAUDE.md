@@ -55,12 +55,8 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 - 运行数据只允许位于 `<git_root>/.raccoon-node/`；配置、SQLite 主存储、会话、
   日志、受管插件、worktree 和附件分别位于 `config.toml`、`data.db`、
   `sessions/`、`logs/`、`extensions/`、`worktrees/`、`attachments/`。
-- `.raccoon-node/data.db` 是唯一业务主存储；旧 `.raccoon-node/app.json`
-  只允许首次事务迁移，成功后原子改名为 `app.json.migrated` 且不自动删除，
-  后续启动不得读取。旧版 `data/`、`build/data/`、`pi-sessions/` 不迁移、
-  不读取，也不删除。
-- Pi session 保存完整模型上下文，不承担 FIFO、DAG、worktree 或恢复状态；
-  SQLite 保存业务投影与事务状态。
+- `.raccoon-node/data.db` 是唯一业务主存储；Pi session 保存完整模型上下文，不承担
+  FIFO、DAG、worktree 或恢复状态；SQLite 保存业务投影与事务状态。
 - `.raccoon-node/extensions/` 只允许存放程序内置的受管 Pi extension；
   项目 Pi RPC 必须隔离用户全局和项目插件。
 - `.raccoon-node/logs/` 中的文件日志按日滚动，最多保留 7 个文件；禁止记录
@@ -72,7 +68,7 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 - 删除和清理只能作用于 `.raccoon-node/` 内的受管资源，绝不能删除 Git 根目录或用户源码。
 - 前端不处理 Git 密码、token、SSH key。
 - 不提交 `build/`、`target/`、`node_modules/`、`frontend/dist/`、
-  `.raccoon-node/`、`data/`、`*.tsbuildinfo`。
+  `.raccoon-node/`、`*.tsbuildinfo`。
 - 提交代码绝对不能跳过 pre-commit，禁止 `git commit --no-verify`。
 - pre-commit 失败必须修复根因，不允许注释、删除或屏蔽钩子绕过。
 - 每次执行 `git commit` 或 `git push` 前，必须得到用户的明确要求或确认；未获明确授权前绝不主动提交。

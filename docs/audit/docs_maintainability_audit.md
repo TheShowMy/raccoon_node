@@ -40,7 +40,7 @@
 - **改进建议**：
   - `CHANGELOG.md`：遵循 Keep a Changelog 格式，记录版本变更。
   - `CONTRIBUTING.md`：说明提交规范、pre-commit 要求、分支策略。
-  - `docs/deployment.md`：说明构建产物结构（`build/bin`、`build/public`、`build/data`）和环境变量配置。
+  - `docs/deployment.md`：说明构建产物结构（`build/bin`、`build/public`）和环境变量配置。
 - **预期收益**：规范发布流程，方便外部贡献。
 
 ---
