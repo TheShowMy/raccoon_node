@@ -19,7 +19,7 @@ Vite 与 React Flow；所有 LLM 和模型能力均通过持久 Pi Agent RPC 子
 
 ### npm
 
-需要 Node.js 20 或更高版本。
+需要 Node.js 22 或更高版本。
 
 ```sh
 npm install --global raccoon-node

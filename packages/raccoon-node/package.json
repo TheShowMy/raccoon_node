@@ -8,7 +8,7 @@
     "url": "git+https://github.com/TheShowMy/raccoon_node.git"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "bin": {
     "raccoon": "bin/raccoon-node.js"
