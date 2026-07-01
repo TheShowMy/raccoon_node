@@ -17,7 +17,7 @@ for (const directory of process.argv.slice(2)) {
   }
   const result = spawnSync(
     "npm",
-    ["publish", directory, "--provenance", "--access", "public"],
+    ["publish", path.resolve(directory), "--provenance", "--access", "public"],
     { stdio: "inherit", shell: false },
   );
   if (result.error) throw result.error;
