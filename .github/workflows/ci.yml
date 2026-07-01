@@ -23,7 +23,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             frontend/package-lock.json
-      - run: npm ci
+      - run: npm ci --no-optional
       - run: npm --prefix frontend ci
       - run: npm run check
       - run: cargo fmt -- --check
