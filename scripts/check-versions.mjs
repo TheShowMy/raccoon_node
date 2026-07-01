@@ -6,7 +6,7 @@ const files = [
   "packages/raccoon-node/package.json",
   "packages/raccoon-node-darwin-arm64/package.json",
   "packages/raccoon-node-linux-x64/package.json",
-  "packages/raccoon-node-win32-x64/package.json",
+  "packages/raccoon-node-windows-x64/package.json",
 ];
 
 for (const file of files) {

@@ -1,9 +1,12 @@
 {
-  "name": "raccoon-node-win32-x64",
+  "name": "raccoon-node-windows-x64",
   "version": "0.2.0",
   "description": "raccoon-node binary for Windows x64",
   "license": "MIT",
-  "repository": "github:TheShowMy/raccoon_node",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheShowMy/raccoon_node.git"
+  },
   "os": [
     "win32"
   ],

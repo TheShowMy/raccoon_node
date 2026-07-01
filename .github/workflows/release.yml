@@ -111,16 +111,16 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Assemble platform packages
         run: |
-          mkdir -p packages/raccoon-node-darwin-arm64/bin packages/raccoon-node-linux-x64/bin packages/raccoon-node-win32-x64/bin
+          mkdir -p packages/raccoon-node-darwin-arm64/bin packages/raccoon-node-linux-x64/bin packages/raccoon-node-windows-x64/bin
           cp artifacts/darwin-arm64/raccoon packages/raccoon-node-darwin-arm64/bin/raccoon
           cp artifacts/linux-x64/raccoon packages/raccoon-node-linux-x64/bin/raccoon
-          cp artifacts/win32-x64/raccoon.exe packages/raccoon-node-win32-x64/bin/raccoon.exe
+          cp artifacts/win32-x64/raccoon.exe packages/raccoon-node-windows-x64/bin/raccoon.exe
           chmod +x packages/raccoon-node/bin/raccoon-node.js packages/raccoon-node-darwin-arm64/bin/raccoon packages/raccoon-node-linux-x64/bin/raccoon
       - name: Check npm package contents
         run: |
           npm pack ./packages/raccoon-node-darwin-arm64 --dry-run
           npm pack ./packages/raccoon-node-linux-x64 --dry-run
-          npm pack ./packages/raccoon-node-win32-x64 --dry-run
+          npm pack ./packages/raccoon-node-windows-x64 --dry-run
           npm pack ./packages/raccoon-node --dry-run
       - name: Smoke-test npm tarballs
         run: |
@@ -130,7 +130,7 @@ jobs:
           npm install --prefix npm-smoke/install --ignore-scripts ./npm-smoke/tarballs/raccoon-node-linux-x64-0.2.0.tgz ./npm-smoke/tarballs/raccoon-node-0.2.0.tgz
           npm-smoke/install/node_modules/.bin/raccoon --help
       - name: Publish platform packages
-        run: node scripts/publish-npm.mjs packages/raccoon-node-darwin-arm64 packages/raccoon-node-linux-x64 packages/raccoon-node-win32-x64
+        run: node scripts/publish-npm.mjs packages/raccoon-node-darwin-arm64 packages/raccoon-node-linux-x64 packages/raccoon-node-windows-x64
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish main package
