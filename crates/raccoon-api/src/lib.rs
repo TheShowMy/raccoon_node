@@ -45,13 +45,12 @@ pub struct AppState {
 }
 
 pub async fn build_app(
-    data_path: PathBuf,
     project_root: PathBuf,
     config: Arc<tokio::sync::RwLock<raccoon_core::config::AppConfig>>,
     config_path: PathBuf,
     port_overridden: bool,
 ) -> (Router, AppState) {
-    let mut store = JsonStore::open_project(data_path, project_root)
+    let mut store = JsonStore::open_project(project_root)
         .await
         .expect("failed to initialize json store");
     let startup_requirement_ids = store

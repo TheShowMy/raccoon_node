@@ -28,9 +28,9 @@ use raccoon_core::models::{
 use raccoon_core::utils::commit_staged_changes;
 use raccoon_core::utils::effective_model_tier;
 use raccoon_core::utils::{
-    build_clarification_answer_summary, clarification_has_answer, data_root_from_file,
-    derive_requirement_title, ensure_child_path, git_remote_origin, normalize_local_path,
-    resolve_git_root, sort_requirements_desc, validate_model_settings,
+    build_clarification_answer_summary, clarification_has_answer, derive_requirement_title,
+    ensure_child_path, git_remote_origin, resolve_git_root, sort_requirements_desc,
+    validate_model_settings,
 };
 
 pub const CURRENT_PROJECT_ID: &str = "current";
@@ -79,8 +79,6 @@ pub enum ProjectScheduleAction {
 }
 
 pub struct JsonStore {
-    /// Legacy path used only for the one-time app.json migration.
-    pub path: PathBuf,
     pub data_root: PathBuf,
     pub data: AppData,
     persisted: AppData,
@@ -88,21 +86,13 @@ pub struct JsonStore {
 }
 
 impl JsonStore {
-    pub async fn open_project(path: PathBuf, project_root: PathBuf) -> Result<Self, AppError> {
-        let requested_path = project_root.join(".raccoon-node").join("app.json");
+    pub async fn open_project(project_root: PathBuf) -> Result<Self, AppError> {
         let project_root = resolve_git_root(Some(&project_root), &project_root)?;
-        let expected_path = project_root.join(".raccoon-node").join("app.json");
-        if path != requested_path && normalize_local_path(&path)? != expected_path {
-            return Err(AppError::bad_request(
-                "数据文件必须位于 Git 根目录的 .raccoon-node/app.json",
-            ));
-        }
-
         let data_root = project_root.join(".raccoon-node");
         ensure_child_path(&project_root, &data_root)?;
         tokio::fs::create_dir_all(&data_root).await?;
-        for file in ["app.json", "data.db"] {
-            let file = data_root.join(file);
+        {
+            let file = data_root.join("data.db");
             ensure_child_path(&data_root, &file)?;
             if std::fs::symlink_metadata(&file)
                 .is_ok_and(|metadata| metadata.file_type().is_symlink())
@@ -117,7 +107,7 @@ impl JsonStore {
             ensure_child_path(&data_root, &directory)?;
             tokio::fs::create_dir_all(directory).await?;
         }
-        let mut store = Self::open(expected_path).await?;
+        let mut store = Self::open(data_root).await?;
         let now = Utc::now();
         let created_at = store
             .data
@@ -149,29 +139,10 @@ impl JsonStore {
         Ok(store)
     }
 
-    pub async fn open(path: PathBuf) -> Result<Self, AppError> {
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
-        let data_root = data_root_from_file(&path)?;
+    pub async fn open(data_root: PathBuf) -> Result<Self, AppError> {
+        tokio::fs::create_dir_all(&data_root).await?;
         let db_path = data_root.join("data.db");
         let db = crate::db::Database::open(&db_path)?;
-
-        // app.json was the primary store before schema v2. Import it once, then
-        // keep the original as a user-visible migration backup.
-        if path.exists() && !db.legacy_migration_completed()? {
-            let content = tokio::fs::read_to_string(&path).await?;
-            let mut data: AppData = serde_json::from_str(&content)?;
-            normalize_stored_paths(&mut data)?;
-            db.import_legacy_app_data(&data)?;
-            let backup = migration_backup_path(&path);
-            tokio::fs::rename(&path, &backup).await?;
-            tracing::info!(
-                backup = %backup.display(),
-                "migrated app.json into SQLite"
-            );
-        }
 
         let mut data = db.load()?;
         for requirement in &mut data.requirements {
@@ -192,7 +163,6 @@ impl JsonStore {
         }
         let persisted = data.clone();
         Ok(Self {
-            path,
             data_root,
             data,
             persisted,
@@ -2132,17 +2102,6 @@ impl JsonStore {
         }
         Ok(self.data_root.clone())
     }
-}
-
-fn migration_backup_path(path: &Path) -> PathBuf {
-    let preferred = path.with_file_name("app.json.migrated");
-    if !preferred.exists() {
-        return preferred;
-    }
-    path.with_file_name(format!(
-        "app.json.migrated.{}",
-        Utc::now().timestamp_millis()
-    ))
 }
 
 fn aggregate_project_token_usage<'a>(

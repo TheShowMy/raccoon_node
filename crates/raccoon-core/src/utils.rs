@@ -210,13 +210,6 @@ pub fn sort_requirements_desc(requirements: &mut [Requirement]) {
     });
 }
 
-pub fn data_root_from_file(path: &Path) -> Result<PathBuf, AppError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let canonical =
-        std::fs::canonicalize(parent).map_err(|_| AppError::bad_request("无法解析数据目录"))?;
-    normalize_local_path(&canonical)
-}
-
 pub fn model_summary_description(settings: &ModelSettings) -> String {
     if settings.low.model_id.is_some()
         && settings.medium.model_id.is_some()

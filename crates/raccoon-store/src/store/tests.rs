@@ -10,62 +10,6 @@ use super::{
 };
 
 #[tokio::test]
-async fn app_json_is_migrated_once_and_kept_as_backup() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let path = temp_dir.path().join("app.json");
-    let mut data = AppData::default();
-    let now = Utc::now();
-    data.projects.push(Project {
-        id: "project".to_owned(),
-        name: "project".to_owned(),
-        git_url: String::new(),
-        local_path: temp_dir.path().to_string_lossy().into_owned(),
-        created_at: now,
-        updated_at: now,
-    });
-    tokio::fs::write(&path, serde_json::to_vec(&data).unwrap())
-        .await
-        .unwrap();
-
-    let store = JsonStore::open(path.clone()).await.unwrap();
-
-    assert_eq!(store.data.projects.len(), 1);
-    assert!(!path.exists());
-    assert!(temp_dir.path().join("app.json.migrated").exists());
-    assert!(temp_dir.path().join("data.db").exists());
-
-    let reopened = JsonStore::open(path).await.unwrap();
-    assert_eq!(reopened.data.projects.len(), 1);
-}
-
-#[tokio::test]
-async fn completed_migration_ignores_a_later_legacy_json_file() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let path = temp_dir.path().join("app.json");
-    tokio::fs::write(&path, serde_json::to_vec(&AppData::default()).unwrap())
-        .await
-        .unwrap();
-    JsonStore::open(path.clone()).await.unwrap();
-
-    tokio::fs::write(&path, b"not valid json").await.unwrap();
-    let reopened = JsonStore::open(path.clone()).await.unwrap();
-
-    assert!(reopened.data.projects.is_empty());
-    assert_eq!(tokio::fs::read(&path).await.unwrap(), b"not valid json");
-}
-
-#[tokio::test]
-async fn failed_legacy_json_parse_keeps_the_source_file() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let path = temp_dir.path().join("app.json");
-    tokio::fs::write(&path, b"not valid json").await.unwrap();
-
-    assert!(JsonStore::open(path.clone()).await.is_err());
-    assert_eq!(tokio::fs::read(&path).await.unwrap(), b"not valid json");
-    assert!(!temp_dir.path().join("app.json.migrated").exists());
-}
-
-#[tokio::test]
 async fn unsupported_database_schema_is_rejected() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("data.db");
@@ -78,7 +22,7 @@ async fn unsupported_database_schema_is_rejected() {
         .unwrap();
     drop(connection);
 
-    let error = JsonStore::open(temp_dir.path().join("app.json"))
+    let error = JsonStore::open(temp_dir.path().to_path_buf())
         .await
         .err()
         .expect("future schema must fail");
@@ -147,7 +91,7 @@ fn runnable_tasks_can_start_review_while_parallel_task_is_running() {
 #[tokio::test]
 async fn fixing_task_keeps_execution_input_status_and_clears_stale_result() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let path = temp_dir.path().join("data/app.json");
+    let path = temp_dir.path().join("data");
     let mut store = JsonStore::open(path.clone()).await.unwrap();
     let now = Utc::now();
     store.data.projects.push(Project {
@@ -237,9 +181,7 @@ fn reset_review_clears_previous_execution_state() {
 #[tokio::test]
 async fn review_summary_uses_rejected_sub_agent_feedback() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let implementation = task(
         "implementation",
         RequirementTaskKind::Implementation,
@@ -312,9 +254,7 @@ async fn review_summary_uses_rejected_sub_agent_feedback() {
 #[tokio::test]
 async fn successful_fix_clears_old_reviews_and_requeues_latest_review() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let implementation = task(
         "implementation",
         RequirementTaskKind::Implementation,
@@ -385,7 +325,7 @@ async fn successful_fix_clears_old_reviews_and_requeues_latest_review() {
 #[tokio::test]
 async fn review_history_persists_rejection_fix_and_approval_rounds() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let path = temp_dir.path().join("data/app.json");
+    let path = temp_dir.path().join("data");
     let mut store = JsonStore::open(path.clone()).await.unwrap();
     let implementation = task(
         "implementation",
@@ -580,9 +520,7 @@ fn execution_failures_have_a_finite_escalation_path() {
 #[tokio::test]
 async fn final_failure_keeps_parallel_branch_running_until_all_progress_stops() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let mut active = requirement("requirement");
     active.execution_plan = Some(RequirementExecutionPlan {
         summary: "plan".to_owned(),
@@ -630,9 +568,7 @@ async fn final_failure_keeps_parallel_branch_running_until_all_progress_stops() 
 #[tokio::test]
 async fn failed_implementation_groups_recover_independently_and_keep_resources() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let mut implementation_a = task(
         "task-a",
         RequirementTaskKind::Implementation,
@@ -700,9 +636,7 @@ async fn failed_implementation_groups_recover_independently_and_keep_resources()
 #[tokio::test]
 async fn recovering_failed_reviews_keeps_successes_and_resets_summary_for_sub_agent() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let implementation = task(
         "implementation",
         RequirementTaskKind::Implementation,
@@ -751,9 +685,7 @@ async fn recovering_failed_reviews_keeps_successes_and_resets_summary_for_sub_ag
 #[tokio::test]
 async fn rejected_reviews_are_not_manually_recoverable() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let implementation = task(
         "implementation",
         RequirementTaskKind::Implementation,
@@ -784,9 +716,7 @@ async fn rejected_reviews_are_not_manually_recoverable() {
 #[tokio::test]
 async fn merge_nodes_can_recover_while_another_group_is_running() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let mut active = requirement("requirement");
     active.execution_plan = Some(RequirementExecutionPlan {
         summary: "plan".to_owned(),
@@ -828,7 +758,7 @@ async fn merge_nodes_can_recover_while_another_group_is_running() {
 #[tokio::test]
 async fn startup_recovery_persists_interrupted_tasks_and_returns_all_running_requirements() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let path = temp_dir.path().join("data/app.json");
+    let path = temp_dir.path().join("data");
     let mut store = JsonStore::open(path.clone()).await.unwrap();
     let mut interrupted = requirement("interrupted");
     interrupted.execution_plan = Some(RequirementExecutionPlan {
@@ -906,9 +836,7 @@ async fn startup_recovery_persists_interrupted_tasks_and_returns_all_running_req
 #[tokio::test]
 async fn project_scheduler_claims_confirmed_requirements_in_fifo_order() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let now = Utc::now();
     store.data.projects.push(Project {
         id: "project".to_owned(),
@@ -957,9 +885,7 @@ async fn project_scheduler_claims_confirmed_requirements_in_fifo_order() {
 #[tokio::test]
 async fn failed_requirement_pauses_project_queue() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let now = Utc::now();
     store.data.projects.push(Project {
         id: "project".to_owned(),
@@ -990,9 +916,7 @@ async fn failed_requirement_pauses_project_queue() {
 #[tokio::test]
 async fn running_requirement_only_blocks_its_own_project() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let now = Utc::now();
     for id in ["project-a", "project-b"] {
         store.data.projects.push(Project {
@@ -1032,9 +956,7 @@ async fn running_requirement_only_blocks_its_own_project() {
 #[tokio::test]
 async fn stale_pi_session_cleanup_keeps_requirement_and_task_references() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let session_dir = store.data_root.join("sessions");
     tokio::fs::create_dir_all(&session_dir).await.unwrap();
     let requirement_session = session_dir.join("requirement.jsonl");
@@ -1077,9 +999,7 @@ async fn stale_pi_session_cleanup_keeps_requirement_and_task_references() {
 #[tokio::test]
 async fn requirement_task_session_parses_messages() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let session_dir = store.data_root.join("sessions");
     tokio::fs::create_dir_all(&session_dir).await.unwrap();
     let session_file = session_dir.join("task.jsonl");
@@ -1152,9 +1072,7 @@ not valid json
 #[tokio::test]
 async fn requirement_task_session_rejects_missing_and_escaping_paths() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let session_dir = store.data_root.join("sessions");
     tokio::fs::create_dir_all(&session_dir).await.unwrap();
 
@@ -1181,9 +1099,7 @@ async fn requirement_task_session_rejects_missing_and_escaping_paths() {
 #[tokio::test]
 async fn requirement_task_session_returns_not_found_when_file_missing() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let session_dir = store.data_root.join("sessions");
     tokio::fs::create_dir_all(&session_dir).await.unwrap();
 
@@ -1219,7 +1135,7 @@ async fn project_store_uses_flat_data_directories_and_current_project() {
             .success()
     );
     let data_root = temp_dir.path().join(".raccoon-node");
-    let store = JsonStore::open_project(data_root.join("app.json"), temp_dir.path().to_path_buf())
+    let store = JsonStore::open_project(temp_dir.path().to_path_buf())
         .await
         .unwrap();
 
@@ -1252,12 +1168,9 @@ async fn project_store_rejects_data_directory_symlink_escape() {
     std::os::unix::fs::symlink(outside.path(), project.path().join(".raccoon-node")).unwrap();
 
     assert!(
-        JsonStore::open_project(
-            project.path().join(".raccoon-node/app.json"),
-            project.path().to_path_buf(),
-        )
-        .await
-        .is_err()
+        JsonStore::open_project(project.path().to_path_buf())
+            .await
+            .is_err()
     );
     assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
 }
@@ -1265,9 +1178,7 @@ async fn project_store_rejects_data_directory_symlink_escape() {
 #[tokio::test]
 async fn resetting_project_chat_clears_context_and_rejects_running_chat() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-        .await
-        .unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
     let now = Utc::now();
     store.data.projects.push(Project {
         id: "project".to_owned(),

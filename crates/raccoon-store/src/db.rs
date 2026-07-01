@@ -1,7 +1,7 @@
 use std::{collections::HashSet, path::Path};
 
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, Transaction, params};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -11,7 +11,6 @@ use raccoon_core::models::{
 };
 
 const SCHEMA_VERSION: i64 = 2;
-const LEGACY_MIGRATION_KEY: &str = "legacy_app_json_migrated";
 
 pub struct Database {
     conn: std::sync::Mutex<Connection>,
@@ -176,35 +175,6 @@ impl Database {
         })
     }
 
-    pub fn import_legacy_app_data(&self, data: &AppData) -> Result<(), AppError> {
-        let mut conn = self.conn.lock().expect("db lock poisoned");
-        let tx = conn.transaction()?;
-        tx.execute("DELETE FROM requirement_sessions", [])?;
-        tx.execute("DELETE FROM requirements", [])?;
-        tx.execute("DELETE FROM project_chats", [])?;
-        tx.execute("DELETE FROM projects", [])?;
-        tx.execute("DELETE FROM settings", [])?;
-        insert_all(&tx, data)?;
-        tx.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, 'true')",
-            [LEGACY_MIGRATION_KEY],
-        )?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    pub fn legacy_migration_completed(&self) -> Result<bool, AppError> {
-        let conn = self.conn.lock().expect("db lock poisoned");
-        Ok(conn
-            .query_row(
-                "SELECT 1 FROM settings WHERE key = ?1",
-                [LEGACY_MIGRATION_KEY],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some())
-    }
-
     pub fn sync_changes(&self, previous: &AppData, next: &AppData) -> Result<(), AppError> {
         let mut conn = self.conn.lock().expect("db lock poisoned");
         let tx = conn.transaction()?;
@@ -317,22 +287,6 @@ fn primary_key(table: &str) -> &'static str {
         "project_chats" => "project_id",
         _ => "id",
     }
-}
-
-fn insert_all(tx: &Transaction<'_>, data: &AppData) -> Result<(), AppError> {
-    for project in &data.projects {
-        save_project(tx, project)?;
-    }
-    for requirement in &data.requirements {
-        save_requirement(tx, requirement)?;
-    }
-    for chat in &data.project_chats {
-        save_project_chat(tx, chat)?;
-    }
-    save_setting(tx, "settings_summary", &data.settings_summary)?;
-    save_setting(tx, "model_summary", &data.model_summary)?;
-    save_setting(tx, "model_settings", &data.model_settings)?;
-    Ok(())
 }
 
 fn save_project(tx: &Transaction<'_>, project: &Project) -> Result<(), AppError> {

@@ -374,7 +374,7 @@ mod tests {
         tokio::fs::create_dir(temp.path().join(".raccoon-node"))
             .await
             .unwrap();
-        tokio::fs::write(temp.path().join(".raccoon-node/app.json"), b"secret")
+        tokio::fs::write(temp.path().join(".raccoon-node/data.db"), b"secret")
             .await
             .unwrap();
         tokio::fs::write(temp.path().join("visible.txt"), b"visible")
@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "visible.txt");
         assert!(
-            read_repo_file(temp.path(), ".raccoon-node/app.json")
+            read_repo_file(temp.path(), ".raccoon-node/data.db")
                 .await
                 .is_err()
         );

@@ -115,7 +115,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let (app, state) = raccoon_api::build_app(
-            data_root.join("app.json"),
             project_root.clone(),
             shared_config.clone(),
             config_path.clone(),
@@ -549,11 +548,10 @@ mod tests {
     #[tokio::test]
     async fn initializes_json_store() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("app.json");
-        let store = JsonStore::open(path.clone()).await.unwrap();
+        let data_root = temp_dir.path().to_path_buf();
+        let store = JsonStore::open(data_root.clone()).await.unwrap();
 
-        assert!(!path.exists());
-        assert!(temp_dir.path().join("data.db").exists());
+        assert!(data_root.join("data.db").exists());
         assert!(store.data.projects.is_empty());
         assert_eq!(store.data.settings_summary.title, "设置");
         assert_eq!(
@@ -565,7 +563,7 @@ mod tests {
     #[tokio::test]
     async fn current_project_api_replaces_start_and_project_mutations() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut store = JsonStore::open(temp_dir.path().join("app.json"))
+        let mut store = JsonStore::open(temp_dir.path().to_path_buf())
             .await
             .unwrap();
         store.data.projects = vec![test_project("current")];
@@ -616,9 +614,7 @@ mod tests {
     async fn basic_settings_api_persists_config_and_updates_runtime_theme() {
         let temp_dir = tempfile::tempdir().unwrap();
         let config_path = temp_dir.path().join("data/config.toml");
-        let mut store = JsonStore::open(temp_dir.path().join("data/app.json"))
-            .await
-            .unwrap();
+        let mut store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
         store.data.projects = vec![test_project("current")];
         let app = build_app_with_model_provider_and_config(
             store,
@@ -717,8 +713,8 @@ mod tests {
     #[tokio::test]
     async fn project_chat_api_persists_messages() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_path = temp_dir.path().join("data/app.json");
-        let mut store = JsonStore::open(data_path.clone()).await.unwrap();
+        let data_root = temp_dir.path().join("data");
+        let mut store = JsonStore::open(data_root.clone()).await.unwrap();
         let project = test_project("alpha");
         store.data.projects.push(project.clone());
         store.persist().await.unwrap();
@@ -762,7 +758,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["running"], true);
 
-        let chat = wait_for_project_chat_answer(&data_path, &project.id).await;
+        let chat = wait_for_project_chat_answer(&data_root, &project.id).await;
         assert!(!chat.running);
         assert_eq!(chat.messages.len(), 2);
         assert_eq!(chat.messages[0].content, "项目入口在哪里？");
@@ -791,7 +787,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["messages"].as_array().unwrap().len(), 0);
 
-        let store = JsonStore::open(data_path).await.unwrap();
+        let store = JsonStore::open(data_root).await.unwrap();
         assert!(store.data.requirements.is_empty());
     }
 
@@ -812,9 +808,7 @@ mod tests {
     #[tokio::test]
     async fn model_settings_api_returns_models_and_handles_rpc_error() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let store = JsonStore::open(temp_dir.path().join("data/app.json"))
-            .await
-            .unwrap();
+        let store = JsonStore::open(temp_dir.path().join("data")).await.unwrap();
         let app = build_app_with_model_provider(
             store,
             PathBuf::from("frontend/dist"),
@@ -836,7 +830,7 @@ mod tests {
         assert_eq!(value["rpc_status"], "ready");
         assert_eq!(value["models"][0]["id"], "test/model-a");
 
-        let store = JsonStore::open(temp_dir.path().join("error/app.json"))
+        let store = JsonStore::open(temp_dir.path().join("error"))
             .await
             .unwrap();
         let app = build_app_with_model_provider(
@@ -863,8 +857,8 @@ mod tests {
     #[tokio::test]
     async fn model_settings_save_validates_models_and_allows_reuse() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_path = temp_dir.path().join("data/app.json");
-        let store = JsonStore::open(data_path.clone()).await.unwrap();
+        let data_root = temp_dir.path().join("data");
+        let store = JsonStore::open(data_root.clone()).await.unwrap();
         let app = build_app_with_model_provider(
             store,
             PathBuf::from("frontend/dist"),
@@ -890,7 +884,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        let stored = JsonStore::open(data_path).await.unwrap();
+        let stored = JsonStore::open(data_root).await.unwrap();
         assert_eq!(
             stored.data.model_summary.description,
             "低 / 中 / 高档模型已配置"
@@ -922,8 +916,8 @@ mod tests {
     #[tokio::test]
     async fn project_canvas_groups_requirements() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_path = temp_dir.path().join("data/app.json");
-        let mut store = JsonStore::open(data_path).await.unwrap();
+        let data_root = temp_dir.path().join("data");
+        let mut store = JsonStore::open(data_root).await.unwrap();
         let project = test_project("alpha");
         let now = Utc::now();
         store.data.projects.push(project.clone());
@@ -1071,8 +1065,8 @@ mod tests {
     #[tokio::test]
     async fn requirement_conversation_maps_items_and_clarification_prompt() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_path = temp_dir.path().join("data/app.json");
-        let mut store = JsonStore::open(data_path).await.unwrap();
+        let data_root = temp_dir.path().join("data");
+        let mut store = JsonStore::open(data_root).await.unwrap();
         let project = test_project("alpha");
         let now = Utc::now();
         let mut requirement =
@@ -1131,8 +1125,8 @@ mod tests {
     #[tokio::test]
     async fn requirement_conversation_maps_confirmation_prompt() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_path = temp_dir.path().join("data/app.json");
-        let mut store = JsonStore::open(data_path).await.unwrap();
+        let data_root = temp_dir.path().join("data");
+        let mut store = JsonStore::open(data_root).await.unwrap();
         let project = test_project("alpha");
         let now = Utc::now();
         let mut requirement =
@@ -1157,8 +1151,8 @@ mod tests {
     #[tokio::test]
     async fn requirement_api_creates_clarifies_plans_and_executes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_path = temp_dir.path().join("data/app.json");
-        let mut store = JsonStore::open(data_path.clone()).await.unwrap();
+        let data_root = temp_dir.path().join("data");
+        let mut store = JsonStore::open(data_root.clone()).await.unwrap();
         let project = test_project("alpha");
         store.data.projects.push(project.clone());
         store.persist().await.unwrap();
@@ -1202,7 +1196,7 @@ mod tests {
         assert_eq!(active.status, RequirementStatus::Analyzing);
 
         let active =
-            wait_for_requirement_status(&data_path, &active.id, RequirementStatus::DraftReady)
+            wait_for_requirement_status(&data_root, &active.id, RequirementStatus::DraftReady)
                 .await;
         assert_eq!(active.draft.as_ref().unwrap().title, "新增登录");
 
@@ -1231,7 +1225,7 @@ mod tests {
         ));
 
         let completed =
-            wait_for_requirement_status(&data_path, &active.id, RequirementStatus::Completed).await;
+            wait_for_requirement_status(&data_root, &active.id, RequirementStatus::Completed).await;
         assert_eq!(
             completed.execution_plan.as_ref().unwrap().tasks[0].status,
             RequirementTaskStatus::Completed
@@ -1259,8 +1253,8 @@ mod tests {
     #[tokio::test]
     async fn deletes_active_requirement_and_returns_empty_canvas() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_path = temp_dir.path().join("data/app.json");
-        let mut store = JsonStore::open(data_path.clone()).await.unwrap();
+        let data_root = temp_dir.path().join("data");
+        let mut store = JsonStore::open(data_root.clone()).await.unwrap();
         let project = test_project("alpha");
         store.data.projects.push(project.clone());
         let now = Utc::now();
@@ -1291,7 +1285,7 @@ mod tests {
             serde_json::from_slice(&body).unwrap();
         assert!(canvas.active_requirement.is_none());
 
-        let store = JsonStore::open(data_path).await.unwrap();
+        let store = JsonStore::open(data_root).await.unwrap();
         assert!(
             !store
                 .data
@@ -1304,8 +1298,8 @@ mod tests {
     #[tokio::test]
     async fn requirement_clarification_answers_resume_analysis() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let data_path = temp_dir.path().join("data/app.json");
-        let mut store = JsonStore::open(data_path).await.unwrap();
+        let data_root = temp_dir.path().join("data");
+        let mut store = JsonStore::open(data_root).await.unwrap();
         let project = test_project("alpha");
         store.data.projects.push(project.clone());
 
@@ -1512,12 +1506,12 @@ mod tests {
     }
 
     async fn wait_for_requirement_status(
-        data_path: &Path,
+        data_root: &Path,
         requirement_id: &str,
         status: RequirementStatus,
     ) -> Requirement {
         for _ in 0..20 {
-            let store = JsonStore::open(data_path.to_path_buf()).await.unwrap();
+            let store = JsonStore::open(data_root.to_path_buf()).await.unwrap();
             if let Some(requirement) = store
                 .data
                 .requirements
@@ -1533,11 +1527,11 @@ mod tests {
     }
 
     async fn wait_for_project_chat_answer(
-        data_path: &Path,
+        data_root: &Path,
         project_id: &str,
     ) -> raccoon_core::models::ProjectChat {
         for _ in 0..20 {
-            let store = JsonStore::open(data_path.to_path_buf()).await.unwrap();
+            let store = JsonStore::open(data_root.to_path_buf()).await.unwrap();
             if let Some(chat) = store
                 .data
                 .project_chats
@@ -1628,8 +1622,8 @@ mod tests {
     #[tokio::test]
     async fn concurrent_create_requirement_no_data_loss() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("app.json");
-        let mut store = JsonStore::open(path.clone()).await.unwrap();
+        let data_root = temp_dir.path().to_path_buf();
+        let mut store = JsonStore::open(data_root.clone()).await.unwrap();
         let project = test_project("current");
         store.data.projects.push(project.clone());
 
@@ -1655,7 +1649,7 @@ mod tests {
             handle.await.unwrap().unwrap();
         }
 
-        let store = JsonStore::open(path).await.unwrap();
+        let store = JsonStore::open(data_root).await.unwrap();
         assert_eq!(store.data.requirements.len(), 5);
     }
 }
