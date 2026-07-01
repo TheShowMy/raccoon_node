@@ -9,6 +9,7 @@ import type {
   ModelTierSetting,
   PiModel,
   Project,
+  PublicationReadiness,
   ProjectCanvasData,
   Requirement,
   RequirementConversation,
@@ -71,6 +72,7 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
 export interface BuildProjectNodesParams {
   projectCanvas: ProjectCanvasData | null;
   project: Project | null;
+  publicationReadiness: PublicationReadiness | null;
   selectedDagRequirement: Requirement | null;
   selectedDagRequirementId: string | null;
   collapsedTaskGroups: Set<string>;
@@ -145,6 +147,7 @@ export interface BuildProjectChatNodeParams {
 export function buildProjectNodes({
   projectCanvas,
   project: currentProject,
+  publicationReadiness,
   selectedDagRequirement,
   selectedDagRequirementId,
   collapsedTaskGroups,
@@ -222,6 +225,13 @@ export function buildProjectNodes({
       data: {
         kind: "project-github",
         project,
+        publicationReadiness: publicationReadiness ?? {
+          mode: project.git_url ? "pull_request" : "local",
+          ready: !project.git_url,
+          summary: "正在读取发布前置检查结果。",
+          issues: [],
+          notes: [],
+        },
       },
     },
     {

@@ -99,6 +99,28 @@ pub struct Project {
 pub struct CurrentProjectResponse {
     pub project: Project,
     pub theme: String,
+    pub publication_readiness: PublicationReadiness,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PublicationReadiness {
+    pub mode: String,
+    pub ready: bool,
+    pub summary: String,
+    pub issues: Vec<String>,
+    pub notes: Vec<String>,
+}
+
+impl PublicationReadiness {
+    pub fn local() -> Self {
+        Self {
+            mode: "local".to_owned(),
+            ready: true,
+            summary: "未配置 origin，将使用本地合并，不创建 PR。".to_owned(),
+            issues: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -458,8 +480,18 @@ pub struct RequirementTaskSessionMessage {
     pub role: String,
     pub text: String,
     pub thinking: Option<String>,
-    pub tool_calls: Vec<String>,
+    pub tools: Vec<RequirementTaskSessionTool>,
     pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequirementTaskSessionTool {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+    pub output: String,
+    pub diff: Option<String>,
+    pub is_error: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

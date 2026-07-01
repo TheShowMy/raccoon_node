@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::BufRead,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -23,7 +23,7 @@ use raccoon_core::models::{
     RequirementReviewStatus, RequirementReviewStep, RequirementStatus,
     RequirementTaskDetailResponse, RequirementTaskExecutionInput, RequirementTaskExecutionOutput,
     RequirementTaskKind, RequirementTaskSessionMessage, RequirementTaskSessionResponse,
-    RequirementTaskStatus,
+    RequirementTaskSessionTool, RequirementTaskStatus,
 };
 use raccoon_core::utils::commit_staged_changes;
 use raccoon_core::utils::effective_model_tier;
@@ -419,7 +419,8 @@ impl JsonStore {
         let file = std::fs::File::open(path)
             .map_err(|_| AppError::not_found("会话记录不存在或无法读取"))?;
         let reader = std::io::BufReader::new(file);
-        let mut messages = Vec::new();
+        let mut messages: Vec<RequirementTaskSessionMessage> = Vec::new();
+        let mut tools_by_id: HashMap<String, (usize, usize)> = HashMap::new();
         let mut skipped_lines = 0usize;
 
         for line in reader.lines() {
@@ -465,13 +466,39 @@ impl JsonStore {
                 .and_then(|t| t.as_str())
                 .unwrap_or("")
                 .to_owned();
-            let (text, thinking, tool_calls) = parse_session_message_content(message);
+            if role == "toolResult" {
+                let Some(tool) = parse_session_tool_result(message) else {
+                    skipped_lines += 1;
+                    continue;
+                };
+                if let Some(&(message_index, tool_index)) = tools_by_id.get(&tool.id) {
+                    let existing = &mut messages[message_index].tools[tool_index];
+                    existing.output = tool.output;
+                    existing.diff = tool.diff;
+                    existing.is_error = tool.is_error;
+                } else {
+                    messages.push(RequirementTaskSessionMessage {
+                        id,
+                        role,
+                        text: String::new(),
+                        thinking: None,
+                        tools: vec![tool],
+                        timestamp,
+                    });
+                }
+                continue;
+            }
+            let (text, thinking, tools) = parse_session_message_content(message);
+            let message_index = messages.len();
+            for (tool_index, tool) in tools.iter().enumerate() {
+                tools_by_id.insert(tool.id.clone(), (message_index, tool_index));
+            }
             messages.push(RequirementTaskSessionMessage {
                 id,
                 role,
                 text,
                 thinking,
-                tool_calls,
+                tools,
                 timestamp,
             });
         }
@@ -2158,10 +2185,12 @@ fn aggregate_project_token_usage<'a>(
     Some(usage)
 }
 
-fn parse_session_message_content(message: &Value) -> (String, Option<String>, Vec<String>) {
+fn parse_session_message_content(
+    message: &Value,
+) -> (String, Option<String>, Vec<RequirementTaskSessionTool>) {
     let mut text_parts = Vec::new();
     let mut thinking_parts = Vec::new();
-    let mut tool_calls = Vec::new();
+    let mut tools = Vec::new();
 
     match message.get("content") {
         Some(Value::String(text)) => {
@@ -2181,26 +2210,25 @@ fn parse_session_message_content(message: &Value) -> (String, Option<String>, Ve
                         }
                     }
                     Some("toolCall") | Some("tool_call") => {
-                        let name = block
-                            .get("name")
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("未知工具");
-                        let arguments = block
-                            .get("arguments")
-                            .map(|a| a.to_string())
-                            .unwrap_or_else(|| "{}".to_owned());
-                        tool_calls.push(format!("{name}: {arguments}"));
-                    }
-                    Some("toolResult") | Some("tool_result") => {
-                        let tool_call_id = block
-                            .get("tool_call_id")
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("未知工具");
-                        let output = block
-                            .get("output")
-                            .map(|a| a.to_string())
-                            .unwrap_or_else(|| "{}".to_owned());
-                        tool_calls.push(format!("工具结果（{tool_call_id}）: {output}"));
+                        tools.push(RequirementTaskSessionTool {
+                            id: block
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_owned(),
+                            name: block
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("未知工具")
+                                .to_owned(),
+                            arguments: block
+                                .get("arguments")
+                                .cloned()
+                                .unwrap_or_else(|| serde_json::json!({})),
+                            output: String::new(),
+                            diff: None,
+                            is_error: false,
+                        });
                     }
                     _ => {}
                 }
@@ -2215,7 +2243,42 @@ fn parse_session_message_content(message: &Value) -> (String, Option<String>, Ve
     } else {
         Some(thinking_parts.join("\n"))
     };
-    (text, thinking, tool_calls)
+    (text, thinking, tools)
+}
+
+fn parse_session_tool_result(message: &Value) -> Option<RequirementTaskSessionTool> {
+    let id = message.get("toolCallId")?.as_str()?.to_owned();
+    let output = message
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|block| {
+            (block.get("type").and_then(Value::as_str) == Some("text"))
+                .then(|| block.get("text").and_then(Value::as_str))
+                .flatten()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(RequirementTaskSessionTool {
+        id,
+        name: message
+            .get("toolName")
+            .and_then(Value::as_str)
+            .unwrap_or("未知工具")
+            .to_owned(),
+        arguments: serde_json::json!({}),
+        output,
+        diff: message
+            .get("details")
+            .and_then(|details| details.get("diff"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        is_error: message
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
 }
 
 fn strip_task_detail(

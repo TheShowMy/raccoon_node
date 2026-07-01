@@ -104,6 +104,17 @@ function renderNode({
   );
 }
 
+function resolveTaskDetail(
+  nodeTask: RequirementExecutionTask = task(),
+  reviews: RequirementExecutionTask[] = [],
+) {
+  vi.mocked(getRequirementTask).mockResolvedValue({
+    task: nodeTask,
+    reviews,
+    dependencies: [],
+  });
+}
+
 describe("RequirementTaskNode", () => {
   beforeEach(() => {
     vi.mocked(getRequirementTask).mockImplementation(
@@ -449,6 +460,7 @@ describe("RequirementTaskNode", () => {
   });
 
   it("requests task session when the detail opens", async () => {
+    resolveTaskDetail();
     vi.mocked(getTaskSession).mockResolvedValue({
       messages: [],
       truncated: false,
@@ -463,6 +475,7 @@ describe("RequirementTaskNode", () => {
   });
 
   it("renders session messages collapsed by default and hides system messages", async () => {
+    resolveTaskDetail();
     vi.mocked(getTaskSession).mockResolvedValue({
       messages: [
         {
@@ -470,7 +483,7 @@ describe("RequirementTaskNode", () => {
           role: "system",
           text: "system prompt",
           thinking: undefined,
-          tool_calls: [],
+          tools: [],
           timestamp: "2026-07-01T03:00:00.000Z",
         },
         {
@@ -478,7 +491,7 @@ describe("RequirementTaskNode", () => {
           role: "user",
           text: "user request",
           thinking: undefined,
-          tool_calls: [],
+          tools: [],
           timestamp: "2026-07-01T03:01:00.000Z",
         },
         {
@@ -486,7 +499,15 @@ describe("RequirementTaskNode", () => {
           role: "assistant",
           text: "assistant reply",
           thinking: "thinking content",
-          tool_calls: ['bash: {"command":"ls"}'],
+          tools: [
+            {
+              id: "bash-1",
+              name: "bash",
+              arguments: { command: "ls" },
+              output: "file.txt",
+              is_error: false,
+            },
+          ],
           timestamp: "2026-07-01T03:02:00.000Z",
         },
       ],
@@ -528,16 +549,143 @@ describe("RequirementTaskNode", () => {
     expect(screen.getByText("thinking content")).toBeInTheDocument();
 
     toolDetails!.open = true;
-    expect(screen.getByText('bash: {"command":"ls"}')).toBeInTheDocument();
+    expect(screen.getByText("bash")).toBeInTheDocument();
+    expect(screen.getByText(/"command": "ls"/)).toBeInTheDocument();
+  });
+
+  it("merges implementation and review summary sessions by time", async () => {
+    const summary = task({
+      id: "summary-1",
+      title: "登录审核汇总",
+      kind: "review_summary",
+      review_for: "task-1",
+    });
+    resolveTaskDetail(task(), [summary]);
+    vi.mocked(getTaskSession).mockImplementation(async (_, taskId) => ({
+      messages: [
+        {
+          id: `${taskId}-message`,
+          role: "assistant",
+          text: taskId === "task-1" ? "完成代码" : "完成审核",
+          tools: [],
+          timestamp:
+            taskId === "task-1"
+              ? "2026-07-01T03:02:00.000Z"
+              : "2026-07-01T03:01:00.000Z",
+        },
+      ],
+      truncated: false,
+    }));
+    renderNode({ reviews: [summary] });
+
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(
+      await screen.findByText("审核汇总 · 登录审核汇总"),
+    ).toBeInTheDocument();
+    const reviewSource = screen.getByText("审核汇总 · 登录审核汇总");
+    const codeSource = screen.getByText("代码节点");
+    expect(reviewSource.compareDocumentPosition(codeSource)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(getTaskSession).toHaveBeenCalledWith("req-1", "task-1");
+    expect(getTaskSession).toHaveBeenCalledWith("req-1", "summary-1");
+  });
+
+  it("keeps available messages when one session cannot be read", async () => {
+    const summary = task({
+      id: "summary-1",
+      title: "审核汇总",
+      kind: "review_summary",
+      review_for: "task-1",
+    });
+    resolveTaskDetail(task(), [summary]);
+    vi.mocked(getTaskSession).mockImplementation(async (_, taskId) => {
+      if (taskId === "summary-1") throw new Error("会话不存在");
+      return {
+        messages: [
+          {
+            id: "code-message",
+            role: "assistant",
+            text: "代码已完成",
+            tools: [],
+            timestamp: "2026-07-01T03:00:00.000Z",
+          },
+        ],
+        truncated: false,
+      };
+    });
+    renderNode({ reviews: [summary] });
+
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(await screen.findByText("代码节点")).toBeInTheDocument();
+    expect(screen.getByText(/审核汇总.*会话不存在/)).toBeInTheDocument();
+  });
+
+  it("renders edit diffs, writes, and generic tool results", async () => {
+    resolveTaskDetail();
+    vi.mocked(getTaskSession).mockResolvedValue({
+      messages: [
+        {
+          id: "tools",
+          role: "assistant",
+          text: "",
+          tools: [
+            {
+              id: "edit-1",
+              name: "edit",
+              arguments: { path: "src/main.rs" },
+              output: "Applied",
+              diff: "@@ -1 +1 @@\n-old\n+new",
+              is_error: false,
+            },
+            {
+              id: "write-1",
+              name: "write",
+              arguments: { path: "src/new.rs", content: "fn main() {}\n" },
+              output: "Written",
+              is_error: false,
+            },
+            {
+              id: "bash-1",
+              name: "bash",
+              arguments: { command: "cargo test" },
+              output: "ok",
+              is_error: false,
+            },
+          ],
+          timestamp: "2026-07-01T03:00:00.000Z",
+        },
+      ],
+      truncated: false,
+    });
+    const { container } = renderNode();
+
+    fireEvent.click(screen.getByRole("button", { name: "详情" }));
+    fireEvent.click(await screen.findByText("工具调用（3）"));
+
+    expect(
+      container.ownerDocument.querySelector(".is-added"),
+    ).toHaveTextContent("+new");
+    expect(
+      container.ownerDocument.querySelector(".is-removed"),
+    ).toHaveTextContent("-old");
+    expect(screen.getByText("src/new.rs")).toBeInTheDocument();
+    expect(screen.getByText("fn main() {}")).toBeInTheDocument();
+    expect(screen.getByText(/"command": "cargo test"/)).toBeInTheDocument();
   });
 
   it("shows session error when session loading fails", async () => {
+    resolveTaskDetail();
     vi.mocked(getTaskSession).mockRejectedValue(new Error("读取任务会话失败"));
     renderNode();
 
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
 
-    expect(await screen.findByText("读取任务会话失败")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/代码节点：读取任务会话失败/),
+    ).toBeInTheDocument();
   });
 
   it("places session usage panel below task description", async () => {
@@ -545,29 +693,33 @@ describe("RequirementTaskNode", () => {
       messages: [],
       truncated: false,
     });
-    renderNode({
-      nodeTask: task({
+    const taskWithUsage = task({
+      trace: {
+        type: "pi_trace",
+        version: 1,
         trace: {
-          type: "pi_trace",
-          version: 1,
-          trace: {
-            thinking: "",
-            output: "",
-            tools: [],
-            statuses: [],
-            usage: {
-              sessionReused: false,
-              callCount: 1,
-              input: 100,
-              output: 50,
-              cacheRead: 0,
-              cacheWrite: 0,
-              context: { tokens: 150, window: 200000, percent: 0.1 },
-            },
+          thinking: "",
+          output: "",
+          tools: [],
+          statuses: [],
+          usage: {
+            sessionReused: false,
+            callCount: 1,
+            input: 100,
+            output: 50,
+            cacheRead: 0,
+            cacheWrite: 0,
+            context: { tokens: 150, window: 200000, percent: 0.1 },
           },
         },
-      }),
+      },
     });
+    vi.mocked(getRequirementTask).mockResolvedValue({
+      task: taskWithUsage,
+      reviews: [],
+      dependencies: [],
+    });
+    renderNode({ nodeTask: taskWithUsage });
 
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
 

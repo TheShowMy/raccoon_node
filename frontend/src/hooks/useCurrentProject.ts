@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Project, ThemeMode } from "../types/api";
+import type { Project, PublicationReadiness, ThemeMode } from "../types/api";
 import { getCurrentProject } from "../api/client";
 import { readError } from "../utils/format";
 
 export function useCurrentProject() {
   const [project, setProject] = useState<Project | null>(null);
+  const [publicationReadiness, setPublicationReadiness] =
+    useState<PublicationReadiness | null>(null);
   const [theme, setTheme] = useState<ThemeMode>("dark");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -17,6 +19,7 @@ export function useCurrentProject() {
   const loadCurrent = useCallback(async () => {
     const current = await getCurrentProject();
     setProject(current.project);
+    setPublicationReadiness(current.publication_readiness);
     applyTheme(current.theme);
   }, [applyTheme]);
 
@@ -29,6 +32,7 @@ export function useCurrentProject() {
 
   return {
     project,
+    publicationReadiness,
     theme,
     loading,
     error,

@@ -14,6 +14,13 @@ describe("useCurrentProject", () => {
           Promise.resolve({
             project: { id: "current", name: "Raccoon" },
             theme: "light",
+            publication_readiness: {
+              mode: "local",
+              ready: true,
+              summary: "本地合并",
+              issues: [],
+              notes: [],
+            },
           }),
       }),
     );
@@ -23,6 +30,7 @@ describe("useCurrentProject", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(fetch).toHaveBeenCalledWith("/api/project/current");
     expect(result.current.project?.id).toBe("current");
+    expect(result.current.publicationReadiness?.mode).toBe("local");
     expect(result.current.theme).toBe("light");
     expect(document.documentElement.dataset.theme).toBe("light");
   });

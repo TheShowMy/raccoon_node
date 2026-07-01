@@ -267,6 +267,7 @@ export default function App() {
       buildProjectNodes({
         projectCanvas: project.projectCanvas,
         project: current.project,
+        publicationReadiness: current.publicationReadiness,
         selectedDagRequirement: project.selectedDagRequirement,
         selectedDagRequirementId: project.selectedDagRequirementId,
         collapsedTaskGroups: project.collapsedTaskGroups,
@@ -299,6 +300,7 @@ export default function App() {
       }),
     [
       current.project,
+      current.publicationReadiness,
       models.basicSettings,
       models.basicSettingsError,
       models.closeSettingsDetail,

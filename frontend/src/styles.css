@@ -1640,6 +1640,16 @@
     color: var(--text-secondary);
   }
 
+  .task-session-message__header > span {
+    @apply flex items-center gap-2;
+  }
+
+  .task-session-message__source {
+    @apply rounded-full px-2 py-0.5 font-semibold;
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--accent-model) 18%, transparent);
+  }
+
   .task-session-message__role {
     @apply font-medium uppercase;
   }
@@ -1669,6 +1679,84 @@
   .task-session-messages__toggle {
     @apply mt-2 text-xs underline;
     color: var(--accent-model);
+  }
+
+  .task-session-messages__warning {
+    @apply mb-2 whitespace-pre-wrap rounded-lg border px-3 py-2 text-xs;
+    border-color: color-mix(in srgb, var(--accent-model) 35%, transparent);
+    color: var(--accent-model);
+  }
+
+  .task-session-tools {
+    @apply mt-2 flex flex-col gap-2;
+  }
+
+  .task-session-tool {
+    @apply overflow-hidden rounded-md border;
+    border-color: color-mix(in srgb, var(--text-soft) 18%, transparent);
+  }
+
+  .task-session-tool.is-error {
+    border-color: color-mix(in srgb, var(--accent-danger) 45%, transparent);
+  }
+
+  .task-session-tool > summary {
+    @apply flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs;
+    background: color-mix(in srgb, var(--canvas-bg) 72%, transparent);
+  }
+
+  .task-session-tool > summary > span:not(.task-session-tool__stats) {
+    @apply min-w-0 flex-1 truncate font-mono;
+    color: var(--text-soft);
+  }
+
+  .task-session-tool__stats {
+    @apply ml-auto flex gap-1 font-mono;
+  }
+
+  .task-session-tool__stats b {
+    color: var(--success);
+  }
+
+  .task-session-tool__stats i {
+    @apply not-italic;
+    color: var(--accent-danger);
+  }
+
+  .task-session-tool__diff,
+  .task-session-tool__code,
+  .task-session-tool__output,
+  .task-session-tool > pre {
+    @apply m-0 max-h-[360px] overflow-auto whitespace-pre font-mono text-xs leading-relaxed;
+  }
+
+  .task-session-tool__diff > span {
+    @apply block min-w-max px-3;
+  }
+
+  .task-session-tool__diff .is-added {
+    color: var(--success);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
+  }
+
+  .task-session-tool__diff .is-removed {
+    color: var(--accent-danger);
+    background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
+  }
+
+  .task-session-tool__diff .is-hunk {
+    color: var(--accent-model);
+  }
+
+  .task-session-tool__code,
+  .task-session-tool__output,
+  .task-session-tool > pre {
+    @apply border-t p-3;
+    border-color: color-mix(in srgb, var(--text-soft) 12%, transparent);
+  }
+
+  .task-session-tool__output {
+    color: var(--text-soft);
   }
 
   .rq-workbench {
@@ -2670,6 +2758,91 @@
 
 .node-card--project-github.compact .node-header {
   gap: 8px;
+}
+
+.project-publication-trigger {
+  @apply flex h-full w-full items-center gap-2 border-0 bg-transparent p-0 text-left;
+  color: var(--text-strong);
+}
+
+.project-publication-trigger > span:last-child {
+  @apply flex min-w-0 flex-col;
+}
+
+.project-publication-trigger strong,
+.project-publication-trigger small {
+  @apply truncate;
+}
+
+.project-publication-trigger small {
+  color: var(--text-soft);
+}
+
+.project-publication-trigger small.is-ready {
+  color: var(--success);
+}
+
+.project-publication-trigger small.is-blocked {
+  color: var(--accent-danger);
+}
+
+.publication-dialog {
+  @apply m-auto border-0 bg-transparent p-0;
+}
+
+.publication-dialog::backdrop {
+  background: rgb(8 10 20 / 72%);
+  backdrop-filter: blur(4px);
+}
+
+.publication-dialog__panel {
+  @apply w-[min(560px,calc(100vw-32px))] rounded-2xl border p-5;
+  border-color: var(--card-border-strong);
+  color: var(--text-strong);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+}
+
+.publication-dialog__panel header {
+  @apply mb-4 flex items-start gap-3;
+}
+
+.publication-dialog__panel header > div {
+  @apply flex min-w-0 flex-1 flex-col;
+}
+
+.publication-dialog__panel header span {
+  @apply truncate text-xs;
+  color: var(--text-soft);
+}
+
+.publication-dialog__panel header button {
+  @apply border-0 bg-transparent p-1;
+  color: var(--text-soft);
+}
+
+.publication-dialog__panel h3 {
+  @apply mt-4 mb-2 text-sm font-semibold;
+}
+
+.publication-dialog__panel ul {
+  @apply list-disc space-y-2 pl-5 text-sm;
+  color: var(--text-soft);
+}
+
+.publication-dialog__issues {
+  color: var(--accent-danger) !important;
+}
+
+.publication-dialog__restart {
+  @apply mt-3 rounded-lg border px-3 py-2 text-sm;
+  border-color: color-mix(in srgb, var(--accent-danger) 35%, transparent);
+  color: var(--accent-danger);
+}
+
+.publication-dialog__panel > a {
+  @apply mt-4 inline-block text-sm underline;
+  color: var(--accent-model);
 }
 
 /* === React Flow controls === */

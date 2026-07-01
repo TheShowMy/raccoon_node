@@ -20,11 +20,11 @@ pub enum AppError {
         message: String,
         pi_session_file: Option<String>,
     },
-    #[error("I/O 错误")]
+    #[error("I/O 错误：{0}")]
     Io(#[source] std::io::Error),
-    #[error("JSON 错误")]
+    #[error("JSON 错误：{0}")]
     Json(#[source] serde_json::Error),
-    #[error("数据库错误")]
+    #[error("数据库错误：{0}")]
     Database(#[source] rusqlite::Error),
 }
 
@@ -121,6 +121,21 @@ pub struct ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn infrastructure_errors_include_their_source_message() {
+        let io_error = AppError::from(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "目标文件不存在",
+        ));
+        let json_error =
+            AppError::from(serde_json::from_str::<serde_json::Value>("{").unwrap_err());
+        let database_error = AppError::from(rusqlite::Error::InvalidQuery);
+
+        assert_eq!(io_error.to_string(), "I/O 错误：目标文件不存在");
+        assert!(json_error.to_string().starts_with("JSON 错误："));
+        assert_ne!(database_error.to_string(), "数据库错误");
+    }
 
     #[test]
     fn conflict_uses_http_409_and_database_keeps_source() {

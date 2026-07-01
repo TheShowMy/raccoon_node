@@ -98,6 +98,13 @@ function params(
   return {
     projectCanvas,
     project: projectCanvas.project,
+    publicationReadiness: {
+      mode: "local",
+      ready: true,
+      summary: "本地合并",
+      issues: [],
+      notes: [],
+    },
     selectedDagRequirement,
     selectedDagRequirementId: selectedDagRequirement?.id ?? null,
     collapsedTaskGroups: new Set(),

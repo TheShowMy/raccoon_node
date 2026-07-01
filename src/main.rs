@@ -589,6 +589,8 @@ mod tests {
                 .unwrap();
         assert_eq!(body["project"]["id"], "current");
         assert_eq!(body["theme"], "dark");
+        assert_eq!(body["publication_readiness"]["mode"], "local");
+        assert_eq!(body["publication_readiness"]["ready"], true);
 
         for (method, path) in [
             ("GET", "/api/start"),

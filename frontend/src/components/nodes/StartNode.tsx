@@ -2,19 +2,9 @@ import React, { useState, useRef, useEffect } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import type { StartNodeData } from "../../types/api";
 import { renderNodeContent } from "../../nodes/renderNodeContent";
-import { githubUrlFromGitUrl } from "../../utils/format";
 
 function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
-  const projectGithubUrl =
-    data.kind === "project-github"
-      ? githubUrlFromGitUrl(data.project.git_url)
-      : null;
-  const clickableAction =
-    data.kind === "summary"
-      ? data.onAction
-      : projectGithubUrl
-        ? () => window.open(projectGithubUrl, "_blank", "noopener,noreferrer")
-        : undefined;
+  const clickableAction = data.kind === "summary" ? data.onAction : undefined;
   const hasSettingsSourceHandle =
     data.kind === "summary" && data.icon === "model";
   const hasSettingsListTargetHandle = data.kind === "settings-list";

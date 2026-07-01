@@ -521,6 +521,36 @@ fn execution_failures_have_a_finite_escalation_path() {
     assert_eq!(next_execution_recovery_stage(1, false), None);
 }
 
+#[test]
+fn execution_failure_keeps_the_infrastructure_error_detail() {
+    let mut merge_review = task(
+        "merge-review",
+        RequirementTaskKind::MergeReview,
+        RequirementTaskStatus::Running,
+    );
+    let error = AppError::from(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "无法读取最终审核工作区",
+    ));
+    let detail = error.to_string();
+
+    register_execution_failure(
+        &mut merge_review,
+        &short_failure_summary(&error),
+        &detail,
+        false,
+    );
+
+    assert_eq!(
+        merge_review.failure_summary.as_deref(),
+        Some("I/O 错误：无法读取最终审核工作区")
+    );
+    assert_eq!(
+        merge_review.error.as_deref(),
+        merge_review.failure_summary.as_deref()
+    );
+}
+
 #[tokio::test]
 async fn final_failure_keeps_parallel_branch_running_until_all_progress_stops() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -1032,7 +1062,8 @@ async fn requirement_task_session_parses_messages() {
         r#"{"type":"session","id":"s1","timestamp":"2026-07-01T00:00:00Z"}
 {"type":"message","id":"m1","timestamp":"2026-07-01T00:01:00Z","message":{"role":"system","content":[{"type":"text","text":"system prompt"}]}}
 {"type":"message","id":"m2","timestamp":"2026-07-01T00:02:00Z","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
-{"type":"message","id":"m3","timestamp":"2026-07-01T00:03:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"thinking text"},{"type":"text","text":"reply"},{"type":"toolCall","name":"bash","arguments":{"command":"ls"}},{"type":"toolResult","tool_call_id":"bash","output":"file.txt"}]}}
+{"type":"message","id":"m3","timestamp":"2026-07-01T00:03:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"thinking text"},{"type":"text","text":"reply"},{"type":"toolCall","id":"edit-1","name":"edit","arguments":{"path":"file.txt","edits":[{"oldText":"old","newText":"new"}]}}]}}
+{"type":"message","id":"m4","timestamp":"2026-07-01T00:04:00Z","message":{"role":"toolResult","toolCallId":"edit-1","toolName":"edit","content":[{"type":"text","text":"Successfully replaced 1 block in file.txt."}],"details":{"diff":"@@ -1 +1 @@\n-old\n+new"},"isError":false}}
 {"type":"not_a_message","id":"n1"}
 not valid json
 "#,
@@ -1071,25 +1102,13 @@ not valid json
         .unwrap();
     assert_eq!(assistant.text, "reply");
     assert_eq!(assistant.thinking.as_deref(), Some("thinking text"));
-    assert_eq!(assistant.tool_calls.len(), 2);
-    assert!(
-        assistant
-            .tool_calls
-            .iter()
-            .any(|tool| tool.contains("bash"))
-    );
-    assert!(
-        assistant
-            .tool_calls
-            .iter()
-            .any(|tool| tool.contains("工具结果"))
-    );
-    assert!(
-        assistant
-            .tool_calls
-            .iter()
-            .any(|tool| tool.contains("file.txt"))
-    );
+    assert_eq!(assistant.tools.len(), 1);
+    let tool = &assistant.tools[0];
+    assert_eq!(tool.name, "edit");
+    assert_eq!(tool.arguments["path"], "file.txt");
+    assert!(tool.output.contains("Successfully replaced"));
+    assert_eq!(tool.diff.as_deref(), Some("@@ -1 +1 @@\n-old\n+new"));
+    assert!(!tool.is_error);
     assert!(!session.truncated);
 }
 

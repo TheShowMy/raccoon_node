@@ -20,6 +20,14 @@ export type Project = {
   updated_at: string;
 };
 
+export type PublicationReadiness = {
+  mode: "local" | "pull_request";
+  ready: boolean;
+  summary: string;
+  issues: string[];
+  notes: string[];
+};
+
 export type RequirementStatus =
   | "analyzing"
   | "clarifying"
@@ -155,8 +163,17 @@ export type RequirementTaskSessionMessage = {
   role: string;
   text: string;
   thinking?: string;
-  tool_calls: string[];
+  tools: RequirementTaskSessionTool[];
   timestamp: string;
+};
+
+export type RequirementTaskSessionTool = {
+  id: string;
+  name: string;
+  arguments: unknown;
+  output: string;
+  diff?: string;
+  is_error: boolean;
 };
 
 export type RequirementTaskSession = {
@@ -435,6 +452,7 @@ export type StartNodeData =
   | {
       kind: "project-github";
       project: Project;
+      publicationReadiness: PublicationReadiness;
     }
   | {
       kind: "requirement-list";

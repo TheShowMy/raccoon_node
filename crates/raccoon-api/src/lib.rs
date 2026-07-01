@@ -9,6 +9,7 @@ use tower_http::cors::CorsLayer;
 
 mod assets;
 pub mod handlers;
+mod publication;
 
 async fn api_not_found() -> StatusCode {
     StatusCode::NOT_FOUND
@@ -37,6 +38,7 @@ pub struct AppState {
     pub config: std::sync::Arc<tokio::sync::RwLock<raccoon_core::config::AppConfig>>,
     pub config_path: std::path::PathBuf,
     pub port_overridden: bool,
+    pub publication_readiness: raccoon_core::models::PublicationReadiness,
     pub project_scheduler_locks: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
     >,
@@ -50,9 +52,17 @@ pub async fn build_app(
     config_path: PathBuf,
     port_overridden: bool,
 ) -> (Router, AppState) {
-    let mut store = JsonStore::open_project(project_root)
+    let mut store = JsonStore::open_project(project_root.clone())
         .await
         .expect("failed to initialize json store");
+    let origin = store
+        .data
+        .projects
+        .iter()
+        .find(|project| project.id == raccoon_store::store::CURRENT_PROJECT_ID)
+        .map(|project| project.git_url.as_str())
+        .unwrap_or_default();
+    let publication_readiness = publication::check(&project_root, origin).await;
     let startup_requirement_ids = store
         .recover_interrupted_requirements()
         .await
@@ -70,6 +80,7 @@ pub async fn build_app(
         config,
         config_path,
         port_overridden,
+        publication_readiness,
     )
 }
 
@@ -88,6 +99,7 @@ pub fn build_app_with_model_provider(
         )),
         config_path,
         false,
+        raccoon_core::models::PublicationReadiness::local(),
     )
     .0
 }
@@ -107,6 +119,7 @@ pub fn build_app_with_model_provider_and_config(
         Arc::new(tokio::sync::RwLock::new(config)),
         config_path,
         port_overridden,
+        raccoon_core::models::PublicationReadiness::local(),
     )
     .0
 }
@@ -118,6 +131,7 @@ fn build_app_with_startup_requirements(
     config: Arc<tokio::sync::RwLock<raccoon_core::config::AppConfig>>,
     config_path: PathBuf,
     port_overridden: bool,
+    publication_readiness: raccoon_core::models::PublicationReadiness,
 ) -> (Router, AppState) {
     let (event_tx, _) = broadcast::channel(256);
     let (project_chat_tx, _) = broadcast::channel(256);
@@ -129,6 +143,7 @@ fn build_app_with_startup_requirements(
         config,
         config_path,
         port_overridden,
+        publication_readiness,
         project_scheduler_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         pending_requirement_interactions: Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),

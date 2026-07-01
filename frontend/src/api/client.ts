@@ -14,11 +14,13 @@ import {
   type BasicSettings,
   type RequirementTaskDetail,
   type RequirementTaskSession,
+  type PublicationReadiness,
 } from "../types/api";
 
 export async function getCurrentProject(): Promise<{
   project: Project;
   theme: ThemeMode;
+  publication_readiness: PublicationReadiness;
 }> {
   const response = await fetch("/api/project/current");
   if (!response.ok) {
@@ -30,11 +32,16 @@ export async function getCurrentProject(): Promise<{
   const current = (await response.json()) as {
     project: Project;
     theme: unknown;
+    publication_readiness: PublicationReadiness;
   };
   if (current.theme !== "dark" && current.theme !== "light") {
     throw new Error("后端返回了无效主题");
   }
-  return { project: current.project, theme: current.theme };
+  return {
+    project: current.project,
+    theme: current.theme,
+    publication_readiness: current.publication_readiness,
+  };
 }
 
 export async function getProjectCanvas(

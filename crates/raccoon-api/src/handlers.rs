@@ -67,6 +67,7 @@ pub async fn get_current_project(
     Ok(Json(CurrentProjectResponse {
         project,
         theme: state.config.read().await.theme.as_str().to_owned(),
+        publication_readiness: state.publication_readiness.clone(),
     }))
 }
 
@@ -440,6 +441,7 @@ pub async fn confirm_requirement(
     AxumPath(requirement_id): AxumPath<String>,
     payload: Option<Json<RequirementConfirmRequest>>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    ensure_publication_ready(&state.publication_readiness)?;
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
     let project_id = {
         let mut store = state.store.write().await;
@@ -456,6 +458,7 @@ pub async fn plan_requirement_execution(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    ensure_publication_ready(&state.publication_readiness)?;
     let project_id = {
         let mut store = state.store.write().await;
         store.requeue_failed_planning(&requirement_id).await?
@@ -469,6 +472,7 @@ pub async fn recover_task_group(
     State(state): State<AppState>,
     AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
+    ensure_publication_ready(&state.publication_readiness)?;
     let project_id = {
         let mut store = state.store.write().await;
         store.recover_task_group(&requirement_id, &task_id).await?
@@ -778,9 +782,29 @@ fn spawn_project_chat_response(
 }
 
 pub(crate) fn spawn_startup_requirement_scheduler(state: AppState, project_ids: Vec<String>) {
+    if !state.publication_readiness.ready {
+        tracing::warn!(
+            issues = %state.publication_readiness.issues.join("；"),
+            "publication prerequisites failed; startup requirement recovery is blocked"
+        );
+        return;
+    }
     for project_id in project_ids {
         spawn_project_scheduler(state.clone(), project_id);
     }
+}
+
+fn ensure_publication_ready(
+    readiness: &raccoon_core::models::PublicationReadiness,
+) -> Result<(), AppError> {
+    if readiness.ready {
+        return Ok(());
+    }
+    Err(AppError::conflict(format!(
+        "{} {}",
+        readiness.summary,
+        readiness.issues.join("；")
+    )))
 }
 
 fn spawn_project_scheduler(state: AppState, project_id: String) {
@@ -1027,6 +1051,21 @@ mod event_filter_tests {
             "requirement-1",
             &query,
         ));
+    }
+
+    #[test]
+    fn failed_publication_readiness_blocks_execution() {
+        let readiness = raccoon_core::models::PublicationReadiness {
+            mode: "pull_request".to_owned(),
+            ready: false,
+            summary: "前置检查未通过".to_owned(),
+            issues: vec!["gh 未登录".to_owned()],
+            notes: Vec::new(),
+        };
+
+        let error = ensure_publication_ready(&readiness).unwrap_err();
+        assert!(matches!(error, AppError::Conflict(_)));
+        assert!(error.to_string().contains("gh 未登录"));
     }
 }
 
