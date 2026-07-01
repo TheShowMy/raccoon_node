@@ -62,6 +62,5 @@
 ## 分发
 
 - npm：主包 `raccoon-node`，按平台可选依赖分发二进制。
-- crates.io：crate `raccoon-node`，安装后的命令为 `raccoon`。
 - GitHub Release：提供 darwin-arm64、linux-x64、win32-x64 压缩包与 SHA256。
 - 当前不支持 Intel Mac、Linux ARM64、musl 或 Windows ARM64。

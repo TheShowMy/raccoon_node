@@ -25,14 +25,6 @@ Vite 与 React Flow；所有 LLM 和模型能力均通过持久 Pi Agent RPC 子
 npm install --global raccoon-node
 ```
 
-### crates.io
-
-需要 Rust 1.96 或更高版本；crate 已包含前端产物，安装时不需要 Node.js。
-
-```sh
-cargo install raccoon-node
-```
-
 ### GitHub Release
 
 也可从 [GitHub Releases](https://github.com/TheShowMy/raccoon_node/releases) 下载
@@ -42,7 +34,7 @@ cargo install raccoon-node
 - Linux x64 GNU（linux-x64）
 - Windows x64（win32-x64）
 
-三种安装方式提供相同命令：`raccoon`。
+npm 与 GitHub Release 两种安装方式提供相同命令：`raccoon`。
 
 ## 使用
 
