@@ -13,7 +13,7 @@ pub mod setup;
 
 use crate::cli::Cli;
 use raccoon_api::AppState;
-use raccoon_core::config::AppConfig;
+use raccoon_core::config::{AppConfig, CommitMode};
 use raccoon_tui::DashboardAction;
 
 #[derive(Clone)]
@@ -83,17 +83,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let saved_config = match AppConfig::load(&config_path)? {
         Some(config) => config,
-        None if use_tui => raccoon_tui::edit_config(
-            AppConfig::default(),
-            "首次配置",
-            raccoon_tui::ConfigEditContext::default(),
-        )?
-        .ok_or("首次配置已取消")?,
-        None => AppConfig::default(),
+        None => {
+            let mut config = AppConfig::default();
+            let initial_origin = raccoon_core::utils::git_remote_origin(&project_root);
+            let initial_readiness =
+                raccoon_api::publication::check(&project_root, &initial_origin, config.commit_mode)
+                    .await;
+            if !initial_readiness.ready {
+                config.commit_mode = raccoon_core::config::CommitMode::Local;
+            }
+            config.save(&config_path)?;
+            config
+        }
     };
     setup::ensure_data_layout(&data_root)?;
     setup::ensure_gitignore(&project_root)?;
-    saved_config.save(&config_path)?;
     let shared_config = std::sync::Arc::new(RwLock::new(saved_config));
 
     let (log_tx, log_rx) = mpsc::channel();
@@ -114,11 +118,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::warn!("服务正在监听所有网络接口；当前 API 没有身份验证");
         }
         let listener = tokio::net::TcpListener::bind(addr).await?;
+        let current_origin = raccoon_core::utils::git_remote_origin(&project_root);
+        let publication_readiness =
+            raccoon_api::publication::check(&project_root, &current_origin, effective.commit_mode)
+                .await;
         let (app, state) = raccoon_api::build_app(
             project_root.clone(),
             shared_config.clone(),
             config_path.clone(),
             cli.port.is_some(),
+            publication_readiness,
         )
         .await;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -171,8 +180,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let mut restart = false;
+        let mut tui = raccoon_tui::TuiSession::enter()?;
         loop {
-            match raccoon_tui::run_dashboard(
+            match tui.run_dashboard(
                 browser_url,
                 &log_rx,
                 managed_vite.as_ref().map(|vite| vite.logs()),
@@ -196,41 +206,76 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         tracing::warn!("存在运行中的 Agent 任务，完成或取消后才能修改运行设置");
                         continue;
                     }
-                    let Some(updated) = raccoon_tui::edit_config(
-                        shared_config.read().await.clone(),
+                    let current_config = shared_config.read().await.clone();
+                    let (readiness_tx, readiness_rx) = mpsc::channel();
+                    let readiness_project_root = project_root.clone();
+                    std::thread::spawn(move || {
+                        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                        else {
+                            return;
+                        };
+                        let settings_origin =
+                            raccoon_core::utils::git_remote_origin(&readiness_project_root);
+                        let readiness = runtime.block_on(raccoon_api::publication::check(
+                            &readiness_project_root,
+                            &settings_origin,
+                            CommitMode::PullRequest,
+                        ));
+                        let _ = readiness_tx.send(readiness);
+                    });
+                    let Some(updated) = tui.edit_config(
+                        current_config.clone(),
                         "运行设置",
                         raccoon_tui::ConfigEditContext {
                             host_overridden: cli.host.is_some(),
                             port_overridden: cli.port.is_some(),
+                            commit_mode_overridden: false,
                         },
+                        raccoon_tui::ConfigEditOptions::loading(readiness_rx),
                     )?
                     else {
                         continue;
                     };
-                    {
-                        let mut config = shared_config.write().await;
-                        updated.save(&config_path)?;
-                        *config = updated;
-                    }
-                    match state.model_provider.available_models().await {
-                        Ok(models) => {
-                            let current = state.store.read().await.data.model_settings.clone();
-                            if let Some(settings) = raccoon_tui::edit_models(&models, current)? {
-                                state
-                                    .store
-                                    .write()
-                                    .await
-                                    .save_model_settings(settings, &models)
-                                    .await?;
-                            }
+                    let updated_readiness = loop {
+                        let latest = shared_config.read().await.clone();
+                        let candidate = merge_config_edit(&current_config, &updated, &latest);
+                        let checked_mode = candidate.commit_mode;
+                        let latest_origin = raccoon_core::utils::git_remote_origin(&project_root);
+                        let readiness = raccoon_api::publication::check(
+                            &project_root,
+                            &latest_origin,
+                            checked_mode,
+                        )
+                        .await;
+                        if checked_mode == CommitMode::PullRequest && !readiness.ready {
+                            tracing::warn!(
+                                "当前不满足 PR 合并条件：{}",
+                                readiness.issues.join("；")
+                            );
+                            break None;
                         }
-                        Err(error) => tracing::warn!("无法读取 Pi 模型：{error}"),
-                    }
+                        let mut config = shared_config.write().await;
+                        let candidate = merge_config_edit(&current_config, &updated, &config);
+                        if candidate.commit_mode != checked_mode {
+                            continue;
+                        }
+                        candidate.save(&config_path)?;
+                        *config = candidate;
+                        break Some(readiness);
+                    };
+                    let Some(updated_readiness) = updated_readiness else {
+                        continue;
+                    };
+                    *state.publication_readiness.write().await = updated_readiness;
+                    raccoon_api::handlers::spawn_startup_requirement_scheduler(state.clone());
                     restart = true;
                     break;
                 }
             }
         }
+        drop(tui);
         if let Some(vite) = managed_vite {
             vite.shutdown().await;
         }
@@ -247,6 +292,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !restart {
             return Ok(());
         }
+    }
+}
+
+fn merge_config_edit(original: &AppConfig, edited: &AppConfig, latest: &AppConfig) -> AppConfig {
+    AppConfig {
+        theme: if edited.theme != original.theme {
+            edited.theme
+        } else {
+            latest.theme
+        },
+        host: if edited.host != original.host {
+            edited.host.clone()
+        } else {
+            latest.host.clone()
+        },
+        port: if edited.port != original.port {
+            edited.port
+        } else {
+            latest.port
+        },
+        commit_mode: if edited.commit_mode != original.commit_mode {
+            edited.commit_mode
+        } else {
+            latest.commit_mode
+        },
     }
 }
 
@@ -588,7 +658,7 @@ mod tests {
             serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
                 .unwrap();
         assert_eq!(body["project"]["id"], "current");
-        assert_eq!(body["theme"], "dark");
+        assert_eq!(body["theme"], "light");
         assert_eq!(body["publication_readiness"]["mode"], "local");
         assert_eq!(body["publication_readiness"]["ready"], true);
 
@@ -627,6 +697,7 @@ mod tests {
                 theme: raccoon_core::config::Theme::Dark,
                 host: "0.0.0.0".to_owned(),
                 port: 3001,
+                commit_mode: raccoon_core::config::CommitMode::PullRequest,
             },
             true,
         );
@@ -646,7 +717,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             body,
-            json!({"theme": "dark", "host": "0.0.0.0", "port": 3001, "port_overridden": true})
+            json!({"theme": "dark", "host": "0.0.0.0", "port": 3001, "port_overridden": true, "commit_mode": "pull_request"})
         );
 
         let response = app
@@ -668,6 +739,7 @@ mod tests {
                 theme: raccoon_core::config::Theme::Light,
                 host: "0.0.0.0".to_owned(),
                 port: 4321,
+                commit_mode: raccoon_core::config::CommitMode::PullRequest,
             })
         );
 

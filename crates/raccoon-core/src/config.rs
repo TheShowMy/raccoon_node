@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
-    Light,
     #[default]
+    Light,
     Dark,
 }
 
@@ -22,20 +22,39 @@ impl Theme {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitMode {
+    Local,
+    #[default]
+    PullRequest,
+}
+
+impl CommitMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::PullRequest => "pull_request",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct AppConfig {
     pub theme: Theme,
     pub host: String,
     pub port: u16,
+    pub commit_mode: CommitMode,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            theme: Theme::Dark,
+            theme: Theme::Light,
             host: "127.0.0.1".to_owned(),
             port: 3001,
+            commit_mode: CommitMode::PullRequest,
         }
     }
 }
@@ -98,6 +117,20 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.toml");
         let expected = AppConfig::default();
+        assert_eq!(expected.theme, Theme::Light);
+        assert_eq!(expected.commit_mode, CommitMode::PullRequest);
+        expected.save(&path).unwrap();
+        assert_eq!(AppConfig::load(&path).unwrap(), Some(expected));
+    }
+
+    #[test]
+    fn local_commit_mode_round_trip() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        let expected = AppConfig {
+            commit_mode: CommitMode::Local,
+            ..AppConfig::default()
+        };
         expected.save(&path).unwrap();
         assert_eq!(AppConfig::load(&path).unwrap(), Some(expected));
     }

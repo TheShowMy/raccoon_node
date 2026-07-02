@@ -52,7 +52,7 @@
 仓库没有 `remote.origin.url` 时，`git_url` 为空字符串。
 `publication_readiness.mode` 为 `local`，且不要求安装或登录 GitHub CLI。有远程且
 `ready` 为 `false` 时，确认需求、重试执行规划、恢复任务组和启动恢复调度均会被
-阻止；修复 `issues` 后需重启应用。
+阻止；修复 `issues` 后保存运行设置会刷新检查结果。
 
 ### 获取项目画布
 

@@ -2,11 +2,12 @@
 use super::*;
 
 use super::{
-    attach_session_usage, build_pr_merge_args, event_has_output_activity, generated_branch_names,
-    is_terminal_agent_end, local_merge_base, merge_local_branch, parse_default_branch,
-    parse_remote_default_branch, parse_session_header_cwd, repository_has_origin,
-    resolve_project_working_dir, safe_worktree_name, session_header_matches_working_dir,
-    stage_task_changes, sync_checked_out_remote_base,
+    attach_session_usage, build_gitlab_mr_merge_args, build_pr_merge_args,
+    event_has_output_activity, generated_branch_names, is_terminal_agent_end, local_merge_base,
+    merge_local_branch, parse_default_branch, parse_remote_default_branch,
+    parse_session_header_cwd, repository_has_origin, resolve_project_working_dir,
+    safe_worktree_name, session_header_matches_working_dir, stage_task_changes,
+    sync_checked_out_remote_base,
 };
 use raccoon_core::models::{
     RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
@@ -103,6 +104,14 @@ fn pr_merge_args_lock_head_commit_without_deleting_branch() {
             "--match-head-commit",
             "abc123",
         ]
+    );
+}
+
+#[test]
+fn gitlab_mr_merge_args_lock_head_commit_without_deleting_branch() {
+    assert_eq!(
+        build_gitlab_mr_merge_args("feature-branch", "abc123"),
+        vec!["mr", "merge", "feature-branch", "--sha", "abc123", "--yes",]
     );
 }
 

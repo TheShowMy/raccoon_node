@@ -18,11 +18,11 @@ use tokio::{
 
 use raccoon_core::error::AppError;
 use raccoon_core::models::{
-    ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings, ModelTierSetting,
-    PI_RPC_REQUEST_ID, PiModel, ProjectChatEventEmitter, ProjectChatFuture, ProjectChatInput,
-    ProjectChatOutput, PromptImage, RequirementAnalysisFuture, RequirementAnalysisInput,
-    RequirementAnalysisOutput, RequirementEventEmitter, RequirementModelTier,
-    RequirementPlanFuture, RequirementPlanInput, RequirementReviewStatus,
+    GitProvider, ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings,
+    ModelTierSetting, PI_RPC_REQUEST_ID, PiModel, ProjectChatEventEmitter, ProjectChatFuture,
+    ProjectChatInput, ProjectChatOutput, PromptImage, RequirementAnalysisFuture,
+    RequirementAnalysisInput, RequirementAnalysisOutput, RequirementEventEmitter,
+    RequirementModelTier, RequirementPlanFuture, RequirementPlanInput, RequirementReviewStatus,
     RequirementTaskExecutionFuture, RequirementTaskExecutionInput, RequirementTaskExecutionOutput,
     RequirementTaskKind,
 };
@@ -1793,31 +1793,54 @@ async fn publish_merge_review(
         .as_deref()
         .ok_or_else(|| AppError::internal("最终合并节点缺少 worktree_path"))?;
     let worktree = resolve_project_working_dir(data_root, worktree)?;
-    let has_origin = repository_has_origin(&repo).await;
-    let (pull_request_url, base_branch) = if has_origin {
-        let commit = git(&worktree, &["rev-parse", "HEAD"])
-            .await?
-            .trim()
-            .to_owned();
-        let base_branch = default_branch(&repo).await?;
-        git(&repo, &["push", "-u", "origin", branch]).await?;
-        let pr_url = ensure_pull_request(&repo, &base_branch, branch, input).await?;
-        if !pull_request_is_merged(&repo, &pr_url).await {
-            let merge_args = build_pr_merge_args(&pr_url, &commit);
-            run_gh(
-                &repo,
-                &merge_args.iter().map(String::as_str).collect::<Vec<_>>(),
-            )
-            .await?;
+    let provider = remote_provider(&repo).await;
+    let (pull_request_url, base_branch) = match provider {
+        GitProvider::Local => {
+            let base_branch = local_merge_base(&repo).await?;
+            merge_local_branch(&repo, branch).await?;
+            (None, base_branch)
         }
-        sync_checked_out_remote_base(&repo, &base_branch).await?;
-        (Some(pr_url), base_branch)
-    } else {
-        let base_branch = local_merge_base(&repo).await?;
-        merge_local_branch(&repo, branch).await?;
-        (None, base_branch)
+        GitProvider::GitHub => {
+            let commit = git(&worktree, &["rev-parse", "HEAD"])
+                .await?
+                .trim()
+                .to_owned();
+            let base_branch = default_branch(&repo).await?;
+            git(&repo, &["push", "-u", "origin", branch]).await?;
+            let pr_url = ensure_pull_request(&repo, &base_branch, branch, input).await?;
+            if !pull_request_is_merged(&repo, &pr_url).await {
+                let merge_args = build_pr_merge_args(&pr_url, &commit);
+                run_gh(
+                    &repo,
+                    &merge_args.iter().map(String::as_str).collect::<Vec<_>>(),
+                )
+                .await?;
+            }
+            sync_checked_out_remote_base(&repo, &base_branch).await?;
+            (Some(pr_url), base_branch)
+        }
+        GitProvider::GitLab => {
+            let commit = git(&worktree, &["rev-parse", "HEAD"])
+                .await?
+                .trim()
+                .to_owned();
+            let base_branch = default_branch(&repo).await?;
+            git(&repo, &["push", "-u", "origin", branch]).await?;
+            let mr_url = ensure_merge_request(&repo, &base_branch, branch, input).await?;
+            if !merge_request_is_merged(&repo, branch).await {
+                let merge_args = build_gitlab_mr_merge_args(branch, &commit);
+                run_glab(
+                    &repo,
+                    &merge_args.iter().map(String::as_str).collect::<Vec<_>>(),
+                )
+                .await?;
+            }
+            sync_checked_out_remote_base(&repo, &base_branch).await?;
+            (Some(mr_url), base_branch)
+        }
     };
-    let cleanup_summary = cleanup_requirement_branches(data_root, &repo, input, has_origin).await;
+    let cleanup_summary =
+        cleanup_requirement_branches(data_root, &repo, input, provider != GitProvider::Local).await;
 
     Ok(PublishResult {
         pull_request_url,
@@ -1826,6 +1849,14 @@ async fn publish_merge_review(
     })
 }
 
+async fn remote_provider(repo: &Path) -> GitProvider {
+    match git(repo, &["remote", "get-url", "origin"]).await {
+        Ok(url) => GitProvider::from_origin(url.trim()),
+        Err(_) => GitProvider::Local,
+    }
+}
+
+#[cfg(test)]
 async fn repository_has_origin(repo: &Path) -> bool {
     git(repo, &["remote", "get-url", "origin"])
         .await
@@ -1980,6 +2011,101 @@ fn build_pr_merge_args(pr_url: &str, commit: &str) -> Vec<String> {
     ]
 }
 
+async fn ensure_merge_request(
+    repo: &Path,
+    base_branch: &str,
+    branch: &str,
+    input: &RequirementTaskExecutionInput,
+) -> Result<String, AppError> {
+    if let Ok(json) = run_glab(repo, &["mr", "view", branch, "--output=json"]).await
+        && let Some(url) = json
+            .trim()
+            .lines()
+            .last()
+            .and_then(|line| serde_json::from_str::<Value>(line).ok())
+            .and_then(|value| {
+                value
+                    .get("web_url")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+    {
+        return Ok(url);
+    }
+
+    let title = format!("raccoon_node: {}", input.requirement.title);
+    let body = format!(
+        "自动合并需求：{}\n\n{}",
+        input.requirement.title,
+        input
+            .requirement
+            .draft
+            .as_ref()
+            .map(|draft| draft.summary.as_str())
+            .unwrap_or("无摘要")
+    );
+    let output = run_glab(
+        repo,
+        &[
+            "mr",
+            "create",
+            "--target-branch",
+            base_branch,
+            "--source-branch",
+            branch,
+            "--title",
+            &title,
+            "--description",
+            &body,
+            "--yes",
+            "--output=json",
+        ],
+    )
+    .await?;
+    let url = output
+        .trim()
+        .lines()
+        .last()
+        .and_then(|line| serde_json::from_str::<Value>(line).ok())
+        .and_then(|value| {
+            value
+                .get("web_url")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .ok_or_else(|| AppError::internal("glab mr create 未返回 MR 地址"))?;
+    Ok(url)
+}
+
+async fn merge_request_is_merged(repo: &Path, branch: &str) -> bool {
+    run_glab(repo, &["mr", "view", branch, "--output=json"])
+        .await
+        .is_ok_and(|json| {
+            json.trim()
+                .lines()
+                .last()
+                .and_then(|line| serde_json::from_str::<Value>(line).ok())
+                .and_then(|value| {
+                    value
+                        .get("state")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                == Some("merged".to_owned())
+        })
+}
+
+fn build_gitlab_mr_merge_args(branch: &str, commit: &str) -> Vec<String> {
+    vec![
+        "mr".to_owned(),
+        "merge".to_owned(),
+        branch.to_owned(),
+        "--sha".to_owned(),
+        commit.to_owned(),
+        "--yes".to_owned(),
+    ]
+}
+
 async fn cleanup_requirement_branches(
     data_root: &Path,
     repo: &Path,
@@ -2058,6 +2184,25 @@ async fn run_gh(dir: &Path, args: &[&str]) -> Result<String, AppError> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     Err(AppError::internal(format!(
         "gh {} 失败：{}",
+        args.join(" "),
+        stderr.trim()
+    )))
+}
+
+async fn run_glab(dir: &Path, args: &[&str]) -> Result<String, AppError> {
+    let dir = normalize_local_path(dir)?;
+    let program = if cfg!(windows) { "glab.exe" } else { "glab" };
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(&dir)
+        .output()
+        .await?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(AppError::internal(format!(
+        "glab {} 失败：{}",
         args.join(" "),
         stderr.trim()
     )))

@@ -1,5 +1,10 @@
 import { Settings } from "lucide-react";
-import type { StartNodeData, ThemeMode } from "../../types/api";
+import type { CommitMode, StartNodeData, ThemeMode } from "../../types/api";
+
+const COMMIT_MODES: [CommitMode, string][] = [
+  ["local", "本地提交"],
+  ["pull_request", "PR / MR 合并"],
+];
 
 export default function BasicSettingsNode({
   data,
@@ -21,7 +26,7 @@ export default function BasicSettingsNode({
         </span>
         <div>
           <strong>基础设置</strong>
-          <span>主题与服务端口</span>
+          <span>主题、端口与提交模式</span>
         </div>
       </div>
       {data.error ? <p className="form-error">{data.error}</p> : null}
@@ -68,6 +73,23 @@ export default function BasicSettingsNode({
               <small>当前端口由命令行参数覆盖；下次启动请勿传入 --port。</small>
             ) : null}
           </label>
+          <fieldset>
+            <legend>提交模式</legend>
+            {COMMIT_MODES.map(([mode, label]) => (
+              <label key={mode}>
+                <input
+                  type="radio"
+                  name="commit_mode"
+                  value={mode}
+                  checked={settings.commit_mode === mode}
+                  onChange={() =>
+                    data.onChange({ ...settings, commit_mode: mode })
+                  }
+                />
+                {label}
+              </label>
+            ))}
+          </fieldset>
         </div>
       ) : data.error ? null : (
         <p className="model-notice">正在读取基础设置…</p>

@@ -19,21 +19,18 @@ use ratatui::{
 };
 
 use raccoon_core::{
-    config::{AppConfig, Theme},
+    config::AppConfig,
     models::{ModelSettings, ModelTierSetting, PiModel, ThinkingLevel},
 };
+
+pub mod settings;
+pub use settings::{ConfigEditContext, ConfigEditOptions, edit_config};
 
 pub enum DashboardAction {
     Quit,
     Restart,
     Settings,
     Open,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ConfigEditContext {
-    pub host_overridden: bool,
-    pub port_overridden: bool,
 }
 
 pub fn confirm(title: &str, message: &str) -> io::Result<bool> {
@@ -71,6 +68,60 @@ pub fn confirm(title: &str, message: &str) -> io::Result<bool> {
     }
 }
 
+pub struct TuiSession {
+    _guard: TerminalGuard,
+    terminal: Terminal<CrosstermBackend<std::io::Stdout>>,
+}
+
+impl TuiSession {
+    pub fn enter() -> io::Result<Self> {
+        Ok(Self {
+            _guard: TerminalGuard::enter()?,
+            terminal: Terminal::new(CrosstermBackend::new(stdout()))?,
+        })
+    }
+
+    pub fn show_status(&mut self, title: &str, message: &str) -> io::Result<()> {
+        self.terminal.draw(|frame| {
+            let area = centered(frame.area(), 72, 7);
+            frame.render_widget(
+                Paragraph::new(vec![Line::raw(message.to_owned())])
+                    .block(Block::default().title(title).borders(Borders::ALL))
+                    .wrap(Wrap { trim: true }),
+                area,
+            );
+        })?;
+        Ok(())
+    }
+
+    pub fn run_dashboard(
+        &mut self,
+        url: &str,
+        backend_logs: &Receiver<String>,
+        vite_logs: Option<&Receiver<String>>,
+    ) -> io::Result<DashboardAction> {
+        run_dashboard_with_terminal(&mut self.terminal, url, backend_logs, vite_logs)
+    }
+
+    pub fn edit_config(
+        &mut self,
+        initial: AppConfig,
+        title: &str,
+        context: ConfigEditContext,
+        options: impl Into<ConfigEditOptions>,
+    ) -> io::Result<Option<AppConfig>> {
+        settings::edit_config_with_terminal(&mut self.terminal, initial, title, context, options)
+    }
+
+    pub fn edit_models(
+        &mut self,
+        models: &[PiModel],
+        initial: ModelSettings,
+    ) -> io::Result<Option<ModelSettings>> {
+        edit_models_with_terminal(&mut self.terminal, models, initial)
+    }
+}
+
 struct TerminalGuard;
 
 impl TerminalGuard {
@@ -88,171 +139,21 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub fn edit_config(
-    initial: AppConfig,
-    title: &str,
-    context: ConfigEditContext,
-) -> io::Result<Option<AppConfig>> {
-    let _guard = TerminalGuard::enter()?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
-    let mut config = initial;
-    let mut row = 0_u8;
-    let mut port = config.port.to_string();
-    let mut confirm_external = false;
-    let mut error: Option<&'static str> = None;
-
-    loop {
-        terminal.draw(|frame| {
-            let area = centered(frame.area(), 76, 20);
-            let host_value = if context.host_overridden {
-                format!("{}（本次被 --host 覆盖）", config.host)
-            } else {
-                config.host.clone()
-            };
-            let port_value = if row == 2 {
-                let value = if port.is_empty() { "_".to_owned() } else { format!("{port}_") };
-                format!("[{value}]{}", if context.port_overridden { "（本次被 --port 覆盖）" } else { "" })
-            } else if context.port_overridden {
-                format!("{port}（本次被 --port 覆盖）")
-            } else {
-                port.clone()
-            };
-            let help = if confirm_external {
-                "当前选择 0.0.0.0，会监听所有网络接口，且 API 暂无鉴权。按 y 保存，按 n/Esc 返回设置。"
-            } else {
-                match row {
-                    0 => "←→ 切换主题  Enter 保存  Esc 取消",
-                    1 => "←→ 切换 127.0.0.1 / 0.0.0.0  Enter 保存  Esc 取消",
-                    _ => "数字输入  Backspace 删除  Ctrl+U/Delete 清空  Enter 保存  Esc 取消",
-                }
-            };
-            let mut rows = vec![
-                setting_line(
-                    row == 0,
-                    "主题",
-                    match config.theme {
-                        Theme::Light => "亮色",
-                        Theme::Dark => "暗色",
-                    },
-                ),
-                setting_line(row == 1, "监听地址", &host_value),
-                setting_line(row == 2, "端口", &port_value),
-                Line::raw(""),
-            ];
-            if context.host_overridden || context.port_overridden {
-                rows.push(Line::styled(
-                    "CLI 参数优先级高于配置文件；被覆盖的保存值会在下次不带对应参数启动时生效。",
-                    Style::default().fg(Color::Yellow),
-                ));
-            }
-            if let Some(message) = error {
-                rows.push(Line::styled(message, Style::default().fg(Color::Red)));
-            }
-            rows.push(Line::styled(
-                help,
-                Style::default().fg(if confirm_external {
-                    Color::Yellow
-                } else {
-                    Color::Gray
-                }),
-            ));
-            frame.render_widget(
-                Paragraph::new(rows)
-                    .block(Block::default().title(title).borders(Borders::ALL))
-                    .wrap(Wrap { trim: true }),
-                area,
-            );
-        })?;
-
-        let Event::Key(key) = event::read()? else {
-            continue;
-        };
-        if !usable_key(key) {
-            continue;
-        }
-        if confirm_external {
-            match key.code {
-                KeyCode::Char(value) if char_matches(value, 'y') => return Ok(Some(config)),
-                KeyCode::Char(value) if char_matches(value, 'n') => confirm_external = false,
-                KeyCode::Esc => confirm_external = false,
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    return Ok(None);
-                }
-                _ => {}
-            }
-            continue;
-        }
-        match key.code {
-            KeyCode::Esc => return Ok(None),
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(None),
-            KeyCode::Up => {
-                row = row.saturating_sub(1);
-                error = None;
-            }
-            KeyCode::Down => {
-                row = (row + 1).min(2);
-                error = None;
-            }
-            KeyCode::Left | KeyCode::Right if row == 0 => {
-                config.theme = match config.theme {
-                    Theme::Light => Theme::Dark,
-                    Theme::Dark => Theme::Light,
-                };
-                error = None;
-            }
-            KeyCode::Left | KeyCode::Right if row == 1 => {
-                config.host = if config.host == "127.0.0.1" {
-                    "0.0.0.0".to_owned()
-                } else {
-                    "127.0.0.1".to_owned()
-                };
-                error = None;
-            }
-            KeyCode::Backspace if row == 2 => {
-                port.pop();
-                error = None;
-            }
-            KeyCode::Delete if row == 2 => {
-                port.clear();
-                error = None;
-            }
-            KeyCode::Char('u') if row == 2 && key.modifiers.contains(KeyModifiers::CONTROL) => {
-                port.clear();
-                error = None;
-            }
-            KeyCode::Char(value) if row == 2 && value.is_ascii_digit() => {
-                push_port_digit(&mut port, value);
-                error = None;
-            }
-            KeyCode::Enter => {
-                let parsed = match validate_port_input(&port) {
-                    Ok(parsed) => parsed,
-                    Err(message) => {
-                        row = 2;
-                        error = Some(message);
-                        continue;
-                    }
-                };
-                config.port = parsed;
-                error = None;
-                if config.host == "0.0.0.0" {
-                    confirm_external = true;
-                } else {
-                    return Ok(Some(config));
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 pub fn run_dashboard(
     url: &str,
     backend_logs: &Receiver<String>,
     vite_logs: Option<&Receiver<String>>,
 ) -> io::Result<DashboardAction> {
-    let _guard = TerminalGuard::enter()?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+    let mut session = TuiSession::enter()?;
+    session.run_dashboard(url, backend_logs, vite_logs)
+}
+
+fn run_dashboard_with_terminal(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    url: &str,
+    backend_logs: &Receiver<String>,
+    vite_logs: Option<&Receiver<String>>,
+) -> io::Result<DashboardAction> {
     let mut backend_lines = Vec::new();
     let mut vite_lines = Vec::new();
 
@@ -362,11 +263,18 @@ pub fn edit_models(
     models: &[PiModel],
     initial: ModelSettings,
 ) -> io::Result<Option<ModelSettings>> {
+    let mut session = TuiSession::enter()?;
+    session.edit_models(models, initial)
+}
+
+fn edit_models_with_terminal(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    models: &[PiModel],
+    initial: ModelSettings,
+) -> io::Result<Option<ModelSettings>> {
     if models.is_empty() {
         return Ok(None);
     }
-    let _guard = TerminalGuard::enter()?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let mut settings = initial;
     let mut row = 0_usize;
 
@@ -443,26 +351,6 @@ fn usable_key(key: KeyEvent) -> bool {
 
 fn char_matches(value: char, expected: char) -> bool {
     value.eq_ignore_ascii_case(&expected)
-}
-
-fn validate_port_input(input: &str) -> Result<u16, &'static str> {
-    if input.is_empty() {
-        return Err("端口不能为空");
-    }
-    let parsed = input.parse::<u32>().map_err(|_| "端口必须是 1-65535")?;
-    if parsed == 0 {
-        Err("端口必须大于 0")
-    } else if parsed <= u16::MAX as u32 {
-        Ok(parsed as u16)
-    } else {
-        Err("端口必须是 1-65535")
-    }
-}
-
-fn push_port_digit(port: &mut String, value: char) {
-    if value.is_ascii_digit() && port.len() < 5 {
-        port.push(value);
-    }
 }
 
 fn tier_mut(settings: &mut ModelSettings, row: usize) -> &mut ModelTierSetting {
@@ -545,24 +433,5 @@ mod tests {
         assert!(usable_key(press));
         assert!(usable_key(repeat));
         assert!(!usable_key(release));
-    }
-
-    #[test]
-    fn validates_port_input_boundaries() {
-        assert_eq!(validate_port_input(""), Err("端口不能为空"));
-        assert_eq!(validate_port_input("0"), Err("端口必须大于 0"));
-        assert_eq!(validate_port_input("3001"), Ok(3001));
-        assert_eq!(validate_port_input("65535"), Ok(65535));
-        assert_eq!(validate_port_input("65536"), Err("端口必须是 1-65535"));
-        assert_eq!(validate_port_input("abc"), Err("端口必须是 1-65535"));
-    }
-
-    #[test]
-    fn push_port_digit_keeps_five_digit_limit() {
-        let mut port = "6553".to_owned();
-        push_port_digit(&mut port, '5');
-        push_port_digit(&mut port, '6');
-        push_port_digit(&mut port, 'x');
-        assert_eq!(port, "65535");
     }
 }

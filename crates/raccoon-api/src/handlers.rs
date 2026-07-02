@@ -19,7 +19,6 @@ use tokio::task::JoinSet;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 
 use crate::AppState;
-use raccoon_core::error::AppError;
 use raccoon_core::file_refs::{
     content_type_value, list_repo_files, read_attachment, save_attachment,
 };
@@ -34,6 +33,7 @@ use raccoon_core::models::{
     TerminalClientMessage, TerminalCommandProfile, TerminalCommandProfilesUpdate,
     TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
 };
+use raccoon_core::{config::CommitMode, error::AppError};
 use raccoon_store::{ProjectScheduleAction, TaskExecutionDisposition};
 
 static ACTIVE_EXECUTIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -78,7 +78,7 @@ pub async fn get_current_project(
     Ok(Json(CurrentProjectResponse {
         project,
         theme: state.config.read().await.theme.as_str().to_owned(),
-        publication_readiness: state.publication_readiness.clone(),
+        publication_readiness: state.publication_readiness.read().await.clone(),
     }))
 }
 
@@ -91,6 +91,7 @@ pub async fn get_basic_settings(
         host: config.host.clone(),
         port: config.port,
         port_overridden: state.port_overridden,
+        commit_mode: config.commit_mode,
     }))
 }
 
@@ -98,27 +99,61 @@ pub async fn put_basic_settings(
     State(state): State<AppState>,
     Json(payload): Json<BasicSettingsUpdate>,
 ) -> Result<Json<BasicSettings>, AppError> {
-    if !(1..=u16::MAX as u32).contains(&payload.port) {
+    if payload
+        .port
+        .is_some_and(|port| !(1..=u16::MAX as u32).contains(&port))
+    {
         return Err(AppError::bad_request("端口必须在 1 到 65535 之间"));
     }
 
-    let mut config = state.config.write().await;
-    let updated = raccoon_core::config::AppConfig {
-        theme: payload.theme,
-        host: config.host.clone(),
-        port: payload.port as u16,
+    let readiness = loop {
+        let current = state.config.read().await.clone();
+        let updated = raccoon_core::config::AppConfig {
+            theme: payload.theme.unwrap_or(current.theme),
+            host: current.host.clone(),
+            port: payload.port.map(|port| port as u16).unwrap_or(current.port),
+            commit_mode: payload.commit_mode.unwrap_or(current.commit_mode),
+        };
+        let checked_mode = updated.commit_mode;
+        let readiness = crate::publication::check(
+            &state.project_root,
+            &raccoon_core::utils::git_remote_origin(&state.project_root),
+            checked_mode,
+        )
+        .await;
+        if checked_mode == CommitMode::PullRequest && !readiness.ready {
+            return Err(AppError::conflict(format!(
+                "当前不满足 PR 合并条件：{}",
+                readiness.issues.join("；")
+            )));
+        }
+        updated
+            .validate()
+            .map_err(|error| AppError::bad_request(error.to_string()))?;
+        let mut config = state.config.write().await;
+        let updated = raccoon_core::config::AppConfig {
+            theme: payload.theme.unwrap_or(config.theme),
+            host: config.host.clone(),
+            port: payload.port.map(|port| port as u16).unwrap_or(config.port),
+            commit_mode: payload.commit_mode.unwrap_or(config.commit_mode),
+        };
+        if updated.commit_mode != checked_mode {
+            continue;
+        }
+        updated.save(&state.config_path)?;
+        *config = updated;
+        break readiness;
     };
-    updated
-        .validate()
-        .map_err(|error| AppError::bad_request(error.to_string()))?;
-    updated.save(&state.config_path)?;
-    *config = updated;
+    *state.publication_readiness.write().await = readiness;
+    spawn_startup_requirement_scheduler(state.clone());
+    let config = state.config.read().await;
 
     Ok(Json(BasicSettings {
         theme: config.theme,
         host: config.host.clone(),
         port: config.port,
         port_overridden: state.port_overridden,
+        commit_mode: config.commit_mode,
     }))
 }
 
@@ -608,7 +643,10 @@ pub async fn confirm_requirement(
     AxumPath(requirement_id): AxumPath<String>,
     payload: Option<Json<RequirementConfirmRequest>>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    ensure_publication_ready(&state.publication_readiness)?;
+    {
+        let readiness = state.publication_readiness.read().await;
+        ensure_publication_ready(&readiness)?;
+    }
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
     let project_id = {
         let mut store = state.store.write().await;
@@ -625,7 +663,10 @@ pub async fn plan_requirement_execution(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    ensure_publication_ready(&state.publication_readiness)?;
+    {
+        let readiness = state.publication_readiness.read().await;
+        ensure_publication_ready(&readiness)?;
+    }
     let project_id = {
         let mut store = state.store.write().await;
         store.requeue_failed_planning(&requirement_id).await?
@@ -639,7 +680,10 @@ pub async fn recover_task_group(
     State(state): State<AppState>,
     AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    ensure_publication_ready(&state.publication_readiness)?;
+    {
+        let readiness = state.publication_readiness.read().await;
+        ensure_publication_ready(&readiness)?;
+    }
     let project_id = {
         let mut store = state.store.write().await;
         store.recover_task_group(&requirement_id, &task_id).await?
@@ -948,17 +992,26 @@ fn spawn_project_chat_response(
     });
 }
 
-pub(crate) fn spawn_startup_requirement_scheduler(state: AppState, project_ids: Vec<String>) {
-    if !state.publication_readiness.ready {
-        tracing::warn!(
-            issues = %state.publication_readiness.issues.join("；"),
-            "publication prerequisites failed; startup requirement recovery is blocked"
-        );
-        return;
-    }
-    for project_id in project_ids {
-        spawn_project_scheduler(state.clone(), project_id);
-    }
+pub fn spawn_startup_requirement_scheduler(state: AppState) {
+    tokio::spawn(async move {
+        {
+            let readiness = state.publication_readiness.read().await;
+            if !readiness.ready {
+                tracing::warn!(
+                    issues = %readiness.issues.join("；"),
+                    "publication prerequisites failed; startup requirement recovery is blocked"
+                );
+                return;
+            }
+        }
+        let project_ids = {
+            let mut pending = state.pending_startup_requirement_ids.lock().await;
+            std::mem::take(&mut *pending)
+        };
+        for project_id in project_ids {
+            spawn_project_scheduler(state.clone(), project_id);
+        }
+    });
 }
 
 fn ensure_publication_ready(
@@ -1224,6 +1277,7 @@ mod event_filter_tests {
     fn failed_publication_readiness_blocks_execution() {
         let readiness = raccoon_core::models::PublicationReadiness {
             mode: "pull_request".to_owned(),
+            provider: raccoon_core::models::GitProvider::GitHub,
             ready: false,
             summary: "前置检查未通过".to_owned(),
             issues: vec!["gh 未登录".to_owned()],

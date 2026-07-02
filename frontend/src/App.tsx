@@ -313,7 +313,7 @@ export default function App() {
     project.setSelectedDagRequirementId,
   );
   const projectChat = useProjectChat(selectedProjectId);
-  const models = useModelSettings(current.applyTheme);
+  const models = useModelSettings(current.applyTheme, current.loadCurrent);
   const terminals = useProjectTerminals(
     selectedProjectId,
     models.basicSettings?.host === "0.0.0.0",

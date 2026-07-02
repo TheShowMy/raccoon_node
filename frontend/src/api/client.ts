@@ -12,6 +12,7 @@ import {
   type ImageAttachment,
   type ThemeMode,
   type BasicSettings,
+  type BasicSettingsUpdate,
   type RequirementTaskDetail,
   type RequirementTaskSession,
   type PublicationReadiness,
@@ -515,7 +516,7 @@ export async function getBasicSettings(): Promise<BasicSettings> {
 }
 
 export async function saveBasicSettings(
-  settings: Pick<BasicSettings, "theme" | "port">,
+  settings: BasicSettingsUpdate,
 ): Promise<BasicSettings> {
   const response = await fetch("/api/settings/basic", {
     method: "PUT",

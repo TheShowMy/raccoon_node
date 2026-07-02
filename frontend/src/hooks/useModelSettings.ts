@@ -15,7 +15,10 @@ import {
 } from "../api/client";
 import { readError, DEFAULT_MODEL_SETTINGS } from "../utils/format";
 
-export function useModelSettings(onThemeChange?: (theme: ThemeMode) => void) {
+export function useModelSettings(
+  onThemeChange?: (theme: ThemeMode) => void,
+  onBasicSettingsSaved?: () => Promise<void>,
+) {
   const [settingsView, setSettingsView] = useState<SettingsView>("closed");
   const [basicSettings, setBasicSettings] = useState<BasicSettings | null>(
     null,
@@ -115,16 +118,24 @@ export function useModelSettings(onThemeChange?: (theme: ThemeMode) => void) {
       const saved = await saveBasicSettings({
         theme: basicSettings.theme,
         port: basicSettings.port,
+        commit_mode: basicSettings.commit_mode,
       });
       setBasicSettings(saved);
       onThemeChange?.(saved.theme);
-      setSettingsView("list");
+      try {
+        await onBasicSettingsSaved?.();
+        setSettingsView("list");
+      } catch (reason) {
+        setBasicSettingsError(
+          `设置已保存，但刷新项目状态失败：${readError(reason)}`,
+        );
+      }
     } catch (reason) {
       setBasicSettingsError(readError(reason));
     } finally {
       setSavingBasicSettings(false);
     }
-  }, [basicSettings, onThemeChange]);
+  }, [basicSettings, onBasicSettingsSaved, onThemeChange]);
 
   return {
     settingsView,

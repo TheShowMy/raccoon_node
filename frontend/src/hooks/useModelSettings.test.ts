@@ -18,6 +18,7 @@ it("navigates settings in one mutually exclusive state", async () => {
     host: "127.0.0.1",
     port: 3000,
     port_overridden: false,
+    commit_mode: "local",
   });
   const { result } = renderHook(() => useModelSettings());
 
@@ -41,12 +42,14 @@ it("applies a saved theme immediately and returns to the settings list", async (
     host: "127.0.0.1",
     port: 3000,
     port_overridden: false,
+    commit_mode: "local",
   });
   vi.mocked(saveBasicSettings).mockResolvedValue({
     theme: "light",
     host: "127.0.0.1",
     port: 4321,
     port_overridden: false,
+    commit_mode: "pull_request",
   });
   const onThemeChange = vi.fn();
   const { result } = renderHook(() => useModelSettings(onThemeChange));
@@ -58,6 +61,7 @@ it("applies a saved theme immediately and returns to the settings list", async (
       host: "127.0.0.1",
       port: 4321,
       port_overridden: false,
+      commit_mode: "pull_request",
     }),
   );
   await act(async () => result.current.saveBasicSettings());
@@ -65,6 +69,7 @@ it("applies a saved theme immediately and returns to the settings list", async (
   expect(saveBasicSettings).toHaveBeenCalledWith({
     theme: "light",
     port: 4321,
+    commit_mode: "pull_request",
   });
   expect(onThemeChange).toHaveBeenCalledWith("light");
   expect(result.current.settingsView).toBe("list");
@@ -78,6 +83,7 @@ it("rejects an invalid port before calling the API", async () => {
       host: "127.0.0.1",
       port: 0,
       port_overridden: false,
+      commit_mode: "local",
     }),
   );
 

@@ -105,9 +105,47 @@ pub struct CurrentProjectResponse {
     pub publication_readiness: PublicationReadiness,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GitProvider {
+    GitHub,
+    GitLab,
+    #[default]
+    Local,
+}
+
+impl GitProvider {
+    pub fn from_origin(origin: &str) -> Self {
+        let origin = origin.trim();
+        if origin.is_empty() {
+            return Self::Local;
+        }
+        let host = origin
+            .strip_prefix("git@")
+            .and_then(|rest| rest.split_once(':'))
+            .map(|(host, _)| host)
+            .or_else(|| {
+                origin
+                    .split_once("://")
+                    .map(|(_, rest)| rest)
+                    .and_then(|rest| rest.split('/').next())
+                    .and_then(|authority| authority.rsplit('@').next())
+            })
+            .unwrap_or(origin);
+        if host.eq_ignore_ascii_case("github.com") || host.ends_with(".github.com") {
+            Self::GitHub
+        } else if host.eq_ignore_ascii_case("gitlab.com") || host.contains("gitlab") {
+            Self::GitLab
+        } else {
+            Self::Local
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PublicationReadiness {
     pub mode: String,
+    pub provider: GitProvider,
     pub ready: bool,
     pub summary: String,
     pub issues: Vec<String>,
@@ -118,6 +156,7 @@ impl PublicationReadiness {
     pub fn local() -> Self {
         Self {
             mode: "local".to_owned(),
+            provider: GitProvider::Local,
             ready: true,
             summary: "未配置 origin，将使用本地合并，不创建 PR。".to_owned(),
             issues: Vec::new(),
@@ -132,12 +171,17 @@ pub struct BasicSettings {
     pub host: String,
     pub port: u16,
     pub port_overridden: bool,
+    pub commit_mode: crate::config::CommitMode,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct BasicSettingsUpdate {
-    pub theme: crate::config::Theme,
-    pub port: u32,
+    #[serde(default)]
+    pub theme: Option<crate::config::Theme>,
+    #[serde(default)]
+    pub port: Option<u32>,
+    #[serde(default)]
+    pub commit_mode: Option<crate::config::CommitMode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

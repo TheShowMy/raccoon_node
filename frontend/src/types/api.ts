@@ -3,11 +3,20 @@
 
 export type ThemeMode = "dark" | "light";
 
+export type CommitMode = "local" | "pull_request";
+
 export type BasicSettings = {
   theme: ThemeMode;
   host: string;
   port: number;
   port_overridden: boolean;
+  commit_mode: CommitMode;
+};
+
+export type BasicSettingsUpdate = {
+  theme?: ThemeMode;
+  port?: number;
+  commit_mode?: CommitMode;
 };
 
 export type SettingsView = "closed" | "list" | "basic" | "models";

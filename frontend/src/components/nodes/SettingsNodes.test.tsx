@@ -36,6 +36,7 @@ it("validates the native port input before saving", () => {
       host: "127.0.0.1",
       port: 3000,
       port_overridden: false,
+      commit_mode: "local" as const,
     },
     error: null,
     saving: false,

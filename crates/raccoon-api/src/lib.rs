@@ -9,7 +9,7 @@ use tower_http::cors::CorsLayer;
 
 mod assets;
 pub mod handlers;
-mod publication;
+pub mod publication;
 pub mod terminal;
 
 async fn api_not_found() -> StatusCode {
@@ -38,10 +38,13 @@ pub struct AppState {
     pub requirement_events: raccoon_core::models::RequirementEventBus,
     pub project_chat_events: raccoon_core::models::ProjectChatEventBus,
     pub terminal_manager: std::sync::Arc<terminal::TerminalManager>,
+    pub project_root: std::path::PathBuf,
     pub config: std::sync::Arc<tokio::sync::RwLock<raccoon_core::config::AppConfig>>,
     pub config_path: std::path::PathBuf,
     pub port_overridden: bool,
-    pub publication_readiness: raccoon_core::models::PublicationReadiness,
+    pub publication_readiness:
+        std::sync::Arc<tokio::sync::RwLock<raccoon_core::models::PublicationReadiness>>,
+    pub pending_startup_requirement_ids: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
     pub project_scheduler_locks: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
     >,
@@ -54,18 +57,11 @@ pub async fn build_app(
     config: Arc<tokio::sync::RwLock<raccoon_core::config::AppConfig>>,
     config_path: PathBuf,
     port_overridden: bool,
+    publication_readiness: raccoon_core::models::PublicationReadiness,
 ) -> (Router, AppState) {
     let mut store = JsonStore::open_project(project_root.clone())
         .await
         .expect("failed to initialize json store");
-    let origin = store
-        .data
-        .projects
-        .iter()
-        .find(|project| project.id == raccoon_store::store::CURRENT_PROJECT_ID)
-        .map(|project| project.git_url.as_str())
-        .unwrap_or_default();
-    let publication_readiness = publication::check(&project_root, origin).await;
     let startup_requirement_ids = store
         .recover_interrupted_requirements()
         .await
@@ -138,16 +134,23 @@ fn build_app_with_startup_requirements(
 ) -> (Router, AppState) {
     let (event_tx, _) = broadcast::channel(256);
     let (project_chat_tx, _) = broadcast::channel(256);
+    let project_root = store
+        .data_root
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| store.data_root.clone());
     let state = AppState {
         store: Arc::new(tokio::sync::RwLock::new(store)),
         model_provider,
         requirement_events: event_tx,
         project_chat_events: project_chat_tx,
         terminal_manager: Arc::new(terminal::TerminalManager::new()),
+        project_root,
         config,
         config_path,
         port_overridden,
-        publication_readiness,
+        publication_readiness: Arc::new(tokio::sync::RwLock::new(publication_readiness)),
+        pending_startup_requirement_ids: Arc::new(tokio::sync::Mutex::new(startup_requirement_ids)),
         project_scheduler_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         pending_requirement_interactions: Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
@@ -256,6 +259,6 @@ fn build_app_with_startup_requirements(
                 .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
                 .allow_headers([header::CONTENT_TYPE]),
         );
-    spawn_startup_requirement_scheduler(state.clone(), startup_requirement_ids);
+    spawn_startup_requirement_scheduler(state.clone());
     (app, state)
 }
