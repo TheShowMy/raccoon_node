@@ -1431,10 +1431,7 @@ name = "raccoon-tui"
 version = "0.2.1"
 dependencies = [
  "crossterm",
- "raccoon-api",
- "raccoon-core",
  "ratatui",
- "tokio",
 ]
 
 [[package]]

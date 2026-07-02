@@ -310,12 +310,19 @@ SSE 不作为状态存储；重连后应重新获取项目画布。
 ```json
 {
   "theme": "dark",
+  "host": "127.0.0.1",
   "port": 3001,
-  "port_overridden": false
+  "host_overridden": false,
+  "port_overridden": false,
+  "effective_host": "127.0.0.1",
+  "effective_port": 3001,
+  "restart_required": false,
+  "commit_mode": "pull_request"
 }
 ```
 
-`port_overridden` 表示本次运行端口由 CLI `--port` 覆盖。
+`host_overridden` / `port_overridden` 表示本次运行值被 CLI 覆盖。此时保存配置不会
+改变实际监听值；`effective_host` / `effective_port` 始终表示当前实际值。
 
 ### 保存设置
 
@@ -324,12 +331,32 @@ SSE 不作为状态存储；重连后应重新获取项目画布。
 ```json
 {
   "theme": "light",
-  "port": 4321
+  "host": "0.0.0.0",
+  "port": 4321,
+  "commit_mode": "local",
+  "confirmed_external": true
 }
 ```
 
-主题保存后立即生效。端口只保存到 `.raccoon-node/config.toml`，下次不带
-`--port` 参数启动时生效。端口范围为 `1..=65535`。
+主题和提交模式保存后立即生效。host 仅支持 `127.0.0.1` / `0.0.0.0`；保存
+`0.0.0.0` 必须传 `confirmed_external: true`，否则返回 `400`。端口范围为
+`1..=65535`。若实际监听值需要变化，响应中的 `restart_required` 为 `true`。
+
+### 重启服务
+
+`POST /api/system/restart`
+
+空闲时返回 `202`：
+
+```json
+{
+  "accepted": true,
+  "next_url": "http://127.0.0.1:4321"
+}
+```
+
+存在运行中的项目问答、需求分析、排队或执行任务时返回 `409`。TUI 与
+`--no-tui` 模式均会响应此生命周期命令。
 
 ## 模型设置
 
@@ -366,7 +393,19 @@ SSE 不作为状态存储；重连后应重新获取项目画布。
 ```
 
 模型列表和设置校验均通过持久 Pi Agent RPC 完成，不读取 Pi Agent 的 auth 或
-settings 文件。
+settings 文件，也不读写 `models.json`。
+
+### 重载 Pi 模型
+
+`POST /api/settings/models/reload`
+
+空闲时关闭并重建全局及项目 Pi RPC 客户端，成功后返回与
+`GET /api/settings/models` 相同的响应。存在运行任务时返回 `409`，RPC
+重建失败时返回经过清理的错误。
+
+登录由前端通过现有终端 API 启动
+`pi --no-session --no-extensions --no-context-files`，用户必须手动输入
+`/login`；服务端不代填命令、不管理凭据。
 
 ## 持久化与路径边界
 

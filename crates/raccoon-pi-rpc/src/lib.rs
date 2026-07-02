@@ -147,6 +147,9 @@ impl PiRpcModelProvider {
                 if shutdown.load(Ordering::Relaxed) {
                     break;
                 }
+                if status_flag.load(Ordering::Relaxed) == RPC_STATUS_RECONNECTING {
+                    continue;
+                }
 
                 let is_healthy = {
                     let guard = global_client_lock.read().await;
@@ -216,6 +219,41 @@ impl PiRpcModelProvider {
             .collect::<Vec<_>>();
         for client in clients {
             client.shutdown().await;
+        }
+    }
+
+    async fn reload_clients(&self) -> Result<(), AppError> {
+        self.rpc_status
+            .store(RPC_STATUS_RECONNECTING, Ordering::Relaxed);
+        if let Some(client) = self.global_client.write().await.take() {
+            client.shutdown().await;
+        }
+        let clients = self
+            .project_clients
+            .lock()
+            .await
+            .drain()
+            .map(|(_, (client, _))| client)
+            .collect::<Vec<_>>();
+        for client in clients {
+            client.shutdown().await;
+        }
+
+        let project_root = self
+            .data_root
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.data_root.clone());
+        match PiRpcClient::start(&self.session_dir, &project_root).await {
+            Ok(client) => {
+                *self.global_client.write().await = Some(Arc::new(client));
+                self.rpc_status.store(RPC_STATUS_READY, Ordering::Relaxed);
+                Ok(())
+            }
+            Err(error) => {
+                self.rpc_status.store(RPC_STATUS_ERROR, Ordering::Relaxed);
+                Err(error)
+            }
         }
     }
 
@@ -438,6 +476,10 @@ impl ModelProvider for PiRpcModelProvider {
                 .send_extension_ui_response(&request_id, response)
                 .await
         })
+    }
+
+    fn reload(&self) -> ModelProviderActionFuture<'_> {
+        Box::pin(async move { self.reload_clients().await })
     }
 
     fn shutdown(&self) -> ModelProviderActionFuture<'_> {

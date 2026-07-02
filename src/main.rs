@@ -1,7 +1,6 @@
 use std::{
-    io::{self, IsTerminal, Write},
+    io::{self, IsTerminal},
     net::{IpAddr, SocketAddr},
-    sync::mpsc,
 };
 
 use clap::Parser;
@@ -12,36 +11,9 @@ mod logging;
 pub mod setup;
 
 use crate::cli::Cli;
-use raccoon_api::AppState;
-use raccoon_core::config::{AppConfig, CommitMode};
+use raccoon_api::{LifecycleCommand, RuntimeOptions};
+use raccoon_core::config::AppConfig;
 use raccoon_tui::DashboardAction;
-
-#[derive(Clone)]
-struct LogWriter(mpsc::Sender<String>);
-
-struct LogLineWriter(mpsc::Sender<String>);
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogWriter {
-    type Writer = LogLineWriter;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        LogLineWriter(self.0.clone())
-    }
-}
-
-impl Write for LogLineWriter {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let line = String::from_utf8_lossy(bytes).trim_end().to_owned();
-        if !line.is_empty() {
-            let _ = self.0.send(line);
-        }
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -100,15 +72,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup::ensure_gitignore(&project_root)?;
     let shared_config = std::sync::Arc::new(RwLock::new(saved_config));
 
-    let (log_tx, log_rx) = mpsc::channel();
     // guard 必须存活到进程退出，确保后台日志线程完成刷盘。
-    let _log_guard =
-        logging::init(&data_root, use_tui.then(|| log_tx.clone())).map_err(|error| {
-            io::Error::other(format!(
-                "无法初始化日志目录 {}：{error}",
-                data_root.join("logs").display()
-            ))
-        })?;
+    let (_log_guard, log_receiver) = logging::init(&data_root, use_tui).map_err(|error| {
+        io::Error::other(format!(
+            "无法初始化日志目录 {}：{error}",
+            data_root.join("logs").display()
+        ))
+    })?;
 
     let mut opened = false;
     loop {
@@ -122,11 +92,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let publication_readiness =
             raccoon_api::publication::check(&project_root, &current_origin, effective.commit_mode)
                 .await;
+        let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::unbounded_channel();
         let (app, state) = raccoon_api::build_app(
             project_root.clone(),
             shared_config.clone(),
             config_path.clone(),
-            cli.port.is_some(),
+            RuntimeOptions {
+                host_override: cli.host.clone(),
+                port_override: cli.port,
+                effective_host: Some(effective.host.clone()),
+                effective_port: Some(effective.port),
+                dev_frontend_url: cli.dev_frontend.clone(),
+                lifecycle_tx: Some(lifecycle_tx),
+            },
             publication_readiness,
         )
         .await;
@@ -158,7 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         );
         if cli.dev_managed_vite {
-            tracing::info!("Vite dev server 由后端管理，日志显示在 TUI 的 Vite 面板");
+            tracing::info!("Vite dev server 由后端管理");
         }
         if use_tui && !cli.no_open && !opened {
             if let Err(error) = webbrowser::open(browser_url) {
@@ -168,31 +146,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if !use_tui {
+            let mut restart = false;
             tokio::select! {
-                result = &mut server => result??,
+                result = &mut server => {
+                    result??;
+                    if let Some(vite) = managed_vite {
+                        vite.shutdown().await;
+                    }
+                    state.model_provider.shutdown().await?;
+                    return Ok(());
+                }
                 _ = tokio::signal::ctrl_c() => {}
+                command = lifecycle_rx.recv() => {
+                    restart = matches!(command, Some(LifecycleCommand::Restart));
+                }
             }
             if let Some(vite) = managed_vite {
                 vite.shutdown().await;
             }
+            let _ = shutdown_tx.send(());
+            match tokio::time::timeout(std::time::Duration::from_secs(3), &mut server).await {
+                Ok(result) => result??,
+                Err(_) => {
+                    server.abort();
+                    let _ = server.await;
+                }
+            }
             state.model_provider.shutdown().await?;
+            if restart {
+                continue;
+            }
             return Ok(());
         }
 
         let mut restart = false;
         let mut tui = raccoon_tui::TuiSession::enter()?;
+        let log_receiver = log_receiver
+            .as_ref()
+            .ok_or_else(|| io::Error::other("TUI 模式需要日志 receiver"))?;
         loop {
-            match tui.run_dashboard(
+            match tui.run_launcher(
                 browser_url,
-                &log_rx,
+                log_receiver,
                 managed_vite.as_ref().map(|vite| vite.logs()),
+                || matches!(lifecycle_rx.try_recv(), Ok(LifecycleCommand::Restart)),
             )? {
                 DashboardAction::Quit => break,
                 DashboardAction::Restart => {
-                    if runtime_busy(&state).await {
-                        tracing::warn!("存在运行中的 Agent 任务，完成或取消后才能重启");
-                        continue;
-                    }
                     restart = true;
                     break;
                 }
@@ -200,78 +200,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Err(error) = webbrowser::open(browser_url) {
                         tracing::warn!("无法打开浏览器：{error}");
                     }
-                }
-                DashboardAction::Settings => {
-                    if runtime_busy(&state).await {
-                        tracing::warn!("存在运行中的 Agent 任务，完成或取消后才能修改运行设置");
-                        continue;
-                    }
-                    let current_config = shared_config.read().await.clone();
-                    let (readiness_tx, readiness_rx) = mpsc::channel();
-                    let readiness_project_root = project_root.clone();
-                    std::thread::spawn(move || {
-                        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                        else {
-                            return;
-                        };
-                        let settings_origin =
-                            raccoon_core::utils::git_remote_origin(&readiness_project_root);
-                        let readiness = runtime.block_on(raccoon_api::publication::check(
-                            &readiness_project_root,
-                            &settings_origin,
-                            CommitMode::PullRequest,
-                        ));
-                        let _ = readiness_tx.send(readiness);
-                    });
-                    let Some(updated) = tui.edit_config(
-                        current_config.clone(),
-                        "运行设置",
-                        raccoon_tui::ConfigEditContext {
-                            host_overridden: cli.host.is_some(),
-                            port_overridden: cli.port.is_some(),
-                            commit_mode_overridden: false,
-                        },
-                        raccoon_tui::ConfigEditOptions::loading(readiness_rx),
-                    )?
-                    else {
-                        continue;
-                    };
-                    let updated_readiness = loop {
-                        let latest = shared_config.read().await.clone();
-                        let candidate = merge_config_edit(&current_config, &updated, &latest);
-                        let checked_mode = candidate.commit_mode;
-                        let latest_origin = raccoon_core::utils::git_remote_origin(&project_root);
-                        let readiness = raccoon_api::publication::check(
-                            &project_root,
-                            &latest_origin,
-                            checked_mode,
-                        )
-                        .await;
-                        if checked_mode == CommitMode::PullRequest && !readiness.ready {
-                            tracing::warn!(
-                                "当前不满足 PR 合并条件：{}",
-                                readiness.issues.join("；")
-                            );
-                            break None;
-                        }
-                        let mut config = shared_config.write().await;
-                        let candidate = merge_config_edit(&current_config, &updated, &config);
-                        if candidate.commit_mode != checked_mode {
-                            continue;
-                        }
-                        candidate.save(&config_path)?;
-                        *config = candidate;
-                        break Some(readiness);
-                    };
-                    let Some(updated_readiness) = updated_readiness else {
-                        continue;
-                    };
-                    *state.publication_readiness.write().await = updated_readiness;
-                    raccoon_api::handlers::spawn_startup_requirement_scheduler(state.clone());
-                    restart = true;
-                    break;
                 }
             }
         }
@@ -295,31 +223,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn merge_config_edit(original: &AppConfig, edited: &AppConfig, latest: &AppConfig) -> AppConfig {
-    AppConfig {
-        theme: if edited.theme != original.theme {
-            edited.theme
-        } else {
-            latest.theme
-        },
-        host: if edited.host != original.host {
-            edited.host.clone()
-        } else {
-            latest.host.clone()
-        },
-        port: if edited.port != original.port {
-            edited.port
-        } else {
-            latest.port
-        },
-        commit_mode: if edited.commit_mode != original.commit_mode {
-            edited.commit_mode
-        } else {
-            latest.commit_mode
-        },
-    }
-}
-
 fn effective_config(saved: &AppConfig, cli: &Cli) -> AppConfig {
     let mut effective = saved.clone();
     if let Some(host) = &cli.host {
@@ -329,22 +232,6 @@ fn effective_config(saved: &AppConfig, cli: &Cli) -> AppConfig {
         effective.port = port;
     }
     effective
-}
-
-async fn runtime_busy(state: &AppState) -> bool {
-    use raccoon_core::models::RequirementStatus;
-
-    let store = state.store.read().await;
-    store.data.project_chats.iter().any(|chat| chat.running)
-        || store.data.requirements.iter().any(|requirement| {
-            matches!(
-                requirement.status,
-                RequirementStatus::Analyzing
-                    | RequirementStatus::Planning
-                    | RequirementStatus::Queued
-                    | RequirementStatus::Running
-            )
-        })
 }
 
 #[cfg(test)]
@@ -363,20 +250,23 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::{AppConfig, Cli, effective_config};
-    use raccoon_api::{build_app_with_model_provider, build_app_with_model_provider_and_config};
+    use raccoon_api::{
+        LifecycleCommand, RuntimeOptions, build_app_with_model_provider,
+        build_app_with_model_provider_and_config, build_app_with_model_provider_and_runtime,
+    };
     use raccoon_core::error::AppError;
     use raccoon_core::models::{
         ClarificationAnswerRequest, ClarificationOption, ClarificationQuestionType, ModelProvider,
-        ModelProviderFuture, ModelSettings, PiModel, Project, ProjectChatEventEmitter,
-        ProjectChatFuture, ProjectChatInput, ProjectChatOutput, Requirement,
-        RequirementAnalysisFuture, RequirementAnalysisInput, RequirementAnalysisOutput,
-        RequirementClarification, RequirementConversationItem, RequirementConversationPrompt,
-        RequirementDraft, RequirementEventEmitter, RequirementExecutionPlan,
-        RequirementExecutionTask, RequirementMessage, RequirementMessageRole, RequirementModelTier,
-        RequirementPlanFuture, RequirementPlanInput, RequirementRecoveryStage,
-        RequirementReviewStatus, RequirementStatus, RequirementTaskExecutionFuture,
-        RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
-        RequirementTaskStatus, ThinkingLevel,
+        ModelProviderActionFuture, ModelProviderFuture, ModelSettings, PiModel, Project,
+        ProjectChatEventEmitter, ProjectChatFuture, ProjectChatInput, ProjectChatOutput,
+        Requirement, RequirementAnalysisFuture, RequirementAnalysisInput,
+        RequirementAnalysisOutput, RequirementClarification, RequirementConversationItem,
+        RequirementConversationPrompt, RequirementDraft, RequirementEventEmitter,
+        RequirementExecutionPlan, RequirementExecutionTask, RequirementMessage,
+        RequirementMessageRole, RequirementModelTier, RequirementPlanFuture, RequirementPlanInput,
+        RequirementRecoveryStage, RequirementReviewStatus, RequirementStatus,
+        RequirementTaskExecutionFuture, RequirementTaskExecutionInput,
+        RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus, ThinkingLevel,
     };
     use raccoon_requirement::build_requirement_prompt;
     use raccoon_store::JsonStore;
@@ -388,11 +278,16 @@ mod tests {
         plan: Result<RequirementExecutionPlan, String>,
         task: Result<RequirementTaskExecutionOutput, String>,
         project_chat: Result<ProjectChatOutput, String>,
+        reload: Result<(), String>,
     }
 
     impl ModelProvider for FakeModelProvider {
         fn available_models(&self) -> ModelProviderFuture<'_> {
             Box::pin(async move { self.result.clone().map_err(AppError::internal) })
+        }
+
+        fn reload(&self) -> ModelProviderActionFuture<'_> {
+            Box::pin(async move { self.reload.clone().map_err(AppError::internal) })
         }
 
         fn analyze_requirement(
@@ -444,6 +339,7 @@ mod tests {
             plan: Ok(test_execution_plan()),
             task: Ok(test_task_output()),
             project_chat: Ok(test_project_chat_output()),
+            reload: Ok(()),
         })
     }
 
@@ -456,6 +352,7 @@ mod tests {
             plan: Ok(test_execution_plan()),
             task: Ok(test_task_output()),
             project_chat: Ok(test_project_chat_output()),
+            reload: Ok(()),
         })
     }
 
@@ -466,6 +363,7 @@ mod tests {
             plan: Err(message.to_owned()),
             task: Err(message.to_owned()),
             project_chat: Err(message.to_owned()),
+            reload: Err(message.to_owned()),
         })
     }
 
@@ -949,7 +847,17 @@ mod tests {
                 .unwrap();
         assert_eq!(
             body,
-            json!({"theme": "dark", "host": "0.0.0.0", "port": 3001, "port_overridden": true, "commit_mode": "pull_request"})
+            json!({
+                "theme": "dark",
+                "host": "0.0.0.0",
+                "port": 3001,
+                "host_overridden": false,
+                "port_overridden": true,
+                "effective_host": "0.0.0.0",
+                "effective_port": 3001,
+                "restart_required": false,
+                "commit_mode": "pull_request"
+            })
         );
 
         let response = app
@@ -1007,6 +915,182 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
+    }
+
+    #[tokio::test]
+    async fn web_settings_confirm_external_host_and_emit_restart_lifecycle() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+            .await
+            .unwrap();
+        store.data.projects = vec![test_project("current")];
+        let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (app, _) = build_app_with_model_provider_and_runtime(
+            store,
+            fake_provider(vec![test_model("test/model", "Test Model")]),
+            AppConfig {
+                commit_mode: raccoon_core::config::CommitMode::Local,
+                ..AppConfig::default()
+            },
+            RuntimeOptions {
+                host_override: Some("127.0.0.1".to_owned()),
+                effective_host: Some("127.0.0.1".to_owned()),
+                effective_port: Some(3001),
+                lifecycle_tx: Some(lifecycle_tx),
+                ..RuntimeOptions::default()
+            },
+        );
+
+        let invalid_host = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/settings/basic")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"host":"localhost"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid_host.status(), StatusCode::BAD_REQUEST);
+
+        let unconfirmed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/settings/basic")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"host":"0.0.0.0","port":4321}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unconfirmed.status(), StatusCode::BAD_REQUEST);
+
+        let confirmed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/settings/basic")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"host":"0.0.0.0","port":4321,"confirmed_external":true}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(confirmed.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(confirmed.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["host"], "0.0.0.0");
+        assert_eq!(body["host_overridden"], true);
+        assert_eq!(body["effective_host"], "127.0.0.1");
+        assert_eq!(body["effective_port"], 3001);
+        assert_eq!(body["restart_required"], true);
+
+        let still_pending = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/settings/basic")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"host":"0.0.0.0","port":4321,"confirmed_external":true}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(still_pending.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["restart_required"], true);
+
+        let restart = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/system/restart")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(restart.status(), StatusCode::ACCEPTED);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(restart.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["next_url"], "http://127.0.0.1:4321");
+        assert_eq!(lifecycle_rx.recv().await, Some(LifecycleCommand::Restart));
+    }
+
+    #[tokio::test]
+    async fn restart_and_model_reload_are_blocked_or_report_rpc_failure() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut busy_store = JsonStore::open(temp_dir.path().join("busy/.raccoon-node"))
+            .await
+            .unwrap();
+        busy_store.data.projects = vec![test_project("current")];
+        busy_store.data.requirements.push(test_requirement(
+            "queued",
+            "current",
+            RequirementStatus::Queued,
+            Utc::now(),
+        ));
+        let (lifecycle_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (busy_app, _) = build_app_with_model_provider_and_runtime(
+            busy_store,
+            fake_provider(Vec::new()),
+            AppConfig::default(),
+            RuntimeOptions {
+                lifecycle_tx: Some(lifecycle_tx),
+                ..RuntimeOptions::default()
+            },
+        );
+        for path in ["/api/system/restart", "/api/settings/models/reload"] {
+            let response = busy_app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+        }
+
+        let mut idle_store = JsonStore::open(temp_dir.path().join("idle/.raccoon-node"))
+            .await
+            .unwrap();
+        idle_store.data.projects = vec![test_project("current")];
+        let idle_app = build_app_with_model_provider(
+            idle_store,
+            PathBuf::from("frontend/dist"),
+            fake_error_provider("rpc reload failed"),
+        );
+        let response = idle_app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/settings/models/reload")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]

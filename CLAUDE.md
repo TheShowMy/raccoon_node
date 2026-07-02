@@ -6,7 +6,7 @@
 
 raccoon_node：Rust + React Flow 的本地 Git 仓库节点画布。当前运行目录中的 Git
 仓库就是唯一项目，固定项目 ID 为 `current`，不提供项目列表、克隆或删除功能。
-当前功能包括项目问答、需求澄清、FIFO 任务 DAG 执行、失败/重启恢复、三档模型设置和本地 TUI。
+当前功能包括项目问答、需求澄清、FIFO 任务 DAG 执行、失败/重启恢复、Web 三档模型设置和极简网页启动 TUI。
 LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc` 子进程并使用 stdin/stdout JSONL 通信。
 
 ## 必读文档
@@ -19,7 +19,7 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 
 - 新增模块、调整目录或改构建脚本。
 - 引入、移除或升级依赖。
-- 修改 Rust/Axum/Tokio/API、SQLite、旧 `app.json` 迁移或恢复逻辑。
+- 修改 Rust/Axum/Tokio/API、SQLite、`.raccoon-node/` 资源或恢复逻辑。
 - 修改 React/Vite/React Flow/节点 UI。
 - 修改项目问答、需求澄清、FIFO 队列、任务 DAG 或恢复流程。
 - 修改 LLM、模型设置、Pi Agent RPC 或 Agent 能力。

@@ -30,7 +30,7 @@ pub struct Cli {
     #[arg(long)]
     pub dev_frontend: Option<String>,
 
-    /// 开发模式下由后端管理 Vite dev server，并将 Vite 日志显示到 TUI。
+    /// 开发模式下由后端管理 Vite dev server。
     #[arg(long)]
     pub dev_managed_vite: bool,
 

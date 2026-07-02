@@ -5,12 +5,6 @@ import { renderNodeContent } from "../../nodes/renderNodeContent";
 
 function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const clickableAction = data.kind === "summary" ? data.onAction : undefined;
-  const hasSettingsSourceHandle =
-    data.kind === "summary" && data.icon === "model";
-  const hasSettingsListTargetHandle = data.kind === "settings-list";
-  const hasSettingsListSourceHandle = data.kind === "settings-list";
-  const hasSettingsDetailTargetHandle =
-    data.kind === "model-config" || data.kind === "basic-settings";
   const hasRequirementChatLeftHandle = data.kind === "requirement-chat";
   const hasRequirementChatRightHandle = data.kind === "requirement-chat";
   const hasRequirementListLeftHandle =
@@ -37,22 +31,6 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
         }
       }}
     >
-      {hasSettingsListTargetHandle ? (
-        <Handle
-          id="settings-list-right"
-          type="target"
-          position={Position.Right}
-          className="node-link-handle node-link-handle--model"
-        />
-      ) : null}
-      {hasSettingsDetailTargetHandle ? (
-        <Handle
-          id="settings-detail-right"
-          type="target"
-          position={Position.Right}
-          className="node-link-handle node-link-handle--model"
-        />
-      ) : null}
       {hasRequirementChatLeftHandle ? (
         <Handle
           id="requirement-chat-left"
@@ -116,22 +94,6 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
           type="source"
           position={Position.Right}
           className="node-link-handle node-link-handle--requirement"
-        />
-      ) : null}
-      {hasSettingsListSourceHandle ? (
-        <Handle
-          id="settings-list-left-source"
-          type="source"
-          position={Position.Left}
-          className="node-link-handle node-link-handle--model"
-        />
-      ) : null}
-      {hasSettingsSourceHandle ? (
-        <Handle
-          id="settings-left-source"
-          type="source"
-          position={Position.Left}
-          className="node-link-handle node-link-handle--model"
         />
       ) : null}
     </div>

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   BasicSettings,
   ModelSettings,
@@ -10,6 +10,7 @@ import type {
 import {
   getBasicSettings,
   getModelSettings,
+  reloadModelSettings,
   saveBasicSettings,
   saveModelSettings,
 } from "../api/client";
@@ -56,23 +57,35 @@ export function useModelSettings(
     }
   }, []);
 
-  const openSettings = useCallback(() => setSettingsView("list"), []);
+  const loadBasicSettings = useCallback(async () => {
+    setBasicSettingsError(null);
+    try {
+      setBasicSettings(await getBasicSettings());
+    } catch (reason) {
+      setBasicSettingsError(readError(reason));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadBasicSettings();
+  }, [loadBasicSettings]);
+
+  const openSettings = useCallback(() => {
+    setSettingsView("basic");
+    void loadBasicSettings();
+  }, [loadBasicSettings]);
 
   const openBasicSettings = useCallback(() => {
     setSettingsView("basic");
-    setBasicSettingsError(null);
-    void getBasicSettings()
-      .then(setBasicSettings)
-      .catch((reason) => setBasicSettingsError(readError(reason)));
-  }, []);
+    void loadBasicSettings();
+  }, [loadBasicSettings]);
 
   const openModelSettings = useCallback(() => {
     setSettingsView("models");
     void loadModelSettings();
   }, [loadModelSettings]);
 
-  const closeSettingsDetail = useCallback(() => setSettingsView("list"), []);
-  const closeSettingsList = useCallback(() => setSettingsView("closed"), []);
+  const closeSettings = useCallback(() => setSettingsView("closed"), []);
 
   const updateModelTier = useCallback(
     (tier: ModelTierKey, setting: ModelTierSetting) => {
@@ -94,7 +107,6 @@ export function useModelSettings(
       setDraftModelSettings(data.settings);
       setModelRpcStatus(data.rpc_status);
       setModelError(data.rpc_error);
-      setSettingsView("list");
     } catch (reason) {
       setModelError(readError(reason));
     } finally {
@@ -102,48 +114,69 @@ export function useModelSettings(
     }
   }, [draftModelSettings]);
 
-  const saveBasicSettingsCallback = useCallback(async () => {
-    if (
-      !basicSettings ||
-      !Number.isInteger(basicSettings.port) ||
-      basicSettings.port < 1 ||
-      basicSettings.port > 65535
-    ) {
-      setBasicSettingsError("端口必须是 1 到 65535 之间的整数");
-      return;
-    }
-    setSavingBasicSettings(true);
-    setBasicSettingsError(null);
+  const reloadModelSettingsCallback = useCallback(async () => {
+    setModelRpcStatus("reconnecting");
+    setModelError(null);
     try {
-      const saved = await saveBasicSettings({
-        theme: basicSettings.theme,
-        port: basicSettings.port,
-        commit_mode: basicSettings.commit_mode,
-      });
-      setBasicSettings(saved);
-      onThemeChange?.(saved.theme);
-      try {
-        await onBasicSettingsSaved?.();
-        setSettingsView("list");
-      } catch (reason) {
-        setBasicSettingsError(
-          `设置已保存，但刷新项目状态失败：${readError(reason)}`,
-        );
-      }
+      const data = await reloadModelSettings();
+      setModels(data.models);
+      setDraftModelSettings(data.settings);
+      setModelRpcStatus(data.rpc_status);
+      setModelError(data.rpc_error);
     } catch (reason) {
-      setBasicSettingsError(readError(reason));
-    } finally {
-      setSavingBasicSettings(false);
+      setModelRpcStatus("error");
+      setModelError(readError(reason));
     }
-  }, [basicSettings, onBasicSettingsSaved, onThemeChange]);
+  }, []);
+
+  const saveBasicSettingsCallback = useCallback(
+    async (confirmedExternal = false): Promise<BasicSettings | null> => {
+      if (
+        !basicSettings ||
+        !Number.isInteger(basicSettings.port) ||
+        basicSettings.port < 1 ||
+        basicSettings.port > 65535
+      ) {
+        setBasicSettingsError("端口必须是 1 到 65535 之间的整数");
+        return null;
+      }
+      setSavingBasicSettings(true);
+      setBasicSettingsError(null);
+      try {
+        const saved = await saveBasicSettings({
+          theme: basicSettings.theme,
+          host: basicSettings.host,
+          port: basicSettings.port,
+          commit_mode: basicSettings.commit_mode,
+          confirmed_external: confirmedExternal,
+        });
+        setBasicSettings(saved);
+        onThemeChange?.(saved.theme);
+        try {
+          await onBasicSettingsSaved?.();
+          return saved;
+        } catch (reason) {
+          setBasicSettingsError(
+            `设置已保存，但刷新项目状态失败：${readError(reason)}`,
+          );
+          return saved;
+        }
+      } catch (reason) {
+        setBasicSettingsError(readError(reason));
+        return null;
+      } finally {
+        setSavingBasicSettings(false);
+      }
+    },
+    [basicSettings, onBasicSettingsSaved, onThemeChange],
+  );
 
   return {
     settingsView,
     openSettings,
     openBasicSettings,
     openModelSettings,
-    closeSettingsDetail,
-    closeSettingsList,
+    closeSettings,
     basicSettings,
     basicSettingsError,
     savingBasicSettings,
@@ -156,5 +189,6 @@ export function useModelSettings(
     savingModels,
     updateModelTier,
     saveModelSettings: saveModelSettingsCallback,
+    reloadModelSettings: reloadModelSettingsCallback,
   };
 }

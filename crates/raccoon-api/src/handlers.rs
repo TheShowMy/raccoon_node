@@ -14,7 +14,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
     },
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 
@@ -86,13 +86,7 @@ pub async fn get_basic_settings(
     State(state): State<AppState>,
 ) -> Result<Json<BasicSettings>, AppError> {
     let config = state.config.read().await;
-    Ok(Json(BasicSettings {
-        theme: config.theme,
-        host: config.host.clone(),
-        port: config.port,
-        port_overridden: state.port_overridden,
-        commit_mode: config.commit_mode,
-    }))
+    Ok(Json(basic_settings_response(&state, &config)))
 }
 
 pub async fn put_basic_settings(
@@ -105,12 +99,17 @@ pub async fn put_basic_settings(
     {
         return Err(AppError::bad_request("端口必须在 1 到 65535 之间"));
     }
+    if payload.host.as_deref() == Some("0.0.0.0") && !payload.confirmed_external {
+        return Err(AppError::bad_request(
+            "监听 0.0.0.0 会将无鉴权 API 暴露到所有网络接口，请先确认风险",
+        ));
+    }
 
     let readiness = loop {
         let current = state.config.read().await.clone();
         let updated = raccoon_core::config::AppConfig {
             theme: payload.theme.unwrap_or(current.theme),
-            host: current.host.clone(),
+            host: payload.host.clone().unwrap_or_else(|| current.host.clone()),
             port: payload.port.map(|port| port as u16).unwrap_or(current.port),
             commit_mode: payload.commit_mode.unwrap_or(current.commit_mode),
         };
@@ -133,7 +132,7 @@ pub async fn put_basic_settings(
         let mut config = state.config.write().await;
         let updated = raccoon_core::config::AppConfig {
             theme: payload.theme.unwrap_or(config.theme),
-            host: config.host.clone(),
+            host: payload.host.clone().unwrap_or_else(|| config.host.clone()),
             port: payload.port.map(|port| port as u16).unwrap_or(config.port),
             commit_mode: payload.commit_mode.unwrap_or(config.commit_mode),
         };
@@ -148,13 +147,43 @@ pub async fn put_basic_settings(
     spawn_startup_requirement_scheduler(state.clone());
     let config = state.config.read().await;
 
-    Ok(Json(BasicSettings {
+    Ok(Json(basic_settings_response(&state, &config)))
+}
+
+fn basic_settings_response(
+    state: &AppState,
+    config: &raccoon_core::config::AppConfig,
+) -> BasicSettings {
+    let desired_host = state
+        .runtime
+        .host_override
+        .clone()
+        .unwrap_or_else(|| config.host.clone());
+    let desired_port = state.runtime.port_override.unwrap_or(config.port);
+    let restart_required = state
+        .runtime
+        .effective_host
+        .as_ref()
+        .is_some_and(|effective| effective != &desired_host)
+        || state
+            .runtime
+            .effective_port
+            .is_some_and(|effective| effective != desired_port);
+    BasicSettings {
         theme: config.theme,
         host: config.host.clone(),
         port: config.port,
-        port_overridden: state.port_overridden,
+        host_overridden: state.runtime.host_override.is_some(),
+        port_overridden: state.runtime.port_override.is_some(),
+        effective_host: state
+            .runtime
+            .effective_host
+            .clone()
+            .unwrap_or_else(|| desired_host.clone()),
+        effective_port: state.runtime.effective_port.unwrap_or(desired_port),
+        restart_required,
         commit_mode: config.commit_mode,
-    }))
+    }
 }
 
 pub async fn get_project_canvas(
@@ -736,6 +765,69 @@ pub async fn put_model_settings(
         rpc_status: RpcStatus::Ready,
         rpc_error: None,
     }))
+}
+
+pub async fn reload_model_settings(
+    State(state): State<AppState>,
+) -> Result<Json<ModelSettingsResponse>, AppError> {
+    ensure_runtime_idle(&state).await?;
+    state.model_provider.reload().await?;
+    get_model_settings(State(state)).await
+}
+
+#[derive(Debug, Serialize)]
+pub struct RestartResponse {
+    accepted: bool,
+    next_url: String,
+}
+
+pub async fn restart_system(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
+    ensure_runtime_idle(&state).await?;
+    let lifecycle_tx = state
+        .runtime
+        .lifecycle_tx
+        .as_ref()
+        .ok_or_else(|| AppError::conflict("当前启动模式不支持 Web 重启"))?;
+    let effective_port = state
+        .runtime
+        .port_override
+        .unwrap_or(state.config.read().await.port);
+    let next_url = state
+        .runtime
+        .dev_frontend_url
+        .clone()
+        .unwrap_or_else(|| format!("http://127.0.0.1:{effective_port}"));
+    lifecycle_tx
+        .send(crate::LifecycleCommand::Restart)
+        .map_err(|_| AppError::conflict("应用生命周期通道已关闭"))?;
+    Ok((
+        axum::http::StatusCode::ACCEPTED,
+        Json(RestartResponse {
+            accepted: true,
+            next_url,
+        }),
+    ))
+}
+
+pub async fn ensure_runtime_idle(state: &AppState) -> Result<(), AppError> {
+    let store = state.store.read().await;
+    let busy = store.data.project_chats.iter().any(|chat| chat.running)
+        || store.data.requirements.iter().any(|requirement| {
+            matches!(
+                requirement.status,
+                RequirementStatus::Analyzing
+                    | RequirementStatus::Planning
+                    | RequirementStatus::Queued
+                    | RequirementStatus::Running
+            )
+        });
+    if busy {
+        Err(AppError::conflict(
+            "存在运行中的问答、需求分析或执行任务，当前操作已阻止",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 pub async fn cancel_requirement_analysis(

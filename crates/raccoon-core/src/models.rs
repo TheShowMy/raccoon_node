@@ -170,7 +170,11 @@ pub struct BasicSettings {
     pub theme: crate::config::Theme,
     pub host: String,
     pub port: u16,
+    pub host_overridden: bool,
     pub port_overridden: bool,
+    pub effective_host: String,
+    pub effective_port: u16,
+    pub restart_required: bool,
     pub commit_mode: crate::config::CommitMode,
 }
 
@@ -179,9 +183,13 @@ pub struct BasicSettingsUpdate {
     #[serde(default)]
     pub theme: Option<crate::config::Theme>,
     #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
     pub port: Option<u32>,
     #[serde(default)]
     pub commit_mode: Option<crate::config::CommitMode>,
+    #[serde(default)]
+    pub confirmed_external: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -841,6 +849,9 @@ pub trait ModelProvider: Send + Sync {
         _response: Value,
     ) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Err(AppError::conflict("当前没有等待回答的澄清请求")) })
+    }
+    fn reload(&self) -> ModelProviderActionFuture<'_> {
+        Box::pin(async { Ok(()) })
     }
     fn shutdown(&self) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })

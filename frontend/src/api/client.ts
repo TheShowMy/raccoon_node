@@ -13,6 +13,7 @@ import {
   type ThemeMode,
   type BasicSettings,
   type BasicSettingsUpdate,
+  type RestartResponse,
   type RequirementTaskDetail,
   type RequirementTaskSession,
   type PublicationReadiness,
@@ -599,6 +600,30 @@ export async function saveModelSettings(
       message?: string;
     } | null;
     throw new Error(body?.message ?? "保存模型设置失败");
+  }
+  return response.json();
+}
+
+export async function reloadModelSettings(): Promise<ModelSettingsResponse> {
+  const response = await fetch("/api/settings/models/reload", {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "重载 Pi 模型失败");
+  }
+  return response.json();
+}
+
+export async function restartApplication(): Promise<RestartResponse> {
+  const response = await fetch("/api/system/restart", { method: "POST" });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "重启应用失败");
   }
   return response.json();
 }

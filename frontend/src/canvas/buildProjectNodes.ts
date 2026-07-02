@@ -1,13 +1,8 @@
 import type { Node } from "@xyflow/react";
 import type {
   DraftClarificationAnswer,
-  BasicSettings,
   FileReference,
   ImageAttachment,
-  ModelSettings,
-  ModelTierKey,
-  ModelTierSetting,
-  PiModel,
   Project,
   PublicationReadiness,
   ProjectCanvasData,
@@ -20,7 +15,6 @@ import type {
   TerminalCommandProfileDraft,
   TerminalSession,
   StartNodeData,
-  SettingsView,
   StreamEvent,
   GitAction,
   GitDiff,
@@ -56,9 +50,6 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       StartNodeData["kind"],
       { width: number; height: number }
     > = {
-      "settings-list": { width: 300, height: 310 },
-      "basic-settings": { width: 360, height: 390 },
-      "model-config": { width: 360, height: 800 },
       summary: { width: 252, height: 134 },
       "project-github": { width: 137, height: 90 },
       "requirement-list": { width: 290, height: 640 },
@@ -89,24 +80,7 @@ export interface BuildProjectNodesParams {
   requirementActionBusyId: string | null;
   recoveringTaskGroupIds: Set<string>;
   requirementActionError: string | null;
-  settingsView: SettingsView;
-  basicSettings: BasicSettings | null;
-  basicSettingsError: string | null;
-  savingBasicSettings: boolean;
-  draftModelSettings: ModelSettings;
-  models: PiModel[];
-  modelRpcStatus: "idle" | "loading" | "ready" | "reconnecting" | "error";
-  modelError: string | null;
-  savingModels: boolean;
   openSettings: () => void;
-  openBasicSettings: () => void;
-  openModelSettings: () => void;
-  closeSettingsDetail: () => void;
-  closeSettingsList: () => void;
-  updateBasicSettings: (settings: BasicSettings) => void;
-  saveBasicSettings: () => Promise<void>;
-  updateModelTier: (tier: ModelTierKey, setting: ModelTierSetting) => void;
-  saveModelSettings: () => Promise<void>;
   closeDag: () => void;
   selectDagRequirement: (requirement: Requirement) => void;
   planRequirement: (requirement: Requirement) => Promise<void>;
@@ -205,24 +179,7 @@ export function buildProjectNodes({
   requirementActionBusyId,
   recoveringTaskGroupIds,
   requirementActionError,
-  settingsView,
-  basicSettings,
-  basicSettingsError,
-  savingBasicSettings,
-  draftModelSettings,
-  models,
-  modelRpcStatus,
-  modelError,
-  savingModels,
   openSettings,
-  openBasicSettings,
-  openModelSettings,
-  closeSettingsDetail,
-  closeSettingsList,
-  updateBasicSettings,
-  saveBasicSettings,
-  updateModelTier,
-  saveModelSettings,
   closeDag,
   selectDagRequirement,
   planRequirement,
@@ -299,65 +256,6 @@ export function buildProjectNodes({
         onAction: openSettings,
       },
     },
-    ...(settingsView !== "closed"
-      ? [
-          {
-            id: "settings-list",
-            type: "startNode" as const,
-            width: 300,
-            height: 310,
-            position: { x: -670, y: 20 },
-            data: {
-              kind: "settings-list" as const,
-              onOpenBasic: openBasicSettings,
-              onOpenModels: openModelSettings,
-              onClose: closeSettingsList,
-            },
-          },
-        ]
-      : []),
-    ...(settingsView === "basic"
-      ? [
-          {
-            id: "basic-settings",
-            type: "startNode" as const,
-            width: 360,
-            height: 390,
-            position: { x: -1050, y: 20 },
-            data: {
-              kind: "basic-settings" as const,
-              settings: basicSettings,
-              error: basicSettingsError,
-              saving: savingBasicSettings,
-              onChange: updateBasicSettings,
-              onClose: closeSettingsDetail,
-              onSave: saveBasicSettings,
-            },
-          },
-        ]
-      : []),
-    ...(settingsView === "models"
-      ? [
-          {
-            id: "model-config",
-            type: "startNode" as const,
-            width: 360,
-            height: 800,
-            position: { x: -1050, y: 20 },
-            data: {
-              kind: "model-config" as const,
-              settings: draftModelSettings,
-              models,
-              rpcStatus: modelRpcStatus,
-              error: modelError,
-              saving: savingModels,
-              onChange: updateModelTier,
-              onClose: closeSettingsDetail,
-              onSave: saveModelSettings,
-            },
-          },
-        ]
-      : []),
     {
       id: "completed-requirements",
       type: "startNode",

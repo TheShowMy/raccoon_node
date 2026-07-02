@@ -7,11 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-raccoon-api.workspace = true
-raccoon-core.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
 
 [lib]
 name = "raccoon_tui"

@@ -25,13 +25,28 @@ use crate::handlers::{
     get_project_canvas, get_project_chat, get_project_files, get_requirement_conversation,
     get_requirement_task, get_requirement_task_session, get_terminal_command_profiles,
     list_project_terminals, plan_requirement_execution, project_chat_events, put_basic_settings,
-    put_model_settings, put_terminal_command_profiles, recover_task_group, requirement_events,
-    reset_project_chat, retry_requirement_analysis, send_project_chat_message,
-    spawn_startup_requirement_scheduler, submit_requirement_clarifications, terminal_websocket,
-    upload_project_attachment,
+    put_model_settings, put_terminal_command_profiles, recover_task_group, reload_model_settings,
+    requirement_events, reset_project_chat, restart_system, retry_requirement_analysis,
+    send_project_chat_message, spawn_startup_requirement_scheduler,
+    submit_requirement_clarifications, terminal_websocket, upload_project_attachment,
 };
 use raccoon_pi_rpc::PiRpcModelProvider;
 use raccoon_store::JsonStore;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleCommand {
+    Restart,
+}
+
+#[derive(Clone, Default)]
+pub struct RuntimeOptions {
+    pub host_override: Option<String>,
+    pub port_override: Option<u16>,
+    pub effective_host: Option<String>,
+    pub effective_port: Option<u16>,
+    pub dev_frontend_url: Option<String>,
+    pub lifecycle_tx: Option<tokio::sync::mpsc::UnboundedSender<LifecycleCommand>>,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -43,7 +58,7 @@ pub struct AppState {
     pub project_root: std::path::PathBuf,
     pub config: std::sync::Arc<tokio::sync::RwLock<raccoon_core::config::AppConfig>>,
     pub config_path: std::path::PathBuf,
-    pub port_overridden: bool,
+    pub runtime: RuntimeOptions,
     pub publication_readiness:
         std::sync::Arc<tokio::sync::RwLock<raccoon_core::models::PublicationReadiness>>,
     pub pending_startup_requirement_ids: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
@@ -58,7 +73,7 @@ pub async fn build_app(
     project_root: PathBuf,
     config: Arc<tokio::sync::RwLock<raccoon_core::config::AppConfig>>,
     config_path: PathBuf,
-    port_overridden: bool,
+    runtime: RuntimeOptions,
     publication_readiness: raccoon_core::models::PublicationReadiness,
 ) -> (Router, AppState) {
     let mut store = JsonStore::open_project(project_root.clone())
@@ -80,7 +95,7 @@ pub async fn build_app(
         startup_requirement_ids,
         config,
         config_path,
-        port_overridden,
+        runtime,
         publication_readiness,
     )
 }
@@ -99,7 +114,7 @@ pub fn build_app_with_model_provider(
             raccoon_core::config::AppConfig::default(),
         )),
         config_path,
-        false,
+        RuntimeOptions::default(),
         raccoon_core::models::PublicationReadiness::local(),
     )
     .0
@@ -113,16 +128,43 @@ pub fn build_app_with_model_provider_and_config(
     port_overridden: bool,
 ) -> Router {
     let config_path = store.data_root.join("config.toml");
+    let port_override = port_overridden.then_some(config.port);
+    let effective_host = Some(config.host.clone());
+    let effective_port = Some(config.port);
     build_app_with_startup_requirements(
         store,
         model_provider,
         Vec::new(),
         Arc::new(tokio::sync::RwLock::new(config)),
         config_path,
-        port_overridden,
+        RuntimeOptions {
+            port_override,
+            effective_host,
+            effective_port,
+            ..RuntimeOptions::default()
+        },
         raccoon_core::models::PublicationReadiness::local(),
     )
     .0
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+pub fn build_app_with_model_provider_and_runtime(
+    store: JsonStore,
+    model_provider: Arc<dyn raccoon_core::models::ModelProvider>,
+    config: raccoon_core::config::AppConfig,
+    runtime: RuntimeOptions,
+) -> (Router, AppState) {
+    let config_path = store.data_root.join("config.toml");
+    build_app_with_startup_requirements(
+        store,
+        model_provider,
+        Vec::new(),
+        Arc::new(tokio::sync::RwLock::new(config)),
+        config_path,
+        runtime,
+        raccoon_core::models::PublicationReadiness::local(),
+    )
 }
 
 fn build_app_with_startup_requirements(
@@ -131,7 +173,7 @@ fn build_app_with_startup_requirements(
     startup_requirement_ids: Vec<String>,
     config: Arc<tokio::sync::RwLock<raccoon_core::config::AppConfig>>,
     config_path: PathBuf,
-    port_overridden: bool,
+    runtime: RuntimeOptions,
     publication_readiness: raccoon_core::models::PublicationReadiness,
 ) -> (Router, AppState) {
     let (event_tx, _) = broadcast::channel(256);
@@ -150,7 +192,7 @@ fn build_app_with_startup_requirements(
         project_root,
         config,
         config_path,
-        port_overridden,
+        runtime,
         publication_readiness: Arc::new(tokio::sync::RwLock::new(publication_readiness)),
         pending_startup_requirement_ids: Arc::new(tokio::sync::Mutex::new(startup_requirement_ids)),
         project_scheduler_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
@@ -240,10 +282,12 @@ fn build_app_with_startup_requirements(
             "/settings/models",
             get(get_model_settings).put(put_model_settings),
         )
+        .route("/settings/models/reload", post(reload_model_settings))
         .route(
             "/settings/basic",
             get(get_basic_settings).put(put_basic_settings),
         )
+        .route("/system/restart", post(restart_system))
         .fallback(api_not_found)
         .with_state(state.clone());
 

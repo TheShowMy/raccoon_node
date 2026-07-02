@@ -1,6 +1,5 @@
 import React from "react";
 import type { StartNodeData } from "../types/api";
-import ModelConfigNode from "../components/nodes/ModelConfigNode";
 import ProjectGithubNode from "../components/nodes/ProjectGithubNode";
 import ProjectTerminalNode from "../components/nodes/ProjectTerminalNode";
 import RequirementChatNode from "../components/nodes/RequirementChatNode";
@@ -9,8 +8,6 @@ import RequirementListNode from "../components/nodes/RequirementListNode";
 import RequirementTaskNode from "../components/nodes/RequirementTaskNode";
 import SummaryCard from "../components/nodes/SummaryCard";
 import TokenUsageNode from "../components/nodes/TokenUsageNode";
-import SettingsListNode from "../components/nodes/SettingsListNode";
-import BasicSettingsNode from "../components/nodes/BasicSettingsNode";
 import ProjectGitNode from "../components/nodes/ProjectGitNode";
 
 function assertNever(value: never): never {
@@ -19,12 +16,6 @@ function assertNever(value: never): never {
 
 export function renderNodeContent(data: StartNodeData): React.JSX.Element {
   switch (data.kind) {
-    case "settings-list":
-      return <SettingsListNode data={data} />;
-    case "basic-settings":
-      return <BasicSettingsNode data={data} />;
-    case "model-config":
-      return <ModelConfigNode data={data} />;
     case "project-github":
       return <ProjectGithubNode data={data} />;
     case "requirement-chat":

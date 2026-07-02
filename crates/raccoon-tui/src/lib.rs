@@ -1,35 +1,33 @@
 use std::{
+    collections::VecDeque,
     io::{self, stdout},
-    sync::mpsc::Receiver,
+    sync::mpsc,
     time::Duration,
 };
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseButton, MouseEventKind,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 
-use raccoon_core::{
-    config::AppConfig,
-    models::{ModelSettings, ModelTierSetting, PiModel, ThinkingLevel},
-};
+const MAX_LOG_LINES: usize = 200;
 
-pub mod settings;
-pub use settings::{ConfigEditContext, ConfigEditOptions, edit_config};
-
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardAction {
     Quit,
     Restart,
-    Settings,
     Open,
 }
 
@@ -50,19 +48,16 @@ pub fn confirm(title: &str, message: &str) -> io::Result<bool> {
                 area,
             );
         })?;
-        let Event::Key(key) = event::read()? else {
-            continue;
-        };
-        if !usable_key(key) {
-            continue;
-        }
-        match key.code {
-            KeyCode::Char(value) if char_matches(value, 'y') => return Ok(true),
-            KeyCode::Char(value) if char_matches(value, 'n') => return Ok(false),
-            KeyCode::Esc => return Ok(false),
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                return Ok(false);
-            }
+        match event::read()? {
+            Event::Key(key) if usable_key(key) => match key.code {
+                KeyCode::Char(value) if char_matches(value, 'y') => return Ok(true),
+                KeyCode::Char(value) if char_matches(value, 'n') => return Ok(false),
+                KeyCode::Esc => return Ok(false),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return Ok(false);
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -81,44 +76,83 @@ impl TuiSession {
         })
     }
 
-    pub fn show_status(&mut self, title: &str, message: &str) -> io::Result<()> {
-        self.terminal.draw(|frame| {
-            let area = centered(frame.area(), 72, 7);
-            frame.render_widget(
-                Paragraph::new(vec![Line::raw(message.to_owned())])
-                    .block(Block::default().title(title).borders(Borders::ALL))
-                    .wrap(Wrap { trim: true }),
-                area,
-            );
-        })?;
-        Ok(())
-    }
-
-    pub fn run_dashboard(
+    pub fn run_launcher(
         &mut self,
         url: &str,
-        backend_logs: &Receiver<String>,
-        vite_logs: Option<&Receiver<String>>,
+        backend_logs: &mpsc::Receiver<String>,
+        vite_logs: Option<&mpsc::Receiver<String>>,
+        mut restart_requested: impl FnMut() -> bool,
     ) -> io::Result<DashboardAction> {
-        run_dashboard_with_terminal(&mut self.terminal, url, backend_logs, vite_logs)
-    }
+        let mut backend_panel = LogPanel::new();
+        let mut vite_panel = vite_logs.map(|_| LogPanel::new());
 
-    pub fn edit_config(
-        &mut self,
-        initial: AppConfig,
-        title: &str,
-        context: ConfigEditContext,
-        options: impl Into<ConfigEditOptions>,
-    ) -> io::Result<Option<AppConfig>> {
-        settings::edit_config_with_terminal(&mut self.terminal, initial, title, context, options)
-    }
+        loop {
+            if restart_requested() {
+                return Ok(DashboardAction::Restart);
+            }
 
-    pub fn edit_models(
-        &mut self,
-        models: &[PiModel],
-        initial: ModelSettings,
-    ) -> io::Result<Option<ModelSettings>> {
-        edit_models_with_terminal(&mut self.terminal, models, initial)
+            let mut button = Rect::default();
+            self.terminal.draw(|frame| {
+                backend_panel.drain(backend_logs);
+                if let (Some(panel), Some(rx)) = (vite_panel.as_mut(), vite_logs) {
+                    panel.drain(rx);
+                }
+
+                let main = frame.area();
+                let card_area = top_centered_card(main, 44, 6);
+                button = button_rect(card_area);
+
+                frame.render_widget(
+                    Paragraph::new(vec![
+                        Line::styled(
+                            "Raccoon Node 正在运行",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Line::raw(url),
+                        Line::raw(""),
+                        Line::styled(
+                            "Enter/o 打开网页    q/Ctrl+C 退出",
+                            Style::default().fg(Color::Gray),
+                        ),
+                    ])
+                    .alignment(Alignment::Center)
+                    .block(Block::default().borders(Borders::ALL)),
+                    card_area,
+                );
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![Span::styled(
+                        "[ 打开网页 ]",
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )]))
+                    .alignment(Alignment::Center)
+                    .style(Style::default().bg(Color::Yellow)),
+                    button,
+                );
+
+                let log_area = remaining_log_area(main, card_area);
+                if log_area.height > 0 {
+                    let panels = split_log_area(log_area, vite_panel.is_some());
+                    if let Some(panel) = vite_panel.as_ref() {
+                        frame.render_widget(backend_panel.render(panels[0], "后端日志"), panels[0]);
+                        frame.render_widget(panel.render(panels[1], "Vite 日志"), panels[1]);
+                    } else {
+                        frame.render_widget(backend_panel.render(panels[0], "日志"), panels[0]);
+                    }
+                }
+            })?;
+
+            if !event::poll(Duration::from_millis(100))? {
+                continue;
+            }
+            if let Some(action) = action_for_event(&event::read()?, button) {
+                return Ok(action);
+            }
+        }
     }
 }
 
@@ -127,7 +161,7 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enter() -> io::Result<Self> {
         enable_raw_mode()?;
-        execute!(stdout(), EnterAlternateScreen)?;
+        execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
         Ok(Self)
     }
 }
@@ -135,303 +169,291 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(stdout(), LeaveAlternateScreen);
+        let _ = execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen);
     }
 }
 
-pub fn run_dashboard(
-    url: &str,
-    backend_logs: &Receiver<String>,
-    vite_logs: Option<&Receiver<String>>,
-) -> io::Result<DashboardAction> {
-    let mut session = TuiSession::enter()?;
-    session.run_dashboard(url, backend_logs, vite_logs)
+struct LogPanel {
+    lines: VecDeque<String>,
 }
 
-fn run_dashboard_with_terminal(
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    url: &str,
-    backend_logs: &Receiver<String>,
-    vite_logs: Option<&Receiver<String>>,
-) -> io::Result<DashboardAction> {
-    let mut backend_lines = Vec::new();
-    let mut vite_lines = Vec::new();
+impl LogPanel {
+    fn new() -> Self {
+        Self {
+            lines: VecDeque::new(),
+        }
+    }
 
-    loop {
-        drain_logs(backend_logs, &mut backend_lines);
-        if let Some(vite_logs) = vite_logs {
-            drain_logs(vite_logs, &mut vite_lines);
-        }
-        terminal.draw(|frame| {
-            let areas = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(5), Constraint::Length(5)])
-                .split(frame.area());
-            if vite_logs.is_some() {
-                let log_areas = if areas[0].width >= 100 {
-                    Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                        .split(areas[0])
-                } else {
-                    Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                        .split(areas[0])
-                };
-                render_log_panel(frame, log_areas[0], "后端日志", &backend_lines);
-                render_log_panel(frame, log_areas[1], "Vite 日志", &vite_lines);
-            } else {
-                render_log_panel(frame, areas[0], "运行日志", &backend_lines);
+    fn drain(&mut self, receiver: &mpsc::Receiver<String>) {
+        while let Ok(line) = receiver.try_recv() {
+            if self.lines.len() >= MAX_LOG_LINES {
+                self.lines.pop_front();
             }
-            frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from(vec![Span::styled(
-                        url,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    )]),
-                    Line::raw("o 打开浏览器   s 设置   r 重启   q 退出"),
-                ])
-                .block(Block::default().title("Raccoon").borders(Borders::ALL)),
-                areas[1],
-            );
-        })?;
+            self.lines.push_back(line);
+        }
+    }
 
-        if !event::poll(Duration::from_millis(100))? {
-            continue;
-        }
-        let Event::Key(key) = event::read()? else {
-            continue;
-        };
-        if !usable_key(key) {
-            continue;
-        }
-        match key.code {
-            KeyCode::Char(value) if char_matches(value, 'q') => return Ok(DashboardAction::Quit),
-            KeyCode::Char(value) if char_matches(value, 'r') => {
-                return Ok(DashboardAction::Restart);
-            }
-            KeyCode::Char(value) if char_matches(value, 's') => {
-                return Ok(DashboardAction::Settings);
-            }
-            KeyCode::Char(value) if char_matches(value, 'o') => return Ok(DashboardAction::Open),
-            KeyCode::Esc => return Ok(DashboardAction::Quit),
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                return Ok(DashboardAction::Quit);
-            }
-            _ => {}
-        }
+    fn render<'a>(&'a self, area: Rect, title: &'a str) -> Paragraph<'a> {
+        let inner_height = area.height.saturating_sub(2).max(1) as usize;
+        let start = self.lines.len().saturating_sub(inner_height);
+        let visible: Vec<Line> = self
+            .lines
+            .range(start..)
+            .map(|line| Line::raw(line.as_str()))
+            .collect();
+        Paragraph::new(visible)
+            .block(Block::default().title(title).borders(Borders::ALL))
+            .wrap(Wrap { trim: true })
     }
 }
 
-fn drain_logs(receiver: &Receiver<String>, lines: &mut Vec<String>) {
-    while let Ok(line) = receiver.try_recv() {
-        lines.push(line);
-        if lines.len() > 500 {
-            lines.drain(..100);
-        }
+fn top_centered_card(area: Rect, max_width: u16, height: u16) -> Rect {
+    let width = area.width.min(max_width);
+    let height = area.height.min(height);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y,
+        width,
+        height,
+    )
+}
+
+fn button_rect(card: Rect) -> Rect {
+    Rect::new(
+        card.x.saturating_add(2),
+        card.y.saturating_add(3),
+        card.width.saturating_sub(4).max(1),
+        1,
+    )
+}
+
+fn remaining_log_area(main: Rect, card: Rect) -> Rect {
+    let y = card.bottom();
+    let height = main.height.saturating_sub(y);
+    Rect::new(
+        main.x.saturating_add(1),
+        y,
+        main.width.saturating_sub(2),
+        height,
+    )
+}
+
+fn split_log_area(area: Rect, split: bool) -> Vec<Rect> {
+    if !split || area.width < 4 {
+        return vec![area];
     }
-}
-
-fn render_log_panel(
-    frame: &mut ratatui::Frame<'_>,
-    area: ratatui::layout::Rect,
-    title: &str,
-    lines: &[String],
-) {
-    let height = area.height.saturating_sub(2) as usize;
-    let visible = log_items(lines, height);
-    frame.render_widget(
-        List::new(visible).block(Block::default().title(title).borders(Borders::ALL)),
-        area,
-    );
-}
-
-fn log_items(lines: &[String], height: usize) -> Vec<ListItem<'_>> {
-    lines
-        .iter()
-        .rev()
-        .take(height)
-        .rev()
-        .map(|line| ListItem::new(line.as_str()))
-        .collect()
-}
-
-pub fn edit_models(
-    models: &[PiModel],
-    initial: ModelSettings,
-) -> io::Result<Option<ModelSettings>> {
-    let mut session = TuiSession::enter()?;
-    session.edit_models(models, initial)
-}
-
-fn edit_models_with_terminal(
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    models: &[PiModel],
-    initial: ModelSettings,
-) -> io::Result<Option<ModelSettings>> {
-    if models.is_empty() {
-        return Ok(None);
-    }
-    let mut settings = initial;
-    let mut row = 0_usize;
-
-    loop {
-        terminal.draw(|frame| {
-            let area = centered(frame.area(), 76, 16);
-            let tiers = [
-                ("低", &settings.low),
-                ("中", &settings.medium),
-                ("高", &settings.high),
-            ];
-            let mut lines = tiers
-                .iter()
-                .enumerate()
-                .map(|(index, (label, tier))| {
-                    setting_line(
-                        row == index,
-                        label,
-                        &format!(
-                            "{} / {}",
-                            model_name(models, tier),
-                            tier.thinking_level.as_str()
-                        ),
-                    )
-                })
-                .collect::<Vec<_>>();
-            lines.extend([
-                Line::raw(""),
-                Line::raw("↑↓ 选择档位  ←→ 模型  t 思考等级  Enter 保存  Esc 取消"),
-            ]);
-            frame.render_widget(
-                Paragraph::new(lines)
-                    .block(Block::default().title("模型设置").borders(Borders::ALL)),
-                area,
-            );
-        })?;
-        let Event::Key(key) = event::read()? else {
-            continue;
-        };
-        if !usable_key(key) {
-            continue;
-        }
-        match key.code {
-            KeyCode::Esc => return Ok(None),
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(None),
-            KeyCode::Enter => return Ok(Some(settings)),
-            KeyCode::Up => row = row.saturating_sub(1),
-            KeyCode::Down => row = (row + 1).min(2),
-            KeyCode::Left => cycle_model(tier_mut(&mut settings, row), models, -1),
-            KeyCode::Right => cycle_model(tier_mut(&mut settings, row), models, 1),
-            KeyCode::Char(value) if char_matches(value, 't') => {
-                let tier = tier_mut(&mut settings, row);
-                tier.thinking_level = next_thinking(tier.thinking_level);
-            }
-            _ => {}
-        }
-    }
-}
-
-fn setting_line(selected: bool, label: &str, value: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(
-            if selected { "› " } else { "  " },
-            Style::default().fg(Color::Cyan),
+    let half = area.width / 2;
+    vec![
+        Rect::new(area.x, area.y, half.max(1), area.height),
+        Rect::new(
+            area.x + half,
+            area.y,
+            area.width.saturating_sub(half),
+            area.height,
         ),
-        Span::styled(format!("{label:<10}"), Style::default().fg(Color::Gray)),
-        Span::raw(value.to_owned()),
-    ])
+    ]
+}
+
+fn action_for_event(event: &Event, button: Rect) -> Option<DashboardAction> {
+    match event {
+        Event::Mouse(mouse)
+            if mouse.kind == MouseEventKind::Up(MouseButton::Left)
+                && point_in_rect(mouse.column, mouse.row, button) =>
+        {
+            Some(DashboardAction::Open)
+        }
+        Event::Key(key) if usable_key(*key) => match key.code {
+            KeyCode::Enter => Some(DashboardAction::Open),
+            KeyCode::Char(value) if char_matches(value, 'o') => Some(DashboardAction::Open),
+            KeyCode::Char(value) if char_matches(value, 'q') => Some(DashboardAction::Quit),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(DashboardAction::Quit)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn point_in_rect(x: u16, y: u16, area: Rect) -> bool {
+    x >= area.x
+        && x < area.x.saturating_add(area.width)
+        && y >= area.y
+        && y < area.y.saturating_add(area.height)
 }
 
 fn usable_key(key: KeyEvent) -> bool {
-    !matches!(key.kind, KeyEventKind::Release)
+    matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
 }
 
 fn char_matches(value: char, expected: char) -> bool {
     value.eq_ignore_ascii_case(&expected)
 }
 
-fn tier_mut(settings: &mut ModelSettings, row: usize) -> &mut ModelTierSetting {
-    match row {
-        0 => &mut settings.low,
-        1 => &mut settings.medium,
-        _ => &mut settings.high,
-    }
-}
-
-fn model_name(models: &[PiModel], tier: &ModelTierSetting) -> String {
-    tier.model_id
-        .as_deref()
-        .and_then(|id| models.iter().find(|model| model.id == id))
-        .map(|model| model.name.clone())
-        .unwrap_or_else(|| "未选择".to_owned())
-}
-
-fn cycle_model(tier: &mut ModelTierSetting, models: &[PiModel], delta: isize) {
-    let current = tier
-        .model_id
-        .as_deref()
-        .and_then(|id| models.iter().position(|model| model.id == id))
-        .map(|index| index as isize)
-        .unwrap_or(if delta > 0 { -1 } else { 0 });
-    let index = (current + delta).rem_euclid(models.len() as isize) as usize;
-    tier.model_id = Some(models[index].id.clone());
-}
-
-fn next_thinking(level: ThinkingLevel) -> ThinkingLevel {
-    match level {
-        ThinkingLevel::Off => ThinkingLevel::Minimal,
-        ThinkingLevel::Minimal => ThinkingLevel::Low,
-        ThinkingLevel::Low => ThinkingLevel::Medium,
-        ThinkingLevel::Medium => ThinkingLevel::High,
-        ThinkingLevel::High => ThinkingLevel::Xhigh,
-        ThinkingLevel::Xhigh => ThinkingLevel::Off,
-    }
-}
-
-fn centered(area: ratatui::layout::Rect, width: u16, height: u16) -> ratatui::layout::Rect {
-    let vertical = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(height.min(area.height)),
-        Constraint::Fill(1),
-    ])
-    .split(area);
-    Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Length(width.min(area.width)),
-        Constraint::Fill(1),
-    ])
-    .split(vertical[1])[1]
+fn centered(area: Rect, max_width: u16, height: u16) -> Rect {
+    let width = area.width.min(max_width);
+    let height = area.height.min(height);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyEventState, MouseEvent};
+    use ratatui::{buffer::Buffer, widgets::Widget};
 
-    #[test]
-    fn shortcut_matching_is_case_insensitive() {
-        assert!(char_matches('q', 'q'));
-        assert!(char_matches('Q', 'q'));
-        assert!(char_matches('T', 't'));
-        assert!(!char_matches('x', 'q'));
+    fn mouse(column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    fn key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })
     }
 
     #[test]
-    fn usable_key_accepts_press_and_repeat_only() {
-        let press = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
-        let repeat = KeyEvent {
-            kind: KeyEventKind::Repeat,
-            ..press
-        };
-        let release = KeyEvent {
-            kind: KeyEventKind::Release,
-            ..press
-        };
+    fn button_click_opens_browser() {
+        let button = Rect::new(10, 5, 20, 3);
+        assert_eq!(
+            action_for_event(&mouse(10, 5), button),
+            Some(DashboardAction::Open)
+        );
+        assert_eq!(
+            action_for_event(&mouse(29, 7), button),
+            Some(DashboardAction::Open)
+        );
+    }
 
-        assert!(usable_key(press));
-        assert!(usable_key(repeat));
-        assert!(!usable_key(release));
+    #[test]
+    fn clicks_outside_button_are_ignored() {
+        let button = Rect::new(10, 5, 20, 3);
+        assert_eq!(action_for_event(&mouse(9, 5), button), None);
+        assert_eq!(action_for_event(&mouse(30, 7), button), None);
+    }
+
+    #[test]
+    fn keyboard_fallbacks_are_hidden_but_available() {
+        let button = Rect::default();
+        assert_eq!(
+            action_for_event(&key(KeyCode::Enter), button),
+            Some(DashboardAction::Open)
+        );
+        assert_eq!(
+            action_for_event(&key(KeyCode::Char('o')), button),
+            Some(DashboardAction::Open)
+        );
+        assert_eq!(
+            action_for_event(&key(KeyCode::Char('q')), button),
+            Some(DashboardAction::Quit)
+        );
+        assert_eq!(action_for_event(&key(KeyCode::Char('s')), button), None);
+        assert_eq!(action_for_event(&key(KeyCode::Char('r')), button), None);
+    }
+
+    #[test]
+    fn log_panel_drain_pulls_messages() {
+        let (tx, rx) = mpsc::channel();
+        let mut panel = LogPanel::new();
+
+        tx.send("line 1".to_owned()).unwrap();
+        tx.send("line 2".to_owned()).unwrap();
+        panel.drain(&rx);
+
+        assert_eq!(panel.lines.len(), 2);
+        assert_eq!(panel.lines[0], "line 1");
+        assert_eq!(panel.lines[1], "line 2");
+    }
+
+    #[test]
+    fn log_panel_drops_oldest_when_over_capacity() {
+        let (tx, rx) = mpsc::channel();
+        let mut panel = LogPanel::new();
+
+        for index in 0..MAX_LOG_LINES + 5 {
+            tx.send(format!("line {index}")).unwrap();
+        }
+        panel.drain(&rx);
+
+        assert_eq!(panel.lines.len(), MAX_LOG_LINES);
+        assert_eq!(panel.lines[0], "line 5");
+        assert_eq!(
+            panel.lines[MAX_LOG_LINES - 1],
+            format!("line {}", MAX_LOG_LINES + 4)
+        );
+    }
+
+    #[test]
+    fn log_panel_render_shows_latest_lines() {
+        let (tx, rx) = mpsc::channel();
+        let mut panel = LogPanel::new();
+        for index in 0..10 {
+            tx.send(format!("line {index}")).unwrap();
+        }
+        panel.drain(&rx);
+
+        let area = Rect::new(0, 0, 20, 5);
+        let paragraph = panel.render(area, "日志");
+        let mut buffer = Buffer::empty(area);
+        paragraph.render(area, &mut buffer);
+        let content = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(content.contains("line 9"));
+    }
+
+    #[test]
+    fn remaining_log_area_respects_compact_layout() {
+        let main = Rect::new(0, 0, 80, 24);
+        let card = top_centered_card(main, 44, 6);
+        let log_area = remaining_log_area(main, card);
+
+        assert_eq!(log_area.x, 1);
+        assert_eq!(log_area.y, card.bottom());
+        assert_eq!(log_area.width, 78);
+        assert_eq!(log_area.height, main.height - card.bottom());
+    }
+
+    #[test]
+    fn split_log_area_divides_horizontally_when_requested() {
+        let area = Rect::new(0, 0, 80, 10);
+        let panels = split_log_area(area, true);
+
+        assert_eq!(panels.len(), 2);
+        assert_eq!(panels[0], Rect::new(0, 0, 40, 10));
+        assert_eq!(panels[1], Rect::new(40, 0, 40, 10));
+    }
+
+    #[test]
+    fn split_log_area_keeps_single_panel_when_not_requested() {
+        let area = Rect::new(0, 0, 80, 10);
+        let panels = split_log_area(area, false);
+
+        assert_eq!(panels.len(), 1);
+        assert_eq!(panels[0], area);
+    }
+
+    #[test]
+    fn split_log_area_falls_back_to_single_panel_on_narrow_terminals() {
+        let area = Rect::new(0, 0, 3, 10);
+        let panels = split_log_area(area, true);
+
+        assert_eq!(panels.len(), 1);
+        assert_eq!(panels[0], area);
     }
 }

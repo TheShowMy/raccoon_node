@@ -9,17 +9,28 @@ export type BasicSettings = {
   theme: ThemeMode;
   host: string;
   port: number;
+  host_overridden: boolean;
   port_overridden: boolean;
+  effective_host: string;
+  effective_port: number;
+  restart_required: boolean;
   commit_mode: CommitMode;
 };
 
 export type BasicSettingsUpdate = {
   theme?: ThemeMode;
+  host?: string;
   port?: number;
   commit_mode?: CommitMode;
+  confirmed_external?: boolean;
 };
 
-export type SettingsView = "closed" | "list" | "basic" | "models";
+export type SettingsView = "closed" | "basic" | "models";
+
+export type RestartResponse = {
+  accepted: boolean;
+  next_url: string;
+};
 
 export type Project = {
   id: string;
@@ -518,32 +529,6 @@ export type ModelSettingsResponse = {
 };
 
 export type StartNodeData =
-  | {
-      kind: "settings-list";
-      onOpenBasic: () => void;
-      onOpenModels: () => void;
-      onClose: () => void;
-    }
-  | {
-      kind: "basic-settings";
-      settings: BasicSettings | null;
-      error: string | null;
-      saving: boolean;
-      onChange: (settings: BasicSettings) => void;
-      onClose: () => void;
-      onSave: () => Promise<void>;
-    }
-  | {
-      kind: "model-config";
-      settings: ModelSettings;
-      models: PiModel[];
-      rpcStatus: "idle" | "loading" | "ready" | "reconnecting" | "error";
-      error: string | null;
-      saving: boolean;
-      onChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
-      onClose: () => void;
-      onSave: () => Promise<void>;
-    }
   | {
       kind: "summary";
       title: string;

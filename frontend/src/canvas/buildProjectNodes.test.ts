@@ -112,28 +112,7 @@ function params(
     requirementActionBusyId: null,
     recoveringTaskGroupIds: new Set(),
     requirementActionError: null,
-    settingsView: "closed",
-    basicSettings: null,
-    basicSettingsError: null,
-    savingBasicSettings: false,
-    draftModelSettings: {
-      low: { model_id: null, thinking_level: "low" },
-      medium: { model_id: null, thinking_level: "medium" },
-      high: { model_id: null, thinking_level: "high" },
-    },
-    models: [],
-    modelRpcStatus: "idle",
-    modelError: null,
-    savingModels: false,
     openSettings: () => {},
-    openBasicSettings: () => {},
-    openModelSettings: () => {},
-    closeSettingsDetail: () => {},
-    closeSettingsList: () => {},
-    updateBasicSettings: () => {},
-    saveBasicSettings: async () => {},
-    updateModelTier: () => {},
-    saveModelSettings: async () => {},
     closeDag: () => {},
     selectDagRequirement: () => {},
     planRequirement: async () => {},
@@ -258,47 +237,20 @@ describe("buildProjectNodes", () => {
     expect(expanded.style).toMatchObject({ width: 720, height: 460 });
   });
 
-  it("opens model configuration from the project canvas", () => {
+  it("keeps settings in one canvas entry without detail nodes", () => {
     const canvas: ProjectCanvasData = {
       project: project(),
       active_requirement: null,
       queued_requirements: [],
       completed_requirements: [],
     };
-    const buildParams = params(canvas, null);
-    buildParams.settingsView = "models";
+    const nodes = buildProjectNodes(params(canvas, null));
 
-    const nodes = buildProjectNodes(buildParams);
-    const settingsList = nodes.find((node) => node.id === "settings-list");
-    const modelConfig = nodes.find((node) => node.id === "model-config");
-
-    expect(settingsList?.data.kind).toBe("settings-list");
-    expect(modelConfig?.data.kind).toBe("model-config");
-  });
-
-  it("keeps the settings list open beside basic settings", () => {
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [],
-      completed_requirements: [],
-    };
-    const buildParams = params(canvas, null);
-    buildParams.settingsView = "basic";
-    buildParams.basicSettings = {
-      theme: "dark",
-      host: "127.0.0.1",
-      port: 3000,
-      port_overridden: false,
-      commit_mode: "local",
-    };
-
-    const nodes = buildProjectNodes(buildParams);
-
-    expect(nodes.find((node) => node.id === "settings-list")).toBeDefined();
-    expect(nodes.find((node) => node.id === "basic-settings")?.data.kind).toBe(
-      "basic-settings",
+    expect(nodes.find((node) => node.id === "settings")?.data.kind).toBe(
+      "summary",
     );
+    expect(nodes.find((node) => node.id === "settings-list")).toBeUndefined();
+    expect(nodes.find((node) => node.id === "basic-settings")).toBeUndefined();
     expect(nodes.find((node) => node.id === "model-config")).toBeUndefined();
   });
 

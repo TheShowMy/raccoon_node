@@ -28,7 +28,7 @@
 
 ## 命令
 
-- `npm run dev`：启动后端 TUI，并由后端管理 Vite dev server；TUI 分别显示后端日志和 Vite 日志。
+- `npm run dev`：启动极简网页启动 TUI，并由后端管理 Vite dev server；完整日志写入 `.raccoon-node/logs/`。
 - `npm run build`：构建前端并生成嵌入静态资源的 release 单二进制。
 - `npm run check`：前端类型检查、测试、构建和 Rust 检查。
 - `pre-commit run --all-files`：完整提交前检查。
@@ -51,6 +51,8 @@
   worktree 或恢复状态。
 - 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。
 - 禁止直接读写 Pi Agent 的 auth/settings 文件；本项目只保存自身三档模型设置。
+- Pi 登录由用户在 Web 终端中手动执行 `/login`；应用不得自动输入登录命令或编辑
+  `models.json`。
 - Pi 工作目录只能是 Git 根目录或 `.raccoon-node/worktrees/` 中的受管 worktree。
 - 清理操作只能删除 `.raccoon-node/` 内受管资源，禁止删除用户仓库。
 - 前端不处理 Git 密码、token、SSH key。
