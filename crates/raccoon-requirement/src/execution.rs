@@ -69,9 +69,10 @@ JSON 格式：
 - target_files 不确定时可以使用目录级路径或空数组。
 - target_files 只应列出当前任务会实际修改的文件，不要把仅用于读取或校验的文件列入。
 - 每个任务必须能产生独立、可审查的 diff；如果两个功能天然必须一起实现，就合并成一个任务，不要硬拆。
-- description 必须明确写出：本任务只做什么、明确不做什么、完成后如何验证。
-- description 不要重复前置任务已经保证的验收标准，只需明确当前任务边界和验证方式。
-- 严禁前置任务提前实现后续任务的功能；骨架/基础结构任务只创建必要容器，不实现业务逻辑。
+- description 必须自包含：即便不参考完整需求，实现者只看描述也能独立完成。
+- description 中必须显式列出：1) 本任务要修改什么、产出什么；2) 明确不做什么（尤其是后续任务负责的功能）；3) 修改后必须运行的验证命令或检查项。
+- 禁止在 description 中使用“后续任务会处理”“这里先预留”等模糊表述。
+- 严禁前置任务提前实现后续任务的功能；骨架/基础结构任务只能创建空容器、类型定义、路由占位；任何业务逻辑必须留给后续任务。
 
 ## 确认需求草案
 {draft}
@@ -166,6 +167,12 @@ pub fn build_requirement_task_prompt(
         || task.kind == RequirementTaskKind::ReviewSummary
     {
         "本次审核范围见下方「当前任务」，不要要求实现其他未分配任务的内容。".to_owned()
+    } else if task.kind == RequirementTaskKind::Implementation {
+        requirement
+            .draft
+            .as_ref()
+            .map(format_requirement_summary_for_task)
+            .unwrap_or_else(|| "当前需求没有确认草案。".to_owned())
     } else {
         requirement
             .draft
@@ -173,36 +180,18 @@ pub fn build_requirement_task_prompt(
             .map(format_draft)
             .unwrap_or_else(|| "当前需求没有确认草案。".to_owned())
     };
-    let completed = plan
-        .tasks
-        .iter()
-        .filter(|item| item.status == RequirementTaskStatus::Completed)
-        .map(|item| {
-            format!(
-                "- {}：{}",
-                item.title,
-                item.result_summary.as_deref().unwrap_or("已完成")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let future_tasks = future_implementation_tasks_for_prompt(plan, task);
+    let completed = direct_dependency_outputs(plan, task);
     let failure_context = execution_failure_context(task);
 
     let (role, extra) = match task.kind {
         RequirementTaskKind::Implementation => (
             "实现 Agent",
             format!(
-                r#"## 严格任务边界
-- 只允许实现“当前任务”描述中明确要求的内容。
-- 只能修改目标文件范围：{target_files_for_boundary}。
-- 禁止提前实现、补全或顺手优化后续未完成任务。
-- 当前任务必须自己完成描述中的改名/文案/代码修改，并运行或说明对应检查；不要把验证工作推给后续独立任务。
-- 如果发现当前任务能力已经由前置节点完整实现，请不要为了制造 diff 而改文件；必须返回 changed=false，并在 no_op_reason 写清验证依据。
-- 如果需要修改文件，changed 必须为 true，no_op_reason 必须为 null。
-
-## 后续未完成实现任务（禁止提前实现）
-{future_tasks}
+                r#"## 任务边界（必须遵守）
+- 只实现「当前任务」描述中的内容；禁止实现任何未在本描述中明确列出的功能。
+- 只能修改目标文件：{target_files_for_boundary}；禁止改动无关文件。
+- 禁止以“预留”“提前准备”“顺便”等理由实现后续任务的功能。
+- 若发现当前任务已无需修改，返回 changed=false，并在 no_op_reason 说明验证依据。
 {fix_feedback}
 {recovery_guidance}"#,
                 target_files_for_boundary = if task.target_files.is_empty() {
@@ -210,7 +199,6 @@ pub fn build_requirement_task_prompt(
                 } else {
                     task.target_files.join("、")
                 },
-                future_tasks = future_tasks,
                 fix_feedback = if task.status == RequirementTaskStatus::Fixing {
                     format!(
                         "\n## 修复要求\n- 当前状态：未提交，改动位于暂存区（git diff --cached）\n- 最新审核反馈：{}\n- 必须针对审核反馈产生实际代码修改，禁止 changed=false 或仅重新描述已有实现。\n- 请在原实现基础上修复问题，不要重做无关内容。",
@@ -289,11 +277,7 @@ JSON 格式：
         } else {
             task.target_files.join("、")
         },
-        completed = if completed.is_empty() {
-            "暂无".to_owned()
-        } else {
-            completed
-        }
+        completed = completed
     )
 }
 
@@ -530,27 +514,29 @@ pub fn parse_task_execution_output(
     })
 }
 
-fn future_implementation_tasks_for_prompt(
+fn direct_dependency_outputs(
     plan: &RequirementExecutionPlan,
-    current: &RequirementExecutionTask,
+    task: &RequirementExecutionTask,
 ) -> String {
-    let future_tasks = plan
+    let direct_ids: HashSet<_> = task.depends_on.iter().collect();
+    let outputs = plan
         .tasks
         .iter()
-        .filter(|task| {
-            task.kind == RequirementTaskKind::Implementation
-                && task.id != current.id
-                && matches!(
-                    task.status,
-                    RequirementTaskStatus::Pending | RequirementTaskStatus::Fixing
-                )
+        .filter(|item| {
+            item.status == RequirementTaskStatus::Completed && direct_ids.contains(&item.id)
         })
-        .map(|task| format!("- {}：{}", task.title, task.description))
+        .map(|item| {
+            format!(
+                "- {}：{}",
+                item.title,
+                item.result_summary.as_deref().unwrap_or("已完成")
+            )
+        })
         .collect::<Vec<_>>();
-    if future_tasks.is_empty() {
-        "无".to_owned()
+    if outputs.is_empty() {
+        "暂无".to_owned()
     } else {
-        future_tasks.join("\n")
+        outputs.join("\n")
     }
 }
 
@@ -933,6 +919,10 @@ fn format_draft(draft: &RequirementDraft) -> String {
     )
 }
 
+fn format_requirement_summary_for_task(draft: &RequirementDraft) -> String {
+    format!("需求：{}\n说明：{}", draft.title, draft.summary)
+}
+
 fn extract_json_object(text: &str) -> Result<Value, AppError> {
     let start = text
         .find('{')
@@ -1095,7 +1085,13 @@ mod tests {
         );
         assert!(prompt.contains("简单命名、文案、单点修改优先生成 1 个实现任务"));
         assert!(prompt.contains("target_files 只应列出当前任务会实际修改的文件"));
-        assert!(prompt.contains("description 不要重复前置任务已经保证的验收标准"));
+        assert!(prompt.contains("description 必须自包含"));
+        assert!(prompt.contains("即便不参考完整需求，实现者只看描述也能独立完成"));
+        assert!(prompt.contains("本任务要修改什么、产出什么"));
+        assert!(prompt.contains("明确不做什么"));
+        assert!(prompt.contains("禁止在 description 中使用"));
+        assert!(prompt.contains("严禁前置任务提前实现后续任务的功能"));
+        assert!(prompt.contains("骨架/基础结构任务只能创建空容器、类型定义、路由占位"));
         assert!(prompt.contains("并行阶段之后的任务必须等待该阶段全部任务完成"));
         assert!(prompt.contains("会修改相同文件的任务禁止并行"));
         assert!(prompt.contains("DAG 必须按“阶段”拆分"));
@@ -1220,10 +1216,86 @@ mod tests {
 
         assert!(prompt.contains("\"changed\": true"));
         assert!(prompt.contains("\"no_op_reason\": null"));
-        assert!(prompt.contains("严格任务边界"));
-        assert!(prompt.contains("禁止提前实现、补全或顺手优化后续未完成任务"));
-        assert!(prompt.contains("不要把验证工作推给后续独立任务"));
-        assert!(prompt.contains("实现搜索"));
+        assert!(prompt.contains("任务边界（必须遵守）"));
+        assert!(prompt.contains("禁止实现任何未在本描述中明确列出的功能"));
+        assert!(prompt.contains("禁止以“预留”“提前准备”“顺便”等理由实现后续任务的功能"));
+        assert!(
+            !prompt.contains("实现搜索"),
+            "future task titles should not appear"
+        );
+    }
+
+    #[test]
+    fn implementation_prompt_does_not_contain_full_draft() {
+        let mut requirement = test_requirement("实现页面");
+        if let Some(ref mut draft) = requirement.draft {
+            draft.title = "完整需求标题".to_owned();
+            draft.summary = "完整需求摘要".to_owned();
+            draft.acceptance_criteria = vec!["必须支持 A".to_owned(), "必须支持 B".to_owned()];
+        }
+        let current = test_task("task-1", "创建骨架", Vec::new());
+        let plan = RequirementExecutionPlan {
+            summary: "计划".to_owned(),
+            tasks: vec![current.clone()],
+        };
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &current);
+
+        assert!(
+            prompt.contains("完整需求标题"),
+            "one-line summary title should appear"
+        );
+        assert!(
+            !prompt.contains("验收标准"),
+            "full acceptance criteria must not appear"
+        );
+        assert!(
+            !prompt.contains("必须支持 A"),
+            "individual acceptance criteria must not appear"
+        );
+    }
+
+    #[test]
+    fn implementation_prompt_shows_only_direct_dependencies() {
+        let requirement = test_requirement("实现页面");
+        let mut completed_a = test_task("task-a", "任务 A", Vec::new());
+        completed_a.status = RequirementTaskStatus::Completed;
+        completed_a.result_summary = Some("完成了 A".to_owned());
+        let mut completed_b = test_task("task-b", "任务 B", vec!["task-a".to_owned()]);
+        completed_b.status = RequirementTaskStatus::Completed;
+        completed_b.result_summary = Some("完成了 B".to_owned());
+        let current = test_task("task-c", "任务 C", vec!["task-b".to_owned()]);
+        let plan = RequirementExecutionPlan {
+            summary: "计划".to_owned(),
+            tasks: vec![completed_a.clone(), completed_b.clone(), current.clone()],
+        };
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &current);
+
+        assert!(prompt.contains("任务 B"), "direct dependency must appear");
+        assert!(
+            !prompt.contains("任务 A"),
+            "transitive dependency must not appear"
+        );
+    }
+
+    #[test]
+    fn implementation_prompt_does_not_list_future_task_descriptions() {
+        let requirement = test_requirement("实现页面");
+        let current = test_task("task-1", "创建骨架", Vec::new());
+        let future = test_task("task-2", "实现搜索", vec!["task-1".to_owned()]);
+        let plan = RequirementExecutionPlan {
+            summary: "计划".to_owned(),
+            tasks: vec![current.clone(), future],
+        };
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &current);
+
+        assert!(
+            !prompt.contains("后续未完成实现任务"),
+            "future tasks section must be removed"
+        );
+        assert!(
+            !prompt.contains("只做实现搜索"),
+            "future task description must not appear"
+        );
     }
 
     #[test]
