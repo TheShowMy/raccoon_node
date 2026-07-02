@@ -80,6 +80,34 @@
 返回可引用的 UTF-8 文本文件列表。`.git/`、`.raccoon-node/`、`node_modules/`、
 `target/` 和 `dist/` 不会被枚举或读取。
 
+### Git 状态与基础操作
+
+- `GET /api/projects/current/git/status`
+- `GET /api/projects/current/git/diff?path={relative_path}&area=staged|unstaged`
+- `POST /api/projects/current/git/actions`
+
+状态接口返回当前分支、HEAD、upstream、ahead/behind、本地分支、origin 可用性、
+写操作阻止原因，以及文件级 staged/unstaged 状态。diff 只接受当前 Git 变更中的
+仓库相对路径；二进制文件不返回内容，文本输出最多 1 MiB。
+
+动作接口只接受以下固定请求，不支持透传任意 Git 命令：
+
+```json
+{ "type": "stage", "paths": ["src/main.rs"] }
+{ "type": "unstage", "paths": ["src/main.rs"] }
+{ "type": "commit", "message": "feat: add node", "confirmed": true }
+{ "type": "fetch" }
+{ "type": "pull" }
+{ "type": "push", "confirmed": true }
+{ "type": "switch_branch", "branch": "main" }
+{ "type": "create_branch", "branch": "feature/example" }
+```
+
+Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-forward-only；
+首次 Push 会推送到 origin 并建立 upstream。切换或创建分支、Pull 要求工作区干净。
+只要项目存在待执行、规划中、执行中或失败待恢复的需求，所有 Git 写操作返回
+`409 Conflict`，状态与 diff 仍可读取。
+
 ### 上传和读取附件
 
 - `POST /api/projects/current/attachments`

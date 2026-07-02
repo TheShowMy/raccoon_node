@@ -19,6 +19,10 @@ import {
   type TerminalCommandProfile,
   type TerminalCommandProfileDraft,
   type TerminalSession,
+  type GitAction,
+  type GitDiff,
+  type GitDiffArea,
+  type GitStatus,
 } from "../types/api";
 
 export async function getCurrentProject(): Promise<{
@@ -112,6 +116,56 @@ export async function getProjectTerminals(
     throw new Error(body?.message ?? "读取项目终端失败");
   }
   return response.json();
+}
+
+async function gitResponse<T>(
+  response: Response,
+  fallback: string,
+): Promise<T> {
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? fallback);
+  }
+  return response.json();
+}
+
+export async function getProjectGitStatus(
+  projectId: string,
+): Promise<GitStatus> {
+  return gitResponse(
+    await fetch(`/api/projects/${encodeURIComponent(projectId)}/git/status`),
+    "读取 Git 状态失败",
+  );
+}
+
+export async function getProjectGitDiff(
+  projectId: string,
+  path: string,
+  area: GitDiffArea,
+): Promise<GitDiff> {
+  const query = new URLSearchParams({ path, area });
+  return gitResponse(
+    await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/git/diff?${query}`,
+    ),
+    "读取文件差异失败",
+  );
+}
+
+export async function executeProjectGitAction(
+  projectId: string,
+  action: GitAction,
+): Promise<GitStatus> {
+  return gitResponse(
+    await fetch(`/api/projects/${encodeURIComponent(projectId)}/git/actions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(action),
+    }),
+    "Git 操作失败",
+  );
 }
 
 export async function createProjectTerminal(

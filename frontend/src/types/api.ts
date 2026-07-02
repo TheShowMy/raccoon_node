@@ -30,6 +30,58 @@ export type Project = {
   updated_at: string;
 };
 
+export type GitChangeKind =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "type_changed"
+  | "untracked"
+  | "conflicted";
+
+export type GitFileStatus = {
+  path: string;
+  original_path: string | null;
+  staged: GitChangeKind | null;
+  unstaged: GitChangeKind | null;
+};
+
+export type GitStatus = {
+  branch: string | null;
+  head: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  branches: string[];
+  remote_configured: boolean;
+  write_blocked: boolean;
+  blocked_reason: string | null;
+  files: GitFileStatus[];
+};
+
+export type GitDiffArea = "staged" | "unstaged";
+
+export type GitDiff = {
+  path: string;
+  area: GitDiffArea;
+  content: string;
+  binary: boolean;
+  truncated: boolean;
+};
+
+export type GitAction =
+  | { type: "stage"; paths: string[] }
+  | { type: "unstage"; paths: string[] }
+  | { type: "commit"; message: string; confirmed: boolean }
+  | { type: "fetch" }
+  | { type: "pull" }
+  | { type: "push"; confirmed: boolean }
+  | { type: "switch_branch"; branch: string }
+  | { type: "create_branch"; branch: string };
+
+export type GitExpansionPhase = "collapsed" | "vertical" | "expanded";
+
 export type PublicationReadiness = {
   mode: "local" | "pull_request";
   ready: boolean;
@@ -578,6 +630,22 @@ export type StartNodeData =
       onSaveCommandProfiles: (
         profiles: TerminalCommandProfileDraft[],
       ) => Promise<void>;
+    }
+  | {
+      kind: "project-git";
+      phase: GitExpansionPhase;
+      status: GitStatus | null;
+      diff: GitDiff | null;
+      selectedPaths: Set<string>;
+      selectedDiff: { path: string; area: GitDiffArea } | null;
+      busy: boolean;
+      error: string | null;
+      lastResult: string | null;
+      onToggleExpanded: () => void;
+      onRefresh: () => Promise<void>;
+      onTogglePath: (path: string) => void;
+      onSelectDiff: (path: string, area: GitDiffArea) => Promise<void>;
+      onAction: (action: GitAction, result: string) => Promise<boolean>;
     }
   | {
       kind: "requirement-dag";

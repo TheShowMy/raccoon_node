@@ -22,6 +22,11 @@ import type {
   StartNodeData,
   SettingsView,
   StreamEvent,
+  GitAction,
+  GitDiff,
+  GitDiffArea,
+  GitExpansionPhase,
+  GitStatus,
 } from "../types/api";
 import { buildRequirementDagEdges } from "./edges";
 import {
@@ -59,6 +64,7 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       "requirement-list": { width: 290, height: 640 },
       "requirement-chat": { width: 720, height: 760 },
       "project-terminal": { width: 720, height: 44 },
+      "project-git": { width: 290, height: 44 },
       "requirement-dag": DAG_NODE_SIZE,
       "requirement-task": { width: 252, height: 134 },
       "token-usage": { width: 290, height: 96 },
@@ -129,6 +135,24 @@ export interface BuildProjectTerminalNodeParams {
   onSaveCommandProfiles: (
     profiles: TerminalCommandProfileDraft[],
   ) => Promise<void>;
+}
+
+export interface BuildProjectGitNodeParams {
+  projectCanvas: ProjectCanvasData | null;
+  project: Project | null;
+  phase: GitExpansionPhase;
+  status: GitStatus | null;
+  diff: GitDiff | null;
+  selectedPaths: Set<string>;
+  selectedDiff: { path: string; area: GitDiffArea } | null;
+  busy: boolean;
+  error: string | null;
+  lastResult: string | null;
+  onToggleExpanded: () => void;
+  onRefresh: () => Promise<void>;
+  onTogglePath: (path: string) => void;
+  onSelectDiff: (path: string, area: GitDiffArea) => Promise<void>;
+  onAction: (action: GitAction, result: string) => Promise<boolean>;
 }
 
 export interface BuildProjectChatNodeParams {
@@ -667,6 +691,55 @@ export function buildProjectTerminalNode({
         onCloseTerminal,
         onSelectTerminal,
         onSaveCommandProfiles,
+      },
+    },
+  ])[0];
+}
+
+export function buildProjectGitNode({
+  projectCanvas,
+  project: currentProject,
+  phase,
+  status,
+  diff,
+  selectedPaths,
+  selectedDiff,
+  busy,
+  error,
+  lastResult,
+  onToggleExpanded,
+  onRefresh,
+  onTogglePath,
+  onSelectDiff,
+  onAction,
+}: BuildProjectGitNodeParams): Node<StartNodeData> | null {
+  const project = projectCanvas?.project ?? currentProject;
+  if (!project) return null;
+
+  return withDimensions([
+    {
+      id: "project-git",
+      type: "startNode",
+      position: { x: 780, y: 800 },
+      style: {
+        width: phase === "expanded" ? 720 : 290,
+        height: phase === "collapsed" ? 44 : 460,
+      },
+      data: {
+        kind: "project-git",
+        phase,
+        status,
+        diff,
+        selectedPaths,
+        selectedDiff,
+        busy,
+        error,
+        lastResult,
+        onToggleExpanded,
+        onRefresh,
+        onTogglePath,
+        onSelectDiff,
+        onAction,
       },
     },
   ])[0];

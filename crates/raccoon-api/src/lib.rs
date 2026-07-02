@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 
 mod assets;
+pub mod git;
 pub mod handlers;
 pub mod publication;
 pub mod terminal;
@@ -16,6 +17,7 @@ async fn api_not_found() -> StatusCode {
     StatusCode::NOT_FOUND
 }
 
+use crate::git::{execute_git_action, get_git_diff, get_git_status};
 use crate::handlers::{
     append_requirement_message, cancel_requirement_analysis, confirm_requirement,
     create_project_terminal, create_requirement, delete_project_terminal, delete_requirement,
@@ -194,6 +196,9 @@ fn build_app_with_startup_requirements(
             "/projects/{id}/terminal-commands",
             get(get_terminal_command_profiles).put(put_terminal_command_profiles),
         )
+        .route("/projects/{id}/git/status", get(get_git_status))
+        .route("/projects/{id}/git/diff", get(get_git_diff))
+        .route("/projects/{id}/git/actions", post(execute_git_action))
         .route("/projects/{id}/requirements", post(create_requirement))
         .route(
             "/requirements/{id}/messages",

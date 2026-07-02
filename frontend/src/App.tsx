@@ -14,11 +14,17 @@ import {
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
 
-import type { SettingsView, StartNodeData, StreamEvent } from "./types/api";
+import type {
+  GitExpansionPhase,
+  SettingsView,
+  StartNodeData,
+  StreamEvent,
+} from "./types/api";
 import StartNode from "./components/nodes/StartNode";
 import { buildRequirementDagEdges } from "./canvas/edges";
 import {
   buildProjectChatNode,
+  buildProjectGitNode,
   buildProjectNodes,
   buildProjectTerminalNode,
   mergeProjectNodes,
@@ -29,6 +35,7 @@ import { useRequirementFlow } from "./hooks/useRequirementFlow";
 import { useProjectChat } from "./hooks/useProjectChat";
 import { useModelSettings } from "./hooks/useModelSettings";
 import { useProjectTerminals } from "./hooks/useProjectTerminals";
+import { useProjectGit } from "./hooks/useProjectGit";
 import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsContext";
 import {
   getVisibleSettingsViewport,
@@ -267,12 +274,55 @@ function TerminalViewportController({ collapsed }: { collapsed: boolean }) {
   return null;
 }
 
+function GitViewportController({ phase }: { phase: GitExpansionPhase }) {
+  const { fitView, getNode, getViewport, setViewport } = useReactFlow();
+  const previous = React.useRef<GitExpansionPhase>("collapsed");
+  const savedViewport = React.useRef<CanvasViewport | undefined>(undefined);
+
+  React.useLayoutEffect(() => {
+    const last = previous.current;
+    previous.current = phase;
+    if (last === "collapsed" && phase !== "collapsed") {
+      savedViewport.current = getViewport();
+    }
+    if (phase === "collapsed") {
+      const saved = savedViewport.current;
+      savedViewport.current = undefined;
+      if (saved) void setViewport(saved, { duration: 260 });
+      return;
+    }
+    if (phase !== "expanded" || last === "expanded") return;
+
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const node = getNode("project-git");
+        if (!node) return;
+        void fitView({
+          nodes: [node],
+          padding: 0.08,
+          maxZoom: savedViewport.current?.zoom ?? getViewport().zoom,
+          duration: 260,
+        });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [fitView, getNode, getViewport, phase, setViewport]);
+
+  return null;
+}
+
 function minimapNodeColor(node: Node<StartNodeData>): string {
   switch (node.data.kind) {
     case "requirement-chat":
       return "#f97316";
     case "project-terminal":
       return "#14b8a6";
+    case "project-git":
+      return "#f59e0b";
     case "requirement-list":
       return node.data.tone === "done" ? "#22c55e" : "#f59e0b";
     case "requirement-dag":
@@ -318,6 +368,7 @@ export default function App() {
     selectedProjectId,
     models.basicSettings?.host === "0.0.0.0",
   );
+  const git = useProjectGit(selectedProjectId);
   const [nodeDragging, setNodeDragging] = useState(false);
   const requirementConversationEvents = project.selectedDagRequirementId
     ? EMPTY_STREAM_EVENTS
@@ -523,14 +574,58 @@ export default function App() {
     ],
   );
 
+  const projectGitNode = useMemo(
+    () =>
+      buildProjectGitNode({
+        projectCanvas: project.projectCanvas,
+        project: current.project,
+        phase: git.phase,
+        status: git.status,
+        diff: git.diff,
+        selectedPaths: git.selectedPaths,
+        selectedDiff: git.selectedDiff,
+        busy: git.busy,
+        error: git.error,
+        lastResult: git.lastResult,
+        onToggleExpanded: git.toggleExpanded,
+        onRefresh: git.load,
+        onTogglePath: git.togglePath,
+        onSelectDiff: git.selectDiff,
+        onAction: git.action,
+      }),
+    [
+      current.project,
+      git.action,
+      git.busy,
+      git.diff,
+      git.error,
+      git.lastResult,
+      git.load,
+      git.phase,
+      git.selectDiff,
+      git.selectedDiff,
+      git.selectedPaths,
+      git.status,
+      git.toggleExpanded,
+      git.togglePath,
+      project.projectCanvas,
+    ],
+  );
+
   const nodes = useMemo(
     () =>
       mergeProjectNodes(
         projectStructureNodes,
         projectChatNode,
         projectTerminalNode,
+        projectGitNode,
       ),
-    [projectChatNode, projectStructureNodes, projectTerminalNode],
+    [
+      projectChatNode,
+      projectGitNode,
+      projectStructureNodes,
+      projectTerminalNode,
+    ],
   );
 
   const edges = useMemo<Edge[]>(() => {
@@ -677,6 +772,7 @@ export default function App() {
               />
               <SettingsViewportController settingsView={models.settingsView} />
               <TerminalViewportController collapsed={terminals.collapsed} />
+              <GitViewportController phase={git.phase} />
             </ReactFlow>
           </ReactFlowProvider>
         </RequirementTaskEventsProvider>

@@ -11,6 +11,7 @@ import SummaryCard from "../components/nodes/SummaryCard";
 import TokenUsageNode from "../components/nodes/TokenUsageNode";
 import SettingsListNode from "../components/nodes/SettingsListNode";
 import BasicSettingsNode from "../components/nodes/BasicSettingsNode";
+import ProjectGitNode from "../components/nodes/ProjectGitNode";
 
 function assertNever(value: never): never {
   throw new Error(`Unexpected node kind: ${String(value)}`);
@@ -30,6 +31,8 @@ export function renderNodeContent(data: StartNodeData): React.JSX.Element {
       return <RequirementChatNode data={data} />;
     case "project-terminal":
       return <ProjectTerminalNode data={data} />;
+    case "project-git":
+      return <ProjectGitNode data={data} />;
     case "requirement-dag":
       return <RequirementDagNode data={data} />;
     case "requirement-list":

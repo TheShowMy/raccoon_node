@@ -683,6 +683,238 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn git_node_api_runs_the_safe_core_workflow() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("repo");
+        let remote = temp.path().join("remote.git");
+        std::fs::create_dir(&root).unwrap();
+        for (dir, args) in [
+            (root.as_path(), vec!["init", "-b", "main"]),
+            (remote.as_path(), vec!["init", "--bare"]),
+        ] {
+            if dir == remote {
+                std::fs::create_dir(dir).unwrap();
+            }
+            assert!(
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(dir)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        for args in [
+            vec!["config", "user.name", "Raccoon Test"],
+            vec!["config", "user.email", "test@example.com"],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(&root)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        std::fs::write(root.join("README.md"), "first\n").unwrap();
+        std::fs::write(root.join(".gitignore"), ".raccoon-node/\n").unwrap();
+        for args in [vec!["add", "."], vec!["commit", "-m", "initial"]] {
+            assert!(
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(&root)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        assert!(
+            std::process::Command::new("git")
+                .args(["remote", "add", "origin"])
+                .arg(&remote)
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let mut store = JsonStore::open(root.join(".raccoon-node")).await.unwrap();
+        let mut project = test_project("current");
+        project.local_path = root.to_string_lossy().into_owned();
+        project.git_url = remote.to_string_lossy().into_owned();
+        store.data.projects = vec![project];
+        let app = build_app_with_model_provider(
+            store,
+            PathBuf::from("frontend/dist"),
+            fake_provider(Vec::new()),
+        );
+
+        std::fs::write(root.join("README.md"), "first\nsecond\n").unwrap();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projects/current/git/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["branch"], "main");
+        assert_eq!(body["files"][0]["path"], "README.md");
+
+        let diff = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projects/current/git/diff?path=README.md&area=unstaged")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(diff.status(), StatusCode::OK);
+
+        async fn action(
+            app: &axum::Router,
+            payload: serde_json::Value,
+        ) -> axum::response::Response {
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/projects/current/git/actions")
+                        .header("content-type", "application/json")
+                        .body(Body::from(payload.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+
+        assert_eq!(
+            action(&app, json!({"type": "stage", "paths": ["README.md"]}))
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            action(
+                &app,
+                json!({"type": "commit", "message": "update", "confirmed": false})
+            )
+            .await
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            action(
+                &app,
+                json!({"type": "commit", "message": "update", "confirmed": true})
+            )
+            .await
+            .status(),
+            StatusCode::OK
+        );
+        for payload in [
+            json!({"type": "push", "confirmed": true}),
+            json!({"type": "fetch"}),
+            json!({"type": "pull"}),
+            json!({"type": "create_branch", "branch": "feature/git-node"}),
+        ] {
+            assert_eq!(action(&app, payload).await.status(), StatusCode::OK);
+        }
+        assert_eq!(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/projects/current/git/diff?path=../secret&area=unstaged")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            app.oneshot(
+                Request::builder()
+                    .uri("/api/projects/other/git/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn git_writes_are_blocked_while_requirements_are_queued() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-b", "main"])
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let mut store = JsonStore::open(root.join(".raccoon-node")).await.unwrap();
+        store.data.projects = vec![test_project("current")];
+        let now = Utc::now();
+        let mut requirement = test_requirement("queued", "current", RequirementStatus::Queued, now);
+        requirement.draft = Some(RequirementDraft {
+            title: "queued".to_owned(),
+            summary: "queued".to_owned(),
+            acceptance_criteria: Vec::new(),
+        });
+        store.data.requirements = vec![requirement];
+        let app = build_app_with_model_provider(
+            store,
+            PathBuf::from("frontend/dist"),
+            fake_provider(Vec::new()),
+        );
+
+        let status = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projects/current/git/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(status.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["write_blocked"], true);
+        assert_eq!(
+            app.oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/projects/current/git/actions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"type": "fetch"}).to_string(),))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status(),
+            StatusCode::CONFLICT
+        );
+    }
+
+    #[tokio::test]
     async fn basic_settings_api_persists_config_and_updates_runtime_theme() {
         let temp_dir = tempfile::tempdir().unwrap();
         let config_path = temp_dir.path().join(".raccoon-node/config.toml");

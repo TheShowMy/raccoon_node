@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildProjectChatNode,
+  buildProjectGitNode,
   buildProjectNodes,
   buildRequirementDagEdges,
   mergeProjectNodes,
@@ -218,6 +219,43 @@ describe("buildProjectNodes", () => {
     expect(model.height).toBe(90);
     expect(model.data.kind).toBe("summary");
     expect(completed.position).toEqual({ x: -350, y: 140 });
+  });
+
+  it("builds the Git node below the pending list with phased dimensions", () => {
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [],
+      completed_requirements: [],
+    };
+    const base = {
+      projectCanvas: canvas,
+      project: canvas.project,
+      status: null,
+      diff: null,
+      selectedPaths: new Set<string>(),
+      selectedDiff: null,
+      busy: false,
+      error: null,
+      lastResult: null,
+      onToggleExpanded: () => {},
+      onRefresh: async () => {},
+      onTogglePath: () => {},
+      onSelectDiff: async () => {},
+      onAction: async () => true,
+    };
+
+    const collapsed = buildProjectGitNode({
+      ...base,
+      phase: "collapsed",
+    })!;
+    const vertical = buildProjectGitNode({ ...base, phase: "vertical" })!;
+    const expanded = buildProjectGitNode({ ...base, phase: "expanded" })!;
+
+    expect(collapsed.position).toEqual({ x: 780, y: 800 });
+    expect(collapsed.style).toMatchObject({ width: 290, height: 44 });
+    expect(vertical.style).toMatchObject({ width: 290, height: 460 });
+    expect(expanded.style).toMatchObject({ width: 720, height: 460 });
   });
 
   it("opens model configuration from the project canvas", () => {
