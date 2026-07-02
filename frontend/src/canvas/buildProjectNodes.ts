@@ -118,6 +118,7 @@ export interface BuildProjectTerminalNodeParams {
   busy: boolean;
   error: string | null;
   terminalDisabled: boolean;
+  terminalDisabledReason?: string;
   onToggleCollapsed: () => void;
   onCreateTerminal: (
     command?: string | null,
@@ -631,6 +632,7 @@ export function buildProjectTerminalNode({
   busy,
   error,
   terminalDisabled,
+  terminalDisabledReason,
   onToggleCollapsed,
   onCreateTerminal,
   onCloseTerminal,
@@ -647,7 +649,7 @@ export function buildProjectTerminalNode({
       position: { x: 0, y: 800 },
       style: {
         width: 720,
-        height: collapsed ? 44 : 420,
+        height: collapsed ? 44 : 460,
       },
       data: {
         kind: "project-terminal",
@@ -659,6 +661,7 @@ export function buildProjectTerminalNode({
         busy,
         error,
         terminalDisabled,
+        terminalDisabledReason,
         onToggleCollapsed,
         onCreateTerminal,
         onCloseTerminal,

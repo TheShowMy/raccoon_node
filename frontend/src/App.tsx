@@ -214,6 +214,59 @@ function SettingsViewportController({
   return null;
 }
 
+export function getTerminalViewportAction(
+  previousCollapsed: boolean,
+  currentCollapsed: boolean,
+): "focus" | "restore" | null {
+  if (previousCollapsed === currentCollapsed) return null;
+  return currentCollapsed ? "restore" : "focus";
+}
+
+function TerminalViewportController({ collapsed }: { collapsed: boolean }) {
+  const { fitView, getNode, getViewport, setViewport } = useReactFlow();
+  const previousCollapsed = React.useRef(collapsed);
+  const savedViewport = React.useRef<CanvasViewport | undefined>(undefined);
+
+  React.useLayoutEffect(() => {
+    const action = getTerminalViewportAction(
+      previousCollapsed.current,
+      collapsed,
+    );
+    previousCollapsed.current = collapsed;
+    if (!action) return;
+
+    if (action === "restore") {
+      const saved = savedViewport.current;
+      savedViewport.current = undefined;
+      if (saved) void setViewport(saved, { duration: 260 });
+      return;
+    }
+
+    const saved = getViewport();
+    savedViewport.current = saved;
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const terminalNode = getNode("project-terminal");
+        if (!terminalNode) return;
+        void fitView({
+          nodes: [terminalNode],
+          padding: 0.08,
+          maxZoom: saved.zoom,
+          duration: 260,
+        });
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [collapsed, fitView, getNode, getViewport, setViewport]);
+
+  return null;
+}
+
 function minimapNodeColor(node: Node<StartNodeData>): string {
   switch (node.data.kind) {
     case "requirement-chat":
@@ -418,6 +471,20 @@ export default function App() {
     ],
   );
 
+  const terminalHost = models.basicSettings?.host;
+  const terminalDisabledReason = useMemo(() => {
+    if (terminalHost === "0.0.0.0") {
+      return "listening-on-all-interfaces";
+    }
+    const hostname =
+      typeof window !== "undefined" ? window.location.hostname : "localhost";
+    if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+      return "non-localhost-access";
+    }
+    return undefined;
+  }, [terminalHost]);
+  const terminalDisabled = terminalDisabledReason !== undefined;
+
   const projectTerminalNode = useMemo(
     () =>
       buildProjectTerminalNode({
@@ -429,7 +496,8 @@ export default function App() {
         commandProfiles: terminals.commandProfiles,
         busy: terminals.busy,
         error: terminals.error,
-        terminalDisabled: models.basicSettings?.host === "0.0.0.0",
+        terminalDisabled,
+        terminalDisabledReason,
         onToggleCollapsed: terminals.toggleCollapsed,
         onCreateTerminal: terminals.createTerminal,
         onCloseTerminal: terminals.closeTerminal,
@@ -438,7 +506,8 @@ export default function App() {
       }),
     [
       current.project,
-      models.basicSettings?.host,
+      terminalDisabled,
+      terminalDisabledReason,
       project.projectCanvas,
       terminals.activeSessionId,
       terminals.busy,
@@ -607,6 +676,7 @@ export default function App() {
                 selectedDagRequirementId={project.selectedDagRequirementId}
               />
               <SettingsViewportController settingsView={models.settingsView} />
+              <TerminalViewportController collapsed={terminals.collapsed} />
             </ReactFlow>
           </ReactFlowProvider>
         </RequirementTaskEventsProvider>

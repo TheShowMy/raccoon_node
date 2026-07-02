@@ -13,21 +13,6 @@ import type {
 } from "../types/api";
 import { readError } from "../utils/format";
 
-function collapsedStorageKey(projectId: string) {
-  return `raccoon-node:project-terminal:collapsed:${projectId}`;
-}
-
-function readInitialCollapsed(projectId: string | null) {
-  if (!projectId) return true;
-  try {
-    return (
-      window.localStorage.getItem(collapsedStorageKey(projectId)) !== "false"
-    );
-  } catch {
-    return true;
-  }
-}
-
 export function useProjectTerminals(
   selectedProjectId: string | null,
   terminalDisabled: boolean,
@@ -37,14 +22,12 @@ export function useProjectTerminals(
     TerminalCommandProfile[]
   >([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(() =>
-    readInitialCollapsed(selectedProjectId),
-  );
+  const [collapsed, setCollapsed] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setCollapsed(readInitialCollapsed(selectedProjectId));
+    setCollapsed(true);
   }, [selectedProjectId]);
 
   const load = useCallback(async () => {
@@ -77,21 +60,8 @@ export function useProjectTerminals(
   }, [load]);
 
   const toggleCollapsed = useCallback(() => {
-    setCollapsed((current) => {
-      const next = !current;
-      if (selectedProjectId) {
-        try {
-          window.localStorage.setItem(
-            collapsedStorageKey(selectedProjectId),
-            String(next),
-          );
-        } catch {
-          // Ignore private-mode/localStorage failures.
-        }
-      }
-      return next;
-    });
-  }, [selectedProjectId]);
+    setCollapsed((current) => !current);
+  }, []);
 
   const createTerminal = useCallback(
     async (command?: string | null, title?: string | null) => {

@@ -395,3 +395,59 @@ fn shell_command(command: Option<&str>) -> CommandBuilder {
         builder
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{sync::mpsc, time::Duration};
+
+    #[test]
+    fn echo_command_writes_output_and_exits() {
+        let manager = TerminalManager::new();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("repo root");
+        let session = manager
+            .spawn(
+                "current",
+                root,
+                Some("echo hello".to_owned()),
+                None,
+                None,
+                None,
+            )
+            .expect("spawn terminal");
+
+        let runtime = manager.get(&session.id).expect("runtime");
+        let mut receiver = runtime.subscribe();
+        let (output_tx, output_rx) = mpsc::channel::<String>();
+
+        thread::spawn(move || {
+            let mut output = String::new();
+            while let Ok(message) = receiver.blocking_recv() {
+                match message {
+                    TerminalServerMessage::Output { data } => output.push_str(&data),
+                    TerminalServerMessage::Status {
+                        status: TerminalSessionStatus::Exited,
+                        ..
+                    } => break,
+                    _ => {}
+                }
+            }
+            let _ = output_tx.send(output);
+        });
+
+        let output = output_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("collect output within timeout");
+        assert!(
+            output.contains("hello"),
+            "expected output to contain 'hello', got: {output:?}"
+        );
+
+        let metadata = runtime.metadata();
+        assert_eq!(metadata.status, TerminalSessionStatus::Exited);
+        assert_eq!(metadata.exit_code, Some(0));
+    }
+}

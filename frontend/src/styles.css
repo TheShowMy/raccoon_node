@@ -235,7 +235,12 @@
   }
 
   .node-card--project-terminal {
-    @apply w-[720px] min-h-0 overflow-hidden p-0;
+    @apply h-full w-[720px] min-h-0 overflow-hidden p-0;
+    display: flex;
+    flex-direction: column;
+    background: var(--card-bg);
+    border: 1px solid
+      color-mix(in srgb, var(--accent-projects) 30%, transparent);
     box-shadow:
       var(--shadow-card),
       0 0 28px color-mix(in srgb, var(--accent-projects) 20%, transparent);
@@ -247,15 +252,41 @@
 
   .terminal-node {
     @apply flex h-full w-full flex-col;
+    color: var(--text-strong);
   }
 
   .terminal-node--collapsed {
     @apply justify-center;
   }
 
+  .terminal-node__traffic-lights {
+    @apply flex shrink-0 items-center gap-1.5;
+  }
+
+  .terminal-node__traffic-lights > span {
+    @apply h-2.5 w-2.5 rounded-full;
+  }
+
+  .terminal-node__traffic-lights > span:nth-child(1) {
+    background: #fb7185;
+  }
+
+  .terminal-node__traffic-lights > span:nth-child(2) {
+    background: #facc15;
+  }
+
+  .terminal-node__traffic-lights > span:nth-child(3) {
+    background: #4ade80;
+  }
+
   .terminal-node__collapsed-bar {
-    @apply flex h-full w-full items-center gap-3 border-0 bg-transparent px-4 text-left;
+    @apply flex h-full w-full items-center gap-3 border-0 px-4 text-left transition;
+    background: transparent;
     color: var(--text-strong);
+  }
+
+  .terminal-node__collapsed-bar:hover {
+    background: color-mix(in srgb, var(--text-strong) 4%, transparent);
   }
 
   .terminal-node__collapsed-copy {
@@ -271,10 +302,6 @@
     color: var(--text-soft);
   }
 
-  .terminal-node__icon {
-    color: var(--accent-projects);
-  }
-
   .terminal-node__error {
     @apply max-w-[240px] truncate rounded-full border px-2 py-1 text-[11px];
     border-color: color-mix(in srgb, var(--accent-danger) 38%, transparent);
@@ -282,73 +309,108 @@
   }
 
   .terminal-node__body {
-    @apply flex h-full min-h-0 flex-col gap-3 p-4;
+    @apply flex h-full min-h-0 flex-col;
+    background: var(--card-bg);
   }
 
-  .terminal-node__header {
-    @apply flex items-start justify-between gap-3;
+  .terminal-node__titlebar {
+    @apply flex shrink-0 items-center justify-between gap-3 px-4 py-2.5;
+    border-bottom: 1px solid var(--card-border);
+    background: var(--panel-bg);
   }
 
-  .terminal-node__header strong {
-    @apply block text-sm;
-  }
-
-  .terminal-node__header span {
-    @apply block text-xs;
+  .terminal-node__title {
+    @apply absolute left-1/2 -translate-x-1/2 text-xs font-semibold;
     color: var(--text-soft);
   }
 
-  .terminal-node__header-actions {
-    @apply flex items-center gap-2;
+  .terminal-node__titlebar-actions {
+    @apply flex items-center gap-1.5;
   }
 
-  .terminal-node__header-actions button,
-  .terminal-node__profiles-actions button,
-  .terminal-node__manage-command {
-    @apply inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50;
+  .terminal-node__titlebar-actions button {
+    @apply inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50;
     border-color: var(--card-border-strong);
     color: var(--text-soft);
-    background: color-mix(in srgb, var(--card-bg-hover) 74%, transparent);
+    background: transparent;
   }
 
-  .terminal-node__security {
-    @apply rounded-full border px-2 py-1 text-[11px];
-    border-color: color-mix(in srgb, var(--accent-danger) 38%, transparent);
-    color: var(--accent-danger) !important;
+  .terminal-node__titlebar-actions button:hover:not(:disabled) {
+    border-color: var(--card-border-strong);
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--text-strong) 5%, transparent);
   }
 
-  .terminal-node__commands {
-    @apply flex min-h-[32px] flex-wrap items-center gap-2;
+  .terminal-node__notice {
+    @apply flex shrink-0 items-center gap-2 px-4 py-1.5 text-xs;
+    color: color-mix(in srgb, var(--accent-danger) 88%, var(--text-strong));
+    background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--accent-danger) 22%, transparent);
   }
 
-  .terminal-node__command-empty {
+  .terminal-node__toolbar {
+    @apply flex shrink-0 items-center justify-between gap-3 px-4 py-2;
+    border-bottom: 1px solid var(--card-border);
+  }
+
+  .terminal-node__command-list {
+    @apply flex min-h-[26px] flex-wrap items-center gap-2;
+  }
+
+  .terminal-node__command-hint {
     @apply text-xs;
     color: var(--text-muted);
   }
 
-  .terminal-node__command-chip {
-    @apply rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50;
-    border-color: color-mix(in srgb, var(--accent-projects) 34%, transparent);
+  .terminal-node__command-tag {
+    @apply inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+    border-color: var(--card-border-strong);
     color: var(--text-strong);
-    background: color-mix(in srgb, var(--accent-projects) 12%, transparent);
+    background: var(--panel-bg);
+  }
+
+  .terminal-node__command-tag:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent-projects) 60%, transparent);
+    background: color-mix(in srgb, var(--accent-projects) 14%, transparent);
+    box-shadow: 0 0 8px
+      color-mix(in srgb, var(--accent-projects) 16%, transparent);
+  }
+
+  .terminal-node__manage {
+    @apply inline-flex shrink-0 cursor-pointer items-center gap-1.5 text-xs font-medium transition;
+    color: var(--text-soft);
+    background: transparent;
+  }
+
+  .terminal-node__manage:hover {
+    color: var(--text-strong);
   }
 
   .terminal-node__profiles {
-    @apply max-h-[150px] overflow-y-auto rounded-2xl border p-3;
+    @apply max-h-[150px] shrink-0 overflow-y-auto border-b px-4 py-3;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--card-bg-hover) 60%, transparent);
+    background: var(--panel-bg);
   }
 
   .terminal-node__profiles-head {
     @apply mb-2 flex items-center justify-between text-sm;
+    color: var(--text-strong);
   }
 
   .terminal-node__profiles-head button,
   .terminal-node__profile-row button,
   .terminal-node__tab-close {
-    @apply inline-flex items-center justify-center rounded-full border bg-transparent p-1;
-    border-color: var(--card-border);
+    @apply inline-flex cursor-pointer items-center justify-center rounded-md border bg-transparent p-1 transition;
+    border-color: var(--card-border-strong);
     color: var(--text-soft);
+  }
+
+  .terminal-node__profiles-head button:hover,
+  .terminal-node__profile-row button:hover {
+    border-color: var(--accent-danger);
+    color: var(--accent-danger);
+    background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
   }
 
   .terminal-node__profile-row {
@@ -356,50 +418,115 @@
   }
 
   .terminal-node__profile-row input {
-    @apply min-w-0 rounded-xl border px-3 py-2 text-xs outline-none;
-    border-color: var(--card-border);
+    @apply min-w-0 rounded-lg border px-3 py-1.5 text-xs outline-none transition;
+    border-color: var(--card-border-strong);
     color: var(--text-strong);
-    background: rgba(2, 6, 23, 0.28);
+    background: var(--panel-bg);
+  }
+
+  .terminal-node__profile-row input:focus {
+    border-color: var(--accent-projects);
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--accent-projects) 16%, transparent);
   }
 
   .terminal-node__profiles-actions {
     @apply flex justify-end gap-2;
   }
 
-  .terminal-node__tabs {
-    @apply flex gap-2 overflow-x-auto pb-1;
+  .terminal-node__profiles-actions button {
+    @apply inline-flex cursor-pointer items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50;
+    border-color: var(--card-border-strong);
+    color: var(--text-soft);
+    background: color-mix(in srgb, var(--text-strong) 5%, transparent);
   }
 
-  .terminal-node__tabs > button {
-    @apply flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs;
+  .terminal-node__profiles-actions button:hover:not(:disabled) {
+    border-color: var(--card-border-strong);
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  }
+
+  .terminal-node__tabs {
+    @apply flex shrink-0 gap-0 overflow-x-auto;
+    border-bottom: 1px solid var(--card-border);
+  }
+
+  .terminal-node__tabs > .terminal-node__tab {
+    @apply flex shrink-0 cursor-pointer items-stretch border-r text-xs transition;
     border-color: var(--card-border);
     color: var(--text-soft);
-    background: rgba(2, 6, 23, 0.2);
+    background: transparent;
   }
 
-  .terminal-node__tabs > button.is-active {
-    border-color: color-mix(in srgb, var(--accent-projects) 50%, transparent);
+  .terminal-node__tabs > .terminal-node__tab:hover:not(.is-active) {
     color: var(--text-strong);
-    background: color-mix(in srgb, var(--accent-projects) 13%, transparent);
+    background: color-mix(in srgb, var(--text-strong) 3%, transparent);
   }
 
-  .terminal-node__tabs small {
-    color: var(--text-muted);
+  .terminal-node__tabs > .terminal-node__tab.is-active {
+    color: var(--text-strong);
+    background: var(--canvas-bg);
+    border-top: 2px solid var(--accent-projects);
+  }
+
+  .terminal-node__tabs > .terminal-node__tab.is-exited {
+    opacity: 0.65;
+  }
+
+  .terminal-node__tab-main {
+    @apply flex flex-1 items-center gap-2 px-3 py-1.5;
+    color: inherit;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+  }
+
+  .terminal-node__tab-close {
+    @apply flex items-center px-2;
+    color: inherit;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+  }
+
+  .terminal-node__tab-close:hover {
+    border-color: var(--accent-danger);
+    color: var(--accent-danger);
+    background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
   }
 
   .terminal-node__viewport {
-    @apply relative min-h-0 flex-1 overflow-hidden rounded-2xl border;
-    border-color: rgba(15, 23, 42, 0.86);
-    background: #020617;
+    @apply relative min-h-0 flex-1 overflow-hidden;
+    background: var(--canvas-bg);
+    box-shadow: inset 0 0 30px
+      color-mix(in srgb, var(--text-strong) 8%, transparent);
   }
 
   .terminal-node__empty {
     @apply flex h-full flex-col items-center justify-center gap-2 text-center text-sm;
-    color: var(--text-soft);
+    color: var(--text-muted);
+  }
+
+  .terminal-node__empty svg {
+    color: var(--accent-projects);
+    opacity: 0.6;
   }
 
   .terminal-node__empty strong {
+    @apply block text-sm;
     color: var(--text-strong);
+  }
+
+  .terminal-node__statusbar {
+    @apply flex shrink-0 items-center justify-between gap-3 px-4 py-1.5 text-[11px];
+    color: var(--text-muted);
+    background: var(--card-bg);
+    border-top: 1px solid var(--card-border);
+  }
+
+  .terminal-node__cwd {
+    @apply min-w-0 truncate font-mono;
   }
 
   .terminal-session-view,
@@ -409,25 +536,36 @@
 
   .terminal-session-view {
     @apply relative overflow-hidden;
+    background: var(--canvas-bg);
   }
 
   .terminal-session-view__host {
     @apply overflow-hidden p-2;
+    max-height: 100%;
   }
 
   .terminal-session-view__host .xterm {
     @apply h-full;
+    max-height: 100%;
+  }
+
+  .terminal-node__profiles,
+  .terminal-node__tabs,
+  .terminal-session-view__host .xterm-viewport {
+    scrollbar-width: thin;
+    scrollbar-color: var(--card-border-strong) var(--canvas-bg);
   }
 
   .terminal-session-view__host .xterm-viewport {
+    background-color: var(--canvas-bg) !important;
     overflow-y: auto !important;
   }
 
   .terminal-session-view__status {
-    @apply absolute right-3 bottom-3 rounded-full border px-3 py-1 text-xs;
+    @apply absolute right-3 bottom-3 rounded-full border px-3 py-1 text-xs backdrop-blur;
     border-color: var(--card-border-strong);
     color: var(--text-soft);
-    background: rgba(15, 23, 42, 0.92);
+    background: var(--card-bg);
   }
 
   .chat-card-stack {

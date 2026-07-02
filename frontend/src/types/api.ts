@@ -558,6 +558,7 @@ export type StartNodeData =
       busy: boolean;
       error: string | null;
       terminalDisabled: boolean;
+      terminalDisabledReason?: string;
       onToggleCollapsed: () => void;
       onCreateTerminal: (
         command?: string | null,

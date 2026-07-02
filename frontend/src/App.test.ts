@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getProjectViewportAction,
   getReactFlowKey,
+  getTerminalViewportAction,
   updateSettingsViewportStack,
   type ProjectViewportSnapshot,
 } from "./App";
@@ -80,5 +81,13 @@ describe("settings viewport stack", () => {
       updateSettingsViewportStack("basic", "models", stack, viewport),
     ).toBeUndefined();
     expect(stack).toEqual([{ x: 1, y: 2, zoom: 1 }]);
+  });
+});
+
+describe("terminal viewport action", () => {
+  it("focuses on expand, restores on collapse, and ignores unchanged state", () => {
+    expect(getTerminalViewportAction(true, false)).toBe("focus");
+    expect(getTerminalViewportAction(false, true)).toBe("restore");
+    expect(getTerminalViewportAction(true, true)).toBeNull();
   });
 });

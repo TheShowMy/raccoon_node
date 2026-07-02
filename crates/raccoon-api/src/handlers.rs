@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, OnceLock};
+
 use axum::{
     Json,
     body::Body,
@@ -414,6 +417,7 @@ pub async fn list_project_terminals(
     State(state): State<AppState>,
     AxumPath(project_id): AxumPath<String>,
 ) -> Result<Json<Vec<TerminalSession>>, AppError> {
+    ensure_terminal_allowed(&state).await?;
     {
         let store = state.store.read().await;
         store.project_root(&project_id)?;
@@ -446,6 +450,7 @@ pub async fn delete_project_terminal(
     State(state): State<AppState>,
     AxumPath((project_id, terminal_id)): AxumPath<(String, String)>,
 ) -> Result<Json<Vec<TerminalSession>>, AppError> {
+    ensure_terminal_allowed(&state).await?;
     state.terminal_manager.delete(&project_id, &terminal_id)?;
     Ok(Json(state.terminal_manager.list(&project_id)))
 }
@@ -454,6 +459,7 @@ pub async fn get_terminal_command_profiles(
     State(state): State<AppState>,
     AxumPath(project_id): AxumPath<String>,
 ) -> Result<Json<Vec<TerminalCommandProfile>>, AppError> {
+    ensure_terminal_allowed(&state).await?;
     let store = state.store.read().await;
     Ok(Json(store.terminal_command_profiles(&project_id)?))
 }
@@ -463,6 +469,7 @@ pub async fn put_terminal_command_profiles(
     AxumPath(project_id): AxumPath<String>,
     Json(payload): Json<TerminalCommandProfilesUpdate>,
 ) -> Result<Json<Vec<TerminalCommandProfile>>, AppError> {
+    ensure_terminal_allowed(&state).await?;
     let mut store = state.store.write().await;
     Ok(Json(
         store
@@ -476,6 +483,7 @@ pub async fn terminal_websocket(
     AxumPath((project_id, terminal_id)): AxumPath<(String, String)>,
     websocket: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, AppError> {
+    ensure_terminal_allowed(&state).await?;
     {
         let store = state.store.read().await;
         store.project_root(&project_id)?;
@@ -1227,6 +1235,3 @@ mod event_filter_tests {
         assert!(error.to_string().contains("gh 未登录"));
     }
 }
-
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex, OnceLock};

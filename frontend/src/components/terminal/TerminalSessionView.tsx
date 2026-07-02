@@ -3,6 +3,18 @@ import "@xterm/xterm/css/xterm.css";
 import { terminalWebSocketUrl } from "../../api/client";
 import type { TerminalServerMessage, TerminalSession } from "../../types/api";
 
+function terminalTheme() {
+  const styles = getComputedStyle(document.documentElement);
+  const color = (name: string) => styles.getPropertyValue(name).trim();
+
+  return {
+    background: color("--canvas-bg"),
+    foreground: color("--text-strong"),
+    cursor: color("--accent-model"),
+    selectionBackground: color("--card-border-strong"),
+  };
+}
+
 export default function TerminalSessionView({
   projectId,
   session,
@@ -36,17 +48,19 @@ export default function TerminalSessionView({
           fontFamily:
             "JetBrains Mono, Cascadia Mono, SFMono-Regular, Consolas, monospace",
           fontSize: 12,
-          rows: 24,
-          theme: {
-            background: "#020617",
-            foreground: "#e2e8f0",
-            cursor: "#f97316",
-            selectionBackground: "#334155",
-          },
+          theme: terminalTheme(),
+        });
+        const themeObserver = new MutationObserver(() => {
+          terminal.options.theme = terminalTheme();
+        });
+        themeObserver.observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["data-theme"],
         });
         const fit = new fitAddon.FitAddon();
         terminal.loadAddon(fit);
         terminal.open(host);
+        fit.fit();
 
         const socket = new WebSocket(
           terminalWebSocketUrl(projectId, session.id),
@@ -111,6 +125,7 @@ export default function TerminalSessionView({
         const frame = window.requestAnimationFrame(sendResize);
         cleanup = () => {
           window.cancelAnimationFrame(frame);
+          themeObserver.disconnect();
           dataDisposable.dispose();
           resizeObserver.disconnect();
           host.removeEventListener("pointerdown", focusTerminal);
