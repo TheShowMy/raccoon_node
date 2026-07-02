@@ -36,6 +36,19 @@ npm install --global raccoon-node
 
 npm 与 GitHub Release 两种安装方式提供相同命令：`raccoon`。
 
+## 更新
+
+### npm
+
+```sh
+npm install --global raccoon-node@latest
+```
+
+### GitHub Release
+
+从 [GitHub Releases](https://github.com/TheShowMy/raccoon_node/releases) 下载
+最新对应平台压缩包，覆盖现有二进制即可。
+
 ## 使用
 
 在 Git 仓库根目录或任意子目录运行：

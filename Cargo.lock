@@ -1305,7 +1305,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "raccoon-api"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "chrono",
@@ -1328,7 +1328,7 @@ dependencies = [
 
 [[package]]
 name = "raccoon-chat"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "raccoon-core",
@@ -1339,7 +1339,7 @@ dependencies = [
 
 [[package]]
 name = "raccoon-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "chrono",
@@ -1355,7 +1355,7 @@ dependencies = [
 
 [[package]]
 name = "raccoon-dev"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "raccoon-core",
  "tempfile",
@@ -1365,7 +1365,7 @@ dependencies = [
 
 [[package]]
 name = "raccoon-node"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "chrono",
@@ -1388,7 +1388,7 @@ dependencies = [
 
 [[package]]
 name = "raccoon-pi-rpc"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "raccoon-chat",
  "raccoon-core",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "raccoon-requirement"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "raccoon-core",
@@ -1414,7 +1414,7 @@ dependencies = [
 
 [[package]]
 name = "raccoon-store"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "raccoon-core",
@@ -1428,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "raccoon-tui"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "crossterm",
  "raccoon-api",

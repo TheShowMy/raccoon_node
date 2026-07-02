@@ -12,6 +12,12 @@ npm install --global raccoon-node
 
 首次启动检测不到 Pi Agent 时，交互式向导会确认执行官方 npm 安装命令。
 
+## 更新
+
+```sh
+npm install --global raccoon-node@latest
+```
+
 ## 使用
 
 在 Git 仓库根目录或任意子目录运行：

@@ -127,7 +127,8 @@ jobs:
           mkdir -p npm-smoke/tarballs npm-smoke/install
           npm pack ./packages/raccoon-node-linux-x64 --pack-destination npm-smoke/tarballs
           npm pack ./packages/raccoon-node --pack-destination npm-smoke/tarballs
-          npm install --prefix npm-smoke/install --ignore-scripts ./npm-smoke/tarballs/raccoon-node-linux-x64-0.2.0.tgz ./npm-smoke/tarballs/raccoon-node-0.2.0.tgz
+          VERSION=$(node -p "require('./packages/raccoon-node/package.json').version")
+          npm install --prefix npm-smoke/install --ignore-scripts ./npm-smoke/tarballs/raccoon-node-linux-x64-${VERSION}.tgz ./npm-smoke/tarballs/raccoon-node-${VERSION}.tgz
           npm-smoke/install/node_modules/.bin/raccoon --help
       - name: Publish platform packages
         run: node scripts/publish-npm.mjs packages/raccoon-node-darwin-arm64 packages/raccoon-node-linux-x64 packages/raccoon-node-windows-x64
