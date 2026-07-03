@@ -223,12 +223,10 @@ describe("buildProjectNodes", () => {
       ...base,
       phase: "collapsed",
     })!;
-    const vertical = buildProjectGitNode({ ...base, phase: "vertical" })!;
     const expanded = buildProjectGitNode({ ...base, phase: "expanded" })!;
 
     expect(collapsed.position).toEqual({ x: 780, y: 800 });
     expect(collapsed.style).toMatchObject({ width: 290, height: 44 });
-    expect(vertical.style).toMatchObject({ width: 290, height: 460 });
     expect(expanded.style).toMatchObject({ width: 720, height: 460 });
   });
 
@@ -257,6 +255,12 @@ describe("buildProjectNodes", () => {
       modelError: null,
       savingModels: false,
       terminalDisabled: false,
+      piLoginSession: null,
+      piLoginBusy: false,
+      piLoginError: null,
+      needsModelOnboarding: true,
+      modelDraftComplete: false,
+      modelSavedComplete: false,
       onToggleExpanded: () => {},
       onOpenBasic: () => {},
       onOpenModels: () => {},
@@ -266,7 +270,8 @@ describe("buildProjectNodes", () => {
       onModelChange: () => {},
       onSaveModels: async () => {},
       onReloadModels: async () => {},
-      onOpenLogin: () => {},
+      onStartPiLogin: async () => {},
+      onClosePiLogin: async () => {},
     };
     const collapsed = buildProjectSettingsNode({
       ...base,
@@ -276,8 +281,10 @@ describe("buildProjectNodes", () => {
 
     expect(collapsed.position).toEqual({ x: -350, y: 20 });
     expect(collapsed.style).toMatchObject({ width: 137, height: 90 });
-    expect(expanded.position).toEqual({ x: -933, y: -350 });
-    expect(expanded.style).toMatchObject({ width: 720, height: 460 });
+    expect(expanded.position).toEqual({ x: -1533, y: -670 });
+    expect(expanded.style).toMatchObject({ width: 1320, height: 780 });
+    expect(expanded.position.x + 1320).toBe(collapsed.position.x + 137);
+    expect(expanded.position.y + 780).toBe(collapsed.position.y + 90);
     expect(expanded.data.kind).toBe("project-settings");
     expect(buildProjectNodes(params(canvas, null))).not.toContainEqual(
       expect.objectContaining({ id: "settings" }),

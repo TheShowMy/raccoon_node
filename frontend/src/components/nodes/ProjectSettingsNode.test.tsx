@@ -3,6 +3,10 @@ import { expect, it, vi } from "vitest";
 import type { StartNodeData } from "../../types/api";
 import ProjectSettingsNode from "./ProjectSettingsNode";
 
+vi.mock("../terminal/TerminalSessionView", () => ({
+  default: () => <div data-testid="embedded-pi-terminal" />,
+}));
+
 const basicSettings = {
   theme: "dark" as const,
   host: "0.0.0.0",
@@ -36,6 +40,12 @@ function data(
     modelError: null,
     savingModels: false,
     terminalDisabled: false,
+    piLoginSession: null,
+    piLoginBusy: false,
+    piLoginError: null,
+    needsModelOnboarding: true,
+    modelDraftComplete: false,
+    modelSavedComplete: false,
     onToggleExpanded: vi.fn(),
     onOpenBasic: vi.fn(),
     onOpenModels: vi.fn(),
@@ -45,7 +55,8 @@ function data(
     onModelChange: vi.fn(),
     onSaveModels: vi.fn(async () => {}),
     onReloadModels: vi.fn(async () => {}),
-    onOpenLogin: vi.fn(),
+    onStartPiLogin: vi.fn(async () => {}),
+    onClosePiLogin: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -63,7 +74,7 @@ it("switches pages and keeps external-listening confirmation inside the node", (
   const props = data();
   render(<ProjectSettingsNode data={props} />);
 
-  fireEvent.click(screen.getByRole("button", { name: "模型设置" }));
+  fireEvent.click(screen.getByRole("tab", { name: "模型设置" }));
   expect(props.onOpenModels).toHaveBeenCalledOnce();
 
   fireEvent.click(screen.getByRole("button", { name: "保存并按需重启" }));
@@ -74,12 +85,59 @@ it("switches pages and keeps external-listening confirmation inside the node", (
   expect(props.onSaveBasic).toHaveBeenCalledWith(true);
 });
 
-it("keeps Pi login and model reload actions in the model page", () => {
+it("embeds Pi login actions and onboarding in the model page", () => {
   const props = data({ page: "models" });
   render(<ProjectSettingsNode data={props} />);
 
-  fireEvent.click(screen.getByRole("button", { name: "打开 Pi 登录终端" }));
-  fireEvent.click(screen.getByRole("button", { name: "重载 Pi 模型" }));
-  expect(props.onOpenLogin).toHaveBeenCalledOnce();
+  expect(
+    screen.getByRole("list", { name: "首次模型配置引导" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Pi 登录终端" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "启动终端" }));
+  fireEvent.click(screen.getByRole("button", { name: "重载模型" }));
+  expect(props.onStartPiLogin).toHaveBeenCalledOnce();
   expect(props.onReloadModels).toHaveBeenCalledOnce();
+});
+
+it("offers restart and close without expanding the project terminal", () => {
+  const props = data({
+    page: "models",
+    piLoginSession: {
+      id: "pi-login",
+      project_id: "current",
+      title: "Pi 登录",
+      command: "pi --no-session --no-extensions --no-context-files",
+      status: "running",
+      exit_code: null,
+      created_at: "2026-07-03T00:00:00Z",
+      updated_at: "2026-07-03T00:00:00Z",
+    },
+  });
+  render(<ProjectSettingsNode data={props} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "重新启动" }));
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  expect(props.onStartPiLogin).toHaveBeenCalledOnce();
+  expect(props.onClosePiLogin).toHaveBeenCalledOnce();
+  expect(props.onToggleExpanded).not.toHaveBeenCalled();
+});
+
+it("hides onboarding after all three saved tiers are complete", () => {
+  render(
+    <ProjectSettingsNode
+      data={data({
+        page: "models",
+        needsModelOnboarding: false,
+        modelDraftComplete: true,
+        modelSavedComplete: true,
+      })}
+    />,
+  );
+
+  expect(
+    screen.queryByRole("list", { name: "首次模型配置引导" }),
+  ).not.toBeInTheDocument();
+  expect(
+    document.querySelector(".model-settings--guided"),
+  ).not.toBeInTheDocument();
 });

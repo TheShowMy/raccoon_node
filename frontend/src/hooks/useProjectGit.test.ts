@@ -28,28 +28,18 @@ describe("useProjectGit", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(getProjectGitStatus).mockResolvedValue(status);
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn(() => ({ matches: false })),
-    );
   });
 
-  it("loads status and expands down before expanding right", async () => {
-    vi.useFakeTimers();
+  it("loads status and toggles expansion in one step", async () => {
     const { result } = renderHook(() => useProjectGit("current"));
     await act(async () => Promise.resolve());
     expect(result.current.phase).toBe("collapsed");
 
     act(() => result.current.toggleExpanded());
-    expect(result.current.phase).toBe("vertical");
-    act(() => vi.advanceTimersByTime(160));
     expect(result.current.phase).toBe("expanded");
 
     act(() => result.current.toggleExpanded());
-    expect(result.current.phase).toBe("vertical");
-    act(() => vi.advanceTimersByTime(160));
     expect(result.current.phase).toBe("collapsed");
-    vi.useRealTimers();
   });
 
   it("applies the status returned by a successful action", async () => {

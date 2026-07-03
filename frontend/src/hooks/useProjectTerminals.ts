@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createProjectTerminal,
   deleteProjectTerminal,
@@ -13,6 +13,8 @@ import type {
 } from "../types/api";
 import { readError } from "../utils/format";
 
+const PI_LOGIN_COMMAND = "pi --no-session --no-extensions --no-context-files";
+
 export function useProjectTerminals(
   selectedProjectId: string | null,
   terminalDisabled: boolean,
@@ -25,10 +27,38 @@ export function useProjectTerminals(
   const [collapsed, setCollapsed] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [piLoginSession, setPiLoginSession] = useState<TerminalSession | null>(
+    null,
+  );
+  const [piLoginBusy, setPiLoginBusy] = useState(false);
+  const [piLoginError, setPiLoginError] = useState<string | null>(null);
+  const piLoginSessionRef = useRef<TerminalSession | null>(null);
+  piLoginSessionRef.current = piLoginSession;
 
   useEffect(() => {
     setCollapsed(true);
+    setPiLoginSession(null);
+    setPiLoginError(null);
+    return () => {
+      const session = piLoginSessionRef.current;
+      if (session) {
+        void deleteProjectTerminal(session.project_id, session.id);
+      }
+    };
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    const closeOnPageHide = () => {
+      const session = piLoginSessionRef.current;
+      if (!session) return;
+      void fetch(
+        `/api/projects/${encodeURIComponent(session.project_id)}/terminals/${encodeURIComponent(session.id)}`,
+        { method: "DELETE", keepalive: true },
+      );
+    };
+    window.addEventListener("pagehide", closeOnPageHide);
+    return () => window.removeEventListener("pagehide", closeOnPageHide);
+  }, []);
 
   const load = useCallback(async () => {
     if (!selectedProjectId) {
@@ -113,6 +143,44 @@ export function useProjectTerminals(
     [selectedProjectId],
   );
 
+  const closePiLoginTerminal = useCallback(async () => {
+    const session = piLoginSessionRef.current;
+    if (!session) return;
+    setPiLoginBusy(true);
+    setPiLoginError(null);
+    try {
+      await deleteProjectTerminal(session.project_id, session.id);
+      setPiLoginSession(null);
+    } catch (reason) {
+      setPiLoginError(readError(reason));
+    } finally {
+      setPiLoginBusy(false);
+    }
+  }, []);
+
+  const startPiLoginTerminal = useCallback(async () => {
+    if (!selectedProjectId || terminalDisabled || piLoginBusy) return;
+    setPiLoginBusy(true);
+    setPiLoginError(null);
+    try {
+      const previous = piLoginSessionRef.current;
+      if (previous) {
+        await deleteProjectTerminal(previous.project_id, previous.id);
+        setPiLoginSession(null);
+      }
+      setPiLoginSession(
+        await createProjectTerminal(selectedProjectId, {
+          command: PI_LOGIN_COMMAND,
+          title: "Pi 登录",
+        }),
+      );
+    } catch (reason) {
+      setPiLoginError(readError(reason));
+    } finally {
+      setPiLoginBusy(false);
+    }
+  }, [piLoginBusy, selectedProjectId, terminalDisabled]);
+
   const saveCommandProfiles = useCallback(
     async (profiles: TerminalCommandProfileDraft[]) => {
       if (!selectedProjectId) return;
@@ -147,6 +215,11 @@ export function useProjectTerminals(
       closeTerminal,
       selectTerminal: setActiveSessionId,
       saveCommandProfiles,
+      piLoginSession,
+      piLoginBusy,
+      piLoginError,
+      startPiLoginTerminal,
+      closePiLoginTerminal,
     }),
     [
       activeSessionId,
@@ -157,8 +230,13 @@ export function useProjectTerminals(
       createTerminal,
       error,
       load,
+      closePiLoginTerminal,
+      piLoginBusy,
+      piLoginError,
+      piLoginSession,
       saveCommandProfiles,
       sessions,
+      startPiLoginTerminal,
       toggleCollapsed,
     ],
   );

@@ -142,6 +142,37 @@ describe("TerminalSessionView", () => {
     expect(MockWebSocket.last).toBe(socket);
   });
 
+  it("keeps the embedded Pi terminal on a high-contrast dark palette", async () => {
+    render(
+      <TerminalSessionView projectId="current" session={session} fixedDark />,
+    );
+    await waitFor(() => expect(terminalOptions).not.toBeNull());
+
+    expect(terminalOptions?.theme).toMatchObject({
+      background: "#0b1120",
+      foreground: "#e2e8f0",
+      black: "#0f172a",
+      red: "#fb7185",
+      green: "#4ade80",
+      yellow: "#fbbf24",
+      blue: "#60a5fa",
+      magenta: "#c084fc",
+      cyan: "#22d3ee",
+      white: "#e2e8f0",
+      brightWhite: "#f8fafc",
+    });
+
+    act(() => {
+      document.documentElement.style.setProperty("--canvas-bg", "#ffffff");
+      document.documentElement.style.setProperty("--text-strong", "#000000");
+      document.documentElement.dataset.theme = "light";
+    });
+    expect(terminalOptions?.theme).toMatchObject({
+      background: "#0b1120",
+      foreground: "#e2e8f0",
+    });
+  });
+
   it("shows connecting status until socket opens", async () => {
     render(<TerminalSessionView projectId="current" session={session} />);
     expect(screen.getByText("正在连接终端…")).toBeInTheDocument();

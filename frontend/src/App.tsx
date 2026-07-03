@@ -467,7 +467,18 @@ export default function App() {
         modelError: models.modelError,
         savingModels: models.savingModels,
         terminalDisabled,
-        onToggleExpanded: models.toggleSettings,
+        piLoginSession: terminals.piLoginSession,
+        piLoginBusy: terminals.piLoginBusy,
+        piLoginError: terminals.piLoginError,
+        needsModelOnboarding: models.needsModelOnboarding,
+        modelDraftComplete: models.modelDraftComplete,
+        modelSavedComplete: models.modelSavedComplete,
+        onToggleExpanded: () => {
+          if (models.settingsExpanded) {
+            void terminals.closePiLoginTerminal();
+          }
+          models.toggleSettings();
+        },
         onOpenBasic: models.openBasicSettings,
         onOpenModels: models.openModelSettings,
         onBasicChange: models.updateBasicSettings,
@@ -476,24 +487,21 @@ export default function App() {
         onModelChange: models.updateModelTier,
         onSaveModels: models.saveModelSettings,
         onReloadModels: models.reloadModelSettings,
-        onOpenLogin: () => {
-          models.closeSettings();
-          void terminals.createTerminal(
-            "pi --no-session --no-extensions --no-context-files",
-            "Pi 登录",
-          );
-        },
+        onStartPiLogin: terminals.startPiLoginTerminal,
+        onClosePiLogin: terminals.closePiLoginTerminal,
       }),
     [
       current.project,
       models.basicSettings,
       models.basicSettingsError,
       models.changeTheme,
-      models.closeSettings,
       models.draftModelSettings,
+      models.modelDraftComplete,
       models.modelError,
       models.modelRpcStatus,
+      models.modelSavedComplete,
       models.models,
+      models.needsModelOnboarding,
       models.openBasicSettings,
       models.openModelSettings,
       models.reloadModelSettings,
@@ -509,7 +517,11 @@ export default function App() {
       models.updateModelTier,
       project.projectCanvas,
       terminalDisabled,
-      terminals.createTerminal,
+      terminals.closePiLoginTerminal,
+      terminals.piLoginBusy,
+      terminals.piLoginError,
+      terminals.piLoginSession,
+      terminals.startPiLoginTerminal,
     ],
   );
 

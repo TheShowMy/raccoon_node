@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   BasicSettings,
   ModelSettings,
@@ -15,6 +15,12 @@ import {
   saveModelSettings,
 } from "../api/client";
 import { readError, DEFAULT_MODEL_SETTINGS } from "../utils/format";
+
+function hasAllModelTiers(settings: ModelSettings) {
+  return Boolean(
+    settings.low.model_id && settings.medium.model_id && settings.high.model_id,
+  );
+}
 
 export function useModelSettings(
   onThemeChange?: (theme: ThemeMode) => void,
@@ -36,11 +42,15 @@ export function useModelSettings(
   const [draftModelSettings, setDraftModelSettings] = useState<ModelSettings>(
     DEFAULT_MODEL_SETTINGS,
   );
+  const [savedModelSettings, setSavedModelSettings] = useState<ModelSettings>(
+    DEFAULT_MODEL_SETTINGS,
+  );
   const [modelRpcStatus, setModelRpcStatus] = useState<
     "idle" | "loading" | "ready" | "reconnecting" | "error"
   >("idle");
   const [modelError, setModelError] = useState<string | null>(null);
   const [savingModels, setSavingModels] = useState(false);
+  const onboardingChecked = useRef(false);
 
   const loadModelSettings = useCallback(async () => {
     setModelRpcStatus("loading");
@@ -50,6 +60,7 @@ export function useModelSettings(
       const data = await getModelSettings();
       setModels(data.models);
       setDraftModelSettings(data.settings);
+      setSavedModelSettings(data.settings);
       setModelRpcStatus(data.rpc_status);
       setModelError(data.rpc_error);
     } catch (reason) {
@@ -70,7 +81,24 @@ export function useModelSettings(
 
   useEffect(() => {
     void loadBasicSettings();
-  }, [loadBasicSettings]);
+    void loadModelSettings();
+  }, [loadBasicSettings, loadModelSettings]);
+
+  useEffect(() => {
+    if (
+      onboardingChecked.current ||
+      modelRpcStatus === "idle" ||
+      modelRpcStatus === "loading" ||
+      modelRpcStatus === "reconnecting"
+    ) {
+      return;
+    }
+    onboardingChecked.current = true;
+    if (models.length === 0 || !hasAllModelTiers(savedModelSettings)) {
+      setSettingsPage("models");
+      setSettingsExpanded(true);
+    }
+  }, [modelRpcStatus, models.length, savedModelSettings]);
 
   const openSettings = useCallback(() => {
     setSettingsPage("basic");
@@ -144,6 +172,7 @@ export function useModelSettings(
       const data = await saveModelSettings(draftModelSettings);
       setModels(data.models);
       setDraftModelSettings(data.settings);
+      setSavedModelSettings(data.settings);
       setModelRpcStatus(data.rpc_status);
       setModelError(data.rpc_error);
     } catch (reason) {
@@ -160,6 +189,7 @@ export function useModelSettings(
       const data = await reloadModelSettings();
       setModels(data.models);
       setDraftModelSettings(data.settings);
+      setSavedModelSettings(data.settings);
       setModelRpcStatus(data.rpc_status);
       setModelError(data.rpc_error);
     } catch (reason) {
@@ -226,6 +256,11 @@ export function useModelSettings(
     saveBasicSettings: saveBasicSettingsCallback,
     models,
     draftModelSettings,
+    savedModelSettings,
+    needsModelOnboarding:
+      models.length === 0 || !hasAllModelTiers(savedModelSettings),
+    modelDraftComplete: hasAllModelTiers(draftModelSettings),
+    modelSavedComplete: hasAllModelTiers(savedModelSettings),
     modelRpcStatus,
     modelError,
     savingModels,

@@ -51,7 +51,8 @@
   worktree 或恢复状态。
 - 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。
 - 禁止直接读写 Pi Agent 的 auth/settings 文件；本项目只保存自身三档模型设置。
-- Pi 登录由用户在 Web 终端中手动执行 `/login`；应用不得自动输入登录命令或编辑
+- Pi 登录由用户在设置工作台内嵌的固定暗色 Web 终端中手动执行 `/login`；该会话
+  复用项目终端协议但不展开普通终端节点，应用不得自动输入登录命令或编辑
   `models.json`。
 - Pi 工作目录只能是 Git 根目录或 `.raccoon-node/worktrees/` 中的受管 worktree。
 - 清理操作只能删除 `.raccoon-node/` 内受管资源，禁止删除用户仓库。

@@ -91,7 +91,7 @@ export type GitAction =
   | { type: "switch_branch"; branch: string }
   | { type: "create_branch"; branch: string };
 
-export type GitExpansionPhase = "collapsed" | "vertical" | "expanded";
+export type GitExpansionPhase = "collapsed" | "expanded";
 
 export type PublicationReadiness = {
   mode: "local" | "pull_request";
@@ -543,6 +543,12 @@ export type StartNodeData =
       modelError: string | null;
       savingModels: boolean;
       terminalDisabled: boolean;
+      piLoginSession: TerminalSession | null;
+      piLoginBusy: boolean;
+      piLoginError: string | null;
+      needsModelOnboarding: boolean;
+      modelDraftComplete: boolean;
+      modelSavedComplete: boolean;
       onToggleExpanded: () => void;
       onOpenBasic: () => void;
       onOpenModels: () => void;
@@ -554,7 +560,8 @@ export type StartNodeData =
       onModelChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
       onSaveModels: () => Promise<void>;
       onReloadModels: () => Promise<void>;
-      onOpenLogin: () => void;
+      onStartPiLogin: () => Promise<void>;
+      onClosePiLogin: () => Promise<void>;
     }
   | {
       kind: "project-github";

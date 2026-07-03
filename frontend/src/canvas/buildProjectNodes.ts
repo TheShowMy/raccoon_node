@@ -109,6 +109,12 @@ export interface BuildProjectSettingsNodeParams {
   modelError: string | null;
   savingModels: boolean;
   terminalDisabled: boolean;
+  piLoginSession: TerminalSession | null;
+  piLoginBusy: boolean;
+  piLoginError: string | null;
+  needsModelOnboarding: boolean;
+  modelDraftComplete: boolean;
+  modelSavedComplete: boolean;
   onToggleExpanded: () => void;
   onOpenBasic: () => void;
   onOpenModels: () => void;
@@ -118,7 +124,8 @@ export interface BuildProjectSettingsNodeParams {
   onModelChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
   onSaveModels: () => Promise<void>;
   onReloadModels: () => Promise<void>;
-  onOpenLogin: () => void;
+  onStartPiLogin: () => Promise<void>;
+  onClosePiLogin: () => Promise<void>;
 }
 
 export interface BuildProjectTerminalNodeParams {
@@ -577,6 +584,12 @@ export function buildProjectSettingsNode({
   modelError,
   savingModels,
   terminalDisabled,
+  piLoginSession,
+  piLoginBusy,
+  piLoginError,
+  needsModelOnboarding,
+  modelDraftComplete,
+  modelSavedComplete,
   onToggleExpanded,
   onOpenBasic,
   onOpenModels,
@@ -586,7 +599,8 @@ export function buildProjectSettingsNode({
   onModelChange,
   onSaveModels,
   onReloadModels,
-  onOpenLogin,
+  onStartPiLogin,
+  onClosePiLogin,
 }: BuildProjectSettingsNodeParams): Node<StartNodeData> | null {
   const project = projectCanvas?.project ?? currentProject;
   if (!project) return null;
@@ -596,10 +610,10 @@ export function buildProjectSettingsNode({
       id: "project-settings",
       type: "startNode",
       className: "settings-flow-node",
-      position: expanded ? { x: -933, y: -350 } : { x: -350, y: 20 },
+      position: expanded ? { x: -1533, y: -670 } : { x: -350, y: 20 },
       style: {
-        width: expanded ? 720 : 137,
-        height: expanded ? 460 : 90,
+        width: expanded ? 1320 : 137,
+        height: expanded ? 780 : 90,
         zIndex: expanded ? 20 : 1,
       },
       data: {
@@ -616,6 +630,12 @@ export function buildProjectSettingsNode({
         modelError,
         savingModels,
         terminalDisabled,
+        piLoginSession,
+        piLoginBusy,
+        piLoginError,
+        needsModelOnboarding,
+        modelDraftComplete,
+        modelSavedComplete,
         onToggleExpanded,
         onOpenBasic,
         onOpenModels,
@@ -625,7 +645,8 @@ export function buildProjectSettingsNode({
         onModelChange,
         onSaveModels,
         onReloadModels,
-        onOpenLogin,
+        onStartPiLogin,
+        onClosePiLogin,
       },
     },
   ])[0];

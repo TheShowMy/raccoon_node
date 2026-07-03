@@ -13,8 +13,6 @@ import type {
 } from "../types/api";
 import { readError } from "../utils/format";
 
-const ANIMATION_MS = 160;
-
 export function useProjectGit(projectId: string | null) {
   const [phase, setPhase] = useState<GitExpansionPhase>("collapsed");
   const [status, setStatus] = useState<GitStatus | null>(null);
@@ -29,7 +27,6 @@ export function useProjectGit(projectId: string | null) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<string | null>(null);
-  const animationTimer = useRef<number | null>(null);
   const statusRequest = useRef(0);
 
   const applyStatus = useCallback((next: GitStatus) => {
@@ -75,51 +72,22 @@ export function useProjectGit(projectId: string | null) {
     };
   }, [load, projectId]);
 
-  useEffect(
-    () => () => {
-      if (animationTimer.current !== null) {
-        window.clearTimeout(animationTimer.current);
-      }
-    },
-    [],
-  );
-
   const toggleExpanded = useCallback(() => {
-    if (animationTimer.current !== null) {
-      window.clearTimeout(animationTimer.current);
-    }
-    const reduced = window.matchMedia?.(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-    if (phase === "collapsed") {
-      if (reduced) {
-        setPhase("expanded");
-        return;
-      }
-      setPhase("vertical");
-      animationTimer.current = window.setTimeout(
-        () => setPhase("expanded"),
-        ANIMATION_MS,
-      );
-      return;
-    }
-    if (reduced) {
-      setPhase("collapsed");
-      return;
-    }
-    setPhase("vertical");
-    animationTimer.current = window.setTimeout(
-      () => setPhase("collapsed"),
-      ANIMATION_MS,
-    );
-  }, [phase]);
+    setPhase((current) => (current === "collapsed" ? "expanded" : "collapsed"));
+  }, []);
+
+  const busyRef = useRef(false);
 
   const togglePath = useCallback((path: string) => {
     setSelectedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
+      const paths = [...current];
+      const index = paths.indexOf(path);
+      if (index >= 0) {
+        paths.splice(index, 1);
+      } else {
+        paths.push(path);
+      }
+      return new Set(paths);
     });
   }, []);
 
@@ -140,7 +108,8 @@ export function useProjectGit(projectId: string | null) {
 
   const action = useCallback(
     async (next: GitAction, result: string) => {
-      if (!projectId || busy) return false;
+      if (!projectId || busyRef.current) return false;
+      busyRef.current = true;
       setBusy(true);
       setError(null);
       const request = ++statusRequest.current;
@@ -156,10 +125,11 @@ export function useProjectGit(projectId: string | null) {
         setError(readError(reason));
         return false;
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     },
-    [applyStatus, busy, projectId],
+    [applyStatus, projectId],
   );
 
   return useMemo(

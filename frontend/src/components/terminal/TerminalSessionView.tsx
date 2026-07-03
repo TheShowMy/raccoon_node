@@ -3,7 +3,31 @@ import "@xterm/xterm/css/xterm.css";
 import { terminalWebSocketUrl } from "../../api/client";
 import type { TerminalServerMessage, TerminalSession } from "../../types/api";
 
-function terminalTheme() {
+function terminalTheme(fixedDark: boolean) {
+  if (fixedDark) {
+    return {
+      background: "#0b1120",
+      foreground: "#e2e8f0",
+      cursor: "#f59e0b",
+      selectionBackground: "#334155",
+      black: "#0f172a",
+      red: "#fb7185",
+      green: "#4ade80",
+      yellow: "#fbbf24",
+      blue: "#60a5fa",
+      magenta: "#c084fc",
+      cyan: "#22d3ee",
+      white: "#e2e8f0",
+      brightBlack: "#64748b",
+      brightRed: "#fda4af",
+      brightGreen: "#86efac",
+      brightYellow: "#fde047",
+      brightBlue: "#93c5fd",
+      brightMagenta: "#d8b4fe",
+      brightCyan: "#67e8f9",
+      brightWhite: "#f8fafc",
+    };
+  }
   const styles = getComputedStyle(document.documentElement);
   const color = (name: string) => styles.getPropertyValue(name).trim();
 
@@ -18,9 +42,11 @@ function terminalTheme() {
 export default function TerminalSessionView({
   projectId,
   session,
+  fixedDark = false,
 }: {
   projectId: string;
   session: TerminalSession;
+  fixedDark?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -48,12 +74,14 @@ export default function TerminalSessionView({
           fontFamily:
             "JetBrains Mono, Cascadia Mono, SFMono-Regular, Consolas, monospace",
           fontSize: 12,
-          theme: terminalTheme(),
+          theme: terminalTheme(fixedDark),
         });
-        const themeObserver = new MutationObserver(() => {
-          terminal.options.theme = terminalTheme();
-        });
-        themeObserver.observe(document.documentElement, {
+        const themeObserver = fixedDark
+          ? null
+          : new MutationObserver(() => {
+              terminal.options.theme = terminalTheme(false);
+            });
+        themeObserver?.observe(document.documentElement, {
           attributes: true,
           attributeFilter: ["data-theme"],
         });
@@ -125,7 +153,7 @@ export default function TerminalSessionView({
         const frame = window.requestAnimationFrame(sendResize);
         cleanup = () => {
           window.cancelAnimationFrame(frame);
-          themeObserver.disconnect();
+          themeObserver?.disconnect();
           dataDisposable.dispose();
           resizeObserver.disconnect();
           host.removeEventListener("pointerdown", focusTerminal);
@@ -147,10 +175,12 @@ export default function TerminalSessionView({
       disposed = true;
       cleanup?.();
     };
-  }, [projectId, session.id]);
+  }, [fixedDark, projectId, session.id]);
 
   return (
-    <div className="terminal-session-view nodrag nowheel">
+    <div
+      className={`terminal-session-view nodrag nowheel${fixedDark ? " terminal-session-view--fixed-dark" : ""}`}
+    >
       <div ref={hostRef} className="terminal-session-view__host" />
       {connectionStatus !== "connected" || error ? (
         <div className="terminal-session-view__status">

@@ -149,9 +149,7 @@ export default function ProjectGitNode({ data }: { data: GitData }) {
   }
 
   return (
-    <section
-      className={`git-node ${data.phase === "vertical" ? "git-node--vertical" : ""}`}
-    >
+    <section className="git-node">
       <header className="git-node__titlebar nodrag">
         <GitBranch size={17} />
         <strong>{status?.branch ?? "Git 仓库"}</strong>

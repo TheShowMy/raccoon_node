@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronUp,
   Settings,
   SlidersHorizontal,
+  X,
 } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import { restartApplication } from "../../api/client";
@@ -33,6 +35,31 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
   const [restarting, setRestarting] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
 
+  const saveBasic = useCallback(
+    async (confirmed = false) => {
+      if (data.basicSettings?.host === "0.0.0.0" && !confirmed) {
+        setConfirmExternal(true);
+        return;
+      }
+      setConfirmExternal(false);
+      setRestartError(null);
+      const saved = await data.onSaveBasic(confirmed);
+      if (!saved?.restart_required) return;
+
+      setRestarting(true);
+      try {
+        const { next_url: nextUrl } = await restartApplication();
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        await waitForService(nextUrl);
+        window.location.assign(nextUrl);
+      } catch (reason) {
+        setRestartError(`设置已保存，但重启失败：${readError(reason)}`);
+        setRestarting(false);
+      }
+    },
+    [data.basicSettings?.host, data.onSaveBasic],
+  );
+
   if (!data.expanded) {
     return (
       <button
@@ -56,45 +83,36 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
     );
   }
 
-  const saveBasic = async (confirmed = false) => {
-    if (data.basicSettings?.host === "0.0.0.0" && !confirmed) {
-      setConfirmExternal(true);
-      return;
-    }
-    setConfirmExternal(false);
-    setRestartError(null);
-    const saved = await data.onSaveBasic(confirmed);
-    if (!saved?.restart_required) return;
-
-    setRestarting(true);
-    try {
-      const { next_url: nextUrl } = await restartApplication();
-      await new Promise((resolve) => window.setTimeout(resolve, 500));
-      await waitForService(nextUrl);
-      window.location.assign(nextUrl);
-    } catch (reason) {
-      setRestartError(`设置已保存，但重启失败：${readError(reason)}`);
-      setRestarting(false);
-    }
-  };
-
   return (
     <section className="settings-node">
       <header className="settings-node__titlebar nodrag">
-        <Settings size={17} />
-        <strong>设置工作台</strong>
-        <span>基础设置与 Pi 模型</span>
+        <span className="settings-node__title">
+          <span className="settings-node__title-icon">
+            <Settings size={17} />
+          </span>
+          <span className="settings-node__title-text">
+            <strong>设置工作台</strong>
+            <span>基础设置与 Pi 模型</span>
+          </span>
+        </span>
         <button
           type="button"
+          className="settings-node__close"
           aria-label="收起设置节点"
           onClick={data.onToggleExpanded}
         >
-          <ChevronDown size={16} />
+          <X size={15} />
         </button>
       </header>
-      <nav className="settings-node__tabs nodrag">
+      <nav
+        className="settings-node__tabs nodrag"
+        role="tablist"
+        aria-label="设置页面"
+      >
         <button
           type="button"
+          role="tab"
+          aria-selected={data.page === "basic"}
           className={data.page === "basic" ? "active" : ""}
           onClick={data.onOpenBasic}
         >
@@ -102,16 +120,29 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
         </button>
         <button
           type="button"
+          role="tab"
+          aria-selected={data.page === "models"}
           className={data.page === "models" ? "active" : ""}
           onClick={data.onOpenModels}
         >
           <SlidersHorizontal size={14} /> 模型设置
         </button>
       </nav>
-      <div className="settings-node__body nodrag nowheel">
-        {restartError ? <p className="form-error">{restartError}</p> : null}
+      <div
+        className="settings-node__body nodrag nowheel"
+        role="tabpanel"
+        id="settings-panel"
+        aria-label={data.page === "basic" ? "基础设置" : "模型设置"}
+      >
+        {restartError ? (
+          <p className="settings-node__banner settings-node__banner--error">
+            {restartError}
+          </p>
+        ) : null}
         {restarting ? (
-          <p className="settings-node__notice">服务正在重启，等待恢复…</p>
+          <p className="settings-node__banner settings-node__banner--info">
+            服务正在重启，等待恢复…
+          </p>
         ) : null}
         {data.page === "basic" ? (
           <BasicSettingsPanel
@@ -131,9 +162,16 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
             error={data.modelError}
             saving={data.savingModels}
             terminalDisabled={data.terminalDisabled}
+            piLoginSession={data.piLoginSession}
+            piLoginBusy={data.piLoginBusy}
+            piLoginError={data.piLoginError}
+            needsOnboarding={data.needsModelOnboarding}
+            draftComplete={data.modelDraftComplete}
+            savedComplete={data.modelSavedComplete}
             onChange={data.onModelChange}
             onSave={() => void data.onSaveModels()}
-            onLogin={data.onOpenLogin}
+            onStartPiLogin={data.onStartPiLogin}
+            onClosePiLogin={data.onClosePiLogin}
             onReload={() => void data.onReloadModels()}
           />
         )}
@@ -142,6 +180,9 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
       {confirmExternal ? (
         <div className="settings-node__confirm" role="alertdialog">
           <div>
+            <span className="settings-node__confirm-icon">
+              <AlertTriangle size={22} />
+            </span>
             <strong>确认监听所有网络接口？</strong>
             <p>
               当前 API 没有身份验证。使用 0.0.0.0
