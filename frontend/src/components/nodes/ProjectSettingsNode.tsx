@@ -64,6 +64,7 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
       <button
         type="button"
         className="settings-node__collapsed nodrag"
+        data-model-setup-target="settings"
         aria-expanded="false"
         onClick={data.onToggleExpanded}
       >
@@ -118,6 +119,7 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
         <button
           type="button"
           role="tab"
+          data-model-setup-target="models"
           aria-selected={data.page === "models"}
           className={data.page === "models" ? "active" : ""}
           onClick={data.onOpenModels}

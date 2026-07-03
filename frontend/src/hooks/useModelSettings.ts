@@ -22,6 +22,8 @@ function hasAllModelTiers(settings: ModelSettings) {
   );
 }
 
+export const MODEL_SETUP_GUIDE_KEY = "raccoon:model-setup-guide-dismissed:v1";
+
 export function useModelSettings(
   onThemeChange?: (theme: ThemeMode) => void,
   onBasicSettingsSaved?: () => Promise<void>,
@@ -50,6 +52,7 @@ export function useModelSettings(
   >("idle");
   const [modelError, setModelError] = useState<string | null>(null);
   const [savingModels, setSavingModels] = useState(false);
+  const [modelSetupGuideActive, setModelSetupGuideActive] = useState(false);
   const onboardingChecked = useRef(false);
 
   const loadModelSettings = useCallback(async () => {
@@ -95,10 +98,23 @@ export function useModelSettings(
     }
     onboardingChecked.current = true;
     if (models.length === 0 || !hasAllModelTiers(savedModelSettings)) {
-      setSettingsPage("models");
-      setSettingsExpanded(true);
+      try {
+        if (localStorage.getItem(MODEL_SETUP_GUIDE_KEY) === "1") return;
+      } catch {
+        // Storage can be unavailable in private or restricted browser contexts.
+      }
+      setModelSetupGuideActive(true);
     }
   }, [modelRpcStatus, models.length, savedModelSettings]);
+
+  const dismissModelSetupGuide = useCallback(() => {
+    setModelSetupGuideActive(false);
+    try {
+      localStorage.setItem(MODEL_SETUP_GUIDE_KEY, "1");
+    } catch {
+      // The current application cycle still stays dismissed.
+    }
+  }, []);
 
   const openSettings = useCallback(() => {
     setSettingsPage("basic");
@@ -112,9 +128,10 @@ export function useModelSettings(
   }, [loadBasicSettings]);
 
   const openModelSettings = useCallback(() => {
+    if (modelSetupGuideActive) dismissModelSetupGuide();
     setSettingsPage("models");
     void loadModelSettings();
-  }, [loadModelSettings]);
+  }, [dismissModelSetupGuide, loadModelSettings, modelSetupGuideActive]);
 
   const closeSettings = useCallback(() => setSettingsExpanded(false), []);
   const toggleSettings = useCallback(() => {
@@ -261,6 +278,8 @@ export function useModelSettings(
       models.length === 0 || !hasAllModelTiers(savedModelSettings),
     modelDraftComplete: hasAllModelTiers(draftModelSettings),
     modelSavedComplete: hasAllModelTiers(savedModelSettings),
+    modelSetupGuideActive,
+    skipModelSetupGuide: dismissModelSetupGuide,
     modelRpcStatus,
     modelError,
     savingModels,

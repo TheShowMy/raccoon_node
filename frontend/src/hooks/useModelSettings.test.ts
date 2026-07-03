@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   getBasicSettings,
   getModelSettings,
@@ -11,7 +11,7 @@ import type {
   ModelSettings,
   ModelSettingsResponse,
 } from "../types/api";
-import { useModelSettings } from "./useModelSettings";
+import { MODEL_SETUP_GUIDE_KEY, useModelSettings } from "./useModelSettings";
 
 vi.mock("../api/client", () => ({
   getBasicSettings: vi.fn(),
@@ -56,6 +56,13 @@ const completeModelResponse = (): ModelSettingsResponse => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  const storage = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: vi.fn((key: string) => storage.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
+    removeItem: vi.fn((key: string) => storage.delete(key)),
+    clear: vi.fn(() => storage.clear()),
+  });
   vi.mocked(getBasicSettings).mockResolvedValue(settings());
   vi.mocked(getModelSettings).mockResolvedValue({
     models: [],
@@ -69,18 +76,57 @@ beforeEach(() => {
   });
 });
 
-it("automatically opens incomplete model setup once per application mount", async () => {
+afterEach(() => vi.unstubAllGlobals());
+
+it("guides incomplete setup without opening settings and completes on the model page", async () => {
   const { result } = renderHook(() => useModelSettings());
   await waitFor(() => expect(result.current.modelRpcStatus).toBe("ready"));
-  expect(result.current.settingsExpanded).toBe(true);
-  expect(result.current.settingsPage).toBe("models");
+  expect(result.current.settingsExpanded).toBe(false);
+  expect(result.current.settingsPage).toBe("basic");
   expect(result.current.needsModelOnboarding).toBe(true);
+  expect(result.current.modelSetupGuideActive).toBe(true);
 
-  act(() => result.current.closeSettings());
-  expect(result.current.settingsExpanded).toBe(false);
+  await act(async () => result.current.openSettings());
+  expect(result.current.settingsExpanded).toBe(true);
+  expect(result.current.modelSetupGuideActive).toBe(true);
+
   await act(async () => result.current.openModelSettings());
-  act(() => result.current.closeSettings());
-  expect(result.current.settingsExpanded).toBe(false);
+  expect(result.current.settingsPage).toBe("models");
+  expect(result.current.modelSetupGuideActive).toBe(false);
+  expect(localStorage.getItem(MODEL_SETUP_GUIDE_KEY)).toBe("1");
+});
+
+it("persists a skipped guide and suppresses it on the next mount", async () => {
+  const first = renderHook(() => useModelSettings());
+  await waitFor(() =>
+    expect(first.result.current.modelSetupGuideActive).toBe(true),
+  );
+  act(() => first.result.current.skipModelSetupGuide());
+  expect(first.result.current.modelSetupGuideActive).toBe(false);
+  expect(localStorage.getItem(MODEL_SETUP_GUIDE_KEY)).toBe("1");
+  first.unmount();
+
+  const second = renderHook(() => useModelSettings());
+  await waitFor(() =>
+    expect(second.result.current.modelRpcStatus).toBe("ready"),
+  );
+  expect(second.result.current.modelSetupGuideActive).toBe(false);
+});
+
+it("still works for the current mount when local storage is unavailable", async () => {
+  vi.stubGlobal("localStorage", {
+    getItem: vi.fn(() => {
+      throw new Error("blocked");
+    }),
+    setItem: vi.fn(() => {
+      throw new Error("blocked");
+    }),
+  });
+  const { result } = renderHook(() => useModelSettings());
+  await waitFor(() => expect(result.current.modelSetupGuideActive).toBe(true));
+
+  act(() => result.current.skipModelSetupGuide());
+  expect(result.current.modelSetupGuideActive).toBe(false);
 });
 
 it("keeps complete saved model setup collapsed", async () => {
@@ -90,6 +136,7 @@ it("keeps complete saved model setup collapsed", async () => {
   await waitFor(() => expect(result.current.modelRpcStatus).toBe("ready"));
   expect(result.current.settingsExpanded).toBe(false);
   expect(result.current.needsModelOnboarding).toBe(false);
+  expect(result.current.modelSetupGuideActive).toBe(false);
   expect(result.current.modelDraftComplete).toBe(true);
   expect(result.current.modelSavedComplete).toBe(true);
 });

@@ -65,7 +65,9 @@ it("renders a compact settings entry while collapsed", () => {
   const props = data({ expanded: false });
   render(<ProjectSettingsNode data={props} />);
 
-  fireEvent.click(screen.getByRole("button", { name: /设置/ }));
+  const settingsButton = screen.getByRole("button", { name: /设置/ });
+  expect(settingsButton).toHaveAttribute("data-model-setup-target", "settings");
+  fireEvent.click(settingsButton);
   expect(props.onToggleExpanded).toHaveBeenCalledOnce();
   expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
 });
@@ -74,7 +76,9 @@ it("switches pages and keeps external-listening confirmation inside the node", (
   const props = data();
   render(<ProjectSettingsNode data={props} />);
 
-  fireEvent.click(screen.getByRole("tab", { name: "模型设置" }));
+  const modelsTab = screen.getByRole("tab", { name: "模型设置" });
+  expect(modelsTab).toHaveAttribute("data-model-setup-target", "models");
+  fireEvent.click(modelsTab);
   expect(props.onOpenModels).toHaveBeenCalledOnce();
 
   fireEvent.click(screen.getByRole("button", { name: "保存并按需重启" }));

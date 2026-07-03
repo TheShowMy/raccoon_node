@@ -154,6 +154,148 @@ function RequirementsReturnButton({ nodes }: { nodes: Node<StartNodeData>[] }) {
   );
 }
 
+type ModelSetupGuideStep = "settings" | "models";
+
+function ModelSetupGuide({
+  step,
+  onSkip,
+}: {
+  step: ModelSetupGuideStep;
+  onSkip: () => void;
+}) {
+  const viewport = useViewport();
+  const width = useStore((state) => state.width);
+  const height = useStore((state) => state.height);
+  const [target, setTarget] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+
+  React.useLayoutEffect(() => {
+    const element = document.querySelector<HTMLElement>(
+      `[data-model-setup-target="${step}"]`,
+    );
+    const flow = element?.closest<HTMLElement>(".react-flow");
+    if (!element || !flow) {
+      setTarget(null);
+      return;
+    }
+
+    let frame = 0;
+    const trackUntil = performance.now() + 350;
+    const update = () => {
+      const elementRect = element.getBoundingClientRect();
+      const flowRect = flow.getBoundingClientRect();
+      const padding = 8;
+      const x = Math.max(0, elementRect.left - flowRect.left - padding);
+      const y = Math.max(0, elementRect.top - flowRect.top - padding);
+      const right = Math.min(
+        width,
+        elementRect.right - flowRect.left + padding,
+      );
+      const bottom = Math.min(
+        height,
+        elementRect.bottom - flowRect.top + padding,
+      );
+      const next = {
+        x,
+        y,
+        width: Math.max(0, right - x),
+        height: Math.max(0, bottom - y),
+      };
+      setTarget((current) =>
+        current &&
+        current.x === next.x &&
+        current.y === next.y &&
+        current.width === next.width &&
+        current.height === next.height
+          ? current
+          : next,
+      );
+      if (performance.now() < trackUntil) {
+        frame = window.requestAnimationFrame(update);
+      }
+    };
+
+    update();
+    return () => window.cancelAnimationFrame(frame);
+  }, [height, step, viewport.x, viewport.y, viewport.zoom, width]);
+
+  const stopInteraction = (event: React.SyntheticEvent) =>
+    event.stopPropagation();
+  const blockers = target
+    ? [
+        { left: 0, top: 0, width, height: target.y },
+        {
+          left: 0,
+          top: target.y,
+          width: target.x,
+          height: target.height,
+        },
+        {
+          left: target.x + target.width,
+          top: target.y,
+          width: Math.max(0, width - target.x - target.width),
+          height: target.height,
+        },
+        {
+          left: 0,
+          top: target.y + target.height,
+          width,
+          height: Math.max(0, height - target.y - target.height),
+        },
+      ]
+    : [{ left: 0, top: 0, width, height }];
+
+  return (
+    <Panel className="model-setup-guide" position="top-left">
+      {blockers.map((style, index) => (
+        <div
+          className="model-setup-guide__blocker"
+          key={index}
+          style={style}
+          onPointerDown={stopInteraction}
+          onClick={stopInteraction}
+          onWheel={stopInteraction}
+        />
+      ))}
+      {target ? (
+        <div
+          className="model-setup-guide__spotlight"
+          style={{
+            left: target.x,
+            top: target.y,
+            width: target.width,
+            height: target.height,
+          }}
+        />
+      ) : null}
+      <div
+        className="model-setup-guide__card"
+        role="dialog"
+        aria-label="模型配置新手引导"
+      >
+        <span>第 {step === "settings" ? "1" : "2"}/2 步</span>
+        <strong>
+          {step === "settings"
+            ? "点击左上角的「设置」节点"
+            : "点击设置工作台中的「模型设置」"}
+        </strong>
+        <p>
+          {step === "settings"
+            ? "从设置工作台开始配置 Pi 模型。"
+            : "进入后按页面提示登录 Pi 并配置低、中、高三档模型。"}
+        </p>
+        <button type="button" onClick={onSkip}>
+          跳过引导
+        </button>
+      </div>
+    </Panel>
+  );
+}
+
 export type ProjectViewportSnapshot = {
   projectLoaded: boolean;
   selectedDagRequirementId: string | null;
@@ -514,6 +656,12 @@ export default function App() {
   const [nodeDragging, setNodeDragging] = useState(false);
   const [githubExpanded, setGithubExpanded] = useState(false);
   const [tokenUsageExpanded, setTokenUsageExpanded] = useState(false);
+  const modelSetupGuideStep: ModelSetupGuideStep | null =
+    models.modelSetupGuideActive
+      ? models.settingsExpanded
+        ? "models"
+        : "settings"
+      : null;
   const requirementConversationEvents = project.selectedDagRequirementId
     ? EMPTY_STREAM_EVENTS
     : requirement.requirementStreamEvents;
@@ -938,6 +1086,12 @@ export default function App() {
                 />
               ) : null}
               <RequirementsReturnButton nodes={requirementHomeNodes} />
+              {modelSetupGuideStep ? (
+                <ModelSetupGuide
+                  step={modelSetupGuideStep}
+                  onSkip={models.skipModelSetupGuide}
+                />
+              ) : null}
               <Controls position="bottom-right" />
               <ProjectCanvasViewportController
                 projectLoaded={Boolean(project.projectCanvas)}

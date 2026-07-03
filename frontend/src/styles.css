@@ -4308,3 +4308,71 @@
   color: var(--accent-projects);
   box-shadow: var(--shadow-hover);
 }
+
+.model-setup-guide.react-flow__panel {
+  @apply pointer-events-none m-0 h-full w-full;
+  inset: 0;
+  z-index: 100;
+}
+
+.model-setup-guide__blocker {
+  @apply pointer-events-auto absolute;
+  background: color-mix(in srgb, var(--canvas-bg) 72%, transparent);
+}
+
+.model-setup-guide__spotlight {
+  @apply pointer-events-none absolute rounded-xl border-2;
+  border-color: var(--accent-model);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent-model) 20%, transparent),
+    0 0 28px color-mix(in srgb, var(--accent-model) 58%, transparent);
+  animation: model-setup-guide-pulse 1.6s ease-in-out infinite;
+}
+
+.model-setup-guide__card {
+  @apply pointer-events-auto absolute bottom-6 left-1/2 grid w-[min(420px,calc(100%-32px))] -translate-x-1/2 gap-1 rounded-xl border p-4;
+  border-color: color-mix(in srgb, var(--accent-model) 48%, transparent);
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--card-bg) 96%, transparent);
+  box-shadow: var(--shadow-hover);
+}
+
+.model-setup-guide__card > span {
+  @apply text-[10px] font-bold tracking-wide;
+  color: var(--accent-model);
+}
+
+.model-setup-guide__card strong {
+  @apply text-sm;
+}
+
+.model-setup-guide__card p {
+  @apply m-0 text-xs leading-5;
+  color: var(--text-soft);
+}
+
+.model-setup-guide__card button {
+  @apply mt-2 cursor-pointer justify-self-end rounded-lg border px-3 py-1.5 text-xs font-semibold;
+  border-color: var(--card-border-strong);
+  color: var(--text-soft);
+  background: transparent;
+}
+
+.model-setup-guide__card button:hover {
+  border-color: var(--accent-model);
+  color: var(--accent-model);
+}
+
+@keyframes model-setup-guide-pulse {
+  50% {
+    box-shadow:
+      0 0 0 4px color-mix(in srgb, var(--accent-model) 24%, transparent),
+      0 0 38px color-mix(in srgb, var(--accent-model) 70%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-setup-guide__spotlight {
+    animation: none;
+  }
+}
