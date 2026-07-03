@@ -137,8 +137,14 @@ export function getSettingsViewportAction(
   return currentExpanded ? "focus" : "restore";
 }
 
-function SettingsViewportController({ expanded }: { expanded: boolean }) {
-  const { fitView, getNode, getViewport, setViewport } = useReactFlow();
+function SettingsViewportController({
+  expanded,
+  node,
+}: {
+  expanded: boolean;
+  node: Node<StartNodeData> | null;
+}) {
+  const { getViewport, setCenter, setViewport } = useReactFlow();
   const previousExpanded = React.useRef(expanded);
   const savedViewport = React.useRef<CanvasViewport | undefined>(undefined);
 
@@ -148,12 +154,12 @@ function SettingsViewportController({ expanded }: { expanded: boolean }) {
       expanded,
     );
     previousExpanded.current = expanded;
-    if (!action) return;
+    if (!action || !node) return;
 
     if (action === "restore") {
       const saved = savedViewport.current;
       savedViewport.current = undefined;
-      if (saved) void setViewport(saved, { duration: 200 });
+      if (saved) void setViewport(saved, { duration: 260 });
       return;
     }
 
@@ -162,22 +168,13 @@ function SettingsViewportController({ expanded }: { expanded: boolean }) {
     const reduced = window.matchMedia?.(
       "(prefers-reduced-motion: reduce)",
     ).matches;
-    const timer = window.setTimeout(
-      () => {
-        const node = getNode("project-settings");
-        if (!node) return;
-        void fitView({
-          nodes: [node],
-          padding: 0.08,
-          maxZoom: saved.zoom,
-          duration: reduced ? 0 : 200,
-        });
-      },
-      reduced ? 0 : 200,
-    );
-
-    return () => window.clearTimeout(timer);
-  }, [expanded, fitView, getNode, getViewport, setViewport]);
+    const width = node.width ?? 1320;
+    const height = node.height ?? 780;
+    void setCenter(node.position.x + width / 2, node.position.y + height / 2, {
+      zoom: saved.zoom,
+      duration: reduced ? 0 : 260,
+    });
+  }, [expanded, getViewport, node, setCenter, setViewport]);
 
   return null;
 }
@@ -727,7 +724,10 @@ export default function App() {
                 projectLoaded={Boolean(project.projectCanvas)}
                 selectedDagRequirementId={project.selectedDagRequirementId}
               />
-              <SettingsViewportController expanded={models.settingsExpanded} />
+              <SettingsViewportController
+                expanded={models.settingsExpanded}
+                node={projectSettingsNode}
+              />
               <TerminalViewportController collapsed={terminals.collapsed} />
               <GitViewportController phase={git.phase} />
             </ReactFlow>

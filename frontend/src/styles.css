@@ -3214,14 +3214,16 @@
   min-height: 0;
   overflow: hidden;
   padding: 0;
-  border-color: color-mix(in srgb, #f59e0b 34%, transparent);
+  border-color: color-mix(in srgb, var(--accent-model) 34%, transparent);
   background: var(--card-bg);
   box-shadow:
     var(--shadow-card),
-    0 0 28px color-mix(in srgb, #f59e0b 20%, transparent);
+    0 0 28px color-mix(in srgb, var(--accent-model) 20%, transparent);
   transition:
-    width 160ms ease,
-    height 160ms ease;
+    width 260ms ease,
+    height 260ms ease,
+    background-color 260ms ease,
+    color 260ms ease;
 }
 
 .node-card--project-git:hover {
@@ -3241,7 +3243,7 @@
 }
 
 .git-node__collapsed:hover {
-  background: color-mix(in srgb, #f59e0b 8%, transparent);
+  background: color-mix(in srgb, var(--accent-model) 8%, transparent);
 }
 
 .git-node__collapsed > span {
@@ -3508,9 +3510,9 @@
 
 .settings-flow-node {
   transition:
-    transform 200ms ease,
-    width 200ms ease,
-    height 200ms ease;
+    transform 260ms ease,
+    width 260ms ease,
+    height 260ms ease;
 }
 
 .node-card--project-settings {
@@ -3521,10 +3523,10 @@
     var(--shadow-card),
     0 0 28px var(--glow-model);
   transition:
-    width 200ms ease,
-    height 200ms ease,
-    background-color 200ms ease,
-    color 200ms ease;
+    width 260ms ease,
+    height 260ms ease,
+    background-color 260ms ease,
+    color 260ms ease;
 }
 
 .node-card--project-settings:hover {

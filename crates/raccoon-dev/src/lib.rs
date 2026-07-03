@@ -1,8 +1,10 @@
 use std::{
     io,
+    net::SocketAddr,
     path::{Path, PathBuf},
     process::Stdio,
     sync::mpsc,
+    time::Duration,
 };
 
 use tokio::{
@@ -13,6 +15,7 @@ use tokio::{
 };
 
 const VITE_PORT: u16 = 5173;
+const VITE_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ViteCommandSpec {
@@ -110,6 +113,36 @@ pub fn start(frontend_dir: &Path, backend_url: &str) -> io::Result<ManagedVite> 
         shutdown_tx: Some(shutdown_tx),
         supervisor,
     })
+}
+
+/// 等待被管理的 Vite dev server 在 `127.0.0.1:VITE_PORT` 接受 TCP 连接。
+///
+/// 每隔 `VITE_READY_POLL_INTERVAL` 探测一次，最多持续 `timeout_seconds` 秒。
+/// 就绪返回 `true`，超时返回 `false`。
+pub async fn wait_until_ready(timeout_seconds: u64) -> bool {
+    let address = SocketAddr::from(([127, 0, 0, 1], VITE_PORT));
+    wait_until_ready_at(
+        address,
+        Duration::from_secs(timeout_seconds),
+        VITE_READY_POLL_INTERVAL,
+    )
+    .await
+}
+
+async fn wait_until_ready_at(address: SocketAddr, timeout: Duration, interval: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        if let Ok(Ok(_)) =
+            tokio::time::timeout(interval, tokio::net::TcpStream::connect(address)).await
+        {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(interval).await;
+    }
 }
 
 fn spawn_log_reader<R>(
@@ -218,5 +251,31 @@ mod tests {
         assert!(spec.args.windows(2).any(|args| args == ["--port", "5173"]));
         assert!(spec.args.iter().any(|arg| arg == "--strictPort"));
         assert_eq!(spec.api_url, "http://127.0.0.1:3002");
+    }
+
+    #[tokio::test]
+    async fn wait_until_ready_at_returns_true_when_port_accepts() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+
+        assert!(
+            wait_until_ready_at(address, Duration::from_secs(5), Duration::from_millis(10)).await
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_until_ready_at_returns_false_on_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+
+        assert!(
+            !wait_until_ready_at(
+                address,
+                Duration::from_millis(50),
+                Duration::from_millis(10)
+            )
+            .await
+        );
     }
 }

@@ -15,6 +15,8 @@ use raccoon_api::{LifecycleCommand, RuntimeOptions};
 use raccoon_core::config::AppConfig;
 use raccoon_tui::DashboardAction;
 
+const VITE_READY_TIMEOUT_SECONDS: u64 = 30;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -139,6 +141,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!("Vite dev server 由后端管理");
         }
         if use_tui && !cli.no_open && !opened {
+            if managed_vite.is_some()
+                && !raccoon_dev::wait_until_ready(VITE_READY_TIMEOUT_SECONDS).await
+            {
+                tracing::warn!("Vite dev server 在 30 秒内未就绪，仍尝试打开浏览器");
+            }
             if let Err(error) = webbrowser::open(browser_url) {
                 tracing::warn!("无法打开浏览器：{error}");
             }

@@ -227,7 +227,9 @@ describe("buildProjectNodes", () => {
 
     expect(collapsed.position).toEqual({ x: 780, y: 800 });
     expect(collapsed.style).toMatchObject({ width: 290, height: 44 });
-    expect(expanded.style).toMatchObject({ width: 720, height: 460 });
+    expect(expanded.position).toEqual({ x: 780, y: 800 });
+    expect(expanded.style).toMatchObject({ width: 1320, height: 780 });
+    expect(expanded.className).toContain("git-flow-node");
   });
 
   it("builds one settings workbench that expands toward the upper left", () => {

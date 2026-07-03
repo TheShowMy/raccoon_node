@@ -726,10 +726,12 @@ export function buildProjectGitNode({
     {
       id: "project-git",
       type: "startNode",
+      className: "git-flow-node",
       position: { x: 780, y: 800 },
       style: {
-        width: phase === "expanded" ? 720 : 290,
-        height: phase === "collapsed" ? 44 : 460,
+        width: phase === "expanded" ? 1320 : 290,
+        height: phase === "collapsed" ? 44 : 780,
+        zIndex: phase === "expanded" ? 20 : 1,
       },
       data: {
         kind: "project-git",
