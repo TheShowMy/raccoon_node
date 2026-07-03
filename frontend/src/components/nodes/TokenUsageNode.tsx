@@ -3,19 +3,10 @@ import type { StartNodeData } from "../../types/api";
 import { formatCompactNumber } from "../../utils/format";
 
 type Data = Extract<StartNodeData, { kind: "token-usage" }>;
-type Align = "left" | "center" | "right";
 
-function TokenItem({
-  label,
-  value,
-  align,
-}: {
-  label: string;
-  value: number;
-  align: Align;
-}) {
+function TokenItem({ label, value }: { label: string; value: number }) {
   return (
-    <div className={`token-usage-node__item token-usage-node__item--${align}`}>
+    <div className="token-usage-node__item">
       <span className="token-usage-node__value">
         {formatCompactNumber(value)}
       </span>
@@ -51,28 +42,10 @@ export default function TokenUsageNode({ data }: { data: Data }) {
         <div className="token-usage-node__detail nodrag nowheel">
           {usage ? (
             <div className="token-usage-node__grid">
-              <TokenItem align="left" label="输入" value={usage.input} />
-              <TokenItem align="center" label="输出" value={usage.output} />
-              <TokenItem
-                align="right"
-                label="缓存读"
-                value={usage.cache_read}
-              />
-              <TokenItem
-                align="left"
-                label="缓存写"
-                value={usage.cache_write}
-              />
-              <TokenItem
-                align="center"
-                label="上下文"
-                value={usage.context_tokens}
-              />
-              <TokenItem
-                align="right"
-                label="窗口"
-                value={usage.context_window}
-              />
+              <TokenItem label="输入" value={usage.input} />
+              <TokenItem label="输出" value={usage.output} />
+              <TokenItem label="缓存读" value={usage.cache_read} />
+              <TokenItem label="缓存写" value={usage.cache_write} />
             </div>
           ) : (
             <div className="token-usage-node__empty">暂无统计</div>

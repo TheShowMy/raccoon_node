@@ -165,7 +165,7 @@
   }
 
   .node-card--requirement-list {
-    @apply flex h-[640px] w-[290px] flex-col overflow-hidden;
+    @apply flex h-[680px] w-[290px] flex-col overflow-hidden p-0;
     box-shadow:
       var(--shadow-card),
       0 0 28px color-mix(in srgb, var(--accent-projects) 18%, transparent);
@@ -521,7 +521,7 @@
   }
 
   .chat-stack-card {
-    @apply absolute top-0 left-0 flex h-[742px] w-[696px] flex-col overflow-hidden rounded-[18px] border p-4 backdrop-blur;
+    @apply absolute top-0 left-0 flex h-[742px] w-[696px] flex-col overflow-hidden rounded-[18px] border px-4 pb-4 pt-0 backdrop-blur;
     border-color: var(--card-border);
     background: var(--card-bg);
     box-shadow:
@@ -854,7 +854,7 @@
   }
 
   .requirement-list {
-    @apply mt-4 grid min-h-0 flex-1 content-start gap-3 overflow-y-auto pr-1;
+    @apply mt-4 grid min-h-0 flex-1 content-start gap-3 overflow-y-auto px-4;
     overscroll-behavior: contain;
   }
 
@@ -3214,7 +3214,7 @@
 }
 
 .token-usage-node__collapsed {
-  @apply flex h-full w-full cursor-pointer items-center gap-3 border-0 px-4 text-left;
+  @apply flex h-11 w-full cursor-pointer items-center gap-3 border-0 px-4 text-left;
   background: transparent;
   color: var(--text-strong);
 }
@@ -3229,39 +3229,43 @@
 }
 
 .token-usage-node__collapsed > span {
-  @apply flex min-w-0 flex-1 flex-col;
+  @apply flex min-w-0 flex-1 flex-col justify-center;
 }
 
 .token-usage-node__collapsed strong {
-  @apply text-xs;
+  @apply text-xs leading-none;
 }
 
 .token-usage-node__collapsed small {
-  @apply truncate text-[9px];
+  @apply truncate text-[9px] leading-none;
   color: var(--text-muted);
 }
 
+.token-usage-node__collapsed > svg:last-child {
+  @apply shrink-0;
+}
+
 .token-usage-node__detail {
-  @apply flex min-h-0 flex-1 flex-col p-4;
+  @apply flex min-h-0 flex-1 flex-col p-3;
 }
 
 .token-usage-node__grid {
-  @apply mt-auto grid grid-cols-3 gap-2;
+  @apply grid grid-cols-2 gap-2;
 }
 
 .token-usage-node__item {
-  @apply grid gap-0.5 rounded-lg border px-2 py-1.5;
+  @apply grid place-content-center gap-1 rounded-lg border px-3 py-2;
   border-color: var(--card-border);
   background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
 }
 
 .token-usage-node__value {
-  @apply w-full text-[11px] font-bold leading-tight;
+  @apply w-full whitespace-nowrap text-center text-[13px] font-bold leading-none;
   color: var(--text-strong);
 }
 
 .token-usage-node__label {
-  @apply w-full text-[9px] leading-tight;
+  @apply w-full whitespace-nowrap text-center text-[10px] leading-none;
   color: var(--text-muted);
 }
 

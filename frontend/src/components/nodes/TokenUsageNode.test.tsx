@@ -48,7 +48,5 @@ describe("TokenUsageNode", () => {
     expect(screen.getByText("输出")).toBeInTheDocument();
     expect(screen.getByText("缓存读")).toBeInTheDocument();
     expect(screen.getByText("缓存写")).toBeInTheDocument();
-    expect(screen.getByText("上下文")).toBeInTheDocument();
-    expect(screen.getByText("窗口")).toBeInTheDocument();
   });
 });

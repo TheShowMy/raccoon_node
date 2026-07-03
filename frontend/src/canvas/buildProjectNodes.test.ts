@@ -179,7 +179,7 @@ describe("buildProjectNodes", () => {
     );
   });
 
-  it("places GitHub below the settings node as a horizontal bar", () => {
+  it("places GitHub beside the terminal node as a horizontal bar", () => {
     const canvas: ProjectCanvasData = {
       project: project(),
       active_requirement: null,
@@ -193,10 +193,11 @@ describe("buildProjectNodes", () => {
       (node) => node.id === "completed-requirements",
     )!;
 
-    expect(github.position).toEqual({ x: -350, y: 72 });
+    expect(github.position).toEqual({ x: -350, y: 800 });
     expect(github.width).toBe(290);
     expect(github.height).toBe(44);
-    expect(completed.position).toEqual({ x: -350, y: 140 });
+    expect(completed.position).toEqual({ x: -350, y: 84 });
+    expect(completed.height).toBe(696);
   });
 
   it("builds the Git node below the pending list with phased dimensions", () => {
@@ -336,8 +337,11 @@ describe("buildProjectNodes", () => {
 
     const nodes = buildProjectNodes(params(canvas, null));
     const token = nodes.find((node) => node.id === "token-usage")!;
+    const queued = nodes.find((node) => node.id === "queued-requirements")!;
 
     expect(token.position).toEqual({ x: 780, y: 20 });
+    expect(queued.position).toEqual({ x: 780, y: 84 });
+    expect(queued.height).toBe(696);
     expect(token.data).toMatchObject({
       kind: "token-usage",
       usage: canvas.token_usage,

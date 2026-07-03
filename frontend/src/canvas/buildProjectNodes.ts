@@ -277,9 +277,9 @@ export function buildProjectNodes({
       id: "project-github",
       type: "startNode",
       className: "github-flow-node",
-      position: { x: -350, y: 72 },
+      position: githubExpanded ? { x: -780, y: 800 } : { x: -350, y: 800 },
       style: {
-        width: 290,
+        width: githubExpanded ? 720 : 290,
         height: githubExpanded ? 540 : 44,
         zIndex: githubExpanded ? 20 : 1,
       },
@@ -300,7 +300,8 @@ export function buildProjectNodes({
     {
       id: "completed-requirements",
       type: "startNode",
-      position: { x: -350, y: 140 },
+      position: { x: -350, y: 84 },
+      style: { height: 696 },
       data: {
         kind: "requirement-list",
         title: "已完成需求",
@@ -318,10 +319,10 @@ export function buildProjectNodes({
       id: "token-usage",
       type: "startNode",
       className: "token-usage-flow-node",
-      position: { x: 780, y: 20 },
+      position: tokenUsageExpanded ? { x: 780, y: -156 } : { x: 780, y: 20 },
       style: {
         width: 290,
-        height: tokenUsageExpanded ? 180 : 44,
+        height: tokenUsageExpanded ? 220 : 44,
         zIndex: tokenUsageExpanded ? 20 : 1,
       },
       data: {
@@ -334,7 +335,8 @@ export function buildProjectNodes({
     {
       id: "queued-requirements",
       type: "startNode",
-      position: { x: 780, y: 140 },
+      position: { x: 780, y: 84 },
+      style: { height: 696 },
       data: {
         kind: "requirement-list",
         title: "待执行 / 执行中",
