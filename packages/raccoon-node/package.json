@@ -1,6 +1,6 @@
 {
   "name": "raccoon-node",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Local Git project canvas powered by Pi Agent RPC",
   "license": "MIT",
   "repository": {
@@ -18,8 +18,8 @@
     "lib"
   ],
   "optionalDependencies": {
-    "raccoon-node-darwin-arm64": "0.2.1",
-    "raccoon-node-linux-x64": "0.2.1",
-    "raccoon-node-windows-x64": "0.2.1"
+    "raccoon-node-darwin-arm64": "0.2.2",
+    "raccoon-node-linux-x64": "0.2.2",
+    "raccoon-node-windows-x64": "0.2.2"
   }
 }

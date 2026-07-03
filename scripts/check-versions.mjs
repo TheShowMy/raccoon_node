@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-const expected = process.env.GITHUB_REF_NAME?.replace(/^v/, "") ?? "0.2.1";
+const expected = process.env.GITHUB_REF_NAME?.replace(/^v/, "") ?? "0.2.2";
 const files = [
   "package.json",
   "packages/raccoon-node/package.json",
