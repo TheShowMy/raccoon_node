@@ -110,6 +110,16 @@
     @apply flex items-center justify-between gap-4 px-7 pt-5 pb-3.5;
   }
 
+  .toolbar__brand {
+    @apply flex min-w-0 items-center gap-2.5;
+  }
+
+  .app-logo {
+    @apply h-9 w-9 shrink-0 rounded-[10px] border object-cover;
+    border-color: var(--card-border);
+    box-shadow: var(--shadow-card);
+  }
+
   .toolbar h1 {
     @apply m-0 text-[22px] leading-tight font-bold;
     color: var(--text-strong);

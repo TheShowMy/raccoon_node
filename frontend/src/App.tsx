@@ -863,13 +863,22 @@ export default function App() {
   return (
     <main className="app-shell" data-theme={current.theme}>
       <section className="toolbar">
-        <div>
-          <h1>Raccoon Node</h1>
-          <p>
-            {current.project
-              ? `${current.project.name} / 项目画布`
-              : "项目画布"}
-          </p>
+        <div className="toolbar__brand">
+          <img
+            className="app-logo"
+            src="/raccoon-icon-180.png"
+            alt=""
+            width="36"
+            height="36"
+          />
+          <div>
+            <h1>Raccoon Node</h1>
+            <p>
+              {current.project
+                ? `${current.project.name} / 项目画布`
+                : "项目画布"}
+            </p>
+          </div>
         </div>
         <div className="status-pill">
           {current.error
