@@ -1,6 +1,7 @@
 import type { Node } from "@xyflow/react";
 import type {
   DraftClarificationAnswer,
+  BasicSettings,
   FileReference,
   ImageAttachment,
   Project,
@@ -21,6 +22,12 @@ import type {
   GitDiffArea,
   GitExpansionPhase,
   GitStatus,
+  ModelSettings,
+  ModelTierKey,
+  ModelTierSetting,
+  PiModel,
+  SettingsPage,
+  ThemeMode,
 } from "../types/api";
 import { buildRequirementDagEdges } from "./edges";
 import {
@@ -50,7 +57,7 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       StartNodeData["kind"],
       { width: number; height: number }
     > = {
-      summary: { width: 252, height: 134 },
+      "project-settings": { width: 137, height: 90 },
       "project-github": { width: 137, height: 90 },
       "requirement-list": { width: 290, height: 640 },
       "requirement-chat": { width: 720, height: 760 },
@@ -80,12 +87,38 @@ export interface BuildProjectNodesParams {
   requirementActionBusyId: string | null;
   recoveringTaskGroupIds: Set<string>;
   requirementActionError: string | null;
-  openSettings: () => void;
   closeDag: () => void;
   selectDagRequirement: (requirement: Requirement) => void;
   planRequirement: (requirement: Requirement) => Promise<void>;
   recoverTaskGroup: (requirementId: string, taskId: string) => Promise<void>;
   toggleTaskGroupCollapsed: (requirementId: string, taskId: string) => void;
+}
+
+export interface BuildProjectSettingsNodeParams {
+  projectCanvas: ProjectCanvasData | null;
+  project: Project | null;
+  expanded: boolean;
+  page: SettingsPage;
+  basicSettings: BasicSettings | null;
+  basicError: string | null;
+  savingBasic: boolean;
+  savingTheme: boolean;
+  modelSettings: ModelSettings;
+  models: PiModel[];
+  modelRpcStatus: "idle" | "loading" | "ready" | "reconnecting" | "error";
+  modelError: string | null;
+  savingModels: boolean;
+  terminalDisabled: boolean;
+  onToggleExpanded: () => void;
+  onOpenBasic: () => void;
+  onOpenModels: () => void;
+  onBasicChange: (settings: BasicSettings) => void;
+  onThemeChange: (theme: ThemeMode) => Promise<void>;
+  onSaveBasic: (confirmedExternal?: boolean) => Promise<BasicSettings | null>;
+  onModelChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
+  onSaveModels: () => Promise<void>;
+  onReloadModels: () => Promise<void>;
+  onOpenLogin: () => void;
 }
 
 export interface BuildProjectTerminalNodeParams {
@@ -179,7 +212,6 @@ export function buildProjectNodes({
   requirementActionBusyId,
   recoveringTaskGroupIds,
   requirementActionError,
-  openSettings,
   closeDag,
   selectDagRequirement,
   planRequirement,
@@ -240,20 +272,6 @@ export function buildProjectNodes({
           issues: [],
           notes: [],
         },
-      },
-    },
-    {
-      id: "settings",
-      type: "startNode",
-      position: { x: -350, y: 20 },
-      width: 137,
-      height: 90,
-      data: {
-        kind: "summary",
-        icon: "model",
-        title: "设置",
-        description: "基础与模型设置",
-        onAction: openSettings,
       },
     },
     {
@@ -539,6 +557,75 @@ export function buildProjectChatNode({
         onContinueEditing: continueEditingRequirement,
         onCancel: () => cancelRequirementAnalysis(activeRequirementId),
         onAbandon: () => abandonRequirement(activeRequirementId),
+      },
+    },
+  ])[0];
+}
+
+export function buildProjectSettingsNode({
+  projectCanvas,
+  project: currentProject,
+  expanded,
+  page,
+  basicSettings,
+  basicError,
+  savingBasic,
+  savingTheme,
+  modelSettings,
+  models,
+  modelRpcStatus,
+  modelError,
+  savingModels,
+  terminalDisabled,
+  onToggleExpanded,
+  onOpenBasic,
+  onOpenModels,
+  onBasicChange,
+  onThemeChange,
+  onSaveBasic,
+  onModelChange,
+  onSaveModels,
+  onReloadModels,
+  onOpenLogin,
+}: BuildProjectSettingsNodeParams): Node<StartNodeData> | null {
+  const project = projectCanvas?.project ?? currentProject;
+  if (!project) return null;
+
+  return withDimensions([
+    {
+      id: "project-settings",
+      type: "startNode",
+      className: "settings-flow-node",
+      position: expanded ? { x: -933, y: -350 } : { x: -350, y: 20 },
+      style: {
+        width: expanded ? 720 : 137,
+        height: expanded ? 460 : 90,
+        zIndex: expanded ? 20 : 1,
+      },
+      data: {
+        kind: "project-settings",
+        expanded,
+        page,
+        basicSettings,
+        basicError,
+        savingBasic,
+        savingTheme,
+        modelSettings,
+        models,
+        modelRpcStatus,
+        modelError,
+        savingModels,
+        terminalDisabled,
+        onToggleExpanded,
+        onOpenBasic,
+        onOpenModels,
+        onBasicChange,
+        onThemeChange,
+        onSaveBasic,
+        onModelChange,
+        onSaveModels,
+        onReloadModels,
+        onOpenLogin,
       },
     },
   ])[0];

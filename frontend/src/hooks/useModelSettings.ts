@@ -4,7 +4,7 @@ import type {
   ModelSettings,
   ModelTierKey,
   ModelTierSetting,
-  SettingsView,
+  SettingsPage,
   ThemeMode,
 } from "../types/api";
 import {
@@ -20,7 +20,8 @@ export function useModelSettings(
   onThemeChange?: (theme: ThemeMode) => void,
   onBasicSettingsSaved?: () => Promise<void>,
 ) {
-  const [settingsView, setSettingsView] = useState<SettingsView>("closed");
+  const [settingsExpanded, setSettingsExpanded] = useState(false);
+  const [settingsPage, setSettingsPage] = useState<SettingsPage>("basic");
   const [basicSettings, setBasicSettings] = useState<BasicSettings | null>(
     null,
   );
@@ -28,6 +29,7 @@ export function useModelSettings(
     null,
   );
   const [savingBasicSettings, setSavingBasicSettings] = useState(false);
+  const [savingTheme, setSavingTheme] = useState(false);
   const [models, setModels] = useState(
     [] as { id: string; name: string; provider: string; reasoning: boolean }[],
   );
@@ -71,21 +73,58 @@ export function useModelSettings(
   }, [loadBasicSettings]);
 
   const openSettings = useCallback(() => {
-    setSettingsView("basic");
+    setSettingsPage("basic");
+    setSettingsExpanded(true);
     void loadBasicSettings();
   }, [loadBasicSettings]);
 
   const openBasicSettings = useCallback(() => {
-    setSettingsView("basic");
+    setSettingsPage("basic");
     void loadBasicSettings();
   }, [loadBasicSettings]);
 
   const openModelSettings = useCallback(() => {
-    setSettingsView("models");
+    setSettingsPage("models");
     void loadModelSettings();
   }, [loadModelSettings]);
 
-  const closeSettings = useCallback(() => setSettingsView("closed"), []);
+  const closeSettings = useCallback(() => setSettingsExpanded(false), []);
+  const toggleSettings = useCallback(() => {
+    if (settingsExpanded) {
+      setSettingsExpanded(false);
+    } else {
+      openSettings();
+    }
+  }, [openSettings, settingsExpanded]);
+
+  const changeTheme = useCallback(
+    async (theme: ThemeMode) => {
+      if (!basicSettings || savingTheme || basicSettings.theme === theme)
+        return;
+      const previousTheme = basicSettings.theme;
+      setSavingTheme(true);
+      setBasicSettingsError(null);
+      setBasicSettings((current) =>
+        current ? { ...current, theme } : current,
+      );
+      onThemeChange?.(theme);
+      try {
+        const saved = await saveBasicSettings({ theme });
+        setBasicSettings((current) =>
+          current ? { ...current, theme: saved.theme } : saved,
+        );
+      } catch (reason) {
+        setBasicSettings((current) =>
+          current ? { ...current, theme: previousTheme } : current,
+        );
+        onThemeChange?.(previousTheme);
+        setBasicSettingsError(`主题保存失败：${readError(reason)}`);
+      } finally {
+        setSavingTheme(false);
+      }
+    },
+    [basicSettings, onThemeChange, savingTheme],
+  );
 
   const updateModelTier = useCallback(
     (tier: ModelTierKey, setting: ModelTierSetting) => {
@@ -144,7 +183,6 @@ export function useModelSettings(
       setBasicSettingsError(null);
       try {
         const saved = await saveBasicSettings({
-          theme: basicSettings.theme,
           host: basicSettings.host,
           port: basicSettings.port,
           commit_mode: basicSettings.commit_mode,
@@ -172,15 +210,19 @@ export function useModelSettings(
   );
 
   return {
-    settingsView,
+    settingsExpanded,
+    settingsPage,
     openSettings,
     openBasicSettings,
     openModelSettings,
     closeSettings,
+    toggleSettings,
     basicSettings,
     basicSettingsError,
     savingBasicSettings,
+    savingTheme,
     updateBasicSettings: setBasicSettings,
+    changeTheme,
     saveBasicSettings: saveBasicSettingsCallback,
     models,
     draftModelSettings,

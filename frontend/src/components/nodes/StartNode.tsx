@@ -4,7 +4,6 @@ import type { StartNodeData } from "../../types/api";
 import { renderNodeContent } from "../../nodes/renderNodeContent";
 
 function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
-  const clickableAction = data.kind === "summary" ? data.onAction : undefined;
   const hasRequirementChatLeftHandle = data.kind === "requirement-chat";
   const hasRequirementChatRightHandle = data.kind === "requirement-chat";
   const hasRequirementListLeftHandle =
@@ -18,18 +17,8 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   return (
     <div
       className={`node-card node-card--${data.kind} ${
-        clickableAction ? "node-card--clickable" : ""
-      } ${data.kind === "project-github" ? "compact" : ""}`}
-      role={clickableAction ? "button" : undefined}
-      tabIndex={clickableAction ? 0 : undefined}
-      onClick={clickableAction}
-      onKeyDown={(event) => {
-        if (!clickableAction) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          clickableAction();
-        }
-      }}
+        data.kind === "project-github" ? "compact" : ""
+      }`}
     >
       {hasRequirementChatLeftHandle ? (
         <Handle

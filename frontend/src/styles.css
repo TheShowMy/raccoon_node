@@ -157,58 +157,11 @@
     transform: translateY(-2px);
   }
 
-  .node-card--summary {
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px var(--glow-style);
-  }
-
-  .node-card--summary {
-    @apply h-[90px] w-[137px] min-h-0 cursor-pointer;
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px var(--glow-model);
-  }
-
-  .node-card--summary .node-header {
-    gap: 8px;
-  }
-
-  .node-card--model-config {
-    @apply min-h-[480px] w-[360px] overflow-visible;
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px var(--glow-model);
-  }
-
-  .node-card--settings-list {
-    @apply min-h-[310px] w-[300px] overflow-visible;
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px var(--glow-model);
-  }
-
-  .node-card--basic-settings {
-    @apply min-h-[390px] w-[360px] overflow-visible;
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px var(--glow-model);
-  }
-
   .node-card--project-github {
     @apply h-[90px] w-[137px] cursor-pointer;
     box-shadow:
       var(--shadow-card),
       0 0 28px var(--glow-projects);
-  }
-
-  .node-card--clickable {
-    @apply flex items-center;
-  }
-
-  .node-card--clickable:focus-visible {
-    outline: 2px solid var(--card-border-strong);
-    outline-offset: 4px;
   }
 
   .node-card--requirement-list {
@@ -3541,77 +3494,100 @@
   }
 }
 
-.settings-drawer-layer {
-  @apply fixed inset-0 z-50;
+.settings-flow-node {
+  transition:
+    transform 200ms ease,
+    width 200ms ease,
+    height 200ms ease;
 }
 
-.settings-drawer-backdrop {
-  @apply absolute inset-0 cursor-default border-0;
-  background: rgba(2, 6, 23, 0.5);
-  backdrop-filter: blur(2px);
-}
-
-.settings-drawer {
-  @apply absolute top-0 right-0 flex h-full w-[560px] max-w-full flex-col border-l;
+.node-card--project-settings {
+  @apply h-full w-full min-h-0 overflow-hidden p-0;
   border-color: color-mix(in srgb, #f59e0b 26%, var(--card-border));
-  color: var(--text-strong);
   background: color-mix(in srgb, var(--canvas-bg) 94%, #f59e0b 6%);
-  box-shadow: -24px 0 70px rgba(2, 6, 23, 0.42);
-  animation: settings-drawer-enter 180ms ease-out;
+  box-shadow:
+    var(--shadow-card),
+    0 0 28px var(--glow-model);
+  transition:
+    width 200ms ease,
+    height 200ms ease,
+    background-color 200ms ease,
+    color 200ms ease;
 }
 
-.settings-drawer > header {
-  @apply flex h-16 shrink-0 items-center justify-between border-b px-5;
-  border-color: var(--card-border);
+.node-card--project-settings:hover {
+  transform: none;
 }
 
-.settings-drawer > header > div {
-  @apply flex items-center gap-3;
-  color: #f59e0b;
+.settings-node,
+.settings-node__collapsed {
+  @apply h-full w-full;
 }
 
-.settings-drawer > header span {
-  @apply grid;
-}
-
-.settings-drawer > header strong {
-  @apply text-sm;
+.settings-node__collapsed {
+  @apply grid cursor-pointer grid-cols-[28px_minmax(0,1fr)_15px] items-center gap-2 border-0 p-3 text-left;
   color: var(--text-strong);
+  background: transparent;
 }
 
-.settings-drawer > header small {
-  @apply text-[10px] font-normal;
+.settings-node__collapsed > span:nth-child(2) {
+  @apply grid min-w-0;
+}
+
+.settings-node__collapsed strong {
+  @apply text-xs;
+}
+
+.settings-node__collapsed small {
+  @apply truncate text-[9px];
   color: var(--text-muted);
 }
 
-.settings-drawer > header button {
-  @apply cursor-pointer rounded-lg border-0 bg-transparent p-2;
+.settings-node__titlebar {
+  @apply flex h-11 items-center gap-2 border-b px-4;
+  border-color: var(--card-border);
+  color: #f59e0b;
+}
+
+.settings-node__titlebar strong {
+  @apply text-xs;
+  color: var(--text-strong);
+}
+
+.settings-node__titlebar > span {
+  @apply min-w-0 flex-1 truncate text-[10px];
+  color: var(--text-muted);
+}
+
+.settings-node__titlebar button {
+  @apply cursor-pointer rounded-md border-0 bg-transparent p-1.5;
   color: var(--text-soft);
 }
 
-.settings-drawer__tabs {
-  @apply grid shrink-0 grid-cols-2 gap-2 border-b p-3;
+.settings-node__tabs {
+  @apply grid h-11 grid-cols-2 gap-2 border-b p-1.5;
   border-color: var(--card-border);
 }
 
-.settings-drawer__tabs button {
+.settings-node__tabs button {
   @apply flex cursor-pointer items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold;
   border-color: transparent;
   color: var(--text-soft);
   background: transparent;
 }
 
-.settings-drawer__tabs button.active {
+.settings-node__tabs button.active {
   border-color: color-mix(in srgb, #f59e0b 42%, transparent);
   color: #f59e0b;
   background: color-mix(in srgb, #f59e0b 10%, transparent);
 }
 
-.settings-drawer__body {
-  @apply min-h-0 flex-1 overflow-y-auto p-5;
+.settings-node__body {
+  @apply h-[372px] overflow-y-auto p-4;
+  overscroll-behavior: contain;
 }
 
-.settings-drawer__notice {
+.settings-node__notice {
   @apply rounded-lg border p-3 text-xs leading-5;
   border-color: var(--card-border);
   color: var(--text-soft);
@@ -3706,14 +3682,13 @@
   color: var(--text-muted);
 }
 
-.settings-drawer__footer {
+.settings-node__footer {
   @apply sticky bottom-0 flex justify-end border-t pt-4;
   border-color: var(--card-border);
   background: color-mix(in srgb, var(--canvas-bg) 94%, transparent);
 }
 
-.settings-primary,
-.settings-danger {
+.settings-primary {
   @apply cursor-pointer rounded-lg border-0 px-4 py-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50;
   color: #1c1917;
   background: #f59e0b;
@@ -3784,69 +3759,44 @@
   @apply grid content-start gap-4 p-5;
 }
 
-.settings-confirm {
-  @apply fixed top-1/2 left-1/2 z-[60] w-[420px] max-w-[calc(100%-32px)] -translate-x-1/2 -translate-y-1/2 rounded-xl border p-5;
-  border-color: color-mix(in srgb, var(--accent-danger) 50%, transparent);
-  color: var(--text-strong);
-  background: var(--canvas-bg);
-  box-shadow: 0 24px 80px rgba(2, 6, 23, 0.6);
+.settings-node__confirm {
+  @apply absolute inset-0 z-20 flex items-center justify-center p-6;
+  background: rgba(2, 6, 23, 0.68);
+  backdrop-filter: blur(4px);
 }
 
-.settings-confirm p {
-  @apply text-xs leading-5;
+.settings-node__confirm > div {
+  @apply w-full max-w-sm rounded-xl border p-4;
+  border-color: color-mix(in srgb, var(--accent-danger) 50%, transparent);
+  color: var(--text-strong);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+}
+
+.settings-node__confirm p {
+  @apply my-3 text-xs leading-5;
   color: var(--text-soft);
 }
 
-.settings-confirm > div {
-  @apply mt-4 flex justify-end gap-2;
+.settings-node__confirm span {
+  @apply flex justify-end gap-2;
 }
 
-.settings-confirm button {
+.settings-node__confirm button {
   @apply cursor-pointer rounded-lg border px-3 py-2 text-xs;
   border-color: var(--card-border-strong);
   color: var(--text-strong);
   background: transparent;
 }
 
-.settings-confirm .settings-danger {
-  border-color: transparent;
-  color: #fff;
-  background: var(--accent-danger);
-}
-
-@keyframes settings-drawer-enter {
-  from {
-    transform: translateX(100%);
-  }
-}
-
-@media (max-width: 640px) {
-  .settings-drawer {
-    width: 100%;
-  }
-
-  .model-status {
-    align-items: flex-start;
-  }
-
-  .model-status,
-  .model-status > div {
-    flex-wrap: wrap;
-  }
-
-  .model-settings__layout {
-    grid-template-columns: 1fr;
-  }
-
-  .model-settings__layout nav {
-    grid-template-columns: repeat(3, 1fr);
-    border-right: 0;
-    border-bottom: 1px solid var(--card-border);
-  }
+.settings-node__confirm button:last-child {
+  border-color: color-mix(in srgb, var(--accent-danger) 50%, transparent);
+  color: var(--accent-danger);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-drawer {
-    animation: none;
+  .settings-flow-node,
+  .node-card--project-settings {
+    transition: none;
   }
 }

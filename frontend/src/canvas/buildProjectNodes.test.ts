@@ -3,6 +3,7 @@ import {
   buildProjectChatNode,
   buildProjectGitNode,
   buildProjectNodes,
+  buildProjectSettingsNode,
   buildRequirementDagEdges,
   mergeProjectNodes,
   type BuildProjectNodesParams,
@@ -112,7 +113,6 @@ function params(
     requirementActionBusyId: null,
     recoveringTaskGroupIds: new Set(),
     requirementActionError: null,
-    openSettings: () => {},
     closeDag: () => {},
     selectDagRequirement: () => {},
     planRequirement: async () => {},
@@ -175,7 +175,7 @@ describe("buildProjectNodes", () => {
     );
   });
 
-  it("places GitHub and model actions at the top of the project canvas", () => {
+  it("places GitHub at the top of the project canvas", () => {
     const canvas: ProjectCanvasData = {
       project: project(),
       active_requirement: null,
@@ -185,18 +185,13 @@ describe("buildProjectNodes", () => {
 
     const nodes = buildProjectNodes(params(canvas, null));
     const github = nodes.find((node) => node.id === "project-github")!;
-    const model = nodes.find((node) => node.id === "settings")!;
     const completed = nodes.find(
       (node) => node.id === "completed-requirements",
     )!;
 
     expect(github.position).toEqual({ x: -197, y: 20 });
-    expect(model.position).toEqual({ x: -350, y: 20 });
     expect(github.width).toBe(137);
     expect(github.height).toBe(90);
-    expect(model.width).toBe(137);
-    expect(model.height).toBe(90);
-    expect(model.data.kind).toBe("summary");
     expect(completed.position).toEqual({ x: -350, y: 140 });
   });
 
@@ -237,21 +232,56 @@ describe("buildProjectNodes", () => {
     expect(expanded.style).toMatchObject({ width: 720, height: 460 });
   });
 
-  it("keeps settings in one canvas entry without detail nodes", () => {
+  it("builds one settings workbench that expands toward the upper left", () => {
     const canvas: ProjectCanvasData = {
       project: project(),
       active_requirement: null,
       queued_requirements: [],
       completed_requirements: [],
     };
-    const nodes = buildProjectNodes(params(canvas, null));
+    const base = {
+      projectCanvas: canvas,
+      project: canvas.project,
+      page: "basic" as const,
+      basicSettings: null,
+      basicError: null,
+      savingBasic: false,
+      savingTheme: false,
+      modelSettings: {
+        low: { model_id: null, thinking_level: "low" as const },
+        medium: { model_id: null, thinking_level: "medium" as const },
+        high: { model_id: null, thinking_level: "high" as const },
+      },
+      models: [],
+      modelRpcStatus: "idle" as const,
+      modelError: null,
+      savingModels: false,
+      terminalDisabled: false,
+      onToggleExpanded: () => {},
+      onOpenBasic: () => {},
+      onOpenModels: () => {},
+      onBasicChange: () => {},
+      onThemeChange: async () => {},
+      onSaveBasic: async () => null,
+      onModelChange: () => {},
+      onSaveModels: async () => {},
+      onReloadModels: async () => {},
+      onOpenLogin: () => {},
+    };
+    const collapsed = buildProjectSettingsNode({
+      ...base,
+      expanded: false,
+    })!;
+    const expanded = buildProjectSettingsNode({ ...base, expanded: true })!;
 
-    expect(nodes.find((node) => node.id === "settings")?.data.kind).toBe(
-      "summary",
+    expect(collapsed.position).toEqual({ x: -350, y: 20 });
+    expect(collapsed.style).toMatchObject({ width: 137, height: 90 });
+    expect(expanded.position).toEqual({ x: -933, y: -350 });
+    expect(expanded.style).toMatchObject({ width: 720, height: 460 });
+    expect(expanded.data.kind).toBe("project-settings");
+    expect(buildProjectNodes(params(canvas, null))).not.toContainEqual(
+      expect.objectContaining({ id: "settings" }),
     );
-    expect(nodes.find((node) => node.id === "settings-list")).toBeUndefined();
-    expect(nodes.find((node) => node.id === "basic-settings")).toBeUndefined();
-    expect(nodes.find((node) => node.id === "model-config")).toBeUndefined();
   });
 
   it("places the DAG entry to the right of the project requirement list", () => {

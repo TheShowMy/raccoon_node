@@ -256,10 +256,10 @@ mod tests {
     };
     use raccoon_core::error::AppError;
     use raccoon_core::models::{
-        ClarificationAnswerRequest, ClarificationOption, ClarificationQuestionType, ModelProvider,
-        ModelProviderActionFuture, ModelProviderFuture, ModelSettings, PiModel, Project,
-        ProjectChatEventEmitter, ProjectChatFuture, ProjectChatInput, ProjectChatOutput,
-        Requirement, RequirementAnalysisFuture, RequirementAnalysisInput,
+        ClarificationAnswerRequest, ClarificationOption, ClarificationQuestionType, GitProvider,
+        ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings, PiModel,
+        Project, ProjectChatEventEmitter, ProjectChatFuture, ProjectChatInput, ProjectChatOutput,
+        PublicationReadiness, Requirement, RequirementAnalysisFuture, RequirementAnalysisInput,
         RequirementAnalysisOutput, RequirementClarification, RequirementConversationItem,
         RequirementConversationPrompt, RequirementDraft, RequirementEventEmitter,
         RequirementExecutionPlan, RequirementExecutionTask, RequirementMessage,
@@ -915,6 +915,63 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
+    }
+
+    #[tokio::test]
+    async fn theme_only_update_keeps_publication_readiness_unchanged() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+            .await
+            .unwrap();
+        store.data.projects = vec![test_project("current")];
+        let (app, state) = build_app_with_model_provider_and_runtime(
+            store,
+            fake_provider(Vec::new()),
+            AppConfig {
+                commit_mode: raccoon_core::config::CommitMode::PullRequest,
+                ..AppConfig::default()
+            },
+            RuntimeOptions::default(),
+        );
+        let blocked = PublicationReadiness {
+            mode: "pull_request".to_owned(),
+            provider: GitProvider::GitHub,
+            ready: false,
+            summary: "发布检查失败".to_owned(),
+            issues: vec!["未登录".to_owned()],
+            notes: Vec::new(),
+        };
+        *state.publication_readiness.write().await = blocked.clone();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/settings/basic")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"theme":"dark"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(*state.publication_readiness.read().await, blocked);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/settings/basic")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"commit_mode":"local"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(state.publication_readiness.read().await.mode, "local");
     }
 
     #[tokio::test]

@@ -105,15 +105,12 @@ pub async fn put_basic_settings(
         ));
     }
 
-    let readiness = loop {
-        let current = state.config.read().await.clone();
-        let updated = raccoon_core::config::AppConfig {
-            theme: payload.theme.unwrap_or(current.theme),
-            host: payload.host.clone().unwrap_or_else(|| current.host.clone()),
-            port: payload.port.map(|port| port as u16).unwrap_or(current.port),
-            commit_mode: payload.commit_mode.unwrap_or(current.commit_mode),
-        };
-        let checked_mode = updated.commit_mode;
+    let current = state.config.read().await.clone();
+    let readiness = if payload
+        .commit_mode
+        .is_some_and(|mode| mode != current.commit_mode)
+    {
+        let checked_mode = payload.commit_mode.unwrap_or(current.commit_mode);
         let readiness = crate::publication::check(
             &state.project_root,
             &raccoon_core::utils::git_remote_origin(&state.project_root),
@@ -126,25 +123,29 @@ pub async fn put_basic_settings(
                 readiness.issues.join("；")
             )));
         }
-        updated
-            .validate()
-            .map_err(|error| AppError::bad_request(error.to_string()))?;
-        let mut config = state.config.write().await;
-        let updated = raccoon_core::config::AppConfig {
-            theme: payload.theme.unwrap_or(config.theme),
-            host: payload.host.clone().unwrap_or_else(|| config.host.clone()),
-            port: payload.port.map(|port| port as u16).unwrap_or(config.port),
-            commit_mode: payload.commit_mode.unwrap_or(config.commit_mode),
-        };
-        if updated.commit_mode != checked_mode {
-            continue;
-        }
-        updated.save(&state.config_path)?;
-        *config = updated;
-        break readiness;
+        Some(readiness)
+    } else {
+        None
     };
-    *state.publication_readiness.write().await = readiness;
-    spawn_startup_requirement_scheduler(state.clone());
+
+    let mut config = state.config.write().await;
+    let updated = raccoon_core::config::AppConfig {
+        theme: payload.theme.unwrap_or(config.theme),
+        host: payload.host.clone().unwrap_or_else(|| config.host.clone()),
+        port: payload.port.map(|port| port as u16).unwrap_or(config.port),
+        commit_mode: payload.commit_mode.unwrap_or(config.commit_mode),
+    };
+    updated
+        .validate()
+        .map_err(|error| AppError::bad_request(error.to_string()))?;
+    updated.save(&state.config_path)?;
+    *config = updated;
+    drop(config);
+
+    if let Some(readiness) = readiness {
+        *state.publication_readiness.write().await = readiness;
+        spawn_startup_requirement_scheduler(state.clone());
+    }
     let config = state.config.read().await;
 
     Ok(Json(basic_settings_response(&state, &config)))

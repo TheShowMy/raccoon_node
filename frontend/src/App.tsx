@@ -25,6 +25,7 @@ import {
   buildProjectChatNode,
   buildProjectGitNode,
   buildProjectNodes,
+  buildProjectSettingsNode,
   buildProjectTerminalNode,
   mergeProjectNodes,
 } from "./canvas/buildProjectNodes";
@@ -36,7 +37,6 @@ import { useModelSettings } from "./hooks/useModelSettings";
 import { useProjectTerminals } from "./hooks/useProjectTerminals";
 import { useProjectGit } from "./hooks/useProjectGit";
 import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsContext";
-import SettingsDrawer from "./components/settings/SettingsDrawer";
 
 const nodeTypes = { startNode: StartNode };
 const EMPTY_STREAM_EVENTS: StreamEvent[] = [];
@@ -127,6 +127,59 @@ export function getTerminalViewportAction(
 ): "focus" | "restore" | null {
   if (previousCollapsed === currentCollapsed) return null;
   return currentCollapsed ? "restore" : "focus";
+}
+
+export function getSettingsViewportAction(
+  previousExpanded: boolean,
+  currentExpanded: boolean,
+): "focus" | "restore" | null {
+  if (previousExpanded === currentExpanded) return null;
+  return currentExpanded ? "focus" : "restore";
+}
+
+function SettingsViewportController({ expanded }: { expanded: boolean }) {
+  const { fitView, getNode, getViewport, setViewport } = useReactFlow();
+  const previousExpanded = React.useRef(expanded);
+  const savedViewport = React.useRef<CanvasViewport | undefined>(undefined);
+
+  React.useLayoutEffect(() => {
+    const action = getSettingsViewportAction(
+      previousExpanded.current,
+      expanded,
+    );
+    previousExpanded.current = expanded;
+    if (!action) return;
+
+    if (action === "restore") {
+      const saved = savedViewport.current;
+      savedViewport.current = undefined;
+      if (saved) void setViewport(saved, { duration: 200 });
+      return;
+    }
+
+    const saved = getViewport();
+    savedViewport.current = saved;
+    const reduced = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const timer = window.setTimeout(
+      () => {
+        const node = getNode("project-settings");
+        if (!node) return;
+        void fitView({
+          nodes: [node],
+          padding: 0.08,
+          maxZoom: saved.zoom,
+          duration: reduced ? 0 : 200,
+        });
+      },
+      reduced ? 0 : 200,
+    );
+
+    return () => window.clearTimeout(timer);
+  }, [expanded, fitView, getNode, getViewport, setViewport]);
+
+  return null;
 }
 
 function TerminalViewportController({ collapsed }: { collapsed: boolean }) {
@@ -223,6 +276,8 @@ function minimapNodeColor(node: Node<StartNodeData>): string {
       return "#14b8a6";
     case "project-git":
       return "#f59e0b";
+    case "project-settings":
+      return "#f97316";
     case "requirement-list":
       return node.data.tone === "done" ? "#22c55e" : "#f59e0b";
     case "requirement-dag":
@@ -231,8 +286,6 @@ function minimapNodeColor(node: Node<StartNodeData>): string {
       return "#6366f1";
     case "token-usage":
       return "#22c55e";
-    case "summary":
-      return "#f97316";
     default:
       return "#94a3b8";
   }
@@ -283,7 +336,6 @@ export default function App() {
         requirementActionBusyId: project.requirementActionBusyId,
         recoveringTaskGroupIds: project.recoveringTaskGroupIds,
         requirementActionError: project.requirementActionError,
-        openSettings: models.openSettings,
         closeDag: project.closeDag,
         selectDagRequirement: project.selectDagRequirement,
         planRequirement: project.planRequirement,
@@ -293,7 +345,6 @@ export default function App() {
     [
       current.project,
       current.publicationReadiness,
-      models.openSettings,
       project.closeDag,
       project.collapsedTaskGroups,
       project.planRequirement,
@@ -399,6 +450,69 @@ export default function App() {
   }, [terminalHost]);
   const terminalDisabled = terminalDisabledReason !== undefined;
 
+  const projectSettingsNode = useMemo(
+    () =>
+      buildProjectSettingsNode({
+        projectCanvas: project.projectCanvas,
+        project: current.project,
+        expanded: models.settingsExpanded,
+        page: models.settingsPage,
+        basicSettings: models.basicSettings,
+        basicError: models.basicSettingsError,
+        savingBasic: models.savingBasicSettings,
+        savingTheme: models.savingTheme,
+        modelSettings: models.draftModelSettings,
+        models: models.models,
+        modelRpcStatus: models.modelRpcStatus,
+        modelError: models.modelError,
+        savingModels: models.savingModels,
+        terminalDisabled,
+        onToggleExpanded: models.toggleSettings,
+        onOpenBasic: models.openBasicSettings,
+        onOpenModels: models.openModelSettings,
+        onBasicChange: models.updateBasicSettings,
+        onThemeChange: models.changeTheme,
+        onSaveBasic: models.saveBasicSettings,
+        onModelChange: models.updateModelTier,
+        onSaveModels: models.saveModelSettings,
+        onReloadModels: models.reloadModelSettings,
+        onOpenLogin: () => {
+          models.closeSettings();
+          void terminals.createTerminal(
+            "pi --no-session --no-extensions --no-context-files",
+            "Pi 登录",
+          );
+        },
+      }),
+    [
+      current.project,
+      models.basicSettings,
+      models.basicSettingsError,
+      models.changeTheme,
+      models.closeSettings,
+      models.draftModelSettings,
+      models.modelError,
+      models.modelRpcStatus,
+      models.models,
+      models.openBasicSettings,
+      models.openModelSettings,
+      models.reloadModelSettings,
+      models.saveBasicSettings,
+      models.saveModelSettings,
+      models.savingBasicSettings,
+      models.savingModels,
+      models.savingTheme,
+      models.settingsExpanded,
+      models.settingsPage,
+      models.toggleSettings,
+      models.updateBasicSettings,
+      models.updateModelTier,
+      project.projectCanvas,
+      terminalDisabled,
+      terminals.createTerminal,
+    ],
+  );
+
   const projectTerminalNode = useMemo(
     () =>
       buildProjectTerminalNode({
@@ -479,6 +593,7 @@ export default function App() {
     () =>
       mergeProjectNodes(
         projectStructureNodes,
+        projectSettingsNode,
         projectChatNode,
         projectTerminalNode,
         projectGitNode,
@@ -486,6 +601,7 @@ export default function App() {
     [
       projectChatNode,
       projectGitNode,
+      projectSettingsNode,
       projectStructureNodes,
       projectTerminalNode,
     ],
@@ -599,42 +715,13 @@ export default function App() {
                 projectLoaded={Boolean(project.projectCanvas)}
                 selectedDagRequirementId={project.selectedDagRequirementId}
               />
+              <SettingsViewportController expanded={models.settingsExpanded} />
               <TerminalViewportController collapsed={terminals.collapsed} />
               <GitViewportController phase={git.phase} />
             </ReactFlow>
           </ReactFlowProvider>
         </RequirementTaskEventsProvider>
       </section>
-      <SettingsDrawer
-        view={models.settingsView}
-        basicSettings={models.basicSettings}
-        basicError={models.basicSettingsError}
-        savingBasic={models.savingBasicSettings}
-        modelSettings={models.draftModelSettings}
-        models={models.models}
-        modelRpcStatus={models.modelRpcStatus}
-        modelError={models.modelError}
-        savingModels={models.savingModels}
-        terminalDisabled={terminalDisabled}
-        onView={(view) =>
-          view === "basic"
-            ? models.openBasicSettings()
-            : models.openModelSettings()
-        }
-        onClose={models.closeSettings}
-        onBasicChange={models.updateBasicSettings}
-        onSaveBasic={models.saveBasicSettings}
-        onModelChange={models.updateModelTier}
-        onSaveModels={models.saveModelSettings}
-        onReloadModels={models.reloadModelSettings}
-        onOpenLogin={() => {
-          models.closeSettings();
-          void terminals.createTerminal(
-            "pi --no-session --no-extensions --no-context-files",
-            "Pi 登录",
-          );
-        }}
-      />
     </main>
   );
 }

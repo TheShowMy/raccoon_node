@@ -25,7 +25,7 @@ export type BasicSettingsUpdate = {
   confirmed_external?: boolean;
 };
 
-export type SettingsView = "closed" | "basic" | "models";
+export type SettingsPage = "basic" | "models";
 
 export type RestartResponse = {
   accepted: boolean;
@@ -530,12 +530,31 @@ export type ModelSettingsResponse = {
 
 export type StartNodeData =
   | {
-      kind: "summary";
-      title: string;
-      description: string;
-      icon: "model";
-      actionLabel?: string;
-      onAction?: () => void;
+      kind: "project-settings";
+      expanded: boolean;
+      page: SettingsPage;
+      basicSettings: BasicSettings | null;
+      basicError: string | null;
+      savingBasic: boolean;
+      savingTheme: boolean;
+      modelSettings: ModelSettings;
+      models: PiModel[];
+      modelRpcStatus: "idle" | "loading" | "ready" | "reconnecting" | "error";
+      modelError: string | null;
+      savingModels: boolean;
+      terminalDisabled: boolean;
+      onToggleExpanded: () => void;
+      onOpenBasic: () => void;
+      onOpenModels: () => void;
+      onBasicChange: (settings: BasicSettings) => void;
+      onThemeChange: (theme: ThemeMode) => Promise<void>;
+      onSaveBasic: (
+        confirmedExternal?: boolean,
+      ) => Promise<BasicSettings | null>;
+      onModelChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
+      onSaveModels: () => Promise<void>;
+      onReloadModels: () => Promise<void>;
+      onOpenLogin: () => void;
     }
   | {
       kind: "project-github";

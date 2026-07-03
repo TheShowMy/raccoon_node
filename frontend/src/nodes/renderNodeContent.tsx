@@ -6,9 +6,9 @@ import RequirementChatNode from "../components/nodes/RequirementChatNode";
 import RequirementDagNode from "../components/nodes/RequirementDagNode";
 import RequirementListNode from "../components/nodes/RequirementListNode";
 import RequirementTaskNode from "../components/nodes/RequirementTaskNode";
-import SummaryCard from "../components/nodes/SummaryCard";
 import TokenUsageNode from "../components/nodes/TokenUsageNode";
 import ProjectGitNode from "../components/nodes/ProjectGitNode";
+import ProjectSettingsNode from "../components/nodes/ProjectSettingsNode";
 
 function assertNever(value: never): never {
   throw new Error(`Unexpected node kind: ${String(value)}`);
@@ -16,6 +16,8 @@ function assertNever(value: never): never {
 
 export function renderNodeContent(data: StartNodeData): React.JSX.Element {
   switch (data.kind) {
+    case "project-settings":
+      return <ProjectSettingsNode data={data} />;
     case "project-github":
       return <ProjectGithubNode data={data} />;
     case "requirement-chat":
@@ -30,8 +32,6 @@ export function renderNodeContent(data: StartNodeData): React.JSX.Element {
       return <RequirementListNode data={data} />;
     case "requirement-task":
       return <RequirementTaskNode data={data} />;
-    case "summary":
-      return <SummaryCard data={data} />;
     case "token-usage":
       return <TokenUsageNode data={data} />;
     default:

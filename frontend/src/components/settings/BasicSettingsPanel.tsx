@@ -9,18 +9,22 @@ export default function BasicSettingsPanel({
   settings,
   error,
   saving,
+  savingTheme,
   onChange,
+  onThemeChange,
   onSave,
 }: {
   settings: BasicSettings | null;
   error: string | null;
   saving: boolean;
+  savingTheme: boolean;
   onChange: (settings: BasicSettings) => void;
+  onThemeChange: (theme: ThemeMode) => void;
   onSave: () => void;
 }) {
   if (!settings) {
     return (
-      <p className="settings-drawer__notice">{error ?? "正在读取基础设置…"}</p>
+      <p className="settings-node__notice">{error ?? "正在读取基础设置…"}</p>
     );
   }
 
@@ -49,7 +53,8 @@ export default function BasicSettingsPanel({
               type="button"
               className={settings.theme === theme ? "active" : ""}
               key={theme}
-              onClick={() => onChange({ ...settings, theme })}
+              disabled={savingTheme}
+              onClick={() => onThemeChange(theme)}
             >
               {label}
             </button>
@@ -126,7 +131,7 @@ export default function BasicSettingsPanel({
         </div>
       </section>
 
-      <div className="settings-drawer__footer">
+      <div className="settings-node__footer">
         <button
           className="settings-primary"
           type="button"

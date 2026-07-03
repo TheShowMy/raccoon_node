@@ -44,59 +44,90 @@ beforeEach(() => {
   });
 });
 
-it("opens the drawer directly on basic settings and closes it", async () => {
+it("opens the settings node on basic settings and closes it", async () => {
   const { result } = renderHook(() => useModelSettings());
   await waitFor(() => expect(result.current.basicSettings).not.toBeNull());
 
   act(() => result.current.openSettings());
-  expect(result.current.settingsView).toBe("basic");
+  expect(result.current.settingsExpanded).toBe(true);
+  expect(result.current.settingsPage).toBe("basic");
 
   await act(async () => result.current.openModelSettings());
-  expect(result.current.settingsView).toBe("models");
+  expect(result.current.settingsPage).toBe("models");
 
   act(() => result.current.closeSettings());
-  expect(result.current.settingsView).toBe("closed");
+  expect(result.current.settingsExpanded).toBe(false);
 });
 
-it("saves host and confirmation while applying the theme immediately", async () => {
-  vi.mocked(saveBasicSettings).mockResolvedValue(
-    settings({
-      theme: "light",
-      host: "0.0.0.0",
-      port: 4321,
-      effective_host: "0.0.0.0",
-      effective_port: 4321,
-      commit_mode: "pull_request",
-      restart_required: true,
-    }),
+it("switches theme immediately, saves only theme, and preserves other drafts", async () => {
+  let finishSave: (saved: BasicSettings) => void = () => {};
+  vi.mocked(saveBasicSettings).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finishSave = resolve;
+      }),
   );
   const onThemeChange = vi.fn();
   const { result } = renderHook(() => useModelSettings(onThemeChange));
   await waitFor(() => expect(result.current.basicSettings).not.toBeNull());
-
   act(() =>
     result.current.updateBasicSettings(
-      settings({
-        theme: "light",
-        host: "0.0.0.0",
-        port: 4321,
-        commit_mode: "pull_request",
-      }),
+      settings({ host: "0.0.0.0", port: 4321 }),
     ),
   );
+
+  let saving = Promise.resolve();
+  act(() => {
+    saving = result.current.changeTheme("light");
+  });
+  expect(result.current.basicSettings?.theme).toBe("light");
+  expect(onThemeChange).toHaveBeenCalledWith("light");
+  expect(saveBasicSettings).toHaveBeenCalledWith({ theme: "light" });
+
+  finishSave(settings({ theme: "light" }));
+  await act(async () => saving);
+  expect(result.current.basicSettings).toMatchObject({
+    theme: "light",
+    host: "0.0.0.0",
+    port: 4321,
+  });
+});
+
+it("rolls theme back when persistence fails", async () => {
+  vi.mocked(saveBasicSettings).mockRejectedValue(new Error("offline"));
+  const onThemeChange = vi.fn();
+  const { result } = renderHook(() => useModelSettings(onThemeChange));
+  await waitFor(() => expect(result.current.basicSettings).not.toBeNull());
+
+  await act(async () => result.current.changeTheme("light"));
+
+  expect(result.current.basicSettings?.theme).toBe("dark");
+  expect(onThemeChange).toHaveBeenLastCalledWith("dark");
+  expect(result.current.basicSettingsError).toContain("offline");
+});
+
+it("saves runtime fields without resubmitting theme", async () => {
+  vi.mocked(saveBasicSettings).mockResolvedValue(
+    settings({ host: "0.0.0.0", port: 4321, restart_required: true }),
+  );
+  const { result } = renderHook(() => useModelSettings());
+  await waitFor(() => expect(result.current.basicSettings).not.toBeNull());
+  act(() =>
+    result.current.updateBasicSettings(
+      settings({ host: "0.0.0.0", port: 4321 }),
+    ),
+  );
+
   await act(async () => {
     await result.current.saveBasicSettings(true);
   });
 
   expect(saveBasicSettings).toHaveBeenCalledWith({
-    theme: "light",
     host: "0.0.0.0",
     port: 4321,
-    commit_mode: "pull_request",
+    commit_mode: "local",
     confirmed_external: true,
   });
-  expect(onThemeChange).toHaveBeenCalledWith("light");
-  expect(result.current.basicSettings?.restart_required).toBe(true);
 });
 
 it("rejects an invalid port before calling the API", async () => {

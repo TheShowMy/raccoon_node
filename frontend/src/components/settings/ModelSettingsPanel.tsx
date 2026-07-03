@@ -80,11 +80,11 @@ export default function ModelSettingsPanel({
         </div>
       </div>
       {terminalDisabled ? (
-        <p className="settings-drawer__notice">
+        <p className="settings-node__notice">
           当前监听地址不允许 Web 终端。请先改为 127.0.0.1。
         </p>
       ) : (
-        <p className="settings-drawer__notice">
+        <p className="settings-node__notice">
           登录终端打开后请输入 /login。Raccoon 不读取或修改 Pi 的认证文件与
           models.json。
         </p>
@@ -146,7 +146,7 @@ export default function ModelSettingsPanel({
         </section>
       </div>
 
-      <div className="settings-drawer__footer">
+      <div className="settings-node__footer">
         <button
           className="settings-primary"
           type="button"
