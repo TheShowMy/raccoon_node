@@ -221,13 +221,32 @@ pub struct RenderedPrompt {
 
 #### 4.2.3 Sub-Agent 插件化
 
-实现/选型 Pi 插件：
+**目标**：把当前 backend-driven 的 `ReviewSubAgent` 改为由 Pi 插件编排的独立 sub-agent 会话；审核节点（Review / 原 ReviewSummary）能看到执行过程，但**不污染审核节点自身的上下文**。
 
-- 若社区已有代码审核插件，评估其输出格式；不匹配则自行实现 `raccoon-review` extension。
-- 插件职责：给定 diff + 审核角度 + 验收标准，返回 `{approved, feedback, result_summary}`。
-- 后端不再单独生成 3 个 `ReviewSubAgent` task；而是生成 1 个 `ReviewSummary` task，其 `pi_session_file` 由插件统一写入。
+**方案**：
 
-数据模型调整：
+- 不删除后端 `ReviewSubAgent` 调度逻辑，而是把具体审核执行交给 Pi 插件。
+- 新增/复用 Pi extension：`raccoon-sub-agent`（它不是代码审核逻辑本身，而是 sub-agent 编排器）。
+  - 输入：父任务 ref、审核角度、工作区路径、diff 范围、验收标准、输出契约。
+  - 行为：启动一个独立 Pi 子会话（`--no-session` 或独立 session 文件），在该会话中运行代码审核 sub-agent；记录完整工具调用、思考过程和 verdict。
+  - 输出：标准化的 `{angle, approved, feedback, result_summary, sub_session_file}`。
+- 后端仍生成 3 个 `ReviewSubAgent` task，但每个 task 的 `pi_session_file` 是 sub-agent 插件生成的**独立 session**，不再是主任务 session。
+- `ReviewSummary`（审核节点）不直接运行 sub-agent，而是：
+  - 收集 3 个 `ReviewSubAgentResult`；
+  - 按需读取每个 `sub_session_file`，将子审核过程事件按时间线合并展示；
+  - 自身只做最终汇总判断：`approved = all(sub.approved)`，生成汇总 feedback。
+
+**上下文隔离**：
+
+- 审核节点自身 session 只包含「汇总指令 + 3 个子审核结果摘要」，不引入子审核的详细思考或完整 diff。
+- 子审核的详细过程保存在各自 `sub_session_file`，前端通过 `getTaskSession` 按需读取并渲染到时间线。
+
+**代码审核标准化**：
+
+- 可以自研一个轻量 `raccoon-code-review` extension，用于标准化 sub-agent 的输入（diff、角度、验收标准）和输出（verdict、feedback）。
+- 该 extension 只负责单次审核判定，不感知 DAG 或节点语义；DAG 编排仍由 raccoon_node 后端完成。
+
+**数据模型调整**：
 
 ```rust
 pub struct RequirementExecutionTask {
@@ -235,28 +254,37 @@ pub struct RequirementExecutionTask {
     pub review_sub_agents: Vec<ReviewSubAgentResult>,
     pub audit_result: Option<PlanAuditResult>,
 }
-```
 
-`ReviewSubAgentResult` 保存每个角度的 verdict、feedback、session_offset，便于前端时间线展示。
+pub struct ReviewSubAgentResult {
+    pub angle: String,
+    pub approved: bool,
+    pub feedback: Option<String>,
+    pub result_summary: String,
+    pub sub_session_file: Option<String>, // sub-agent 独立会话文件
+}
+```
 
 #### 4.2.4 ReviewSummary 语义变更
 
 - 前端 `taskKindText` 中 `review_summary` 改为「审核」。
 - `RequirementTaskNode` 中 `review_summary` 图标使用 `ShieldCheck`（保持）。
-- TaskDetailDialog 中，implementation 任务的审核时间线直接读取 `review_sub_agents` 和 `ReviewSummary` 的合并 session。
+- TaskDetailDialog 中，implementation 任务的审核时间线读取 `review_sub_agents` 的 `sub_session_file`，与审核节点自身的汇总 session 合并展示。
 
 #### 4.2.5 验收标准
 
 - [ ] 生成 plan 后自动触发审计；审计结果可在 PlanNode 查看。
 - [ ] BLOCKED 时无法开始执行；NEEDS_REVISION 时可一键重试规划。
-- [ ] Sub-agent 审核过程可在 Review（原 ReviewSummary）节点 session 中查看。
-- [ ] 旧需求无 audit_result 时不显示 PlanNode 审计面板，保持兼容。
+- [ ] Sub-agent 审核过程可在 Review（原 ReviewSummary）节点时间线中查看。
+- [ ] 审核节点自身 session 不包含子审核详细 diff/思考，仅包含汇总指令和子审核结果。
+- [ ] 旧需求无 `sub_session_file` 时回退到现有 backend-driven 展示，保持兼容。
 
 #### 4.2.6 涉及文件
 
 - 后端：`crates/raccoon-requirement/src/execution.rs`、`crates/raccoon-store/src/store/mod.rs`、`crates/raccoon-api/src/handlers.rs`、`crates/raccoon-core/src/models.rs`
 - 前端：`frontend/src/components/nodes/RequirementTaskNode.tsx`、`frontend/src/canvas/buildProjectNodes.ts`、`frontend/src/canvas/edges.ts`、`frontend/src/types/api.ts`
-- 插件：`.raccoon-node/extensions/raccoon-review.mjs`（或复用社区插件）
+- 插件：
+  - `.raccoon-node/extensions/raccoon-sub-agent.mjs`：sub-agent 编排插件。
+  - `.raccoon-node/extensions/raccoon-code-review.mjs`：可选，标准化单次代码审核输入输出。
 
 ---
 
@@ -368,7 +396,7 @@ React Flow 边样式：
 
 - `prompts/skills/` 支持按名称加载。
 - 后端启动时校验所有 skill 文件 frontmatter。
-- 为后续「自定义节点 prompt」做准备。
+- Skill 仅作用于现有 `RequirementTaskKind` 的 prompt 渲染，不引入新的自定义节点类型。
 
 #### 4.4.4 验收标准
 
@@ -434,7 +462,7 @@ pub struct ReviewSubAgentResult {
     pub approved: bool,
     pub feedback: Option<String>,
     pub result_summary: String,
-    pub session_offset: Option<usize>, // 在 ReviewSummary session 中的位置
+    pub sub_session_file: Option<String>, // sub-agent 独立会话文件
 }
 ```
 
