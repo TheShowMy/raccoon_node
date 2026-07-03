@@ -265,6 +265,88 @@ function GitViewportController({ phase }: { phase: GitExpansionPhase }) {
   return null;
 }
 
+function GithubViewportController({ expanded }: { expanded: boolean }) {
+  const { fitView, getNode, getViewport, setViewport } = useReactFlow();
+  const previous = React.useRef(false);
+  const savedViewport = React.useRef<CanvasViewport | undefined>(undefined);
+
+  React.useLayoutEffect(() => {
+    const last = previous.current;
+    previous.current = expanded;
+    if (!last && expanded) {
+      savedViewport.current = getViewport();
+    }
+    if (!expanded) {
+      const saved = savedViewport.current;
+      savedViewport.current = undefined;
+      if (saved) void setViewport(saved, { duration: 260 });
+      return;
+    }
+    if (last) return;
+
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const node = getNode("project-github");
+        if (!node) return;
+        void fitView({
+          nodes: [node],
+          padding: 0.08,
+          maxZoom: savedViewport.current?.zoom ?? getViewport().zoom,
+          duration: 260,
+        });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [expanded, fitView, getNode, getViewport, setViewport]);
+
+  return null;
+}
+
+function TokenUsageViewportController({ expanded }: { expanded: boolean }) {
+  const { fitView, getNode, getViewport, setViewport } = useReactFlow();
+  const previous = React.useRef(false);
+  const savedViewport = React.useRef<CanvasViewport | undefined>(undefined);
+
+  React.useLayoutEffect(() => {
+    const last = previous.current;
+    previous.current = expanded;
+    if (!last && expanded) {
+      savedViewport.current = getViewport();
+    }
+    if (!expanded) {
+      const saved = savedViewport.current;
+      savedViewport.current = undefined;
+      if (saved) void setViewport(saved, { duration: 260 });
+      return;
+    }
+    if (last) return;
+
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const node = getNode("token-usage");
+        if (!node) return;
+        void fitView({
+          nodes: [node],
+          padding: 0.08,
+          maxZoom: savedViewport.current?.zoom ?? getViewport().zoom,
+          duration: 260,
+        });
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [expanded, fitView, getNode, getViewport, setViewport]);
+
+  return null;
+}
+
 function minimapNodeColor(node: Node<StartNodeData>): string {
   switch (node.data.kind) {
     case "requirement-chat":
@@ -317,6 +399,8 @@ export default function App() {
   );
   const git = useProjectGit(selectedProjectId);
   const [nodeDragging, setNodeDragging] = useState(false);
+  const [githubExpanded, setGithubExpanded] = useState(false);
+  const [tokenUsageExpanded, setTokenUsageExpanded] = useState(false);
   const requirementConversationEvents = project.selectedDagRequirementId
     ? EMPTY_STREAM_EVENTS
     : requirement.requirementStreamEvents;
@@ -333,15 +417,21 @@ export default function App() {
         requirementActionBusyId: project.requirementActionBusyId,
         recoveringTaskGroupIds: project.recoveringTaskGroupIds,
         requirementActionError: project.requirementActionError,
+        githubExpanded,
+        tokenUsageExpanded,
         closeDag: project.closeDag,
         selectDagRequirement: project.selectDagRequirement,
         planRequirement: project.planRequirement,
         recoverTaskGroup: project.recoverTaskGroup,
         toggleTaskGroupCollapsed: project.toggleTaskGroupCollapsed,
+        onToggleGithubExpanded: () => setGithubExpanded((current) => !current),
+        onToggleTokenUsageExpanded: () =>
+          setTokenUsageExpanded((current) => !current),
       }),
     [
       current.project,
       current.publicationReadiness,
+      githubExpanded,
       project.closeDag,
       project.collapsedTaskGroups,
       project.planRequirement,
@@ -354,6 +444,7 @@ export default function App() {
       project.selectedDagRequirement,
       project.selectedDagRequirementId,
       project.toggleTaskGroupCollapsed,
+      tokenUsageExpanded,
     ],
   );
 
@@ -730,6 +821,8 @@ export default function App() {
               />
               <TerminalViewportController collapsed={terminals.collapsed} />
               <GitViewportController phase={git.phase} />
+              <GithubViewportController expanded={githubExpanded} />
+              <TokenUsageViewportController expanded={tokenUsageExpanded} />
             </ReactFlow>
           </ReactFlowProvider>
         </RequirementTaskEventsProvider>

@@ -57,15 +57,15 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       StartNodeData["kind"],
       { width: number; height: number }
     > = {
-      "project-settings": { width: 137, height: 90 },
-      "project-github": { width: 137, height: 90 },
+      "project-settings": { width: 290, height: 44 },
+      "project-github": { width: 290, height: 44 },
       "requirement-list": { width: 290, height: 640 },
       "requirement-chat": { width: 720, height: 760 },
       "project-terminal": { width: 720, height: 44 },
       "project-git": { width: 290, height: 44 },
       "requirement-dag": DAG_NODE_SIZE,
       "requirement-task": { width: 252, height: 134 },
-      "token-usage": { width: 290, height: 96 },
+      "token-usage": { width: 290, height: 44 },
     };
 
     const fallback = defaults[node.data.kind];
@@ -87,11 +87,15 @@ export interface BuildProjectNodesParams {
   requirementActionBusyId: string | null;
   recoveringTaskGroupIds: Set<string>;
   requirementActionError: string | null;
+  githubExpanded: boolean;
+  tokenUsageExpanded: boolean;
   closeDag: () => void;
   selectDagRequirement: (requirement: Requirement) => void;
   planRequirement: (requirement: Requirement) => Promise<void>;
   recoverTaskGroup: (requirementId: string, taskId: string) => Promise<void>;
   toggleTaskGroupCollapsed: (requirementId: string, taskId: string) => void;
+  onToggleGithubExpanded: () => void;
+  onToggleTokenUsageExpanded: () => void;
 }
 
 export interface BuildProjectSettingsNodeParams {
@@ -219,11 +223,15 @@ export function buildProjectNodes({
   requirementActionBusyId,
   recoveringTaskGroupIds,
   requirementActionError,
+  githubExpanded,
+  tokenUsageExpanded,
   closeDag,
   selectDagRequirement,
   planRequirement,
   recoverTaskGroup,
   toggleTaskGroupCollapsed,
+  onToggleGithubExpanded,
+  onToggleTokenUsageExpanded,
 }: BuildProjectNodesParams): Node<StartNodeData>[] {
   const project = projectCanvas?.project ?? currentProject;
   if (!project) {
@@ -268,9 +276,16 @@ export function buildProjectNodes({
     {
       id: "project-github",
       type: "startNode",
-      position: { x: -197, y: 20 },
+      className: "github-flow-node",
+      position: { x: -350, y: 72 },
+      style: {
+        width: 290,
+        height: githubExpanded ? 540 : 44,
+        zIndex: githubExpanded ? 20 : 1,
+      },
       data: {
         kind: "project-github",
+        expanded: githubExpanded,
         project,
         publicationReadiness: publicationReadiness ?? {
           mode: project.git_url ? "pull_request" : "local",
@@ -279,6 +294,7 @@ export function buildProjectNodes({
           issues: [],
           notes: [],
         },
+        onToggleExpanded: onToggleGithubExpanded,
       },
     },
     {
@@ -301,12 +317,18 @@ export function buildProjectNodes({
     {
       id: "token-usage",
       type: "startNode",
+      className: "token-usage-flow-node",
       position: { x: 780, y: 20 },
-      width: 290,
-      height: 96,
+      style: {
+        width: 290,
+        height: tokenUsageExpanded ? 180 : 44,
+        zIndex: tokenUsageExpanded ? 20 : 1,
+      },
       data: {
         kind: "token-usage",
         usage: projectCanvas?.token_usage ?? null,
+        expanded: tokenUsageExpanded,
+        onToggleExpanded: onToggleTokenUsageExpanded,
       },
     },
     {
@@ -610,10 +632,10 @@ export function buildProjectSettingsNode({
       id: "project-settings",
       type: "startNode",
       className: "settings-flow-node",
-      position: expanded ? { x: -1533, y: -670 } : { x: -350, y: 20 },
+      position: expanded ? { x: -1380, y: -716 } : { x: -350, y: 20 },
       style: {
-        width: expanded ? 1320 : 137,
-        height: expanded ? 780 : 90,
+        width: expanded ? 1320 : 290,
+        height: expanded ? 780 : 44,
         zIndex: expanded ? 20 : 1,
       },
       data: {

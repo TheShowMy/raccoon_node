@@ -1,8 +1,7 @@
 import { useCallback, useState } from "react";
 import {
   AlertTriangle,
-  ChevronDown,
-  ChevronUp,
+  ChevronRight,
   Settings,
   SlidersHorizontal,
   X,
@@ -68,9 +67,7 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
         aria-expanded="false"
         onClick={data.onToggleExpanded}
       >
-        <span className="node-icon">
-          <SlidersHorizontal size={20} />
-        </span>
+        <SlidersHorizontal size={17} />
         <span>
           <strong>设置</strong>
           <small>
@@ -78,7 +75,7 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
             基础与模型
           </small>
         </span>
-        <ChevronUp size={15} />
+        <ChevronRight size={16} />
       </button>
     );
   }

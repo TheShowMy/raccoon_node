@@ -565,8 +565,10 @@ export type StartNodeData =
     }
   | {
       kind: "project-github";
+      expanded: boolean;
       project: Project;
       publicationReadiness: PublicationReadiness;
+      onToggleExpanded: () => void;
     }
   | {
       kind: "requirement-list";
@@ -687,4 +689,6 @@ export type StartNodeData =
   | {
       kind: "token-usage";
       usage: ProjectTokenUsage | null;
+      expanded: boolean;
+      onToggleExpanded: () => void;
     };

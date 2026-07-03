@@ -81,10 +81,8 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
           aria-expanded={!data.collapsed}
           onClick={data.onToggleCollapsed}
         >
-          <span className="terminal-node__traffic-lights" aria-hidden="true">
-            <span />
-            <span />
-            <span />
+          <span className="terminal-node__icon" aria-hidden="true">
+            <Terminal size={17} />
           </span>
           <span className="terminal-node__collapsed-copy">
             <strong>项目终端</strong>
@@ -102,11 +100,9 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
       ) : (
         <div className="terminal-node__body">
           <header className="terminal-node__titlebar nodrag">
-            <div className="terminal-node__traffic-lights" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </div>
+            <span className="terminal-node__icon" aria-hidden="true">
+              <Terminal size={17} />
+            </span>
             <span className="terminal-node__title">项目终端</span>
             <div className="terminal-node__titlebar-actions">
               {data.error ? (

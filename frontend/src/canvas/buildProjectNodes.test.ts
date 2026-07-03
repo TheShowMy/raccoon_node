@@ -113,11 +113,15 @@ function params(
     requirementActionBusyId: null,
     recoveringTaskGroupIds: new Set(),
     requirementActionError: null,
+    githubExpanded: false,
+    tokenUsageExpanded: false,
     closeDag: () => {},
     selectDagRequirement: () => {},
     planRequirement: async () => {},
     recoverTaskGroup: async () => {},
     toggleTaskGroupCollapsed: () => {},
+    onToggleGithubExpanded: () => {},
+    onToggleTokenUsageExpanded: () => {},
   };
 }
 
@@ -175,7 +179,7 @@ describe("buildProjectNodes", () => {
     );
   });
 
-  it("places GitHub at the top of the project canvas", () => {
+  it("places GitHub below the settings node as a horizontal bar", () => {
     const canvas: ProjectCanvasData = {
       project: project(),
       active_requirement: null,
@@ -189,9 +193,9 @@ describe("buildProjectNodes", () => {
       (node) => node.id === "completed-requirements",
     )!;
 
-    expect(github.position).toEqual({ x: -197, y: 20 });
-    expect(github.width).toBe(137);
-    expect(github.height).toBe(90);
+    expect(github.position).toEqual({ x: -350, y: 72 });
+    expect(github.width).toBe(290);
+    expect(github.height).toBe(44);
     expect(completed.position).toEqual({ x: -350, y: 140 });
   });
 
@@ -282,11 +286,11 @@ describe("buildProjectNodes", () => {
     const expanded = buildProjectSettingsNode({ ...base, expanded: true })!;
 
     expect(collapsed.position).toEqual({ x: -350, y: 20 });
-    expect(collapsed.style).toMatchObject({ width: 137, height: 90 });
-    expect(expanded.position).toEqual({ x: -1533, y: -670 });
+    expect(collapsed.style).toMatchObject({ width: 290, height: 44 });
+    expect(expanded.position).toEqual({ x: -1380, y: -716 });
     expect(expanded.style).toMatchObject({ width: 1320, height: 780 });
-    expect(expanded.position.x + 1320).toBe(collapsed.position.x + 137);
-    expect(expanded.position.y + 780).toBe(collapsed.position.y + 90);
+    expect(expanded.position.x + 1320).toBe(collapsed.position.x + 290);
+    expect(expanded.position.y + 780).toBe(collapsed.position.y + 44);
     expect(expanded.data.kind).toBe("project-settings");
     expect(buildProjectNodes(params(canvas, null))).not.toContainEqual(
       expect.objectContaining({ id: "settings" }),
@@ -338,7 +342,7 @@ describe("buildProjectNodes", () => {
       kind: "token-usage",
       usage: canvas.token_usage,
     });
-    expect(token.height).toBe(96);
+    expect(token.height).toBe(44);
   });
 
   it("passes recovery errors to the selected DAG node", () => {

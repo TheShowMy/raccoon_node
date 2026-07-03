@@ -212,24 +212,10 @@
     @apply justify-center;
   }
 
-  .terminal-node__traffic-lights {
-    @apply flex shrink-0 items-center gap-1.5;
-  }
-
-  .terminal-node__traffic-lights > span {
-    @apply h-2.5 w-2.5 rounded-full;
-  }
-
-  .terminal-node__traffic-lights > span:nth-child(1) {
-    background: #fb7185;
-  }
-
-  .terminal-node__traffic-lights > span:nth-child(2) {
-    background: #facc15;
-  }
-
-  .terminal-node__traffic-lights > span:nth-child(3) {
-    background: #4ade80;
+  .terminal-node__icon {
+    @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-lg;
+    color: var(--accent-projects);
+    background: color-mix(in srgb, var(--accent-projects) 12%, transparent);
   }
 
   .terminal-node__collapsed-bar {
@@ -238,20 +224,16 @@
     color: var(--text-strong);
   }
 
-  .terminal-node__collapsed-bar:hover {
-    background: color-mix(in srgb, var(--text-strong) 4%, transparent);
-  }
-
   .terminal-node__collapsed-copy {
-    @apply flex min-w-0 flex-1 items-center gap-2;
+    @apply flex min-w-0 flex-1 flex-col;
   }
 
   .terminal-node__collapsed-copy strong {
-    @apply shrink-0 text-sm;
+    @apply text-xs;
   }
 
   .terminal-node__collapsed-copy small {
-    @apply truncate text-xs;
+    @apply truncate text-[9px];
     color: var(--text-soft);
   }
 
@@ -717,6 +699,29 @@
 
   .node-header__action:hover:not(:disabled) {
     filter: brightness(1.08);
+  }
+
+  .node-card--requirement-list .node-header,
+  .node-card--requirement-chat .node-header {
+    @apply h-11 shrink-0 items-center gap-2 border-b px-4 py-0;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--panel-bg) 80%, transparent);
+  }
+
+  .node-card--requirement-list .node-header .node-icon,
+  .node-card--requirement-chat .node-header .node-icon {
+    @apply h-7 w-7 rounded-lg;
+  }
+
+  .node-card--requirement-list .node-header strong,
+  .node-card--requirement-chat .node-header strong {
+    @apply text-xs;
+  }
+
+  .node-card--requirement-list .node-header span,
+  .node-card--requirement-chat .node-header span {
+    @apply mt-0 text-[9px];
+    color: var(--text-muted);
   }
 
   .requirement-input textarea {
@@ -3045,103 +3050,224 @@
   opacity: 0.85;
 }
 
-/* === Compact GitHub project action === */
-.node-card--project-github.compact {
-  width: 137px !important;
-  height: 90px !important;
-  min-height: 0 !important;
-  padding: 12px;
-  border-radius: 12px;
-  box-shadow: var(--shadow-card);
-}
-
-.node-card--project-github.compact .node-header {
-  gap: 8px;
-}
-
-.project-publication-trigger {
-  @apply flex h-full w-full items-center gap-2 border-0 bg-transparent p-0 text-left;
-  color: var(--text-strong);
-}
-
-.project-publication-trigger > span:last-child {
-  @apply flex min-w-0 flex-col;
-}
-
-.project-publication-trigger strong,
-.project-publication-trigger small {
-  @apply truncate;
-}
-
-.project-publication-trigger small {
-  color: var(--text-soft);
-}
-
-.project-publication-trigger small.is-ready {
-  color: var(--success);
-}
-
-.project-publication-trigger small.is-blocked {
-  color: var(--accent-danger);
-}
-
-.publication-dialog {
-  @apply m-auto border-0 bg-transparent p-0;
-}
-
-.publication-dialog::backdrop {
-  background: rgb(8 10 20 / 72%);
-  backdrop-filter: blur(4px);
-}
-
-.publication-dialog__panel {
-  @apply w-[min(560px,calc(100vw-32px))] rounded-2xl border p-5;
-  border-color: var(--card-border-strong);
-  color: var(--text-strong);
+/* === Project GitHub node === */
+.node-card--project-github {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  border-color: color-mix(in srgb, var(--accent-projects) 34%, transparent);
   background: var(--card-bg);
-  box-shadow: var(--shadow-card);
+  box-shadow:
+    var(--shadow-card),
+    0 0 28px color-mix(in srgb, var(--accent-projects) 20%, transparent);
+  transition:
+    width 260ms ease,
+    height 260ms ease,
+    background-color 260ms ease,
+    color 260ms ease;
 }
 
-.publication-dialog__panel header {
-  @apply mb-4 flex items-start gap-3;
+.github-flow-node {
+  transition:
+    width 260ms ease,
+    height 260ms ease;
 }
 
-.publication-dialog__panel header > div {
+.github-node,
+.github-node__collapsed {
+  width: 100%;
+  height: 100%;
+  color: var(--text-strong);
+}
+
+.github-node__collapsed {
+  @apply flex cursor-pointer items-center gap-3 border-0 px-4 text-left;
+  background: transparent;
+}
+
+.github-node__collapsed:hover {
+  background: color-mix(in srgb, var(--accent-projects) 8%, transparent);
+}
+
+.github-node__collapsed > span:first-child {
+  @apply flex shrink-0 items-center justify-center;
+  color: var(--accent-projects);
+}
+
+.github-node__collapsed > span:nth-child(2) {
   @apply flex min-w-0 flex-1 flex-col;
 }
 
-.publication-dialog__panel header span {
-  @apply truncate text-xs;
-  color: var(--text-soft);
+.github-node__collapsed strong {
+  @apply text-xs;
 }
 
-.publication-dialog__panel header button {
-  @apply border-0 bg-transparent p-1;
-  color: var(--text-soft);
+.github-node__collapsed small {
+  @apply truncate text-[9px];
+  color: var(--text-muted);
 }
 
-.publication-dialog__panel h3 {
-  @apply mt-4 mb-2 text-sm font-semibold;
+.github-node__collapsed small.is-ready {
+  color: var(--success);
 }
 
-.publication-dialog__panel ul {
+.github-node__collapsed small.is-blocked {
+  color: var(--accent-danger);
+}
+
+.github-node {
+  @apply relative flex flex-col;
+}
+
+.github-node__titlebar {
+  @apply flex h-11 shrink-0 items-center gap-2 border-b px-4;
+  border-color: var(--card-border);
+  background: var(--panel-bg);
+}
+
+.github-node__titlebar strong {
+  @apply min-w-0 flex-1 truncate text-sm;
+}
+
+.github-node__titlebar button {
+  @apply inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border transition;
+  border-color: var(--card-border-strong);
+  color: var(--text-strong);
+  background: transparent;
+}
+
+.github-node__titlebar button:hover {
+  border-color: color-mix(in srgb, var(--accent-projects) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-projects) 10%, transparent);
+}
+
+.github-node__body {
+  @apply flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4;
+}
+
+.github-node__meta {
+  @apply grid gap-1 rounded-xl border p-3 text-xs;
+  border-color: var(--card-border);
+  background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
+}
+
+.github-node__meta span:first-child {
+  color: var(--text-muted);
+}
+
+.github-node__meta span:last-child {
+  color: var(--text-strong);
+  word-break: break-all;
+}
+
+.github-node__body h3 {
+  @apply text-sm font-semibold;
+  color: var(--text-strong);
+}
+
+.github-node__body ul {
   @apply list-disc space-y-2 pl-5 text-sm;
   color: var(--text-soft);
 }
 
-.publication-dialog__issues {
+.github-node__issues {
   color: var(--accent-danger) !important;
 }
 
-.publication-dialog__restart {
-  @apply mt-3 rounded-lg border px-3 py-2 text-sm;
+.github-node__restart {
+  @apply rounded-lg border px-3 py-2 text-sm;
   border-color: color-mix(in srgb, var(--accent-danger) 35%, transparent);
   color: var(--accent-danger);
 }
 
-.publication-dialog__panel > a {
-  @apply mt-4 inline-block text-sm underline;
+.github-node__link {
+  @apply inline-block text-sm underline;
   color: var(--accent-model);
+}
+
+/* === Token usage node === */
+.node-card--token-usage {
+  @apply h-full w-full min-h-0 overflow-hidden p-0;
+  border-color: color-mix(in srgb, var(--success) 34%, transparent);
+  background: var(--card-bg);
+  box-shadow:
+    var(--shadow-card),
+    0 0 28px color-mix(in srgb, var(--success) 20%, transparent);
+  transition:
+    width 260ms ease,
+    height 260ms ease,
+    background-color 260ms ease,
+    color 260ms ease;
+}
+
+.token-usage-flow-node {
+  transition:
+    width 260ms ease,
+    height 260ms ease;
+}
+
+.token-usage-node {
+  @apply flex h-full w-full flex-col;
+  color: var(--text-strong);
+}
+
+.token-usage-node__collapsed {
+  @apply flex h-full w-full cursor-pointer items-center gap-3 border-0 px-4 text-left;
+  background: transparent;
+  color: var(--text-strong);
+}
+
+.token-usage-node__collapsed:hover {
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+}
+
+.token-usage-node__collapsed > svg:first-child {
+  @apply shrink-0;
+  color: var(--success);
+}
+
+.token-usage-node__collapsed > span {
+  @apply flex min-w-0 flex-1 flex-col;
+}
+
+.token-usage-node__collapsed strong {
+  @apply text-xs;
+}
+
+.token-usage-node__collapsed small {
+  @apply truncate text-[9px];
+  color: var(--text-muted);
+}
+
+.token-usage-node__detail {
+  @apply flex min-h-0 flex-1 flex-col p-4;
+}
+
+.token-usage-node__grid {
+  @apply mt-auto grid grid-cols-3 gap-2;
+}
+
+.token-usage-node__item {
+  @apply grid gap-0.5 rounded-lg border px-2 py-1.5;
+  border-color: var(--card-border);
+  background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
+}
+
+.token-usage-node__value {
+  @apply w-full text-[11px] font-bold leading-tight;
+  color: var(--text-strong);
+}
+
+.token-usage-node__label {
+  @apply w-full text-[9px] leading-tight;
+  color: var(--text-muted);
+}
+
+.token-usage-node__empty {
+  @apply flex h-full items-center justify-center text-xs;
+  color: var(--text-muted);
 }
 
 /* === React Flow controls === */
@@ -3539,13 +3665,18 @@
 }
 
 .settings-node__collapsed {
-  @apply grid cursor-pointer grid-cols-[28px_minmax(0,1fr)_15px] items-center gap-2 border-0 p-3 text-left;
+  @apply flex h-full w-full cursor-pointer items-center gap-3 border-0 px-4 text-left;
   color: var(--text-strong);
   background: transparent;
 }
 
-.settings-node__collapsed > span:nth-child(2) {
-  @apply grid min-w-0;
+.settings-node__collapsed > svg {
+  @apply shrink-0;
+  color: var(--accent-model);
+}
+
+.settings-node__collapsed > span {
+  @apply flex min-w-0 flex-1 flex-col;
 }
 
 .settings-node__collapsed strong {
