@@ -4279,3 +4279,22 @@
     transition: none;
   }
 }
+
+.requirements-return-panel {
+  @apply pointer-events-none m-4;
+}
+
+.requirements-return-panel button {
+  @apply pointer-events-auto flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold;
+  border-color: color-mix(in srgb, var(--accent-projects) 48%, transparent);
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--card-bg) 94%, transparent);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(12px);
+}
+
+.requirements-return-panel button:hover {
+  border-color: var(--accent-projects);
+  color: var(--accent-projects);
+  box-shadow: var(--shadow-hover);
+}

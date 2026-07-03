@@ -6,11 +6,16 @@ import {
   MarkerType,
   MiniMap,
   type Node,
+  Panel,
+  type Rect,
   type Viewport as CanvasViewport,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
+  useViewport,
 } from "@xyflow/react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
 
@@ -40,6 +45,114 @@ import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsC
 
 const nodeTypes = { startNode: StartNode };
 const EMPTY_STREAM_EVENTS: StreamEvent[] = [];
+const REQUIREMENT_HOME_NODE_IDS = new Set([
+  "completed-requirements",
+  "requirement-chat",
+  "queued-requirements",
+]);
+
+export type RequirementsReturnDirection = "left" | "right" | "up" | "down";
+
+export function getRequirementsReturnDirection(
+  rects: Rect[],
+  viewport: CanvasViewport,
+  width: number,
+  height: number,
+): RequirementsReturnDirection | null {
+  if (rects.length === 0 || width === 0 || height === 0) return null;
+  const screenRects = rects.map((rect) => ({
+    left: rect.x * viewport.zoom + viewport.x,
+    right: (rect.x + rect.width) * viewport.zoom + viewport.x,
+    top: rect.y * viewport.zoom + viewport.y,
+    bottom: (rect.y + rect.height) * viewport.zoom + viewport.y,
+  }));
+  if (
+    screenRects.some(
+      (rect) =>
+        rect.right > 0 &&
+        rect.left < width &&
+        rect.bottom > 0 &&
+        rect.top < height,
+    )
+  ) {
+    return null;
+  }
+
+  const centerX =
+    (Math.min(...screenRects.map((rect) => rect.left)) +
+      Math.max(...screenRects.map((rect) => rect.right))) /
+    2;
+  const centerY =
+    (Math.min(...screenRects.map((rect) => rect.top)) +
+      Math.max(...screenRects.map((rect) => rect.bottom))) /
+    2;
+  const dx = (centerX - width / 2) / width;
+  const dy = (centerY - height / 2) / height;
+  return Math.abs(dx) >= Math.abs(dy)
+    ? dx < 0
+      ? "left"
+      : "right"
+    : dy < 0
+      ? "up"
+      : "down";
+}
+
+function RequirementsReturnButton({ nodes }: { nodes: Node<StartNodeData>[] }) {
+  const viewport = useViewport();
+  const width = useStore((state) => state.width);
+  const height = useStore((state) => state.height);
+  const { fitView } = useReactFlow();
+  const rects = nodes.map((node) => ({
+    x: node.position.x,
+    y: node.position.y,
+    width: node.width ?? 0,
+    height: node.height ?? 0,
+  }));
+  const direction = getRequirementsReturnDirection(
+    rects,
+    viewport,
+    width,
+    height,
+  );
+  if (!direction) return null;
+
+  const positions = {
+    left: "center-left",
+    right: "center-right",
+    up: "top-center",
+    down: "bottom-center",
+  } as const;
+  const icons = {
+    left: ArrowLeft,
+    right: ArrowRight,
+    up: ArrowUp,
+    down: ArrowDown,
+  };
+  const Icon = icons[direction];
+
+  return (
+    <Panel
+      className={`requirements-return-panel requirements-return-panel--${direction}`}
+      position={positions[direction]}
+    >
+      <button
+        type="button"
+        aria-label={`返回需求会话区域（${direction}）`}
+        onClick={() =>
+          void fitView({
+            nodes,
+            padding: 0.08,
+            maxZoom: viewport.zoom,
+            duration: 260,
+          })
+        }
+      >
+        <Icon size={16} />
+        <span>返回需求会话</span>
+      </button>
+    </Panel>
+  );
+}
 
 export type ProjectViewportSnapshot = {
   projectLoaded: boolean;
@@ -743,6 +856,9 @@ export default function App() {
     }
     return flowEdges;
   }, [project.collapsedTaskGroups, project.selectedDagRequirement]);
+  const requirementHomeNodes = nodes.filter((node) =>
+    REQUIREMENT_HOME_NODE_IDS.has(node.id),
+  );
 
   return (
     <main className="app-shell" data-theme={current.theme}>
@@ -802,14 +918,17 @@ export default function App() {
               }}
             >
               <Background color="rgba(148, 163, 184, 0.18)" gap={24} />
-              <MiniMap
-                position="bottom-left"
-                pannable
-                zoomable
-                nodeColor={minimapNodeColor}
-                nodeStrokeWidth={2}
-                nodeStrokeColor="rgba(255, 255, 255, 0.5)"
-              />
+              {project.selectedDagRequirement ? (
+                <MiniMap
+                  position="bottom-left"
+                  pannable
+                  zoomable
+                  nodeColor={minimapNodeColor}
+                  nodeStrokeWidth={2}
+                  nodeStrokeColor="rgba(255, 255, 255, 0.5)"
+                />
+              ) : null}
+              <RequirementsReturnButton nodes={requirementHomeNodes} />
               <Controls position="bottom-right" />
               <ProjectCanvasViewportController
                 projectLoaded={Boolean(project.projectCanvas)}

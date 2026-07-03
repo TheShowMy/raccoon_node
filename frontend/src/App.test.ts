@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getProjectViewportAction,
   getReactFlowKey,
+  getRequirementsReturnDirection,
   getSettingsViewportAction,
   getTerminalViewportAction,
   type ProjectViewportSnapshot,
@@ -65,5 +66,52 @@ describe("settings viewport action", () => {
     expect(getSettingsViewportAction(false, true)).toBe("focus");
     expect(getSettingsViewportAction(true, false)).toBe("restore");
     expect(getSettingsViewportAction(false, false)).toBeNull();
+  });
+});
+
+describe("requirements return direction", () => {
+  const rect = { x: 0, y: 0, width: 100, height: 100 };
+
+  it("hides while visible and points toward an offscreen requirements area", () => {
+    expect(
+      getRequirementsReturnDirection(
+        [rect],
+        { x: 10, y: 10, zoom: 1 },
+        800,
+        600,
+      ),
+    ).toBeNull();
+    expect(
+      getRequirementsReturnDirection(
+        [rect],
+        { x: -500, y: 200, zoom: 1 },
+        800,
+        600,
+      ),
+    ).toBe("left");
+    expect(
+      getRequirementsReturnDirection(
+        [rect],
+        { x: 1000, y: 200, zoom: 1 },
+        800,
+        600,
+      ),
+    ).toBe("right");
+    expect(
+      getRequirementsReturnDirection(
+        [rect],
+        { x: 200, y: -500, zoom: 1 },
+        800,
+        600,
+      ),
+    ).toBe("up");
+    expect(
+      getRequirementsReturnDirection(
+        [rect],
+        { x: 200, y: 800, zoom: 1 },
+        800,
+        600,
+      ),
+    ).toBe("down");
   });
 });
