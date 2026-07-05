@@ -3,6 +3,7 @@
 ## 栈
 
 - 后端：Rust 2024（MSRV 1.96）、Axum、Tokio、serde/JSON、rusqlite、chrono、tracing。
+- Pi RPC：低层 RPC 依赖 `pi-rpc-rs`，应用层仍由本项目封装模型、会话、受管 extension 和任务流程。
 - 前端：React、TypeScript、Vite、React Flow（`@xyflow/react`）、lucide-react、Tailwind CSS。
 - CLI/TUI：clap、ratatui、crossterm。
 - 静态资源：Vite 产物通过 rust-embed 嵌入 `raccoon` 单二进制。
@@ -13,6 +14,7 @@
 ## 目录
 
 - 后端入口：`src/main.rs`
+- 后端模块：根 crate `raccoon-node` 的内部模块位于 `src/api/`、`src/store/`、`src/pi/`、`src/requirement/` 等目录，不再依赖单独发布的内部 crates。
 - 前端入口：`frontend/src/main.tsx`
 - 前端样式：`frontend/src/styles.css`，使用 Tailwind CSS，保留少量 React Flow 全局覆盖。
 - 构建脚本：`scripts/build.mjs`
@@ -31,6 +33,7 @@
 - `npm run dev`：启动极简网页启动 TUI，并由后端管理 Vite dev server；完整日志写入 `.raccoon-node/logs/`。
 - `npm run build`：构建前端并生成嵌入静态资源的 release 单二进制。
 - `npm run check`：前端类型检查、测试、构建和 Rust 检查。
+- `cargo package --locked` / `cargo publish --dry-run --locked`：crate 发布前检查。
 - `pre-commit run --all-files`：完整提交前检查。
 
 ## 检查
@@ -62,6 +65,7 @@
 
 ## 分发
 
+- crates.io：发布根 crate `raccoon-node`；内部实现是同一 crate 的模块，不再发布 `raccoon-*` 子 crate。
 - npm：主包 `raccoon-node`，按平台可选依赖分发二进制。
 - GitHub Release：提供 darwin-arm64、linux-x64、win32-x64 压缩包与 SHA256。
 - 当前不支持 Intel Mac、Linux ARM64、musl 或 Windows ARM64。

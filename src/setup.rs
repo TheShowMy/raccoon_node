@@ -51,7 +51,7 @@ pub fn ensure_data_layout(data_root: &Path) -> io::Result<()> {
                 format!("{} 不能是符号链接", directory.display()),
             ));
         }
-        raccoon_core::utils::ensure_child_path(data_root, &directory)
+        crate::utils::ensure_child_path(data_root, &directory)
             .map_err(|error| io::Error::other(error.to_string()))?;
         fs::create_dir_all(directory)?;
     }

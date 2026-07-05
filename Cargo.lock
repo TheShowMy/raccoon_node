@@ -1217,6 +1217,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "pi-rpc-rs"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31ca4a7bd36645297d5b0294aebd34122785459f22d5d4d27ab17c4edd720698"
+dependencies = [
+ "clap",
+ "log",
+ "serde",
+ "serde_json",
+ "strum 0.28.0",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1304,134 +1319,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "raccoon-api"
-version = "0.2.2"
-dependencies = [
- "axum",
- "chrono",
- "mime_guess",
- "portable-pty",
- "raccoon-chat",
- "raccoon-core",
- "raccoon-pi-rpc",
- "raccoon-requirement",
- "raccoon-store",
- "rust-embed",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tower",
- "tower-http",
- "tracing",
-]
-
-[[package]]
-name = "raccoon-chat"
-version = "0.2.2"
-dependencies = [
- "chrono",
- "raccoon-core",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "raccoon-core"
-version = "0.2.2"
-dependencies = [
- "axum",
- "chrono",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "toml",
- "tracing",
-]
-
-[[package]]
-name = "raccoon-dev"
-version = "0.2.2"
-dependencies = [
- "raccoon-core",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "raccoon-node"
 version = "0.2.2"
 dependencies = [
  "axum",
  "chrono",
  "clap",
- "raccoon-api",
- "raccoon-core",
- "raccoon-dev",
- "raccoon-requirement",
- "raccoon-store",
- "raccoon-tui",
+ "crossterm",
+ "mime_guess",
+ "pi-rpc-rs",
+ "portable-pty",
+ "ratatui",
+ "rusqlite",
+ "rust-embed",
+ "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
+ "toml",
  "tower",
+ "tower-http",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
  "webbrowser",
-]
-
-[[package]]
-name = "raccoon-pi-rpc"
-version = "0.2.2"
-dependencies = [
- "raccoon-chat",
- "raccoon-core",
- "raccoon-requirement",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "raccoon-requirement"
-version = "0.2.2"
-dependencies = [
- "chrono",
- "raccoon-core",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "raccoon-store"
-version = "0.2.2"
-dependencies = [
- "chrono",
- "raccoon-core",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "raccoon-tui"
-version = "0.2.2"
-dependencies = [
- "crossterm",
- "ratatui",
 ]
 
 [[package]]
@@ -1478,7 +1391,7 @@ dependencies = [
  "itertools",
  "lru",
  "paste",
- "strum",
+ "strum 0.26.3",
  "unicode-segmentation",
  "unicode-truncate",
  "unicode-width 0.2.0",
@@ -1858,7 +1771,16 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.26.4",
+]
+
+[[package]]
+name = "strum"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
+dependencies = [
+ "strum_macros 0.28.0",
 ]
 
 [[package]]
@@ -1871,6 +1793,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
+ "syn",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
  "syn",
 ]
 
@@ -2019,6 +1953,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",

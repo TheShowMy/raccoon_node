@@ -34,7 +34,15 @@ npm install --global raccoon-node
 - Linux x64 GNU（linux-x64）
 - Windows x64（win32-x64）
 
-npm 与 GitHub Release 两种安装方式提供相同命令：`raccoon`。
+### crates.io
+
+也可通过 Cargo 安装根 crate；发布包携带预构建前端资源，安装时不需要 Node/npm：
+
+```sh
+cargo install raccoon-node --locked
+```
+
+npm、crates.io 与 GitHub Release 三种安装方式提供相同命令：`raccoon`。
 
 ## 更新
 
@@ -42,6 +50,12 @@ npm 与 GitHub Release 两种安装方式提供相同命令：`raccoon`。
 
 ```sh
 npm install --global raccoon-node@latest
+```
+
+### crates.io
+
+```sh
+cargo install raccoon-node --locked --force
 ```
 
 ### GitHub Release
@@ -132,7 +146,7 @@ worktree；会话首行记录的 `cwd` 必须与预期目录一致。
 
 ## 从源码开发
 
-需要 Node.js 20、Rust 1.96、Git 和 Pi Agent。
+需要 Node.js 22、Rust 1.96、Git 和 Pi Agent。
 
 `Cargo.toml` 中的 `rust-version` 声明项目承诺支持的最低 Rust 版本；
 `rust-toolchain.toml` 固定在本目录实际使用的工具链。两者当前均为 1.96。

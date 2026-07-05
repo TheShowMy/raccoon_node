@@ -26,6 +26,12 @@ jobs:
       - run: npm --prefix frontend ci
       - run: npm run check:versions
       - run: npm run check
+      - run: cargo package --locked --allow-dirty --list
+        env:
+          RACCOON_SKIP_FRONTEND_BUILD: "1"
+      - run: cargo publish --dry-run --locked --allow-dirty
+        env:
+          RACCOON_SKIP_FRONTEND_BUILD: "1"
 
   build:
     needs: verify

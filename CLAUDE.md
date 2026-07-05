@@ -7,7 +7,7 @@
 raccoon_node：Rust + React Flow 的本地 Git 仓库节点画布。当前运行目录中的 Git
 仓库就是唯一项目，固定项目 ID 为 `current`，不提供项目列表、克隆或删除功能。
 当前功能包括项目问答、需求澄清、FIFO 任务 DAG 执行、失败/重启恢复、Web 三档模型设置和极简网页启动 TUI。
-LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc` 子进程并使用 stdin/stdout JSONL 通信。
+LLM 与模型能力必须通过 Pi Agent RPC：后端通过 `pi-rpc-rs` 封装持久 `pi --mode rpc` 子进程并使用 stdin/stdout JSONL 通信。
 
 ## 必读文档
 
@@ -19,7 +19,7 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 
 - 新增模块、调整目录或改构建脚本。
 - 引入、移除或升级依赖。
-- 修改 Rust/Axum/Tokio/API、SQLite、`.raccoon-node/` 资源或恢复逻辑。
+- 修改 Rust/Axum/Tokio/API、SQLite、根 crate 内部模块、`.raccoon-node/` 资源或恢复逻辑。
 - 修改 React/Vite/React Flow/节点 UI。
 - 修改项目问答、需求澄清、FIFO 队列、任务 DAG 或恢复流程。
 - 修改 LLM、模型设置、Pi Agent RPC 或 Agent 能力。
@@ -62,7 +62,8 @@ LLM 与模型能力必须通过 Pi Agent RPC：后端启动持久 `pi --mode rpc
 - `.raccoon-node/logs/` 中的文件日志按日滚动，最多保留 7 个文件；禁止记录
   prompt、澄清答案、token 或完整工具输出。
 - 生产构建是嵌入前端静态资源的 `build/bin/raccoon` 单二进制，不依赖外置 `public` 或数据目录。
-- 所有 LLM、模型列表、模型选择和 Agent 能力必须基于 Pi Agent RPC，禁止绕过 `pi --mode rpc`。
+- Rust 发布对象是根 crate `raccoon-node`；内部实现位于 `src/` 模块中，不再发布或依赖单独的 `raccoon-*` 子 crate。
+- 所有 LLM、模型列表、模型选择和 Agent 能力必须基于 Pi Agent RPC，低层 RPC 依赖 `pi-rpc-rs`，禁止绕过 `pi --mode rpc`。
 - 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。
 - 禁止直接读写 Pi Agent 的 auth/settings 文件；本项目只保存自身三档模型设置。
 - 删除和清理只能作用于 `.raccoon-node/` 内的受管资源，绝不能删除 Git 根目录或用户源码。

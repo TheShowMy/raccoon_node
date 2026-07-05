@@ -6,14 +6,10 @@ use std::{
 use clap::Parser;
 use tokio::sync::{RwLock, oneshot};
 
-pub mod cli;
-mod logging;
-pub mod setup;
-
-use crate::cli::Cli;
-use raccoon_api::{LifecycleCommand, RuntimeOptions};
-use raccoon_core::config::AppConfig;
-use raccoon_tui::DashboardAction;
+use raccoon_node::api::{LifecycleCommand, RuntimeOptions};
+use raccoon_node::cli::Cli;
+use raccoon_node::config::AppConfig;
+use raccoon_node::tui::DashboardAction;
 
 const VITE_READY_TIMEOUT_SECONDS: u64 = 30;
 
@@ -22,10 +18,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let cwd = std::env::current_dir()?;
     // Git 校验必须先于任何项目文件写入。
-    let project_root = raccoon_core::utils::resolve_git_root(cli.project_root.as_deref(), &cwd)
+    let project_root = raccoon_node::utils::resolve_git_root(cli.project_root.as_deref(), &cwd)
         .map_err(|error| io::Error::other(error.to_string()))?;
     let data_root = project_root.join(".raccoon-node");
-    raccoon_core::utils::ensure_child_path(&project_root, &data_root)
+    raccoon_node::utils::ensure_child_path(&project_root, &data_root)
         .map_err(|error| io::Error::other(error.to_string()))?;
     let config_path = data_root.join("config.toml");
     if std::fs::symlink_metadata(&config_path)
@@ -43,44 +39,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if !setup::pi_available() {
+    if !raccoon_node::setup::pi_available() {
         if !use_tui
-            || !raccoon_tui::confirm(
+            || !raccoon_node::tui::confirm(
                 "Pi Agent",
                 "未找到 Pi Agent。是否执行 npm install -g --ignore-scripts @earendil-works/pi-coding-agent？",
             )?
         {
             return Err("未找到 Pi Agent。请按 https://pi.dev 安装后重试。".into());
         }
-        setup::install_pi()?;
+        raccoon_node::setup::install_pi()?;
     }
 
     let saved_config = match AppConfig::load(&config_path)? {
         Some(config) => config,
         None => {
             let mut config = AppConfig::default();
-            let initial_origin = raccoon_core::utils::git_remote_origin(&project_root);
-            let initial_readiness =
-                raccoon_api::publication::check(&project_root, &initial_origin, config.commit_mode)
-                    .await;
+            let initial_origin = raccoon_node::utils::git_remote_origin(&project_root);
+            let initial_readiness = raccoon_node::api::publication::check(
+                &project_root,
+                &initial_origin,
+                config.commit_mode,
+            )
+            .await;
             if !initial_readiness.ready {
-                config.commit_mode = raccoon_core::config::CommitMode::Local;
+                config.commit_mode = raccoon_node::config::CommitMode::Local;
             }
             config.save(&config_path)?;
             config
         }
     };
-    setup::ensure_data_layout(&data_root)?;
-    setup::ensure_gitignore(&project_root)?;
+    raccoon_node::setup::ensure_data_layout(&data_root)?;
+    raccoon_node::setup::ensure_gitignore(&project_root)?;
     let shared_config = std::sync::Arc::new(RwLock::new(saved_config));
 
     // guard 必须存活到进程退出，确保后台日志线程完成刷盘。
-    let (_log_guard, log_receiver) = logging::init(&data_root, use_tui).map_err(|error| {
-        io::Error::other(format!(
-            "无法初始化日志目录 {}：{error}",
-            data_root.join("logs").display()
-        ))
-    })?;
+    let (_log_guard, log_receiver) =
+        raccoon_node::logging::init(&data_root, use_tui).map_err(|error| {
+            io::Error::other(format!(
+                "无法初始化日志目录 {}：{error}",
+                data_root.join("logs").display()
+            ))
+        })?;
 
     let mut opened = false;
     loop {
@@ -90,12 +90,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::warn!("服务正在监听所有网络接口；当前 API 没有身份验证");
         }
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        let current_origin = raccoon_core::utils::git_remote_origin(&project_root);
-        let publication_readiness =
-            raccoon_api::publication::check(&project_root, &current_origin, effective.commit_mode)
-                .await;
+        let current_origin = raccoon_node::utils::git_remote_origin(&project_root);
+        let publication_readiness = raccoon_node::api::publication::check(
+            &project_root,
+            &current_origin,
+            effective.commit_mode,
+        )
+        .await;
         let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (app, state) = raccoon_api::build_app(
+        let (app, state) = raccoon_node::api::build_app(
             project_root.clone(),
             shared_config.clone(),
             config_path.clone(),
@@ -125,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .dev_frontend_dir
                 .as_deref()
                 .ok_or("--dev-managed-vite 必须提供 --dev-frontend-dir")?;
-            Some(raccoon_dev::start(frontend_dir, &server_url)?)
+            Some(raccoon_node::dev::start(frontend_dir, &server_url)?)
         } else {
             None
         };
@@ -142,7 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if use_tui && !cli.no_open && !opened {
             if managed_vite.is_some()
-                && !raccoon_dev::wait_until_ready(VITE_READY_TIMEOUT_SECONDS).await
+                && !raccoon_node::dev::wait_until_ready(VITE_READY_TIMEOUT_SECONDS).await
             {
                 tracing::warn!("Vite dev server 在 30 秒内未就绪，仍尝试打开浏览器");
             }
@@ -187,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let mut restart = false;
-        let mut tui = raccoon_tui::TuiSession::enter()?;
+        let mut tui = raccoon_node::tui::TuiSession::enter()?;
         let log_receiver = log_receiver
             .as_ref()
             .ok_or_else(|| io::Error::other("TUI 模式需要日志 receiver"))?;
@@ -257,12 +260,12 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::{AppConfig, Cli, effective_config};
-    use raccoon_api::{
+    use raccoon_node::api::{
         LifecycleCommand, RuntimeOptions, build_app_with_model_provider,
         build_app_with_model_provider_and_config, build_app_with_model_provider_and_runtime,
     };
-    use raccoon_core::error::AppError;
-    use raccoon_core::models::{
+    use raccoon_node::error::AppError;
+    use raccoon_node::models::{
         ClarificationAnswerRequest, ClarificationOption, ClarificationQuestionType, GitProvider,
         ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings, PiModel,
         Project, ProjectChatEventEmitter, ProjectChatFuture, ProjectChatInput, ProjectChatOutput,
@@ -275,8 +278,8 @@ mod tests {
         RequirementTaskExecutionFuture, RequirementTaskExecutionInput,
         RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus, ThinkingLevel,
     };
-    use raccoon_requirement::build_requirement_prompt;
-    use raccoon_store::JsonStore;
+    use raccoon_node::requirement::build_requirement_prompt;
+    use raccoon_node::store::JsonStore;
 
     #[derive(Clone)]
     struct FakeModelProvider {
@@ -831,10 +834,10 @@ mod tests {
             store,
             fake_provider(Vec::new()),
             AppConfig {
-                theme: raccoon_core::config::Theme::Dark,
+                theme: raccoon_node::config::Theme::Dark,
                 host: "0.0.0.0".to_owned(),
                 port: 3001,
-                commit_mode: raccoon_core::config::CommitMode::PullRequest,
+                commit_mode: raccoon_node::config::CommitMode::PullRequest,
             },
             true,
         );
@@ -883,10 +886,10 @@ mod tests {
         assert_eq!(
             AppConfig::load(&config_path).unwrap(),
             Some(AppConfig {
-                theme: raccoon_core::config::Theme::Light,
+                theme: raccoon_node::config::Theme::Light,
                 host: "0.0.0.0".to_owned(),
                 port: 4321,
-                commit_mode: raccoon_core::config::CommitMode::PullRequest,
+                commit_mode: raccoon_node::config::CommitMode::PullRequest,
             })
         );
 
@@ -935,7 +938,7 @@ mod tests {
             store,
             fake_provider(Vec::new()),
             AppConfig {
-                commit_mode: raccoon_core::config::CommitMode::PullRequest,
+                commit_mode: raccoon_node::config::CommitMode::PullRequest,
                 ..AppConfig::default()
             },
             RuntimeOptions::default(),
@@ -993,7 +996,7 @@ mod tests {
             store,
             fake_provider(vec![test_model("test/model", "Test Model")]),
             AppConfig {
-                commit_mode: raccoon_core::config::CommitMode::Local,
+                commit_mode: raccoon_node::config::CommitMode::Local,
                 ..AppConfig::default()
             },
             RuntimeOptions {
@@ -1249,7 +1252,7 @@ mod tests {
 
     #[test]
     fn project_chat_message_allows_legacy_missing_metadata() {
-        let message: raccoon_core::models::ProjectChatMessage =
+        let message: raccoon_node::models::ProjectChatMessage =
             serde_json::from_value(serde_json::json!({
                 "role": "assistant",
                 "content": "旧回答",
@@ -1648,7 +1651,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let canvas: raccoon_core::models::ProjectCanvasResponse =
+        let canvas: raccoon_node::models::ProjectCanvasResponse =
             serde_json::from_slice(&body).unwrap();
         let active = canvas.active_requirement.unwrap();
         assert_eq!(active.status, RequirementStatus::Analyzing);
@@ -1671,7 +1674,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let canvas: raccoon_core::models::ProjectCanvasResponse =
+        let canvas: raccoon_node::models::ProjectCanvasResponse =
             serde_json::from_slice(&body).unwrap();
         assert!(canvas.active_requirement.is_none());
         assert!(matches!(
@@ -1739,7 +1742,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let canvas: raccoon_core::models::ProjectCanvasResponse =
+        let canvas: raccoon_node::models::ProjectCanvasResponse =
             serde_json::from_slice(&body).unwrap();
         assert!(canvas.active_requirement.is_none());
 
@@ -1987,7 +1990,7 @@ mod tests {
     async fn wait_for_project_chat_answer(
         data_root: &Path,
         project_id: &str,
-    ) -> raccoon_core::models::ProjectChat {
+    ) -> raccoon_node::models::ProjectChat {
         for _ in 0..20 {
             let store = JsonStore::open(data_root.to_path_buf()).await.unwrap();
             if let Some(chat) = store
@@ -2052,7 +2055,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let child = root.join("projects").join("foo");
         std::fs::create_dir_all(&child).unwrap();
-        assert!(raccoon_core::utils::ensure_child_path(&root, &child).is_ok());
+        assert!(raccoon_node::utils::ensure_child_path(&root, &child).is_ok());
     }
 
     #[test]
@@ -2062,10 +2065,10 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let outside = temp.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
-        assert!(raccoon_core::utils::ensure_child_path(&root, &outside).is_err());
+        assert!(raccoon_node::utils::ensure_child_path(&root, &outside).is_err());
 
         let traversal = root.join("..").join("outside");
-        assert!(raccoon_core::utils::ensure_child_path(&root, &traversal).is_err());
+        assert!(raccoon_node::utils::ensure_child_path(&root, &traversal).is_err());
     }
 
     #[test]
@@ -2074,7 +2077,7 @@ mod tests {
         let root = temp.path().join(".raccoon-node");
         std::fs::create_dir_all(&root).unwrap();
         let child = root.join("projects").join("new-project");
-        assert!(raccoon_core::utils::ensure_child_path(&root, &child).is_ok());
+        assert!(raccoon_node::utils::ensure_child_path(&root, &child).is_ok());
     }
 
     #[tokio::test]

@@ -29,3 +29,5 @@ await run(process.execPath, ["--test", "packages/raccoon-node/test/binary.test.j
 process.env.RACCOON_SKIP_FRONTEND_BUILD = "1";
 await run("cargo", ["test", "--no-run"], 0);
 await run("cargo", ["test"]);
+await run("cargo", ["package", "--locked", "--allow-dirty", "--list"]);
+await run("cargo", ["publish", "--dry-run", "--locked", "--allow-dirty"], 0);

@@ -429,4 +429,4 @@ settings 文件，也不读写 `models.json`。
 Pi 会话记录的 `cwd` 必须等于当前 Git 根目录或受管 worktree。所有清理操作只能
 作用于 `.raccoon-node/`，不会删除用户仓库。
 
-主要类型定义在 `src/models.rs` 与 `frontend/src/types/api.ts`，两端必须保持同步。
+主要类型定义在 `src/models/mod.rs` 与 `frontend/src/types/api.ts`，两端必须保持同步。
