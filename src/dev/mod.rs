@@ -265,9 +265,7 @@ mod tests {
 
     #[tokio::test]
     async fn wait_until_ready_at_returns_false_on_timeout() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
+        let address = SocketAddr::from(([127, 0, 0, 1], 0));
 
         assert!(
             !wait_until_ready_at(

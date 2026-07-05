@@ -1881,7 +1881,7 @@ mod tests {
             model_settings: ModelSettings::default(),
             pi_session_file: None,
         };
-        let prompt = build_requirement_prompt(&input);
+        let prompt = build_requirement_prompt(&input).markdown;
         assert!(prompt.contains("### BEGIN USER INPUT ###"));
         assert!(prompt.contains("### END USER INPUT ###"));
         assert!(prompt.contains("必须先结合当前项目/仓库现状"));

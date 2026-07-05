@@ -29,6 +29,7 @@ use crate::models::{
     RequirementTaskExecutionFuture, RequirementTaskExecutionInput, RequirementTaskExecutionOutput,
     RequirementTaskKind,
 };
+use crate::prompt::attach_prompt_diagnostics;
 use crate::requirement::{
     PiResponseFailure, build_recovery_guidance_json_repair_prompt, build_recovery_guidance_prompt,
     build_requirement_plan_json_repair_prompt, build_requirement_plan_prompt,
@@ -755,7 +756,8 @@ impl PiRpcClient {
         }
         self.ensure_clarification_extension().await?;
         self.prepare_high_model(&input.model_settings).await?;
-        self.prompt_with_images(&build_requirement_prompt(&input), &input.prompt_images)
+        let rendered_prompt = build_requirement_prompt(&input);
+        self.prompt_with_images(&rendered_prompt.markdown, &input.prompt_images)
             .await?;
         let mut pi_events = Vec::new();
         self.wait_for_agent_end_with_events(
@@ -773,7 +775,10 @@ impl PiRpcClient {
 
         let trace = self
             .attach_session_usage(
-                crate::requirement::build_pi_trace_metadata(&pi_events),
+                attach_prompt_diagnostics(
+                    crate::requirement::build_pi_trace_metadata(&pi_events),
+                    &rendered_prompt.diagnostics,
+                ),
                 session_reused,
             )
             .await;
@@ -811,15 +816,17 @@ impl PiRpcClient {
     ) -> Result<crate::models::RequirementExecutionPlan, AppError> {
         self.new_session().await?;
         self.prepare_high_model(&input.model_settings).await?;
-        let response = self
+        let rendered_prompt = build_requirement_plan_prompt(&input.requirement);
+        let mut response = self
             .prompt_and_extract_response(
-                &build_requirement_plan_prompt(&input.requirement),
+                &rendered_prompt.markdown,
                 Duration::from_secs(600),
                 Duration::from_secs(600),
                 &events,
                 false,
             )
             .await?;
+        response.trace = attach_prompt_diagnostics(response.trace, &rendered_prompt.diagnostics);
         match parse_requirement_plan(&response.assistant_text) {
             Ok(plan) => Ok(plan),
             Err(parse_error) => {
@@ -858,15 +865,18 @@ impl PiRpcClient {
         {
             self.prepare_high_model(&input.model_settings).await?;
             let timeout = Duration::from_secs(input.task.timeout_seconds.min(600));
+            let recovery_prompt = build_recovery_guidance_prompt(&input.task);
             let mut response = self
                 .prompt_and_extract_response(
-                    &build_recovery_guidance_prompt(&input.task),
+                    &recovery_prompt.markdown,
                     timeout,
                     timeout,
                     &events,
                     session_reused,
                 )
                 .await?;
+            response.trace =
+                attach_prompt_diagnostics(response.trace, &recovery_prompt.diagnostics);
             let guidance = match parse_recovery_guidance(&response.assistant_text) {
                 Ok(guidance) => guidance,
                 Err(parse_error) => {
@@ -883,6 +893,8 @@ impl PiRpcClient {
                             true,
                         )
                         .await?;
+                    response.trace =
+                        attach_prompt_diagnostics(response.trace, &recovery_prompt.diagnostics);
                     parse_recovery_guidance(&response.assistant_text).map_err(|repair_error| {
                         AppError::internal(format!(
                             "恢复指导 JSON 解析失败，已尝试同会话修复：{repair_error}"
@@ -911,9 +923,11 @@ impl PiRpcClient {
         self.prepare_model_tier(&input.model_settings, input.task.model_tier)
             .await?;
         let task_timeout = Duration::from_secs(input.task.timeout_seconds);
+        let rendered_prompt =
+            build_requirement_task_prompt(&input.requirement, &input.plan, &input.task);
         let mut response = self
             .prompt_and_extract_response(
-                &build_requirement_task_prompt(&input.requirement, &input.plan, &input.task),
+                &rendered_prompt.markdown,
                 task_timeout,
                 task_timeout,
                 &events,
@@ -926,6 +940,7 @@ impl PiRpcClient {
                     input.task.title
                 ))
             })?;
+        response.trace = attach_prompt_diagnostics(response.trace, &rendered_prompt.diagnostics);
         let mut output =
             match parse_task_execution_output(&response.assistant_text, response.trace.clone()) {
                 Ok(output) => output,
@@ -947,6 +962,8 @@ impl PiRpcClient {
                                 true,
                             )
                             .await?;
+                        response.trace =
+                            attach_prompt_diagnostics(response.trace, &rendered_prompt.diagnostics);
                         match parse_task_execution_output(
                             &response.assistant_text,
                             response.trace.clone(),

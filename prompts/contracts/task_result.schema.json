@@ -1,0 +1,15 @@
+{
+  "implementation": {
+    "changed": true,
+    "no_op_reason": null,
+    "result_summary": "本任务完成了什么，涉及哪些关键文件，如何验证"
+  },
+  "review": {
+    "approved": true,
+    "feedback": "审核意见，若不通过必须说明需要如何修复",
+    "result_summary": "本次审核结论"
+  },
+  "branch_merge": {
+    "result_summary": "本分支合并节点完成了什么，是否处理了冲突，如何验证"
+  }
+}

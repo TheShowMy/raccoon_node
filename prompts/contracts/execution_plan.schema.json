@@ -1,0 +1,12 @@
+{
+  "summary": "执行计划摘要",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "任务标题",
+      "description": "任务目标、边界和完成标准",
+      "depends_on": [],
+      "target_files": ["可能涉及的文件或目录"]
+    }
+  ]
+}

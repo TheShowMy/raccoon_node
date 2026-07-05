@@ -1,0 +1,6 @@
+{
+  "root_cause": "根因判断",
+  "strategy": "处理策略",
+  "steps": ["执行步骤"],
+  "verification": ["验证步骤"]
+}

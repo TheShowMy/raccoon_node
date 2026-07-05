@@ -9,7 +9,11 @@ use crate::models::{
     RequirementModelTier, RequirementRecoveryStage, RequirementReviewStatus,
     RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
 };
+use crate::prompt::{
+    PromptContract, PromptRenderer, PromptSourceKind, RenderedPrompt, contract_text,
+};
 
+const GLOBAL_PROMPT: &str = include_str!("../../prompts/global/raccoon.md");
 const REVIEW_ANGLES: [&str; 3] = ["正确性", "边界与安全", "代码质量与测试"];
 const GIT_OPERATION_RESTRICTIONS: &str = r#"## Git 操作限制（必须遵守）
 - 禁止执行 git add、git commit、git stash、git reset、git checkout、git switch、git merge、git rebase、git push 等会修改暂存区、提交历史、分支状态或工作区边界的命令。
@@ -28,38 +32,16 @@ pub fn effective_model_tier(kind: RequirementTaskKind) -> RequirementModelTier {
     }
 }
 
-pub fn build_requirement_plan_prompt(requirement: &Requirement) -> String {
+pub fn build_requirement_plan_prompt(requirement: &Requirement) -> RenderedPrompt {
     let draft = requirement
         .draft
         .as_ref()
         .map(format_draft)
         .unwrap_or_else(|| "当前需求没有确认草案。".to_owned());
-
-    format!(
-        r#"你是当前项目的执行规划 Agent。
-
-请根据确认需求草案拆分一个可执行 DAG。你只负责规划，不要修改代码。
-Pi Agent 当前工作目录已经是项目仓库根目录。你可以读取仓库结构和相关代码来判断任务边界。
-所有可展示内容必须使用简体中文。
-
-{git_operation_restrictions}
-
-输出必须是一个 JSON 对象，不要 Markdown，不要代码块。
-JSON 格式：
-{{
-  "summary": "执行计划摘要",
-  "tasks": [
-    {{
-      "id": "task-1",
-      "title": "任务标题",
-      "description": "任务目标、边界和完成标准",
-      "depends_on": [],
-      "target_files": ["可能涉及的文件或目录"]
-    }}
-  ]
-}}
-
-要求：
+    let contract = PromptContract::ExecutionPlan;
+    let instructions = r#"输出必须是一个 JSON 对象，不要 Markdown，不要代码块。
+JSON 格式："#;
+    let requirements = r#"要求：
 - tasks 数量 1-10 个。
 - id 必须稳定、唯一，只能使用小写字母、数字、短横线和下划线。
 - depends_on 只能引用已有任务 id，不能形成环。
@@ -78,14 +60,42 @@ JSON 格式：
 - description 必须自包含：即便不参考完整需求，实现者只看描述也能独立完成。
 - description 中必须显式列出：1) 本任务要修改什么、产出什么；2) 明确不做什么（尤其是后续任务负责的功能）；3) 修改后必须运行的验证命令或检查项。
 - 禁止在 description 中使用“后续任务会处理”“这里先预留”等模糊表述。
-- 严禁前置任务提前实现后续任务的功能；骨架/基础结构任务只能创建空容器、类型定义、路由占位；任何业务逻辑必须留给后续任务。
+- 严禁前置任务提前实现后续任务的功能；骨架/基础结构任务只能创建空容器、类型定义、路由占位；任何业务逻辑必须留给后续任务。"#;
 
-## 确认需求草案
-{draft}
-"#,
-        draft = draft,
-        git_operation_restrictions = GIT_OPERATION_RESTRICTIONS,
-    )
+    PromptRenderer::new("execution_planner")
+        .contract_id(contract.id())
+        .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT)
+        .add_source(
+            PromptSourceKind::Skill,
+            "execution_planner",
+            include_str!("../../prompts/skills/execution_planner.md"),
+        )
+        .add_source(
+            PromptSourceKind::InlinePolicy,
+            "git_operation_restrictions",
+            GIT_OPERATION_RESTRICTIONS,
+        )
+        .add_source(
+            PromptSourceKind::InlinePolicy,
+            "json_output_instruction",
+            instructions,
+        )
+        .add_source(
+            PromptSourceKind::Contract,
+            contract.id(),
+            contract_text(contract),
+        )
+        .add_source(
+            PromptSourceKind::InlinePolicy,
+            "planning_requirements",
+            requirements,
+        )
+        .add_source(
+            PromptSourceKind::RequirementContext,
+            "confirmed_requirement_draft",
+            format!("## 确认需求草案\n{draft}\n"),
+        )
+        .render()
 }
 
 pub fn parse_requirement_plan(text: &str) -> Result<RequirementExecutionPlan, AppError> {
@@ -143,7 +153,7 @@ pub fn parse_requirement_plan(text: &str) -> Result<RequirementExecutionPlan, Ap
     Ok(RequirementExecutionPlan { summary, tasks })
 }
 
-fn build_review_sub_agent_prompt(
+fn build_review_sub_agent_prompt_markdown(
     _requirement: &Requirement,
     task: &RequirementExecutionTask,
 ) -> String {
@@ -166,9 +176,17 @@ pub fn build_requirement_task_prompt(
     requirement: &Requirement,
     plan: &RequirementExecutionPlan,
     task: &RequirementExecutionTask,
-) -> String {
+) -> RenderedPrompt {
     if task.kind == RequirementTaskKind::ReviewSubAgent {
-        return build_review_sub_agent_prompt(requirement, task);
+        return PromptRenderer::new("code_reviewer")
+            .contract_id(task_output_contract(task.kind).id())
+            .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT)
+            .add_source(
+                PromptSourceKind::TaskContext,
+                "review_sub_agent",
+                build_review_sub_agent_prompt_markdown(requirement, task),
+            )
+            .render();
     }
 
     let context_sections = build_context_sections(requirement, plan, task);
@@ -214,7 +232,9 @@ pub fn build_requirement_task_prompt(
                 task.review_angle.as_deref().unwrap_or("综合审核")
             ),
         ),
-        RequirementTaskKind::ReviewSubAgent => unreachable!("ReviewSubAgent uses build_review_sub_agent_prompt"),
+        RequirementTaskKind::ReviewSubAgent => {
+            unreachable!("ReviewSubAgent uses build_review_sub_agent_prompt_markdown")
+        }
         RequirementTaskKind::ReviewSummary => (
             "代码审核汇总 Agent",
             format!(
@@ -232,41 +252,64 @@ pub fn build_requirement_task_prompt(
             "当前独立工作区已包含所有审核通过的前置分支。请只在当前分支运行最终检查，至少运行 npm run check；必要时可以做最小修复。禁止 checkout、switch、merge、rebase、push 或执行 gh pr，最终发布由系统处理。".to_owned(),
         ),
     };
-    let json_contract = task_output_json_contract(task.kind);
-
-    format!(
-        r#"你是当前项目的{role}。
-
-Pi Agent 当前工作目录已经是当前节点的独立工作空间。请只执行当前任务。
-必须遵守项目现有技术栈、目录约束和代码风格。
-完成后必须只输出一个 JSON 对象，不要 Markdown，不要代码块。
-
-JSON 格式：
-{json_contract}
-{context_sections}
-{git_operation_restrictions}
-
-## 当前任务
-- 标题：{task_title}
-- 描述：{task_description}
-- 目标文件：{target_files}
-{extra}
-{failure_context}
-"#,
-        role = role,
-        json_contract = json_contract,
-        context_sections = context_sections,
-        git_operation_restrictions = GIT_OPERATION_RESTRICTIONS,
-        task_title = task.title,
-        task_description = task.description,
-        extra = extra,
-        failure_context = failure_context,
-        target_files = if task.target_files.is_empty() {
+    let contract = task_output_contract(task.kind);
+    let header = format!(
+        "你是当前项目的{role}。\n\nPi Agent 当前工作目录已经是当前节点的独立工作空间。请只执行当前任务。\n必须遵守项目现有技术栈、目录约束和代码风格。\n完成后必须只输出一个 JSON 对象，不要 Markdown，不要代码块。\n\nJSON 格式："
+    );
+    let implementation_header = format!("你是当前项目的{role}。");
+    let current_task = format!(
+        "## 当前任务\n- 标题：{}\n- 描述：{}\n- 目标文件：{}\n{}",
+        task.title,
+        task.description,
+        if task.target_files.is_empty() {
             "未限定".to_owned()
         } else {
             task.target_files.join("、")
         },
-    )
+        extra
+    );
+
+    let mut renderer = PromptRenderer::new(task_prompt_role(task.kind))
+        .contract_id(contract.id())
+        .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT);
+    if task.kind == RequirementTaskKind::Implementation {
+        renderer = renderer
+            .add_source(
+                PromptSourceKind::TaskContext,
+                "task_role",
+                implementation_header,
+            )
+            .add_source(
+                PromptSourceKind::Skill,
+                "implementation_runner",
+                include_str!("../../prompts/skills/implementation_runner.md"),
+            );
+    } else {
+        renderer = renderer.add_source(PromptSourceKind::TaskContext, "task_role", header);
+    }
+    renderer
+        .add_source(
+            PromptSourceKind::Contract,
+            contract.id(),
+            contract_text(contract),
+        )
+        .add_optional_source(
+            PromptSourceKind::ExecutionContext,
+            "context_sections",
+            Some(context_sections),
+        )
+        .add_source(
+            PromptSourceKind::InlinePolicy,
+            "git_operation_restrictions",
+            GIT_OPERATION_RESTRICTIONS,
+        )
+        .add_source(PromptSourceKind::TaskContext, "current_task", current_task)
+        .add_optional_source(
+            PromptSourceKind::ExecutionContext,
+            "failure_context",
+            Some(failure_context),
+        )
+        .render()
 }
 
 fn build_context_sections(
@@ -309,22 +352,20 @@ fn execution_failure_context(task: &RequirementExecutionTask) -> String {
     )
 }
 
-pub fn build_recovery_guidance_prompt(task: &RequirementExecutionTask) -> String {
-    format!(
-        r#"你是任务恢复指导 Agent。只分析，不修改代码。
+pub fn build_recovery_guidance_prompt(task: &RequirementExecutionTask) -> RenderedPrompt {
+    let contract = PromptContract::RecoveryGuidance;
+    let role = r#"你是任务恢复指导 Agent。只分析，不修改代码。
 
 请根据任务边界、失败原因和审核反馈生成最小可执行恢复方案。
-只输出 JSON，不要 Markdown：
-{recovery_guidance_json_contract}
-
-任务：{title}
+只输出 JSON，不要 Markdown："#;
+    let task_context = format!(
+        r#"任务：{title}
 描述：{description}
 目标文件：{target_files}
 失败原因：{error}
 失败摘要：{failure_summary}
 审核反馈：{review_feedback}
 "#,
-        recovery_guidance_json_contract = recovery_guidance_json_contract(),
         title = task.title,
         description = task.description,
         target_files = if task.target_files.is_empty() {
@@ -335,7 +376,19 @@ pub fn build_recovery_guidance_prompt(task: &RequirementExecutionTask) -> String
         error = task.error.as_deref().unwrap_or("无"),
         failure_summary = task.failure_summary.as_deref().unwrap_or("无"),
         review_feedback = task.last_review_feedback.as_deref().unwrap_or("无"),
-    )
+    );
+
+    PromptRenderer::new("recovery_guide")
+        .contract_id(contract.id())
+        .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT)
+        .add_source(PromptSourceKind::Skill, "recovery_guide", role)
+        .add_source(
+            PromptSourceKind::Contract,
+            contract.id(),
+            contract_text(contract),
+        )
+        .add_source(PromptSourceKind::TaskContext, "recovery_task", task_context)
+        .render()
 }
 
 pub fn build_task_output_json_repair_prompt(
@@ -397,65 +450,38 @@ JSON 格式：
 }
 
 fn task_output_json_contract(kind: RequirementTaskKind) -> &'static str {
+    contract_text(task_output_contract(kind))
+}
+
+fn task_output_contract(kind: RequirementTaskKind) -> PromptContract {
     match kind {
-        RequirementTaskKind::Implementation => {
-            r#"{
-  "changed": true,
-  "no_op_reason": null,
-  "result_summary": "本任务完成了什么，涉及哪些关键文件，如何验证"
-}"#
-        }
+        RequirementTaskKind::Implementation => PromptContract::TaskResultImplementation,
         RequirementTaskKind::Review | RequirementTaskKind::ReviewSubAgent => {
-            r#"{
-  "approved": true,
-  "feedback": "审核意见，若不通过必须说明需要如何修复",
-  "result_summary": "本次审核结论"
-}"#
+            PromptContract::TaskResultReview
         }
-        RequirementTaskKind::ReviewSummary => {
-            r#"{
-  "approved": true,
-  "feedback": "汇总后的审核意见，若不通过必须说明代码节点需要如何修复",
-  "result_summary": "审核汇总结论"
-}"#
-        }
-        RequirementTaskKind::BranchMerge => {
-            r#"{
-  "result_summary": "本分支合并节点完成了什么，是否处理了冲突，如何验证"
-}"#
-        }
-        RequirementTaskKind::MergeReview => {
-            r#"{
-  "approved": true,
-  "feedback": "最终审核意见",
-  "result_summary": "最终合并审核结论"
-}"#
-        }
+        RequirementTaskKind::ReviewSummary => PromptContract::TaskResultReviewSummary,
+        RequirementTaskKind::BranchMerge => PromptContract::TaskResultBranchMerge,
+        RequirementTaskKind::MergeReview => PromptContract::TaskResultMergeReview,
+    }
+}
+
+fn task_prompt_role(kind: RequirementTaskKind) -> &'static str {
+    match kind {
+        RequirementTaskKind::Implementation => "implementation_runner",
+        RequirementTaskKind::Review => "code_reviewer",
+        RequirementTaskKind::ReviewSubAgent => "code_reviewer",
+        RequirementTaskKind::ReviewSummary => "review_summarizer",
+        RequirementTaskKind::BranchMerge => "branch_merger",
+        RequirementTaskKind::MergeReview => "merge_reviewer",
     }
 }
 
 fn recovery_guidance_json_contract() -> &'static str {
-    r#"{
-  "root_cause": "根因判断",
-  "strategy": "处理策略",
-  "steps": ["执行步骤"],
-  "verification": ["验证步骤"]
-}"#
+    contract_text(PromptContract::RecoveryGuidance)
 }
 
 fn requirement_plan_json_contract() -> &'static str {
-    r#"{
-  "summary": "执行计划摘要",
-  "tasks": [
-    {
-      "id": "task-1",
-      "title": "任务标题",
-      "description": "任务目标、边界和完成标准",
-      "depends_on": [],
-      "target_files": ["可能涉及的文件或目录"]
-    }
-  ]
-}"#
+    contract_text(PromptContract::ExecutionPlan)
 }
 
 fn json_repair_excerpt(content: &str) -> String {
@@ -1088,7 +1114,7 @@ mod tests {
     #[test]
     fn planning_prompt_forbids_check_only_tasks() {
         let requirement = test_requirement("重命名旧文案");
-        let prompt = build_requirement_plan_prompt(&requirement);
+        let prompt = build_requirement_plan_prompt(&requirement).markdown;
 
         assert!(prompt.contains("tasks 数量 1-10 个"));
         assert!(prompt.contains("禁止生成纯审核、纯校验、纯检查、纯原因分析任务"));
@@ -1226,7 +1252,7 @@ mod tests {
             summary: "计划".to_owned(),
             tasks: vec![current.clone(), future],
         };
-        let prompt = build_requirement_task_prompt(&requirement, &plan, &current);
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &current).markdown;
 
         assert!(prompt.contains("\"changed\": true"));
         assert!(prompt.contains("\"no_op_reason\": null"));
@@ -1255,7 +1281,7 @@ mod tests {
             summary: "计划".to_owned(),
             tasks: vec![current.clone()],
         };
-        let prompt = build_requirement_task_prompt(&requirement, &plan, &current);
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &current).markdown;
 
         assert!(
             !prompt.contains("## 确认需求草案"),
@@ -1289,7 +1315,7 @@ mod tests {
             summary: "计划".to_owned(),
             tasks: vec![completed_a.clone(), completed_b.clone(), current.clone()],
         };
-        let prompt = build_requirement_task_prompt(&requirement, &plan, &current);
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &current).markdown;
 
         assert!(
             !prompt.contains("## 已完成前置任务"),
@@ -1320,7 +1346,7 @@ mod tests {
             summary: "计划".to_owned(),
             tasks: vec![completed_b, current.clone()],
         };
-        let prompt = build_requirement_task_prompt(&requirement, &plan, &current);
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &current).markdown;
 
         assert!(
             !prompt.contains("## 确认需求草案"),
@@ -1341,7 +1367,7 @@ mod tests {
             summary: "计划".to_owned(),
             tasks: vec![current.clone(), future],
         };
-        let prompt = build_requirement_task_prompt(&requirement, &plan, &current);
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &current).markdown;
 
         assert!(
             !prompt.contains("后续未完成实现任务"),
@@ -1363,7 +1389,7 @@ mod tests {
             tasks: vec![task.clone()],
         };
 
-        let prompt = build_requirement_task_prompt(&requirement, &plan, &task);
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &task).markdown;
 
         assert!(prompt.contains("当前独立工作区已包含所有审核通过的前置分支"));
         assert!(prompt.contains("禁止 checkout、switch、merge、rebase、push 或执行 gh pr"));
@@ -1390,7 +1416,7 @@ mod tests {
             tasks: vec![task.clone()],
         };
 
-        let prompt = build_requirement_task_prompt(&requirement, &plan, &task);
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &task).markdown;
 
         assert!(
             prompt.contains("## 确认需求草案"),
@@ -1416,12 +1442,13 @@ mod tests {
             tasks: vec![implementation.clone(), review.clone()],
         };
 
-        let fixing_prompt = build_requirement_task_prompt(&requirement, &plan, &implementation);
+        let fixing_prompt =
+            build_requirement_task_prompt(&requirement, &plan, &implementation).markdown;
         assert!(fixing_prompt.contains("当前状态：未提交，改动位于暂存区"));
         assert!(fixing_prompt.contains("最新审核反馈：补充边界校验"));
         assert!(fixing_prompt.contains("必须针对审核反馈产生实际代码修改"));
 
-        let review_prompt = build_requirement_task_prompt(&requirement, &plan, &review);
+        let review_prompt = build_requirement_task_prompt(&requirement, &plan, &review).markdown;
         assert!(review_prompt.contains("只审核 git diff --cached"));
         assert!(review_prompt.contains("不要修改代码"));
     }
@@ -1467,7 +1494,7 @@ mod tests {
             ],
         };
 
-        let sub_prompt = build_requirement_task_prompt(&requirement, &plan, &review_sub);
+        let sub_prompt = build_requirement_task_prompt(&requirement, &plan, &review_sub).markdown;
         assert!(sub_prompt.contains("只审核 git diff --cached"));
         assert!(sub_prompt.contains("审核目标：审核(正确性)：修复道路回收"));
         assert!(
@@ -1475,7 +1502,7 @@ mod tests {
             "ReviewSubAgent prompt must not see the full requirement draft"
         );
 
-        let review_prompt = build_requirement_task_prompt(&requirement, &plan, &review);
+        let review_prompt = build_requirement_task_prompt(&requirement, &plan, &review).markdown;
         assert!(review_prompt.contains("本次审核范围见下方「当前任务」"));
         assert!(review_prompt.contains("当前任务"));
         assert!(review_prompt.contains("修复道路回收"));
@@ -1484,7 +1511,8 @@ mod tests {
             "Review prompt must not see the full requirement draft"
         );
 
-        let summary_prompt = build_requirement_task_prompt(&requirement, &plan, &review_summary);
+        let summary_prompt =
+            build_requirement_task_prompt(&requirement, &plan, &review_summary).markdown;
         assert!(summary_prompt.contains("本次审核范围见下方「当前任务」"));
         assert!(summary_prompt.contains("当前任务"));
         assert!(summary_prompt.contains("修复道路回收"));

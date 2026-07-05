@@ -395,7 +395,7 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
 fn compact_trace(value: &Value) -> Option<Value> {
     let trace = value.get("trace")?.as_object()?;
     let mut compact = Map::new();
-    for key in ["usage", "statuses", "completed", "live"] {
+    for key in ["usage", "statuses", "completed", "live", "prompt"] {
         if let Some(value) = trace.get(key) {
             compact.insert(key.to_owned(), value.clone());
         }

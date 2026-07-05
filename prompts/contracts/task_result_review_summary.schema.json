@@ -1,0 +1,5 @@
+{
+  "approved": true,
+  "feedback": "汇总后的审核意见，若不通过必须说明代码节点需要如何修复",
+  "result_summary": "审核汇总结论"
+}

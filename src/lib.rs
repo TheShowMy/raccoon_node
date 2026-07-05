@@ -9,6 +9,7 @@ pub mod logging;
 pub mod models;
 pub mod pi;
 pub mod pi_event;
+pub mod prompt;
 pub mod requirement;
 pub mod setup;
 pub mod store;
