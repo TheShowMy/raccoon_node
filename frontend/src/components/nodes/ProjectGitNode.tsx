@@ -1,17 +1,20 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
+  ChevronDown,
+  ChevronRight,
   Download,
   GitBranch,
   GitCommit,
   Loader2,
-  Plus,
   RefreshCw,
   Upload,
 } from "lucide-react";
 import type {
+  GitAction,
   GitChangeKind,
   GitDiffArea,
   GitFileStatus,
+  GitStatus,
   StartNodeData,
 } from "../../types/api";
 import NodeBar from "../ui/NodeBar";
@@ -40,11 +43,57 @@ function FileGroup({
   files: GitFileStatus[];
   data: GitData;
 }) {
+  const selectedInArea = useMemo(
+    () =>
+      files.filter((f) => data.selectedPaths.has(f.path)).map((f) => f.path),
+    [files, data.selectedPaths],
+  );
+  const allPaths = useMemo(() => files.map((f) => f.path), [files]);
+  const actionPaths = selectedInArea.length > 0 ? selectedInArea : allPaths;
+  const disabled = data.busy || data.status?.write_blocked;
+
+  const actionLabel =
+    area === "unstaged"
+      ? selectedInArea.length > 0
+        ? "暂存所选"
+        : "全部暂存"
+      : selectedInArea.length > 0
+        ? "取消所选"
+        : "全部取消";
+
+  const actionResult =
+    area === "unstaged"
+      ? selectedInArea.length > 0
+        ? "已暂存所选文件"
+        : "已暂存所有文件"
+      : selectedInArea.length > 0
+        ? "已取消暂存所选"
+        : "已取消全部暂存";
+
   return (
     <section className="git-node__file-group">
-      <strong>
-        {title} <span>{files.length}</span>
-      </strong>
+      <div className="git-node__file-group-header">
+        <span>
+          {title} <em>{files.length}</em>
+        </span>
+        {files.length > 0 && (
+          <button
+            type="button"
+            className="git-node__file-group-action"
+            disabled={disabled}
+            onClick={() =>
+              void data.onAction(
+                area === "unstaged"
+                  ? { type: "stage", paths: actionPaths }
+                  : { type: "unstage", paths: actionPaths },
+                actionResult,
+              )
+            }
+          >
+            {actionLabel}
+          </button>
+        )}
+      </div>
       {files.length === 0 ? (
         <small>暂无文件</small>
       ) : (
@@ -53,10 +102,10 @@ function FileGroup({
           return (
             <div
               key={`${area}:${file.path}`}
-              className={`git-node__file ${
+              className={`git-node__file${
                 data.selectedDiff?.path === file.path &&
                 data.selectedDiff.area === area
-                  ? "is-active"
+                  ? " is-active"
                   : ""
               }`}
             >
@@ -85,9 +134,229 @@ function FileGroup({
   );
 }
 
+function BranchSidebar({
+  status,
+  disabled,
+  onAction,
+  onPushRequest,
+}: {
+  status: GitStatus | null;
+  disabled: boolean;
+  onAction: (action: GitAction, result: string) => Promise<boolean>;
+  onPushRequest: () => void;
+}) {
+  const [branchesOpen, setBranchesOpen] = useState(true);
+  const [remotesOpen, setRemotesOpen] = useState(true);
+  const [contextMenu, setContextMenu] = useState<{
+    branch: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [newBranchFrom, setNewBranchFrom] = useState<string | null>(null);
+  const [newBranchName, setNewBranchName] = useState("");
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const dirty = (status?.files.length ?? 0) > 0;
+
+  function handleBranchContextMenu(e: React.MouseEvent, branch: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = sidebarRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setContextMenu({
+      branch,
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    });
+    setNewBranchFrom(null);
+    setNewBranchName("");
+  }
+
+  function closeMenu() {
+    setContextMenu(null);
+    setNewBranchFrom(null);
+    setNewBranchName("");
+  }
+
+  async function handleCreateBranch() {
+    const branch = newBranchName.trim();
+    if (!branch) return;
+    if (await onAction({ type: "create_branch", branch }, `已创建 ${branch}`)) {
+      closeMenu();
+    }
+  }
+
+  return (
+    <div className="git-node__branch-sidebar" ref={sidebarRef}>
+      <div className="git-node__branch-ops">
+        <button
+          type="button"
+          disabled={disabled || !status?.remote_configured}
+          onClick={() => void onAction({ type: "fetch" }, "远端状态已更新")}
+        >
+          <RefreshCw size={12} />
+          Fetch
+        </button>
+        <button
+          type="button"
+          disabled={disabled || dirty || !status?.remote_configured}
+          onClick={() => void onAction({ type: "pull" }, "拉取完成")}
+        >
+          <Download size={12} />
+          Pull
+        </button>
+        <button
+          type="button"
+          disabled={disabled || !status?.remote_configured}
+          onClick={onPushRequest}
+        >
+          <Upload size={12} />
+          Push
+        </button>
+      </div>
+
+      <div className="git-node__branch-section">
+        <button
+          type="button"
+          className="git-node__branch-section-header"
+          onClick={() => setBranchesOpen((v) => !v)}
+        >
+          {branchesOpen ? (
+            <ChevronDown size={12} />
+          ) : (
+            <ChevronRight size={12} />
+          )}
+          分支
+        </button>
+        {branchesOpen && (
+          <ul className="git-node__branch-list">
+            {(status?.branches ?? []).map((branch) => (
+              <li
+                key={branch}
+                className={`git-node__branch-item${
+                  branch === status?.branch ? " is-current" : ""
+                }`}
+                onContextMenu={(e) =>
+                  !disabled && handleBranchContextMenu(e, branch)
+                }
+                onClick={() => {
+                  if (!disabled && branch !== status?.branch) {
+                    void onAction(
+                      { type: "switch_branch", branch },
+                      `已切换到 ${branch}`,
+                    );
+                  }
+                }}
+              >
+                {branch === status?.branch ? (
+                  <GitBranch size={11} className="git-node__branch-icon" />
+                ) : (
+                  <span className="git-node__branch-indent" />
+                )}
+                <span>{branch}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {status?.remote_configured && status.upstream && (
+        <div className="git-node__branch-section">
+          <button
+            type="button"
+            className="git-node__branch-section-header"
+            onClick={() => setRemotesOpen((v) => !v)}
+          >
+            {remotesOpen ? (
+              <ChevronDown size={12} />
+            ) : (
+              <ChevronRight size={12} />
+            )}
+            远端
+          </button>
+          {remotesOpen && (
+            <ul className="git-node__branch-list">
+              <li className="git-node__branch-item">
+                <span className="git-node__branch-indent" />
+                <span>{status.upstream}</span>
+                {(status.ahead > 0 || status.behind > 0) && (
+                  <span className="git-node__branch-sync">
+                    {status.ahead > 0 ? `↑${status.ahead}` : ""}
+                    {status.behind > 0 ? ` ↓${status.behind}` : ""}
+                  </span>
+                )}
+              </li>
+            </ul>
+          )}
+        </div>
+      )}
+
+      {contextMenu && (
+        <>
+          <div className="git-node__context-overlay" onClick={closeMenu} />
+          <div
+            className="git-node__context-menu"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+          >
+            {contextMenu.branch !== status?.branch && (
+              <button
+                type="button"
+                className="git-node__context-menu-item"
+                onClick={() => {
+                  void onAction(
+                    { type: "switch_branch", branch: contextMenu.branch },
+                    `已切换到 ${contextMenu.branch}`,
+                  );
+                  closeMenu();
+                }}
+              >
+                切换到此分支
+              </button>
+            )}
+            {newBranchFrom === contextMenu.branch ? (
+              <div className="git-node__new-branch-inline">
+                <input
+                  autoFocus
+                  placeholder="新分支名称"
+                  value={newBranchName}
+                  onChange={(e) => setNewBranchName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleCreateBranch();
+                    if (e.key === "Escape") closeMenu();
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={!newBranchName.trim()}
+                  onClick={() => void handleCreateBranch()}
+                >
+                  创建
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="git-node__context-menu-item"
+                onClick={() => setNewBranchFrom(contextMenu.branch)}
+              >
+                基于此新建分支…
+              </button>
+            )}
+            <button
+              type="button"
+              className="git-node__context-menu-item git-node__context-menu-item--close"
+              onClick={closeMenu}
+            >
+              取消
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function ProjectGitNode({ data }: { data: GitData }) {
   const [commitMessage, setCommitMessage] = useState("");
-  const [newBranch, setNewBranch] = useState("");
   const [confirming, setConfirming] = useState<"commit" | "push" | null>(null);
   const status = data.status;
   const staged = useMemo(
@@ -98,13 +367,6 @@ export default function ProjectGitNode({ data }: { data: GitData }) {
     () => status?.files.filter((file) => file.unstaged) ?? [],
     [status],
   );
-  const selectedStaged = staged
-    .filter((file) => data.selectedPaths.has(file.path))
-    .map((file) => file.path);
-  const selectedUnstaged = unstaged
-    .filter((file) => data.selectedPaths.has(file.path))
-    .map((file) => file.path);
-  const dirty = (status?.files.length ?? 0) > 0;
   const disabled = data.busy || status?.write_blocked;
   const summary = status
     ? `${status.files.length} 个变更${
@@ -174,134 +436,55 @@ export default function ProjectGitNode({ data }: { data: GitData }) {
 
       {data.phase === "expanded" ? (
         <>
-          <div className="git-node__toolbar nodrag">
-            <select
-              aria-label="切换分支"
-              value={status?.branch ?? ""}
-              disabled={disabled || dirty}
-              onChange={(event) =>
-                void data.onAction(
-                  { type: "switch_branch", branch: event.target.value },
-                  `已切换到 ${event.target.value}`,
-                )
-              }
-            >
-              {status?.branches.map((branch) => (
-                <option key={branch}>{branch}</option>
-              ))}
-            </select>
-            <input
-              value={newBranch}
-              aria-label="新分支名称"
-              placeholder="新分支"
-              disabled={disabled || dirty}
-              onChange={(event) => setNewBranch(event.target.value)}
-            />
-            <button
-              type="button"
-              aria-label="创建分支"
-              disabled={disabled || dirty || !newBranch.trim()}
-              onClick={async () => {
-                const branch = newBranch.trim();
-                if (
-                  await data.onAction(
-                    { type: "create_branch", branch },
-                    `已创建 ${branch}`,
-                  )
-                ) {
-                  setNewBranch("");
-                }
-              }}
-            >
-              <Plus size={13} />
-            </button>
-            <span className="git-node__toolbar-spacer" />
-            <button
-              type="button"
-              disabled={disabled || !status?.remote_configured}
-              onClick={() =>
-                void data.onAction({ type: "fetch" }, "远端状态已更新")
-              }
-            >
-              <RefreshCw size={13} /> Fetch
-            </button>
-            <button
-              type="button"
-              disabled={disabled || dirty || !status?.remote_configured}
-              onClick={() => void data.onAction({ type: "pull" }, "拉取完成")}
-            >
-              <Download size={13} /> Pull
-            </button>
-            <button
-              type="button"
-              disabled={disabled || !status?.remote_configured}
-              onClick={() => setConfirming("push")}
-            >
-              <Upload size={13} /> Push
-            </button>
-          </div>
-
           <div className="git-node__workspace nodrag nowheel">
-            <aside className="git-node__files">
-              <div className="git-node__batch-actions">
-                <button
-                  type="button"
-                  disabled={disabled || selectedUnstaged.length === 0}
-                  onClick={() =>
-                    void data.onAction(
-                      { type: "stage", paths: selectedUnstaged },
-                      "已暂存所选文件",
-                    )
-                  }
-                >
-                  暂存所选
-                </button>
-                <button
-                  type="button"
-                  disabled={disabled || selectedStaged.length === 0}
-                  onClick={() =>
-                    void data.onAction(
-                      { type: "unstage", paths: selectedStaged },
-                      "已取消暂存",
-                    )
-                  }
-                >
-                  取消暂存
-                </button>
-              </div>
-              <FileGroup
-                title="已暂存"
-                area="staged"
-                files={staged}
-                data={data}
-              />
-              <FileGroup
-                title="未暂存"
-                area="unstaged"
-                files={unstaged}
-                data={data}
-              />
-            </aside>
-            <div className="git-node__detail">
-              <div className="git-node__diff">
-                {data.diff ? (
-                  <>
-                    <div>
-                      <strong>{data.diff.path}</strong>
-                      <span>
-                        {data.diff.area === "staged" ? "已暂存" : "未暂存"}
-                      </span>
-                    </div>
-                    {data.diff.binary ? (
-                      <p>二进制文件不提供差异预览</p>
+            <BranchSidebar
+              status={status}
+              disabled={disabled ?? false}
+              onAction={data.onAction}
+              onPushRequest={() => setConfirming("push")}
+            />
+            <div className="git-node__main-area">
+              <div className="git-node__top-area">
+                <aside className="git-node__files">
+                  <FileGroup
+                    title="未暂存"
+                    area="unstaged"
+                    files={unstaged}
+                    data={data}
+                  />
+                  <FileGroup
+                    title="已暂存"
+                    area="staged"
+                    files={staged}
+                    data={data}
+                  />
+                </aside>
+                <div className="git-node__detail">
+                  <div className="git-node__diff">
+                    {data.diff ? (
+                      <>
+                        <div>
+                          <strong>{data.diff.path}</strong>
+                          <span>
+                            {data.diff.area === "staged" ? "已暂存" : "未暂存"}
+                          </span>
+                        </div>
+                        {data.diff.binary ? (
+                          <p>二进制文件不提供差异预览</p>
+                        ) : (
+                          <pre>
+                            {data.diff.content || "没有可显示的文本差异"}
+                          </pre>
+                        )}
+                        {data.diff.truncated ? (
+                          <small>差异内容已截断</small>
+                        ) : null}
+                      </>
                     ) : (
-                      <pre>{data.diff.content || "没有可显示的文本差异"}</pre>
+                      <p>选择文件查看差异</p>
                     )}
-                    {data.diff.truncated ? <small>差异内容已截断</small> : null}
-                  </>
-                ) : (
-                  <p>选择文件查看差异</p>
-                )}
+                  </div>
+                </div>
               </div>
               <div className="git-node__commit">
                 <textarea

@@ -2916,30 +2916,44 @@ button.node-bar:hover {
   @apply flex min-h-0 flex-1;
 }
 
+.git-node__main-area {
+  @apply flex min-w-0 flex-1 flex-col;
+}
+
+.git-node__top-area {
+  @apply flex min-h-0 flex-1;
+}
+
 .git-node__files {
-  @apply flex w-[280px] shrink-0 flex-col overflow-y-auto;
+  @apply flex w-[300px] shrink-0 flex-col overflow-y-auto;
   border-right: 1px solid var(--card-border);
-}
-
-.git-node__batch-actions {
-  @apply flex gap-2 p-2;
-  border-bottom: 1px solid var(--card-border);
-}
-
-.git-node__batch-actions button {
-  @apply flex-1 cursor-pointer rounded-md border px-2 py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-40;
-  border-color: var(--card-border-strong);
-  color: var(--text-soft);
-  background: transparent;
 }
 
 .git-node__file-group {
   @apply flex flex-col py-1;
 }
 
-.git-node__file-group > strong {
+.git-node__file-group-header {
   @apply flex items-center justify-between px-3 py-1 text-[11px] uppercase tracking-wide;
   color: var(--text-soft);
+}
+
+.git-node__file-group-header > span em {
+  font-style: normal;
+  font-weight: normal;
+}
+
+.git-node__file-group-action {
+  @apply cursor-pointer rounded border px-1.5 py-0.5 text-[10px] normal-case tracking-normal transition disabled:cursor-not-allowed disabled:opacity-40;
+  border-color: var(--card-border-strong);
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.git-node__file-group-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent-warning) 60%, transparent);
+  color: var(--accent-warning);
+  background: color-mix(in srgb, var(--accent-warning) 8%, transparent);
 }
 
 .git-node__file-group > small {
@@ -2987,7 +3001,7 @@ button.node-bar:hover {
 }
 
 .git-node__detail {
-  @apply flex min-w-0 flex-1 flex-col;
+  @apply flex min-h-0 min-w-0 flex-1 flex-col;
 }
 
 .git-node__diff {
@@ -3020,7 +3034,7 @@ button.node-bar:hover {
 }
 
 .git-node__commit {
-  @apply flex h-[90px] shrink-0 gap-2 p-2;
+  @apply flex h-[88px] shrink-0 gap-2 p-2;
   border-top: 1px solid var(--card-border);
 }
 
@@ -3081,6 +3095,119 @@ button.node-bar:hover {
 .git-node__confirm button:last-child {
   border-color: color-mix(in srgb, var(--accent-warning) 55%, transparent);
   color: var(--accent-warning);
+}
+
+.git-node__branch-sidebar {
+  @apply relative flex w-[220px] shrink-0 flex-col overflow-y-auto;
+  border-right: 1px solid var(--card-border);
+}
+
+.git-node__branch-ops {
+  @apply flex shrink-0 gap-1 p-2;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.git-node__branch-ops button {
+  @apply inline-flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md border py-1 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40;
+  border-color: var(--card-border-strong);
+  color: var(--text-strong);
+  background: transparent;
+}
+
+.git-node__branch-ops button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent-warning) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-warning) 10%, transparent);
+}
+
+.git-node__branch-section {
+  @apply flex flex-col;
+}
+
+.git-node__branch-section-header {
+  @apply flex h-7 w-full cursor-pointer items-center gap-1.5 border-0 bg-transparent px-2 text-left text-[11px] uppercase tracking-wide transition;
+  color: var(--text-soft);
+}
+
+.git-node__branch-section-header:hover {
+  background: color-mix(in srgb, var(--text-strong) 5%, transparent);
+}
+
+.git-node__branch-list {
+  @apply m-0 list-none p-0;
+}
+
+.git-node__branch-item {
+  @apply flex h-7 cursor-pointer items-center gap-1.5 px-2 text-xs transition;
+  color: var(--text-soft);
+}
+
+.git-node__branch-item:hover {
+  background: color-mix(in srgb, var(--text-strong) 6%, transparent);
+}
+
+.git-node__branch-item.is-current {
+  color: var(--accent-projects);
+  font-weight: 500;
+}
+
+.git-node__branch-icon {
+  flex-shrink: 0;
+  color: var(--accent-projects);
+}
+
+.git-node__branch-indent {
+  @apply inline-block w-[11px] shrink-0;
+}
+
+.git-node__branch-sync {
+  @apply ml-auto shrink-0 text-[10px];
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.git-node__context-overlay {
+  @apply absolute inset-0 z-40;
+}
+
+.git-node__context-menu {
+  @apply absolute z-50 flex min-w-[160px] flex-col rounded-lg border py-1;
+  border-color: var(--card-border-strong);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+}
+
+.git-node__context-menu-item {
+  @apply flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-3 py-1.5 text-left text-xs transition;
+  color: var(--text-strong);
+}
+
+.git-node__context-menu-item:hover {
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+}
+
+.git-node__context-menu-item--close {
+  color: var(--text-muted);
+  border-top: 1px solid var(--card-border);
+  margin-top: 2px;
+  padding-top: 6px;
+}
+
+.git-node__new-branch-inline {
+  @apply flex gap-1 px-2 py-1.5;
+}
+
+.git-node__new-branch-inline input {
+  @apply min-w-0 flex-1 rounded border px-2 py-1 text-xs outline-none;
+  border-color: var(--card-border-strong);
+  color: var(--text-strong);
+  background: var(--surface-subtle);
+}
+
+.git-node__new-branch-inline button {
+  @apply cursor-pointer rounded border px-2 py-1 text-xs transition disabled:cursor-not-allowed disabled:opacity-40;
+  border-color: color-mix(in srgb, var(--accent-warning) 55%, transparent);
+  color: var(--accent-warning);
+  background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
