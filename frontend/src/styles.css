@@ -138,7 +138,7 @@
   }
 
   .canvas-shell {
-    @apply mx-6 mb-6 min-h-[620px] overflow-hidden rounded-[20px] border;
+    @apply relative mx-6 mb-6 min-h-[620px] overflow-hidden rounded-[20px] border;
     border-color: var(--card-border);
     background:
       radial-gradient(
@@ -475,13 +475,20 @@
   }
 
   .terminal-session-view,
+  .terminal-session-view__overlay,
   .terminal-session-view__host {
     @apply h-full w-full min-h-0;
   }
 
-  .terminal-session-view {
+  .terminal-session-view,
+  .terminal-session-view__overlay {
     @apply relative overflow-hidden;
     background: var(--canvas-bg);
+  }
+
+  .terminal-session-view__overlay {
+    @apply absolute;
+    z-index: 30;
   }
 
   .terminal-session-view__host {

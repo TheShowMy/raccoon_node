@@ -1,7 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import "@xterm/xterm/css/xterm.css";
 import { terminalWebSocketUrl } from "../../api/client";
 import type { TerminalServerMessage, TerminalSession } from "../../types/api";
+
+type OverlayPlacement = {
+  root: HTMLElement;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
 
 function terminalTheme(fixedDark: boolean) {
   if (fixedDark) {
@@ -39,6 +48,35 @@ function terminalTheme(fixedDark: boolean) {
   };
 }
 
+function readOverlayPlacement(element: HTMLElement): OverlayPlacement {
+  const root = element.closest<HTMLElement>(".canvas-shell") ?? document.body;
+  const rect = element.getBoundingClientRect();
+  const rootRect = root.getBoundingClientRect();
+
+  return {
+    root,
+    left: rect.left - rootRect.left,
+    top: rect.top - rootRect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function sameOverlayPlacement(
+  a: OverlayPlacement | null,
+  b: OverlayPlacement | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.root !== b.root) return false;
+  const threshold = 0.5;
+  return (
+    Math.abs(a.left - b.left) < threshold &&
+    Math.abs(a.top - b.top) < threshold &&
+    Math.abs(a.width - b.width) < threshold &&
+    Math.abs(a.height - b.height) < threshold
+  );
+}
+
 export default function TerminalSessionView({
   projectId,
   session,
@@ -48,14 +86,36 @@ export default function TerminalSessionView({
   session: TerminalSession;
   fixedDark?: boolean;
 }) {
+  const anchorRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const [overlayPlacement, setOverlayPlacement] =
+    useState<OverlayPlacement | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<
     "connecting" | "connected" | "closed"
   >("connecting");
   const [error, setError] = useState<string | null>(null);
+  const overlayReady = overlayPlacement !== null;
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+
+    let frame = 0;
+    const syncPlacement = () => {
+      const next = readOverlayPlacement(anchor);
+      setOverlayPlacement((current) =>
+        sameOverlayPlacement(current, next) ? current : next,
+      );
+      frame = window.requestAnimationFrame(syncPlacement);
+    };
+
+    syncPlacement();
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   useEffect(() => {
+    if (!overlayReady) return;
     const host = hostRef.current;
     if (!host) return;
 
@@ -175,21 +235,41 @@ export default function TerminalSessionView({
       disposed = true;
       cleanup?.();
     };
-  }, [fixedDark, projectId, session.id]);
+  }, [fixedDark, overlayReady, projectId, session.id]);
+
+  const status =
+    connectionStatus !== "connected" || error ? (
+      <div className="terminal-session-view__status">
+        {error ??
+          (connectionStatus === "connecting"
+            ? "正在连接终端…"
+            : "终端连接已断开")}
+      </div>
+    ) : null;
 
   return (
-    <div
-      className={`terminal-session-view nodrag nowheel${fixedDark ? " terminal-session-view--fixed-dark" : ""}`}
-    >
-      <div ref={hostRef} className="terminal-session-view__host" />
-      {connectionStatus !== "connected" || error ? (
-        <div className="terminal-session-view__status">
-          {error ??
-            (connectionStatus === "connecting"
-              ? "正在连接终端…"
-              : "终端连接已断开")}
-        </div>
-      ) : null}
-    </div>
+    <>
+      <div
+        ref={anchorRef}
+        className={`terminal-session-view nodrag nowheel${fixedDark ? " terminal-session-view--fixed-dark" : ""}`}
+      />
+      {overlayPlacement
+        ? createPortal(
+            <div
+              className={`terminal-session-view__overlay nodrag nowheel${fixedDark ? " terminal-session-view--fixed-dark" : ""}`}
+              style={{
+                left: overlayPlacement.left,
+                top: overlayPlacement.top,
+                width: overlayPlacement.width,
+                height: overlayPlacement.height,
+              }}
+            >
+              <div ref={hostRef} className="terminal-session-view__host" />
+              {status}
+            </div>,
+            overlayPlacement.root,
+          )
+        : null}
+    </>
   );
 }
