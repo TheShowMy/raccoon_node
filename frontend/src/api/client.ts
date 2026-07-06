@@ -18,6 +18,7 @@ import {
   type SessionTranscriptPage,
   type ProjectFileContent,
   type PublicationReadiness,
+  type TerminalAccessStatus,
   type TerminalCommandProfile,
   type TerminalCommandProfileDraft,
   type TerminalSession,
@@ -154,6 +155,42 @@ export async function getProjectTerminals(
       message?: string;
     } | null;
     throw new Error(body?.message ?? "读取项目终端失败");
+  }
+  return response.json();
+}
+
+export async function getTerminalAccessStatus(
+  projectId: string,
+): Promise<TerminalAccessStatus> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/terminal-access`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取终端授权状态失败");
+  }
+  return response.json();
+}
+
+export async function unlockTerminalAccess(
+  projectId: string,
+  key: string,
+): Promise<TerminalAccessStatus> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/terminal-access`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "终端密钥验证失败");
   }
   return response.json();
 }

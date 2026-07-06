@@ -1,6 +1,6 @@
 use std::{
-    collections::HashMap,
-    io::{Read, Write},
+    collections::{HashMap, VecDeque},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
@@ -8,12 +8,13 @@ use std::{
 
 use crate::{
     error::AppError,
-    models::{TerminalServerMessage, TerminalSession, TerminalSessionStatus},
+    models::{TerminalAccessStatus, TerminalServerMessage, TerminalSession, TerminalSessionStatus},
     utils::resolve_git_root,
 };
-use chrono::Utc;
-use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use chrono::{Duration as ChronoDuration, Utc};
+use rand::Rng;
 use tokio::sync::{broadcast, mpsc};
+use xpty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, PtySystem, native_pty_system};
 
 const MAX_TERMINALS_PER_PROJECT: usize = 6;
 const MAX_TERMINAL_COMMAND_LEN: usize = 4096;
@@ -24,6 +25,98 @@ const MAX_ROWS: u16 = 80;
 const MIN_COLS: u16 = 20;
 const MAX_COLS: u16 = 240;
 const OUTPUT_CHANNEL_CAPACITY: usize = 512;
+const OUTPUT_HISTORY_CAPACITY: usize = 512;
+const TERMINAL_ACCESS_TTL_HOURS: i64 = 12;
+const TERMINAL_ACCESS_KEY_LEN: usize = 12;
+const TERMINAL_ACCESS_KEY_GROUP: usize = 4;
+const TERMINAL_ACCESS_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+pub struct TerminalAccess {
+    startup_key: String,
+    authorized_until: Mutex<Option<chrono::DateTime<Utc>>>,
+}
+
+impl TerminalAccess {
+    pub fn new() -> Self {
+        Self {
+            startup_key: generate_terminal_access_key(),
+            authorized_until: Mutex::new(None),
+        }
+    }
+
+    pub fn startup_key(&self) -> &str {
+        &self.startup_key
+    }
+
+    pub fn status(&self, required: bool) -> TerminalAccessStatus {
+        if !required {
+            return TerminalAccessStatus {
+                required: false,
+                authorized: true,
+                expires_at: None,
+            };
+        }
+        let expires_at = self.current_authorization();
+        TerminalAccessStatus {
+            required: true,
+            authorized: expires_at.is_some(),
+            expires_at,
+        }
+    }
+
+    pub fn authorize(&self, key: &str) -> Result<TerminalAccessStatus, AppError> {
+        if key.trim() != self.startup_key {
+            return Err(AppError::bad_request("终端密钥不正确"));
+        }
+        let expires_at = Utc::now() + ChronoDuration::hours(TERMINAL_ACCESS_TTL_HOURS);
+        *self
+            .authorized_until
+            .lock()
+            .expect("terminal access lock poisoned") = Some(expires_at);
+        Ok(TerminalAccessStatus {
+            required: true,
+            authorized: true,
+            expires_at: Some(expires_at),
+        })
+    }
+
+    pub fn ensure_authorized(&self) -> Result<(), AppError> {
+        if self.current_authorization().is_some() {
+            return Ok(());
+        }
+        Err(AppError::bad_request(
+            "项目终端需要先输入本次启动的终端密钥",
+        ))
+    }
+
+    pub fn duration_until_expiry(&self) -> Option<std::time::Duration> {
+        self.current_authorization().map(|expires_at| {
+            let remaining = expires_at.signed_duration_since(Utc::now());
+            remaining.to_std().unwrap_or_default()
+        })
+    }
+
+    fn current_authorization(&self) -> Option<chrono::DateTime<Utc>> {
+        let mut guard = self
+            .authorized_until
+            .lock()
+            .expect("terminal access lock poisoned");
+        match *guard {
+            Some(expires_at) if expires_at > Utc::now() => Some(expires_at),
+            Some(_) => {
+                *guard = None;
+                None
+            }
+            None => None,
+        }
+    }
+}
+
+impl Default for TerminalAccess {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Default)]
 pub struct TerminalManager {
@@ -159,13 +252,26 @@ pub struct TerminalSessionRuntime {
     state: Mutex<TerminalSessionState>,
     input_tx: mpsc::UnboundedSender<TerminalInput>,
     output_tx: broadcast::Sender<TerminalServerMessage>,
-    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    output_history: Mutex<VecDeque<TerminalServerMessage>>,
+    killer: Mutex<Box<dyn TerminalKiller + Send>>,
 }
 
 struct TerminalSessionState {
     status: TerminalSessionStatus,
     exit_code: Option<i32>,
     updated_at: chrono::DateTime<Utc>,
+}
+
+trait TerminalKiller {
+    fn kill(&mut self) -> io::Result<()>;
+}
+
+struct PortableChildKiller(Box<dyn ChildKiller + Send + Sync>);
+
+impl TerminalKiller for PortableChildKiller {
+    fn kill(&mut self) -> io::Result<()> {
+        self.0.kill()
+    }
 }
 
 enum TerminalInput {
@@ -221,7 +327,8 @@ impl TerminalSessionRuntime {
             }),
             input_tx,
             output_tx,
-            killer: Mutex::new(killer),
+            output_history: Mutex::new(VecDeque::new()),
+            killer: Mutex::new(Box::new(PortableChildKiller(killer))),
         });
 
         spawn_reader(runtime.clone(), reader);
@@ -246,6 +353,15 @@ impl TerminalSessionRuntime {
 
     pub fn subscribe(&self) -> broadcast::Receiver<TerminalServerMessage> {
         self.output_tx.subscribe()
+    }
+
+    pub fn output_history(&self) -> Vec<TerminalServerMessage> {
+        self.output_history
+            .lock()
+            .expect("terminal output history lock poisoned")
+            .iter()
+            .cloned()
+            .collect()
     }
 
     pub fn input(&self, data: String) {
@@ -285,10 +401,28 @@ impl TerminalSessionRuntime {
         });
     }
 
+    fn emit_output(&self, data: String) {
+        self.emit_message(TerminalServerMessage::Output { data });
+    }
+
     fn emit_error(&self, message: impl Into<String>) {
-        let _ = self.output_tx.send(TerminalServerMessage::Error {
+        self.emit_message(TerminalServerMessage::Error {
             message: message.into(),
         });
+    }
+
+    fn emit_message(&self, message: TerminalServerMessage) {
+        {
+            let mut history = self
+                .output_history
+                .lock()
+                .expect("terminal output history lock poisoned");
+            if history.len() >= OUTPUT_HISTORY_CAPACITY {
+                history.pop_front();
+            }
+            history.push_back(message.clone());
+        }
+        let _ = self.output_tx.send(message);
     }
 }
 
@@ -302,9 +436,7 @@ fn spawn_reader(runtime: Arc<TerminalSessionRuntime>, mut reader: Box<dyn Read +
                     Ok(0) => break,
                     Ok(length) => {
                         let data = String::from_utf8_lossy(&buffer[..length]).into_owned();
-                        let _ = runtime
-                            .output_tx
-                            .send(TerminalServerMessage::Output { data });
+                        runtime.emit_output(data);
                     }
                     Err(error) => {
                         runtime.emit_error(format!("终端输出读取失败：{error}"));
@@ -396,6 +528,21 @@ fn shell_command(command: Option<&str>) -> CommandBuilder {
     }
 }
 
+fn generate_terminal_access_key() -> String {
+    let mut rng = rand::rng();
+    let raw: String = (0..TERMINAL_ACCESS_KEY_LEN)
+        .map(|_| {
+            let index = rng.random_range(0..TERMINAL_ACCESS_ALPHABET.len());
+            TERMINAL_ACCESS_ALPHABET[index] as char
+        })
+        .collect();
+    raw.as_bytes()
+        .chunks(TERMINAL_ACCESS_KEY_GROUP)
+        .map(|chunk| std::str::from_utf8(chunk).expect("terminal key is ASCII"))
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,5 +595,43 @@ mod tests {
         let metadata = runtime.metadata();
         assert_eq!(metadata.status, TerminalSessionStatus::Exited);
         assert_eq!(metadata.exit_code, Some(0));
+    }
+
+    #[test]
+    fn interactive_shell_accepts_input() {
+        let manager = TerminalManager::new();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .expect("repo root");
+        let session = manager
+            .spawn("current", root, None, None, None, None)
+            .expect("spawn terminal");
+
+        let runtime = manager.get(&session.id).expect("runtime");
+        let mut receiver = runtime.subscribe();
+        runtime.input("echo RACCOON_INTERACTIVE_INPUT\r".to_owned());
+        let (output_tx, output_rx) = mpsc::channel::<String>();
+
+        thread::spawn(move || {
+            let mut output = String::new();
+            while let Ok(message) = receiver.blocking_recv() {
+                if let TerminalServerMessage::Output { data } = message {
+                    output.push_str(&data);
+                    if output.contains("RACCOON_INTERACTIVE_INPUT") {
+                        break;
+                    }
+                }
+            }
+            let _ = output_tx.send(output);
+        });
+
+        let output = output_rx
+            .recv_timeout(Duration::from_secs(6))
+            .expect("collect output within timeout");
+        assert!(
+            output.contains("RACCOON_INTERACTIVE_INPUT"),
+            "expected interactive shell output, got: {output:?}"
+        );
+        runtime.shutdown();
     }
 }

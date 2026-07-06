@@ -185,6 +185,58 @@
       color-mix(in srgb, var(--accent-danger) 22%, transparent);
   }
 
+  .terminal-node__access {
+    @apply grid shrink-0 grid-cols-[auto_minmax(220px,1fr)_auto] items-center gap-3 border-b px-4 py-2;
+    border-color: var(--card-border);
+    color: var(--text-soft);
+    background: color-mix(in srgb, var(--accent-warning) 9%, transparent);
+  }
+
+  .terminal-node__access > svg,
+  .terminal-node__access-status > svg {
+    color: var(--accent-warning);
+  }
+
+  .terminal-node__access label {
+    @apply grid min-w-0 grid-cols-[70px_minmax(0,1fr)] items-center gap-2 text-xs font-semibold;
+  }
+
+  .terminal-node__access input {
+    @apply min-w-0 rounded-md border px-3 py-1.5 font-mono text-xs outline-none transition;
+    border-color: var(--card-border-strong);
+    color: var(--text-strong);
+    background: var(--surface-subtle);
+  }
+
+  .terminal-node__access input:focus {
+    border-color: var(--accent-warning);
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--accent-warning) 18%, transparent);
+  }
+
+  .terminal-node__access button {
+    @apply inline-flex h-8 cursor-pointer items-center justify-center rounded-md border px-3 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-50;
+    border-color: color-mix(in srgb, var(--accent-warning) 54%, transparent);
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--accent-warning) 14%, transparent);
+  }
+
+  .terminal-node__access button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent-warning) 22%, transparent);
+  }
+
+  .terminal-node__access small {
+    @apply col-start-2 min-w-0 truncate text-[11px] font-medium;
+    color: var(--text-muted);
+  }
+
+  .terminal-node__access-status {
+    @apply flex shrink-0 items-center gap-2 border-b px-4 py-1.5 text-xs;
+    border-color: var(--card-border);
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--accent-warning) 7%, transparent);
+  }
+
   .terminal-node__toolbar {
     @apply flex shrink-0 items-center justify-between gap-3 px-4 py-2;
     border-bottom: 1px solid var(--card-border);

@@ -262,6 +262,10 @@ describe("buildProjectNodes", () => {
       modelError: null,
       savingModels: false,
       terminalDisabled: false,
+      terminalAccessRequired: false,
+      terminalAccessAuthorized: true,
+      terminalAccessBusy: false,
+      terminalAccessError: null,
       piLoginSession: null,
       piLoginBusy: false,
       piLoginError: null,
@@ -277,6 +281,7 @@ describe("buildProjectNodes", () => {
       onModelChange: () => {},
       onSaveModels: async () => {},
       onReloadModels: async () => {},
+      onAuthorizeTerminalAccess: async () => true,
       onStartPiLogin: async () => {},
       onClosePiLogin: async () => {},
     };

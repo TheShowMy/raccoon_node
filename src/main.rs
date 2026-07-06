@@ -143,6 +143,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if cli.dev_managed_vite {
             tracing::info!("Vite dev server 由后端管理");
         }
+        let terminal_access_key =
+            (effective.host == "0.0.0.0").then(|| state.terminal_access.startup_key().to_owned());
         if use_tui && !cli.no_open && !opened {
             if managed_vite.is_some()
                 && !raccoon_node::dev::wait_until_ready(VITE_READY_TIMEOUT_SECONDS).await
@@ -197,6 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             match tui.run_launcher(
                 browser_url,
+                terminal_access_key.as_deref(),
                 log_receiver,
                 managed_vite.as_ref().map(|vite| vite.logs()),
                 || matches!(lifecycle_rx.try_recv(), Ok(LifecycleCommand::Restart)),
@@ -1098,6 +1101,100 @@ mod tests {
                 .unwrap();
         assert_eq!(body["next_url"], "http://127.0.0.1:4321");
         assert_eq!(lifecycle_rx.recv().await, Some(LifecycleCommand::Restart));
+    }
+
+    #[tokio::test]
+    async fn external_host_terminal_access_requires_startup_key() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+            .await
+            .unwrap();
+        store.data.projects = vec![test_project("current")];
+        let (app, state) = build_app_with_model_provider_and_runtime(
+            store,
+            fake_provider(Vec::new()),
+            AppConfig::default(),
+            RuntimeOptions {
+                effective_host: Some("0.0.0.0".to_owned()),
+                effective_port: Some(3001),
+                ..RuntimeOptions::default()
+            },
+        );
+
+        let status = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projects/current/terminal-access")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(status.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["required"], true);
+        assert_eq!(body["authorized"], false);
+
+        let terminals = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projects/current/terminals")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(terminals.status(), StatusCode::BAD_REQUEST);
+
+        let wrong_key = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/projects/current/terminal-access")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"key":"wrong"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(wrong_key.status(), StatusCode::BAD_REQUEST);
+
+        let key = state.terminal_access.startup_key().to_owned();
+        let unlocked = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/projects/current/terminal-access")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "key": key }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unlocked.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(unlocked.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["required"], true);
+        assert_eq!(body["authorized"], true);
+        assert!(body["expires_at"].is_string());
+
+        let terminals = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projects/current/terminals")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(terminals.status(), StatusCode::OK);
     }
 
     #[tokio::test]

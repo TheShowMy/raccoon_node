@@ -650,9 +650,21 @@ export default function App() {
   );
   const projectChat = useProjectChat(selectedProjectId);
   const models = useModelSettings(current.applyTheme, current.loadCurrent);
+  const terminalHost = models.basicSettings?.effective_host;
+  const terminalAccessRequired = terminalHost === "0.0.0.0";
+  const terminalBlockedReason = useMemo(() => {
+    if (terminalAccessRequired) return undefined;
+    const hostname =
+      typeof window !== "undefined" ? window.location.hostname : "localhost";
+    if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+      return "non-localhost-access";
+    }
+    return undefined;
+  }, [terminalAccessRequired]);
   const terminals = useProjectTerminals(
     selectedProjectId,
-    models.basicSettings?.effective_host === "0.0.0.0",
+    terminalBlockedReason,
+    terminalAccessRequired,
   );
   const git = useProjectGit(selectedProjectId);
   const [nodeDragging, setNodeDragging] = useState(false);
@@ -787,19 +799,8 @@ export default function App() {
     ],
   );
 
-  const terminalHost = models.basicSettings?.effective_host;
-  const terminalDisabledReason = useMemo(() => {
-    if (terminalHost === "0.0.0.0") {
-      return "listening-on-all-interfaces";
-    }
-    const hostname =
-      typeof window !== "undefined" ? window.location.hostname : "localhost";
-    if (hostname !== "localhost" && hostname !== "127.0.0.1") {
-      return "non-localhost-access";
-    }
-    return undefined;
-  }, [terminalHost]);
-  const terminalDisabled = terminalDisabledReason !== undefined;
+  const terminalDisabled = terminals.terminalDisabled;
+  const terminalDisabledReason = terminals.terminalDisabledReason;
 
   const projectSettingsNode = useMemo(
     () =>
@@ -818,6 +819,10 @@ export default function App() {
         modelError: models.modelError,
         savingModels: models.savingModels,
         terminalDisabled,
+        terminalAccessRequired: terminals.terminalAccessRequired,
+        terminalAccessAuthorized: terminals.terminalAccessAuthorized,
+        terminalAccessBusy: terminals.terminalAccessBusy,
+        terminalAccessError: terminals.terminalAccessError,
         piLoginSession: terminals.piLoginSession,
         piLoginBusy: terminals.piLoginBusy,
         piLoginError: terminals.piLoginError,
@@ -838,6 +843,7 @@ export default function App() {
         onModelChange: models.updateModelTier,
         onSaveModels: models.saveModelSettings,
         onReloadModels: models.reloadModelSettings,
+        onAuthorizeTerminalAccess: terminals.authorizeTerminalAccess,
         onStartPiLogin: terminals.startPiLoginTerminal,
         onClosePiLogin: terminals.closePiLoginTerminal,
       }),
@@ -868,7 +874,12 @@ export default function App() {
       models.updateModelTier,
       project.projectCanvas,
       terminalDisabled,
+      terminals.authorizeTerminalAccess,
       terminals.closePiLoginTerminal,
+      terminals.terminalAccessAuthorized,
+      terminals.terminalAccessBusy,
+      terminals.terminalAccessError,
+      terminals.terminalAccessRequired,
       terminals.piLoginBusy,
       terminals.piLoginError,
       terminals.piLoginSession,
@@ -889,7 +900,13 @@ export default function App() {
         error: terminals.error,
         terminalDisabled,
         terminalDisabledReason,
+        terminalAccessRequired: terminals.terminalAccessRequired,
+        terminalAccessAuthorized: terminals.terminalAccessAuthorized,
+        terminalAccessExpiresAt: terminals.terminalAccessExpiresAt,
+        terminalAccessBusy: terminals.terminalAccessBusy,
+        terminalAccessError: terminals.terminalAccessError,
         onToggleCollapsed: terminals.toggleCollapsed,
+        onAuthorizeTerminalAccess: terminals.authorizeTerminalAccess,
         onCreateTerminal: terminals.createTerminal,
         onCloseTerminal: terminals.closeTerminal,
         onSelectTerminal: terminals.selectTerminal,
@@ -901,6 +918,7 @@ export default function App() {
       terminalDisabledReason,
       project.projectCanvas,
       terminals.activeSessionId,
+      terminals.authorizeTerminalAccess,
       terminals.busy,
       terminals.closeTerminal,
       terminals.collapsed,
@@ -910,6 +928,11 @@ export default function App() {
       terminals.saveCommandProfiles,
       terminals.selectTerminal,
       terminals.sessions,
+      terminals.terminalAccessAuthorized,
+      terminals.terminalAccessBusy,
+      terminals.terminalAccessError,
+      terminals.terminalAccessExpiresAt,
+      terminals.terminalAccessRequired,
       terminals.toggleCollapsed,
     ],
   );

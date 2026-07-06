@@ -24,11 +24,12 @@ use crate::api::handlers::{
     get_basic_settings, get_current_project, get_model_settings, get_project_attachment,
     get_project_canvas, get_project_chat, get_project_chat_session, get_project_file_content,
     get_project_files, get_requirement_conversation, get_requirement_session, get_requirement_task,
-    get_requirement_task_session, get_terminal_command_profiles, list_project_terminals,
-    plan_requirement_execution, project_chat_events, put_basic_settings, put_model_settings,
-    put_terminal_command_profiles, recover_task_group, reload_model_settings, requirement_events,
-    reset_project_chat, restart_system, retry_requirement_analysis, send_project_chat_message,
-    spawn_startup_requirement_scheduler, submit_requirement_clarifications, terminal_websocket,
+    get_requirement_task_session, get_terminal_access_status, get_terminal_command_profiles,
+    list_project_terminals, plan_requirement_execution, project_chat_events, put_basic_settings,
+    put_model_settings, put_terminal_command_profiles, recover_task_group, reload_model_settings,
+    requirement_events, reset_project_chat, restart_system, retry_requirement_analysis,
+    send_project_chat_message, spawn_startup_requirement_scheduler,
+    submit_requirement_clarifications, terminal_websocket, unlock_terminal_access,
     upload_project_attachment,
 };
 use crate::pi::PiRpcModelProvider;
@@ -56,6 +57,7 @@ pub struct AppState {
     pub requirement_events: crate::models::RequirementEventBus,
     pub project_chat_events: crate::models::ProjectChatEventBus,
     pub terminal_manager: std::sync::Arc<terminal::TerminalManager>,
+    pub terminal_access: std::sync::Arc<terminal::TerminalAccess>,
     pub project_root: std::path::PathBuf,
     pub config: std::sync::Arc<tokio::sync::RwLock<crate::config::AppConfig>>,
     pub config_path: std::path::PathBuf,
@@ -188,6 +190,7 @@ fn build_app_with_startup_requirements(
         requirement_events: event_tx,
         project_chat_events: project_chat_tx,
         terminal_manager: Arc::new(terminal::TerminalManager::new()),
+        terminal_access: Arc::new(terminal::TerminalAccess::new()),
         project_root,
         config,
         config_path,
@@ -241,6 +244,10 @@ fn build_app_with_startup_requirements(
         .route(
             "/projects/{id}/terminal-commands",
             get(get_terminal_command_profiles).put(put_terminal_command_profiles),
+        )
+        .route(
+            "/projects/{id}/terminal-access",
+            get(get_terminal_access_status).post(unlock_terminal_access),
         )
         .route("/projects/{id}/git/status", get(get_git_status))
         .route("/projects/{id}/git/diff", get(get_git_diff))

@@ -113,6 +113,10 @@ export interface BuildProjectSettingsNodeParams {
   modelError: string | null;
   savingModels: boolean;
   terminalDisabled: boolean;
+  terminalAccessRequired: boolean;
+  terminalAccessAuthorized: boolean;
+  terminalAccessBusy: boolean;
+  terminalAccessError: string | null;
   piLoginSession: TerminalSession | null;
   piLoginBusy: boolean;
   piLoginError: string | null;
@@ -128,6 +132,7 @@ export interface BuildProjectSettingsNodeParams {
   onModelChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
   onSaveModels: () => Promise<void>;
   onReloadModels: () => Promise<void>;
+  onAuthorizeTerminalAccess: (key: string) => Promise<boolean>;
   onStartPiLogin: () => Promise<void>;
   onClosePiLogin: () => Promise<void>;
 }
@@ -143,7 +148,13 @@ export interface BuildProjectTerminalNodeParams {
   error: string | null;
   terminalDisabled: boolean;
   terminalDisabledReason?: string;
+  terminalAccessRequired: boolean;
+  terminalAccessAuthorized: boolean;
+  terminalAccessExpiresAt: string | null;
+  terminalAccessBusy: boolean;
+  terminalAccessError: string | null;
   onToggleCollapsed: () => void;
+  onAuthorizeTerminalAccess: (key: string) => Promise<boolean>;
   onCreateTerminal: (
     command?: string | null,
     title?: string | null,
@@ -608,6 +619,10 @@ export function buildProjectSettingsNode({
   modelError,
   savingModels,
   terminalDisabled,
+  terminalAccessRequired,
+  terminalAccessAuthorized,
+  terminalAccessBusy,
+  terminalAccessError,
   piLoginSession,
   piLoginBusy,
   piLoginError,
@@ -623,6 +638,7 @@ export function buildProjectSettingsNode({
   onModelChange,
   onSaveModels,
   onReloadModels,
+  onAuthorizeTerminalAccess,
   onStartPiLogin,
   onClosePiLogin,
 }: BuildProjectSettingsNodeParams): Node<StartNodeData> | null {
@@ -654,6 +670,10 @@ export function buildProjectSettingsNode({
         modelError,
         savingModels,
         terminalDisabled,
+        terminalAccessRequired,
+        terminalAccessAuthorized,
+        terminalAccessBusy,
+        terminalAccessError,
         piLoginSession,
         piLoginBusy,
         piLoginError,
@@ -669,6 +689,7 @@ export function buildProjectSettingsNode({
         onModelChange,
         onSaveModels,
         onReloadModels,
+        onAuthorizeTerminalAccess,
         onStartPiLogin,
         onClosePiLogin,
       },
@@ -687,7 +708,13 @@ export function buildProjectTerminalNode({
   error,
   terminalDisabled,
   terminalDisabledReason,
+  terminalAccessRequired,
+  terminalAccessAuthorized,
+  terminalAccessExpiresAt,
+  terminalAccessBusy,
+  terminalAccessError,
   onToggleCollapsed,
+  onAuthorizeTerminalAccess,
   onCreateTerminal,
   onCloseTerminal,
   onSelectTerminal,
@@ -716,7 +743,13 @@ export function buildProjectTerminalNode({
         error,
         terminalDisabled,
         terminalDisabledReason,
+        terminalAccessRequired,
+        terminalAccessAuthorized,
+        terminalAccessExpiresAt,
+        terminalAccessBusy,
+        terminalAccessError,
         onToggleCollapsed,
+        onAuthorizeTerminalAccess,
         onCreateTerminal,
         onCloseTerminal,
         onSelectTerminal,

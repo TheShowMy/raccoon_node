@@ -606,6 +606,18 @@ pub struct TerminalSession {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TerminalAccessStatus {
+    pub required: bool,
+    pub authorized: bool,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct TerminalAccessRequest {
+    pub key: String,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct TerminalLaunchRequest {
     pub command: Option<String>,

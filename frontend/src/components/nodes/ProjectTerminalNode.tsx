@@ -1,11 +1,13 @@
 import {
   AlertTriangle,
+  KeyRound,
   Plus,
   Settings2,
   Terminal,
   Trash2,
   X,
 } from "lucide-react";
+import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 import type {
   StartNodeData,
@@ -19,8 +21,8 @@ type TerminalData = Extract<StartNodeData, { kind: "project-terminal" }>;
 function useDisabledReason(disabled: boolean, reason?: string): string | null {
   return useMemo(() => {
     if (!disabled) return null;
-    if (reason === "listening-on-all-interfaces") {
-      return "监听 0.0.0.0 时终端已禁用，请在基础设置中将 host 改为 127.0.0.1";
+    if (reason === "terminal-authorization-required") {
+      return "监听 0.0.0.0 时需要输入本次启动的终端密钥";
     }
     if (reason === "non-localhost-access") {
       const hostname =
@@ -33,6 +35,7 @@ function useDisabledReason(disabled: boolean, reason?: string): string | null {
 
 export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
   const [editingProfiles, setEditingProfiles] = useState(false);
+  const [accessKey, setAccessKey] = useState("");
   const [draftProfiles, setDraftProfiles] = useState<
     TerminalCommandProfileDraft[]
   >([]);
@@ -47,6 +50,8 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
     data.terminalDisabled,
     data.terminalDisabledReason,
   );
+  const needsTerminalAccess =
+    data.terminalAccessRequired && !data.terminalAccessAuthorized;
 
   function openProfileEditor() {
     setDraftProfiles(
@@ -66,6 +71,14 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
       ),
     );
     setEditingProfiles(false);
+  }
+
+  async function authorizeTerminal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const unlocked = await data.onAuthorizeTerminalAccess(accessKey);
+    if (unlocked) {
+      setAccessKey("");
+    }
   }
 
   return (
@@ -120,6 +133,41 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
             <div className="terminal-node__notice nodrag">
               <AlertTriangle size={14} />
               <span>{disabledReason}</span>
+            </div>
+          ) : null}
+          {needsTerminalAccess ? (
+            <form
+              className="terminal-node__access nodrag"
+              onSubmit={(event) => void authorizeTerminal(event)}
+            >
+              <KeyRound size={16} />
+              <label>
+                <span>终端密钥</span>
+                <input
+                  value={accessKey}
+                  type="password"
+                  autoComplete="off"
+                  placeholder="TUI 中显示的本次启动密钥"
+                  onChange={(event) => setAccessKey(event.target.value)}
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={data.terminalAccessBusy || !accessKey.trim()}
+              >
+                启用终端
+              </button>
+              <small>
+                {data.terminalAccessError ?? "验证通过后 12 小时内无需再次输入"}
+              </small>
+            </form>
+          ) : data.terminalAccessRequired && data.terminalAccessExpiresAt ? (
+            <div className="terminal-node__access-status nodrag">
+              <KeyRound size={14} />
+              <span>
+                终端已授权至{" "}
+                {new Date(data.terminalAccessExpiresAt).toLocaleTimeString()}
+              </span>
             </div>
           ) : null}
 

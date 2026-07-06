@@ -53,6 +53,7 @@ const profile = {
 function renderNode(overrides: Record<string, unknown> = {}) {
   const onToggleCollapsed = vi.fn();
   const onCreateTerminal = vi.fn(async () => {});
+  const onAuthorizeTerminalAccess = vi.fn(async () => true);
   const onCloseTerminal = vi.fn(async () => {});
   const onSelectTerminal = vi.fn();
   const onSaveCommandProfiles = vi.fn(async () => {});
@@ -69,7 +70,13 @@ function renderNode(overrides: Record<string, unknown> = {}) {
         busy: false,
         error: null,
         terminalDisabled: false,
+        terminalAccessRequired: false,
+        terminalAccessAuthorized: true,
+        terminalAccessExpiresAt: null,
+        terminalAccessBusy: false,
+        terminalAccessError: null,
         onToggleCollapsed,
+        onAuthorizeTerminalAccess,
         onCreateTerminal,
         onCloseTerminal,
         onSelectTerminal,
@@ -82,6 +89,7 @@ function renderNode(overrides: Record<string, unknown> = {}) {
   return {
     ...result,
     onToggleCollapsed,
+    onAuthorizeTerminalAccess,
     onCreateTerminal,
     onCloseTerminal,
     onSelectTerminal,
@@ -120,6 +128,23 @@ describe("ProjectTerminalNode", () => {
     renderNode({ terminalDisabled: true });
     expect(screen.getByRole("button", { name: "新建" })).toBeDisabled();
     expect(screen.getByText("终端当前不可用")).toBeInTheDocument();
+  });
+
+  it("asks for the startup key when external terminal access is required", async () => {
+    const { onAuthorizeTerminalAccess } = renderNode({
+      terminalDisabled: true,
+      terminalDisabledReason: "terminal-authorization-required",
+      terminalAccessRequired: true,
+      terminalAccessAuthorized: false,
+    });
+    expect(screen.getByText("终端密钥")).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("TUI 中显示的本次启动密钥"), {
+      target: { value: "ABCD-EFGH-JKLM" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "启用终端" }));
+    await waitFor(() => {
+      expect(onAuthorizeTerminalAccess).toHaveBeenCalledWith("ABCD-EFGH-JKLM");
+    });
   });
 
   it("renders command profiles as clickable chips", () => {

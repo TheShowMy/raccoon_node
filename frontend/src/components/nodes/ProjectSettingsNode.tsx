@@ -144,6 +144,10 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
             error={data.modelError}
             saving={data.savingModels}
             terminalDisabled={data.terminalDisabled}
+            terminalAccessRequired={data.terminalAccessRequired}
+            terminalAccessAuthorized={data.terminalAccessAuthorized}
+            terminalAccessBusy={data.terminalAccessBusy}
+            terminalAccessError={data.terminalAccessError}
             piLoginSession={data.piLoginSession}
             piLoginBusy={data.piLoginBusy}
             piLoginError={data.piLoginError}
@@ -152,6 +156,7 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
             savedComplete={data.modelSavedComplete}
             onChange={data.onModelChange}
             onSave={() => void data.onSaveModels()}
+            onAuthorizeTerminalAccess={data.onAuthorizeTerminalAccess}
             onStartPiLogin={data.onStartPiLogin}
             onClosePiLogin={data.onClosePiLogin}
             onReload={() => void data.onReloadModels()}

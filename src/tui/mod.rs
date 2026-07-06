@@ -31,6 +31,18 @@ pub enum DashboardAction {
     Open,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct LauncherButtons {
+    open: Rect,
+    copy_key: Option<Rect>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LauncherEvent {
+    Action(DashboardAction),
+    CopyTerminalAccessKey,
+}
+
 pub fn confirm(title: &str, message: &str) -> io::Result<bool> {
     let _guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
@@ -79,19 +91,21 @@ impl TuiSession {
     pub fn run_launcher(
         &mut self,
         url: &str,
+        terminal_access_key: Option<&str>,
         backend_logs: &mpsc::Receiver<String>,
         vite_logs: Option<&mpsc::Receiver<String>>,
         mut restart_requested: impl FnMut() -> bool,
     ) -> io::Result<DashboardAction> {
         let mut backend_panel = LogPanel::new();
         let mut vite_panel = vite_logs.map(|_| LogPanel::new());
+        let mut copy_feedback: Option<String> = None;
 
         loop {
             if restart_requested() {
                 return Ok(DashboardAction::Restart);
             }
 
-            let mut button = Rect::default();
+            let mut buttons = LauncherButtons::default();
             self.terminal.draw(|frame| {
                 backend_panel.drain(backend_logs);
                 if let (Some(panel), Some(rx)) = (vite_panel.as_mut(), vite_logs) {
@@ -99,28 +113,56 @@ impl TuiSession {
                 }
 
                 let main = frame.area();
-                let card_area = top_centered_card(main, 44, 6);
-                button = button_rect(card_area);
+                let card_area =
+                    top_centered_card(main, 52, if terminal_access_key.is_some() { 9 } else { 7 });
+                buttons = button_rects(card_area, terminal_access_key.is_some());
+                let mut lines = vec![
+                    Line::styled(
+                        "Raccoon Node 正在运行",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Line::raw(url),
+                ];
+                if let Some(key) = terminal_access_key {
+                    lines.push(Line::styled(
+                        format!("Web 终端密钥：{key}"),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    lines.push(Line::styled(
+                        "输入后 12 小时内可启用终端",
+                        Style::default().fg(Color::Gray),
+                    ));
+                }
+                lines.push(Line::raw(""));
+                lines.push(Line::styled(
+                    "Enter/o 打开网页    q/Ctrl+C 退出",
+                    Style::default().fg(Color::Gray),
+                ));
 
                 frame.render_widget(
-                    Paragraph::new(vec![
-                        Line::styled(
-                            "Raccoon Node 正在运行",
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Line::raw(url),
-                        Line::raw(""),
-                        Line::styled(
-                            "Enter/o 打开网页    q/Ctrl+C 退出",
-                            Style::default().fg(Color::Gray),
-                        ),
-                    ])
-                    .alignment(Alignment::Center)
-                    .block(Block::default().borders(Borders::ALL)),
+                    Paragraph::new(lines)
+                        .alignment(Alignment::Center)
+                        .block(Block::default().borders(Borders::ALL)),
                     card_area,
                 );
+                if let Some(feedback) = copy_feedback.as_deref() {
+                    let feedback_area = Rect::new(
+                        card_area.x.saturating_add(2),
+                        card_area.y.saturating_add(4),
+                        card_area.width.saturating_sub(4).max(1),
+                        1,
+                    );
+                    frame.render_widget(
+                        Paragraph::new(feedback)
+                            .alignment(Alignment::Center)
+                            .style(Style::default().fg(Color::Gray)),
+                        feedback_area,
+                    );
+                }
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![Span::styled(
                         "[ 打开网页 ]",
@@ -131,8 +173,22 @@ impl TuiSession {
                     )]))
                     .alignment(Alignment::Center)
                     .style(Style::default().bg(Color::Yellow)),
-                    button,
+                    buttons.open,
                 );
+                if let Some(copy_key_button) = buttons.copy_key {
+                    frame.render_widget(
+                        Paragraph::new(Line::from(vec![Span::styled(
+                            "[ 复制密钥 ]",
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        )]))
+                        .alignment(Alignment::Center)
+                        .style(Style::default().bg(Color::Yellow)),
+                        copy_key_button,
+                    );
+                }
 
                 let log_area = remaining_log_area(main, card_area);
                 if log_area.height > 0 {
@@ -149,8 +205,17 @@ impl TuiSession {
             if !event::poll(Duration::from_millis(100))? {
                 continue;
             }
-            if let Some(action) = action_for_event(&event::read()?, button) {
-                return Ok(action);
+            match action_for_event(&event::read()?, buttons) {
+                Some(LauncherEvent::Action(action)) => return Ok(action),
+                Some(LauncherEvent::CopyTerminalAccessKey) => {
+                    if let Some(key) = terminal_access_key {
+                        copy_feedback = Some(match copy_to_clipboard(key) {
+                            Ok(()) => "密钥已复制到剪贴板".to_owned(),
+                            Err(error) => format!("密钥复制失败：{error}"),
+                        });
+                    }
+                }
+                None => {}
             }
         }
     }
@@ -218,13 +283,31 @@ fn top_centered_card(area: Rect, max_width: u16, height: u16) -> Rect {
     )
 }
 
-fn button_rect(card: Rect) -> Rect {
-    Rect::new(
+fn button_rects(card: Rect, has_terminal_access_key: bool) -> LauncherButtons {
+    let full = Rect::new(
         card.x.saturating_add(2),
-        card.y.saturating_add(3),
+        card.y.saturating_add(card.height.saturating_sub(2)),
         card.width.saturating_sub(4).max(1),
         1,
-    )
+    );
+    if !has_terminal_access_key || full.width < 4 {
+        return LauncherButtons {
+            open: full,
+            copy_key: None,
+        };
+    }
+    let gap = 1;
+    let open_width = full.width.saturating_sub(gap) / 2;
+    let copy_width = full.width.saturating_sub(open_width).saturating_sub(gap);
+    LauncherButtons {
+        open: Rect::new(full.x, full.y, open_width.max(1), full.height),
+        copy_key: Some(Rect::new(
+            full.x.saturating_add(open_width).saturating_add(gap),
+            full.y,
+            copy_width.max(1),
+            full.height,
+        )),
+    }
 }
 
 fn remaining_log_area(main: Rect, card: Rect) -> Rect {
@@ -254,25 +337,45 @@ fn split_log_area(area: Rect, split: bool) -> Vec<Rect> {
     ]
 }
 
-fn action_for_event(event: &Event, button: Rect) -> Option<DashboardAction> {
+fn action_for_event(event: &Event, buttons: LauncherButtons) -> Option<LauncherEvent> {
     match event {
         Event::Mouse(mouse)
             if mouse.kind == MouseEventKind::Up(MouseButton::Left)
-                && point_in_rect(mouse.column, mouse.row, button) =>
+                && point_in_rect(mouse.column, mouse.row, buttons.open) =>
         {
-            Some(DashboardAction::Open)
+            Some(LauncherEvent::Action(DashboardAction::Open))
+        }
+        Event::Mouse(mouse)
+            if mouse.kind == MouseEventKind::Up(MouseButton::Left)
+                && buttons
+                    .copy_key
+                    .is_some_and(|button| point_in_rect(mouse.column, mouse.row, button)) =>
+        {
+            Some(LauncherEvent::CopyTerminalAccessKey)
         }
         Event::Key(key) if usable_key(*key) => match key.code {
-            KeyCode::Enter => Some(DashboardAction::Open),
-            KeyCode::Char(value) if char_matches(value, 'o') => Some(DashboardAction::Open),
-            KeyCode::Char(value) if char_matches(value, 'q') => Some(DashboardAction::Quit),
+            KeyCode::Enter => Some(LauncherEvent::Action(DashboardAction::Open)),
+            KeyCode::Char(value) if char_matches(value, 'o') => {
+                Some(LauncherEvent::Action(DashboardAction::Open))
+            }
+            KeyCode::Char(value) if char_matches(value, 'q') => {
+                Some(LauncherEvent::Action(DashboardAction::Quit))
+            }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                Some(DashboardAction::Quit)
+                Some(LauncherEvent::Action(DashboardAction::Quit))
             }
             _ => None,
         },
         _ => None,
     }
+}
+
+fn copy_to_clipboard(value: &str) -> io::Result<()> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|error| io::Error::other(error.to_string()))?;
+    clipboard
+        .set_text(value.to_owned())
+        .map_err(|error| io::Error::other(error.to_string()))
 }
 
 fn point_in_rect(x: u16, y: u16, area: Rect) -> bool {
@@ -327,41 +430,89 @@ mod tests {
 
     #[test]
     fn button_click_opens_browser() {
-        let button = Rect::new(10, 5, 20, 3);
+        let buttons = LauncherButtons {
+            open: Rect::new(10, 5, 20, 3),
+            copy_key: None,
+        };
         assert_eq!(
-            action_for_event(&mouse(10, 5), button),
-            Some(DashboardAction::Open)
+            action_for_event(&mouse(10, 5), buttons),
+            Some(LauncherEvent::Action(DashboardAction::Open))
         );
         assert_eq!(
-            action_for_event(&mouse(29, 7), button),
-            Some(DashboardAction::Open)
+            action_for_event(&mouse(29, 7), buttons),
+            Some(LauncherEvent::Action(DashboardAction::Open))
         );
     }
 
     #[test]
     fn clicks_outside_button_are_ignored() {
-        let button = Rect::new(10, 5, 20, 3);
-        assert_eq!(action_for_event(&mouse(9, 5), button), None);
-        assert_eq!(action_for_event(&mouse(30, 7), button), None);
+        let buttons = LauncherButtons {
+            open: Rect::new(10, 5, 20, 3),
+            copy_key: None,
+        };
+        assert_eq!(action_for_event(&mouse(9, 5), buttons), None);
+        assert_eq!(action_for_event(&mouse(30, 7), buttons), None);
     }
 
     #[test]
     fn keyboard_fallbacks_are_hidden_but_available() {
-        let button = Rect::default();
+        let buttons = LauncherButtons::default();
         assert_eq!(
-            action_for_event(&key(KeyCode::Enter), button),
-            Some(DashboardAction::Open)
+            action_for_event(&key(KeyCode::Enter), buttons),
+            Some(LauncherEvent::Action(DashboardAction::Open))
         );
         assert_eq!(
-            action_for_event(&key(KeyCode::Char('o')), button),
-            Some(DashboardAction::Open)
+            action_for_event(&key(KeyCode::Char('o')), buttons),
+            Some(LauncherEvent::Action(DashboardAction::Open))
         );
         assert_eq!(
-            action_for_event(&key(KeyCode::Char('q')), button),
-            Some(DashboardAction::Quit)
+            action_for_event(&key(KeyCode::Char('q')), buttons),
+            Some(LauncherEvent::Action(DashboardAction::Quit))
         );
-        assert_eq!(action_for_event(&key(KeyCode::Char('s')), button), None);
-        assert_eq!(action_for_event(&key(KeyCode::Char('r')), button), None);
+        assert_eq!(action_for_event(&key(KeyCode::Char('s')), buttons), None);
+        assert_eq!(action_for_event(&key(KeyCode::Char('r')), buttons), None);
+    }
+
+    #[test]
+    fn copy_key_button_click_copies_terminal_key() {
+        let buttons = LauncherButtons {
+            open: Rect::new(10, 5, 10, 1),
+            copy_key: Some(Rect::new(21, 5, 10, 1)),
+        };
+
+        assert_eq!(
+            action_for_event(&mouse(25, 5), buttons),
+            Some(LauncherEvent::CopyTerminalAccessKey)
+        );
+    }
+
+    #[test]
+    fn open_button_does_not_cover_terminal_access_key_line() {
+        let card = top_centered_card(Rect::new(0, 0, 80, 24), 52, 9);
+        let buttons = button_rects(card, true);
+        let terminal_access_key_line_y = card.y + 3;
+        let shortcut_hint_line_y = card.y + 6;
+
+        assert_ne!(buttons.open.y, terminal_access_key_line_y);
+        assert_ne!(buttons.open.y, shortcut_hint_line_y);
+        assert_ne!(
+            buttons.copy_key.expect("copy key button").y,
+            terminal_access_key_line_y
+        );
+        assert_ne!(
+            buttons.copy_key.expect("copy key button").y,
+            shortcut_hint_line_y
+        );
+    }
+
+    #[test]
+    fn open_button_does_not_cover_shortcut_hint_without_terminal_key() {
+        let card = top_centered_card(Rect::new(0, 0, 80, 24), 52, 7);
+        let buttons = button_rects(card, false);
+        let shortcut_hint_line_y = card.y + 4;
+
+        assert_ne!(buttons.open.y, shortcut_hint_line_y);
+        assert!(buttons.copy_key.is_none());
     }
 
     #[test]

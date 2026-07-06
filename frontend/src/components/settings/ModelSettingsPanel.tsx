@@ -1,5 +1,13 @@
+import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
-import { Check, Power, RefreshCw, RotateCw, Terminal } from "lucide-react";
+import {
+  Check,
+  KeyRound,
+  Power,
+  RefreshCw,
+  RotateCw,
+  Terminal,
+} from "lucide-react";
 import type {
   ModelSettings,
   ModelTierKey,
@@ -25,6 +33,10 @@ export default function ModelSettingsPanel({
   error,
   saving,
   terminalDisabled,
+  terminalAccessRequired,
+  terminalAccessAuthorized,
+  terminalAccessBusy,
+  terminalAccessError,
   piLoginSession,
   piLoginBusy,
   piLoginError,
@@ -33,6 +45,7 @@ export default function ModelSettingsPanel({
   savedComplete,
   onChange,
   onSave,
+  onAuthorizeTerminalAccess,
   onStartPiLogin,
   onClosePiLogin,
   onReload,
@@ -43,6 +56,10 @@ export default function ModelSettingsPanel({
   error: string | null;
   saving: boolean;
   terminalDisabled: boolean;
+  terminalAccessRequired: boolean;
+  terminalAccessAuthorized: boolean;
+  terminalAccessBusy: boolean;
+  terminalAccessError: string | null;
   piLoginSession: TerminalSession | null;
   piLoginBusy: boolean;
   piLoginError: string | null;
@@ -51,13 +68,17 @@ export default function ModelSettingsPanel({
   savedComplete: boolean;
   onChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
   onSave: () => void;
+  onAuthorizeTerminalAccess: (key: string) => Promise<boolean>;
   onStartPiLogin: () => Promise<void>;
   onClosePiLogin: () => Promise<void>;
   onReload: () => void;
 }) {
   const [selectedTier, setSelectedTier] = useState<ModelTierKey>("medium");
+  const [accessKey, setAccessKey] = useState("");
   const setting = settings[selectedTier];
   const disabled = rpcStatus !== "ready" || models.length === 0;
+  const needsTerminalAccess =
+    terminalAccessRequired && !terminalAccessAuthorized;
   const modelOptions = useMemo(
     () => [
       { value: "", label: "选择模型" },
@@ -82,6 +103,14 @@ export default function ModelSettingsPanel({
     { label: "保存", done: savedComplete },
   ];
   const currentStep = steps.findIndex((step) => !step.done);
+
+  async function authorizeTerminal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const unlocked = await onAuthorizeTerminalAccess(accessKey);
+    if (unlocked) {
+      setAccessKey("");
+    }
+  }
 
   return (
     <div
@@ -263,6 +292,33 @@ export default function ModelSettingsPanel({
               )}
             </div>
           </header>
+          {needsTerminalAccess ? (
+            <form
+              className="terminal-node__access nodrag"
+              onSubmit={(event) => void authorizeTerminal(event)}
+            >
+              <KeyRound size={16} />
+              <label>
+                <span>终端密钥</span>
+                <input
+                  value={accessKey}
+                  type="password"
+                  autoComplete="off"
+                  placeholder="TUI 中显示的本次启动密钥"
+                  onChange={(event) => setAccessKey(event.target.value)}
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={terminalAccessBusy || !accessKey.trim()}
+              >
+                启用终端
+              </button>
+              <small>
+                {terminalAccessError ?? "验证通过后可启动 Pi 登录终端"}
+              </small>
+            </form>
+          ) : null}
           {piLoginSession ? (
             <TerminalSessionView
               projectId={piLoginSession.project_id}

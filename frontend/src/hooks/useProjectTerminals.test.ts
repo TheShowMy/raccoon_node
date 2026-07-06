@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createProjectTerminal,
   deleteProjectTerminal,
+  getTerminalAccessStatus,
   getProjectTerminals,
   getTerminalCommandProfiles,
+  unlockTerminalAccess,
 } from "../api/client";
 import type { TerminalSession } from "../types/api";
 import { useProjectTerminals } from "./useProjectTerminals";
@@ -14,9 +16,11 @@ import { useProjectTerminals } from "./useProjectTerminals";
 vi.mock("../api/client", () => ({
   createProjectTerminal: vi.fn(),
   deleteProjectTerminal: vi.fn(),
+  getTerminalAccessStatus: vi.fn(),
   getProjectTerminals: vi.fn(),
   getTerminalCommandProfiles: vi.fn(),
   putTerminalCommandProfiles: vi.fn(),
+  unlockTerminalAccess: vi.fn(),
 }));
 
 describe("useProjectTerminals", () => {
@@ -35,6 +39,16 @@ describe("useProjectTerminals", () => {
     vi.resetAllMocks();
     vi.mocked(getProjectTerminals).mockResolvedValue([]);
     vi.mocked(getTerminalCommandProfiles).mockResolvedValue([]);
+    vi.mocked(getTerminalAccessStatus).mockResolvedValue({
+      required: false,
+      authorized: true,
+      expires_at: null,
+    });
+    vi.mocked(unlockTerminalAccess).mockResolvedValue({
+      required: true,
+      authorized: true,
+      expires_at: "2026-07-03T12:00:00Z",
+    });
     vi.stubGlobal("localStorage", {
       getItem: vi.fn(() => "false"),
       setItem: vi.fn(),
@@ -45,7 +59,7 @@ describe("useProjectTerminals", () => {
 
   it("always starts collapsed and does not persist toggles", async () => {
     const { result } = renderHook(() =>
-      useProjectTerminals("project-1", false),
+      useProjectTerminals("project-1", undefined, false),
     );
 
     await waitFor(() => expect(getProjectTerminals).toHaveBeenCalled());
@@ -58,7 +72,7 @@ describe("useProjectTerminals", () => {
 
   it("resets to collapsed when the project changes", async () => {
     const { result, rerender } = renderHook(
-      ({ projectId }) => useProjectTerminals(projectId, false),
+      ({ projectId }) => useProjectTerminals(projectId, undefined, false),
       { initialProps: { projectId: "project-1" } },
     );
 
@@ -73,7 +87,7 @@ describe("useProjectTerminals", () => {
   it("starts an independent Pi login session without opening the project terminal", async () => {
     vi.mocked(createProjectTerminal).mockResolvedValue(piSession("pi-1"));
     const { result } = renderHook(() =>
-      useProjectTerminals("project-1", false),
+      useProjectTerminals("project-1", undefined, false),
     );
     await waitFor(() => expect(getProjectTerminals).toHaveBeenCalled());
 
@@ -94,7 +108,7 @@ describe("useProjectTerminals", () => {
       .mockResolvedValueOnce(piSession("pi-2"));
     vi.mocked(deleteProjectTerminal).mockResolvedValue([]);
     const { result } = renderHook(() =>
-      useProjectTerminals("project-1", false),
+      useProjectTerminals("project-1", undefined, false),
     );
     await waitFor(() => expect(getProjectTerminals).toHaveBeenCalled());
 
@@ -115,7 +129,7 @@ describe("useProjectTerminals", () => {
       .mockRejectedValueOnce(new Error("Pi 启动失败"));
     vi.mocked(deleteProjectTerminal).mockResolvedValue([]);
     const { result } = renderHook(() =>
-      useProjectTerminals("project-1", false),
+      useProjectTerminals("project-1", undefined, false),
     );
     await waitFor(() => expect(getProjectTerminals).toHaveBeenCalled());
 

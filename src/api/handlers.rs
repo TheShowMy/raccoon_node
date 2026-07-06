@@ -30,8 +30,8 @@ use crate::models::{
     RequirementConfirmRequest, RequirementConversationResponse, RequirementEvent,
     RequirementEventEmitter, RequirementMessageRequest, RequirementStatus,
     RequirementTaskDetailResponse, RequirementTaskExecutionInput, RpcStatus, SessionTranscriptPage,
-    TerminalClientMessage, TerminalCommandProfile, TerminalCommandProfilesUpdate,
-    TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
+    TerminalAccessRequest, TerminalAccessStatus, TerminalClientMessage, TerminalCommandProfile,
+    TerminalCommandProfilesUpdate, TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
 };
 use crate::store::{ProjectScheduleAction, TaskExecutionDisposition};
 use crate::{config::CommitMode, error::AppError};
@@ -556,6 +556,36 @@ pub async fn list_project_terminals(
     Ok(Json(state.terminal_manager.list(&project_id)))
 }
 
+pub async fn get_terminal_access_status(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<String>,
+) -> Result<Json<TerminalAccessStatus>, AppError> {
+    {
+        let store = state.store.read().await;
+        store.project_root(&project_id)?;
+    }
+    Ok(Json(
+        state
+            .terminal_access
+            .status(terminal_access_required(&state).await),
+    ))
+}
+
+pub async fn unlock_terminal_access(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(payload): Json<TerminalAccessRequest>,
+) -> Result<Json<TerminalAccessStatus>, AppError> {
+    {
+        let store = state.store.read().await;
+        store.project_root(&project_id)?;
+    }
+    if !terminal_access_required(&state).await {
+        return Ok(Json(state.terminal_access.status(false)));
+    }
+    Ok(Json(state.terminal_access.authorize(&payload.key)?))
+}
+
 pub async fn create_project_terminal(
     State(state): State<AppState>,
     AxumPath(project_id): AxumPath<String>,
@@ -623,14 +653,26 @@ pub async fn terminal_websocket(
     if session.metadata().project_id != project_id {
         return Err(AppError::not_found("终端不存在"));
     }
-    Ok(websocket.on_upgrade(move |socket| handle_terminal_socket(socket, session)))
+    let terminal_access = state.terminal_access.clone();
+    let authorization_required = terminal_access_required(&state).await;
+    Ok(websocket.on_upgrade(move |socket| {
+        handle_terminal_socket(socket, session, terminal_access, authorization_required)
+    }))
 }
 
 async fn handle_terminal_socket(
     mut socket: WebSocket,
     session: std::sync::Arc<crate::api::terminal::TerminalSessionRuntime>,
+    terminal_access: std::sync::Arc<crate::api::terminal::TerminalAccess>,
+    authorization_required: bool,
 ) {
     let mut output_rx = session.subscribe();
+    let access_duration = if authorization_required {
+        terminal_access.duration_until_expiry().unwrap_or_default()
+    } else {
+        std::time::Duration::from_secs(365 * 24 * 60 * 60)
+    };
+    let mut access_expiry = Box::pin(tokio::time::sleep(access_duration));
     let status_message = TerminalServerMessage::Status {
         status: session.metadata().status,
         exit_code: session.metadata().exit_code,
@@ -639,6 +681,14 @@ async fn handle_terminal_socket(
         && socket.send(Message::Text(message.into())).await.is_err()
     {
         return;
+    }
+    for message in session.output_history() {
+        let Ok(data) = serde_json::to_string(&message) else {
+            continue;
+        };
+        if socket.send(Message::Text(data.into())).await.is_err() {
+            return;
+        }
     }
     loop {
         tokio::select! {
@@ -657,6 +707,15 @@ async fn handle_terminal_socket(
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
+            }
+            _ = &mut access_expiry, if authorization_required => {
+                let message = TerminalServerMessage::Error {
+                    message: "终端授权已过期，请重新输入密钥".to_owned(),
+                };
+                if let Ok(data) = serde_json::to_string(&message) {
+                    let _ = socket.send(Message::Text(data.into())).await;
+                }
+                break;
             }
             inbound = socket.recv() => {
                 let Some(Ok(message)) = inbound else { break; };
@@ -690,12 +749,20 @@ async fn handle_terminal_socket(
 }
 
 async fn ensure_terminal_allowed(state: &AppState) -> Result<(), AppError> {
-    if state.config.read().await.host == "0.0.0.0" {
-        return Err(AppError::bad_request(
-            "当前服务监听 0.0.0.0，出于安全考虑已禁用项目终端",
-        ));
+    if terminal_access_required(state).await {
+        state.terminal_access.ensure_authorized()?;
     }
     Ok(())
+}
+
+async fn terminal_access_required(state: &AppState) -> bool {
+    let config = state.config.read().await;
+    state
+        .runtime
+        .effective_host
+        .as_deref()
+        .unwrap_or(&config.host)
+        == "0.0.0.0"
 }
 
 pub async fn project_chat_events(

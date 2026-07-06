@@ -286,6 +286,12 @@ export type TerminalSession = {
   updated_at: string;
 };
 
+export type TerminalAccessStatus = {
+  required: boolean;
+  authorized: boolean;
+  expires_at: string | null;
+};
+
 export type TerminalCommandProfile = {
   id: string;
   name: string;
@@ -562,6 +568,10 @@ export type StartNodeData =
       modelError: string | null;
       savingModels: boolean;
       terminalDisabled: boolean;
+      terminalAccessRequired: boolean;
+      terminalAccessAuthorized: boolean;
+      terminalAccessBusy: boolean;
+      terminalAccessError: string | null;
       piLoginSession: TerminalSession | null;
       piLoginBusy: boolean;
       piLoginError: string | null;
@@ -579,6 +589,7 @@ export type StartNodeData =
       onModelChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
       onSaveModels: () => Promise<void>;
       onReloadModels: () => Promise<void>;
+      onAuthorizeTerminalAccess: (key: string) => Promise<boolean>;
       onStartPiLogin: () => Promise<void>;
       onClosePiLogin: () => Promise<void>;
     }
@@ -652,7 +663,13 @@ export type StartNodeData =
       error: string | null;
       terminalDisabled: boolean;
       terminalDisabledReason?: string;
+      terminalAccessRequired: boolean;
+      terminalAccessAuthorized: boolean;
+      terminalAccessExpiresAt: string | null;
+      terminalAccessBusy: boolean;
+      terminalAccessError: string | null;
       onToggleCollapsed: () => void;
+      onAuthorizeTerminalAccess: (key: string) => Promise<boolean>;
       onCreateTerminal: (
         command?: string | null,
         title?: string | null,

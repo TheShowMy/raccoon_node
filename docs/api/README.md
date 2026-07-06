@@ -416,6 +416,46 @@ SSE 不作为状态存储；重连后应重新获取项目画布。
 存在运行中的项目问答、需求分析、排队或执行任务时返回 `409`。TUI 与
 `--no-tui` 模式均会响应此生命周期命令。
 
+## Web 终端授权
+
+监听地址为 `0.0.0.0` 时，项目终端 API 需要先用本次启动的终端密钥授权。密钥只在
+TUI 中显示，每次进程启动随机生成，不写入 SQLite 或配置文件；授权成功后 12 小时内有效。
+监听地址不是 `0.0.0.0` 时，接口返回 `required: false`，终端沿用本机访问限制。
+
+### 查询授权状态
+
+`GET /api/projects/current/terminal-access`
+
+```json
+{
+  "required": true,
+  "authorized": false,
+  "expires_at": null
+}
+```
+
+### 提交启动密钥
+
+`POST /api/projects/current/terminal-access`
+
+```json
+{
+  "key": "ABCD-EFGH-JKLM"
+}
+```
+
+成功后返回：
+
+```json
+{
+  "required": true,
+  "authorized": true,
+  "expires_at": "2026-07-06T12:00:00Z"
+}
+```
+
+授权过期后，后续终端 HTTP API 会重新要求密钥；已建立的终端 WebSocket 会收到错误消息并断开。
+
 ## 模型设置
 
 ### 获取设置
