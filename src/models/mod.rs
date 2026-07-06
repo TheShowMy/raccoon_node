@@ -525,29 +525,56 @@ pub struct RequirementTaskDetailResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequirementTaskSessionResponse {
-    pub messages: Vec<RequirementTaskSessionMessage>,
-    pub truncated: bool,
+pub struct SessionTranscriptPage {
+    pub entries: Vec<SessionEntry>,
+    pub next_before: Option<usize>,
+    pub invalid_lines: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequirementTaskSessionMessage {
-    pub id: String,
-    pub role: String,
-    pub text: String,
-    pub thinking: Option<String>,
-    pub tools: Vec<RequirementTaskSessionTool>,
-    pub timestamp: String,
+pub struct SessionEntry {
+    pub cursor: usize,
+    pub source: String,
+    pub line: usize,
+    pub kind: String,
+    pub id: Option<String>,
+    pub role: Option<String>,
+    pub timestamp: Option<String>,
+    pub blocks: Vec<SessionContentBlock>,
+    pub raw: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequirementTaskSessionTool {
-    pub id: String,
-    pub name: String,
-    pub arguments: Value,
-    pub output: String,
-    pub diff: Option<String>,
-    pub is_error: bool,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionContentBlock {
+    Text {
+        text: String,
+    },
+    Thinking {
+        text: String,
+    },
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: Value,
+    },
+    ToolResult {
+        tool_call_id: String,
+        name: String,
+        output: String,
+        diff: Option<String>,
+        is_error: bool,
+    },
+    Unknown {
+        block_type: String,
+        raw: Value,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectFileContent {
+    pub path: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

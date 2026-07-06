@@ -17,14 +17,12 @@ import type {
   RequirementRecoveryStage,
   RequirementReviewStatus,
   RequirementTaskDetail,
-  RequirementTaskSession,
-  RequirementTaskSessionMessage,
-  RequirementTaskSessionTool,
   StartNodeData,
   TraceUsage,
 } from "../../types/api";
 import { getRequirementTask, getTaskSession } from "../../api/client";
 import { readError, tierLabels, traceFromMetadata } from "../../utils/format";
+import SessionTranscript from "../ui/SessionTranscript";
 
 const taskStatusText: Record<RequirementExecutionTask["status"], string> = {
   pending: "待执行",
@@ -45,15 +43,6 @@ const taskKindText: Record<RequirementExecutionTask["kind"], string> = {
   review_sub_agent: "审核 Sub Agent",
   branch_merge: "分支合并",
   merge_review: "合并审核",
-};
-
-type TimelineSessionMessage = RequirementTaskSessionMessage & {
-  timelineId: string;
-  source: string;
-};
-
-type TimelineSession = Omit<RequirementTaskSession, "messages"> & {
-  messages: TimelineSessionMessage[];
 };
 
 export default function RequirementTaskNode({
@@ -243,9 +232,6 @@ function TaskDetailDialog({
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<RequirementTaskDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [session, setSession] = useState<TimelineSession | null>(null);
-  const [sessionError, setSessionError] = useState<string | null>(null);
-  const [sessionLoading, setSessionLoading] = useState(false);
   const displayedTask = detail?.task ?? task;
   const displayedReviews = detail?.reviews ?? reviews;
   const displayedDependencies = detail?.dependencies ?? dependencies;
@@ -256,22 +242,13 @@ function TaskDetailDialog({
     if (!open) {
       setDetail(null);
       setDetailError(null);
-      setSession(null);
-      setSessionError(null);
-      setSessionLoading(false);
       return;
     }
 
     let cancelled = false;
     const load = async () => {
-      setSessionLoading(true);
-      let loadedDetail: RequirementTaskDetail = {
-        task,
-        reviews,
-        dependencies,
-      };
       try {
-        loadedDetail = await getRequirementTask(requirementId, task.id);
+        const loadedDetail = await getRequirementTask(requirementId, task.id);
         if (!cancelled) {
           setDetail(loadedDetail);
           setDetailError(null);
@@ -279,60 +256,6 @@ function TaskDetailDialog({
       } catch (reason) {
         if (!cancelled) setDetailError(readError(reason));
       }
-
-      const sources = [
-        {
-          task: loadedDetail.task,
-          label:
-            loadedDetail.task.kind === "implementation"
-              ? "代码节点"
-              : taskKindText[loadedDetail.task.kind],
-        },
-        ...(loadedDetail.task.kind === "implementation"
-          ? loadedDetail.reviews
-              .filter((review) => review.kind === "review_summary")
-              .map((review) => ({
-                task: review,
-                label: `审核汇总 · ${review.title}`,
-              }))
-          : []),
-      ];
-      const results = await Promise.allSettled(
-        sources.map(async (source) => ({
-          source,
-          session: await getTaskSession(requirementId, source.task.id),
-        })),
-      );
-      if (cancelled) return;
-
-      const errors: string[] = [];
-      const messages: TimelineSessionMessage[] = [];
-      let truncated = false;
-      results.forEach((result, sourceIndex) => {
-        const source = sources[sourceIndex];
-        if (result.status === "rejected") {
-          errors.push(`${source.label}：${readError(result.reason)}`);
-          return;
-        }
-        truncated ||= result.value.session.truncated;
-        result.value.session.messages.forEach((message, messageIndex) => {
-          messages.push({
-            ...message,
-            timelineId: `${source.task.id}:${message.id || messageIndex}`,
-            source: source.label,
-          });
-        });
-      });
-      messages.sort((left, right) => {
-        const leftTime = Date.parse(left.timestamp);
-        const rightTime = Date.parse(right.timestamp);
-        if (Number.isNaN(leftTime)) return Number.isNaN(rightTime) ? 0 : 1;
-        if (Number.isNaN(rightTime)) return -1;
-        return leftTime - rightTime;
-      });
-      setSession({ messages, truncated });
-      setSessionError(errors.length > 0 ? errors.join("\n") : null);
-      setSessionLoading(false);
     };
     void load();
 
@@ -407,11 +330,17 @@ function TaskDetailDialog({
             reviews={displayedReviews}
             dependencies={displayedDependencies}
           />
-          <TaskSessionMessages
-            session={session}
-            error={sessionError}
-            loading={sessionLoading}
-          />
+          <section className="task-detail-dialog__section task-detail-dialog__section--wide">
+            <h3>会话记录</h3>
+            <SessionTranscript
+              scopeKey={`${requirementId}:${task.id}`}
+              loadPage={(before) =>
+                getTaskSession(requirementId, task.id, before)
+              }
+              title="实现与审核 JSONL 时间线"
+              initiallyOpen
+            />
+          </section>
           <section className="task-detail-dialog__section task-detail-dialog__section--wide">
             <h3>恢复信息</h3>
             <dl className="task-detail-dialog__info-list task-detail-dialog__info-list--embedded">
@@ -855,209 +784,6 @@ function TaskUsage({ usage }: { usage: TraceUsage }) {
       </dl>
     </section>
   );
-}
-
-function TaskSessionMessages({
-  session,
-  error,
-  loading,
-}: {
-  session: TimelineSession | null;
-  error: string | null;
-  loading: boolean;
-}) {
-  const [showSystem, setShowSystem] = useState(false);
-  const roleLabels: Record<string, string> = {
-    user: "用户",
-    assistant: "助手",
-    system: "系统",
-    toolResult: "工具结果",
-  };
-
-  if (loading) {
-    return (
-      <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-        <h3>会话记录</h3>
-        <p className="task-detail-dialog__empty">加载中…</p>
-      </section>
-    );
-  }
-
-  if (error && (!session || session.messages.length === 0)) {
-    return (
-      <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-        <h3>会话记录</h3>
-        <p className="task-detail-dialog__empty">{error}</p>
-      </section>
-    );
-  }
-
-  if (!session || session.messages.length === 0) {
-    return (
-      <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-        <h3>会话记录</h3>
-        <p className="task-detail-dialog__empty">暂无会话记录</p>
-      </section>
-    );
-  }
-
-  const visibleMessages = showSystem
-    ? session.messages
-    : session.messages.filter((message) => message.role !== "system");
-  const hiddenCount = session.messages.length - visibleMessages.length;
-
-  return (
-    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-      <h3>会话记录</h3>
-      {error ? <p className="task-session-messages__warning">{error}</p> : null}
-      <div className="task-session-messages">
-        {visibleMessages.map((message) => (
-          <article
-            key={message.timelineId}
-            className={`task-session-message task-session-message--${message.role}`}
-          >
-            <header className="task-session-message__header">
-              <span>
-                <b className="task-session-message__source">{message.source}</b>
-                <span className="task-session-message__role">
-                  {roleLabels[message.role] ?? message.role}
-                </span>
-              </span>
-              <time dateTime={message.timestamp}>
-                {message.timestamp
-                  ? new Date(message.timestamp).toLocaleString("zh-CN")
-                  : "未知时间"}
-              </time>
-            </header>
-            {message.text ? (
-              <details className="task-session-message__content">
-                <summary>消息内容</summary>
-                <pre>{message.text}</pre>
-              </details>
-            ) : null}
-            {message.thinking ? (
-              <details className="task-session-message__thinking">
-                <summary>思考过程</summary>
-                <pre>{message.thinking}</pre>
-              </details>
-            ) : null}
-            {message.tools.length > 0 ? (
-              <details className="task-session-message__tools">
-                <summary>工具调用（{message.tools.length}）</summary>
-                <div className="task-session-tools">
-                  {message.tools.map((tool, index) => (
-                    <SessionToolCard
-                      key={tool.id || `${tool.name}-${index}`}
-                      tool={tool}
-                    />
-                  ))}
-                </div>
-              </details>
-            ) : null}
-          </article>
-        ))}
-      </div>
-      {hiddenCount > 0 ? (
-        <button
-          type="button"
-          className="task-session-messages__toggle"
-          onClick={() => setShowSystem((prev) => !prev)}
-        >
-          {showSystem
-            ? `隐藏 ${hiddenCount} 条 system 消息`
-            : `显示 ${hiddenCount} 条 system 消息`}
-        </button>
-      ) : null}
-    </section>
-  );
-}
-
-function SessionToolCard({ tool }: { tool: RequirementTaskSessionTool }) {
-  const args = asRecord(tool.arguments);
-  const path =
-    typeof args.path === "string"
-      ? args.path
-      : typeof args.file_path === "string"
-        ? args.file_path
-        : null;
-  const argumentDiff =
-    typeof args.patch === "string"
-      ? args.patch
-      : typeof args.diff === "string"
-        ? args.diff
-        : null;
-  const diff = tool.diff ?? argumentDiff;
-  const writeContent =
-    tool.name === "write" && typeof args.content === "string"
-      ? args.content
-      : null;
-  const additions = diff
-    ? diff
-        .split("\n")
-        .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
-        .length
-    : 0;
-  const removals = diff
-    ? diff
-        .split("\n")
-        .filter((line) => line.startsWith("-") && !line.startsWith("---"))
-        .length
-    : 0;
-
-  return (
-    <details className={`task-session-tool ${tool.is_error ? "is-error" : ""}`}>
-      <summary>
-        <strong>{tool.name}</strong>
-        {path ? <span>{path}</span> : null}
-        {diff ? (
-          <span className="task-session-tool__stats">
-            <b>+{additions}</b>
-            <i>-{removals}</i>
-          </span>
-        ) : writeContent ? (
-          <span>{writeContent.split("\n").length} 行</span>
-        ) : null}
-      </summary>
-      {diff ? <SessionDiff diff={diff} /> : null}
-      {writeContent ? (
-        <pre className="task-session-tool__code">{writeContent}</pre>
-      ) : null}
-      {!diff && !writeContent ? (
-        <pre>{JSON.stringify(tool.arguments, null, 2)}</pre>
-      ) : null}
-      {tool.output ? (
-        <pre className="task-session-tool__output">{tool.output}</pre>
-      ) : null}
-    </details>
-  );
-}
-
-function SessionDiff({ diff }: { diff: string }) {
-  return (
-    <pre className="task-session-tool__diff">
-      {diff.split("\n").map((line, index) => {
-        const kind =
-          line.startsWith("+") && !line.startsWith("+++")
-            ? "added"
-            : line.startsWith("-") && !line.startsWith("---")
-              ? "removed"
-              : line.startsWith("@@")
-                ? "hunk"
-                : "context";
-        return (
-          <span className={`is-${kind}`} key={`${index}-${line}`}>
-            {line || " "}
-          </span>
-        );
-      })}
-    </pre>
-  );
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : {};
 }
 
 function buildReviewFeedback(

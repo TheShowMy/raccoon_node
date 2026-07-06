@@ -31,7 +31,9 @@ describe("ChatMessageBubble", () => {
       </ChatMessageBubble>,
     );
 
-    const body = screen.getByText("answer text").parentElement;
+    const body = screen
+      .getByText("answer text")
+      .closest(".rq-message__body") as HTMLElement;
     const children = screen.getByTestId("process-card")
       .parentElement as HTMLElement;
     expect(body).toContainElement(children);

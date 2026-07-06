@@ -231,27 +231,46 @@ export type RequirementTaskDetail = {
   dependencies: RequirementExecutionTask[];
 };
 
-export type RequirementTaskSessionMessage = {
-  id: string;
-  role: string;
-  text: string;
-  thinking?: string;
-  tools: RequirementTaskSessionTool[];
-  timestamp: string;
+export type SessionTranscriptPage = {
+  entries: SessionEntry[];
+  next_before: number | null;
+  invalid_lines: number;
 };
 
-export type RequirementTaskSessionTool = {
-  id: string;
-  name: string;
-  arguments: unknown;
-  output: string;
-  diff?: string;
-  is_error: boolean;
+export type SessionEntry = {
+  cursor: number;
+  source: string;
+  line: number;
+  kind: string;
+  id: string | null;
+  role: string | null;
+  timestamp: string | null;
+  blocks: SessionContentBlock[];
+  raw: unknown;
 };
 
-export type RequirementTaskSession = {
-  messages: RequirementTaskSessionMessage[];
-  truncated: boolean;
+export type SessionContentBlock =
+  | { type: "text"; text: string }
+  | { type: "thinking"; text: string }
+  | {
+      type: "tool_call";
+      id: string;
+      name: string;
+      arguments: unknown;
+    }
+  | {
+      type: "tool_result";
+      tool_call_id: string;
+      name: string;
+      output: string;
+      diff: string | null;
+      is_error: boolean;
+    }
+  | { type: "unknown"; block_type: string; raw: unknown };
+
+export type ProjectFileContent = {
+  path: string;
+  content: string;
 };
 
 export type TerminalSessionStatus = "starting" | "running" | "exited";

@@ -22,13 +22,14 @@ use crate::api::handlers::{
     append_requirement_message, cancel_requirement_analysis, confirm_requirement,
     create_project_terminal, create_requirement, delete_project_terminal, delete_requirement,
     get_basic_settings, get_current_project, get_model_settings, get_project_attachment,
-    get_project_canvas, get_project_chat, get_project_files, get_requirement_conversation,
-    get_requirement_task, get_requirement_task_session, get_terminal_command_profiles,
-    list_project_terminals, plan_requirement_execution, project_chat_events, put_basic_settings,
-    put_model_settings, put_terminal_command_profiles, recover_task_group, reload_model_settings,
-    requirement_events, reset_project_chat, restart_system, retry_requirement_analysis,
-    send_project_chat_message, spawn_startup_requirement_scheduler,
-    submit_requirement_clarifications, terminal_websocket, upload_project_attachment,
+    get_project_canvas, get_project_chat, get_project_chat_session, get_project_file_content,
+    get_project_files, get_requirement_conversation, get_requirement_session, get_requirement_task,
+    get_requirement_task_session, get_terminal_command_profiles, list_project_terminals,
+    plan_requirement_execution, project_chat_events, put_basic_settings, put_model_settings,
+    put_terminal_command_profiles, recover_task_group, reload_model_settings, requirement_events,
+    reset_project_chat, restart_system, retry_requirement_analysis, send_project_chat_message,
+    spawn_startup_requirement_scheduler, submit_requirement_clarifications, terminal_websocket,
+    upload_project_attachment,
 };
 use crate::pi::PiRpcModelProvider;
 use crate::store::JsonStore;
@@ -204,6 +205,10 @@ fn build_app_with_startup_requirements(
         .route("/projects/{id}/canvas", get(get_project_canvas))
         .route("/projects/{id}/files", get(get_project_files))
         .route(
+            "/projects/{id}/files/content",
+            get(get_project_file_content),
+        )
+        .route(
             "/projects/{id}/attachments",
             post(upload_project_attachment),
         )
@@ -215,6 +220,7 @@ fn build_app_with_startup_requirements(
             "/projects/{id}/chat",
             get(get_project_chat).delete(reset_project_chat),
         )
+        .route("/projects/{id}/chat/session", get(get_project_chat_session))
         .route(
             "/projects/{id}/chat/messages",
             post(send_project_chat_message),
@@ -248,6 +254,7 @@ fn build_app_with_startup_requirements(
             "/requirements/{id}/conversation",
             get(get_requirement_conversation),
         )
+        .route("/requirements/{id}/session", get(get_requirement_session))
         .route(
             "/requirements/{id}/clarifications",
             post(submit_requirement_clarifications),

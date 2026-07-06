@@ -1,12 +1,12 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     io::BufRead,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime},
 };
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 pub mod db;
@@ -24,9 +24,8 @@ use crate::models::{
     RequirementRecoveryStage, RequirementReviewRound, RequirementReviewRoundStatus,
     RequirementReviewStatus, RequirementReviewStep, RequirementStatus,
     RequirementTaskDetailResponse, RequirementTaskExecutionInput, RequirementTaskExecutionOutput,
-    RequirementTaskKind, RequirementTaskSessionMessage, RequirementTaskSessionResponse,
-    RequirementTaskSessionTool, RequirementTaskStatus, TerminalCommandProfile,
-    TerminalCommandProfileUpdate,
+    RequirementTaskKind, RequirementTaskStatus, SessionContentBlock, SessionEntry,
+    SessionTranscriptPage, TerminalCommandProfile, TerminalCommandProfileUpdate,
 };
 use crate::utils::commit_staged_changes;
 use crate::utils::effective_model_tier;
@@ -479,11 +478,11 @@ impl JsonStore {
         })
     }
 
-    pub fn requirement_task_session_path(
+    pub fn requirement_task_session_sources(
         &self,
         requirement_id: &str,
         task_id: &str,
-    ) -> Result<PathBuf, AppError> {
+    ) -> Result<Vec<(String, PathBuf)>, AppError> {
         let requirement_index = self.requirement_index(requirement_id)?;
         let plan = self.data.requirements[requirement_index]
             .execution_plan
@@ -494,122 +493,117 @@ impl JsonStore {
             .iter()
             .find(|task| task.id == task_id)
             .ok_or_else(|| AppError::not_found("任务不存在"))?;
-        let session_file = task
-            .pi_session_file
-            .as_deref()
-            .ok_or_else(|| AppError::not_found("任务没有会话记录"))?;
-        self.resolve_managed_session_path(session_file)
-    }
-
-    pub fn read_task_session_file(path: &Path) -> Result<RequirementTaskSessionResponse, AppError> {
-        let file = std::fs::File::open(path)
-            .map_err(|_| AppError::not_found("会话记录不存在或无法读取"))?;
-        let reader = std::io::BufReader::new(file);
-        let mut messages: Vec<RequirementTaskSessionMessage> = Vec::new();
-        let mut tools_by_id: HashMap<String, (usize, usize)> = HashMap::new();
-        let mut skipped_lines = 0usize;
-
-        for line in reader.lines() {
-            let line = match line {
-                Ok(line) => line,
-                Err(_) => {
-                    skipped_lines += 1;
-                    continue;
-                }
-            };
-            if line.trim().is_empty() {
-                continue;
-            }
-            let value: serde_json::Value = match serde_json::from_str(&line) {
-                Ok(v) => v,
-                Err(_) => {
-                    skipped_lines += 1;
-                    continue;
-                }
-            };
-            if value.get("type").and_then(|t| t.as_str()) != Some("message") {
-                continue;
-            }
-            let message = match value.get("message") {
-                Some(m) => m,
-                None => {
-                    skipped_lines += 1;
-                    continue;
-                }
-            };
-            let role = message
-                .get("role")
-                .and_then(|r| r.as_str())
-                .unwrap_or("unknown")
-                .to_owned();
-            let id = value
-                .get("id")
-                .and_then(|i| i.as_str())
-                .unwrap_or("")
-                .to_owned();
-            let timestamp = value
-                .get("timestamp")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_owned();
-            if role == "toolResult" {
-                let Some(tool) = parse_session_tool_result(message) else {
-                    skipped_lines += 1;
-                    continue;
-                };
-                if let Some(&(message_index, tool_index)) = tools_by_id.get(&tool.id) {
-                    let existing = &mut messages[message_index].tools[tool_index];
-                    existing.output = tool.output;
-                    existing.diff = tool.diff;
-                    existing.is_error = tool.is_error;
+        let mut sources = Vec::new();
+        if let Some(session_file) = task.pi_session_file.as_deref() {
+            sources.push((
+                if task.kind == RequirementTaskKind::Implementation {
+                    "代码节点".to_owned()
                 } else {
-                    messages.push(RequirementTaskSessionMessage {
-                        id,
-                        role,
-                        text: String::new(),
-                        thinking: None,
-                        tools: vec![tool],
-                        timestamp,
-                    });
+                    task.title.clone()
+                },
+                self.resolve_managed_session_path(session_file)?,
+            ));
+        }
+        if task.kind == RequirementTaskKind::Implementation {
+            for review in plan.tasks.iter().filter(|candidate| {
+                candidate.kind == RequirementTaskKind::ReviewSummary
+                    && candidate.review_for.as_deref() == Some(task_id)
+            }) {
+                if let Some(session_file) = review.pi_session_file.as_deref() {
+                    sources.push((
+                        format!("审核汇总 · {}", review.title),
+                        self.resolve_managed_session_path(session_file)?,
+                    ));
                 }
-                continue;
             }
-            let (text, thinking, tools) = parse_session_message_content(message);
-            let message_index = messages.len();
-            for (tool_index, tool) in tools.iter().enumerate() {
-                tools_by_id.insert(tool.id.clone(), (message_index, tool_index));
-            }
-            messages.push(RequirementTaskSessionMessage {
-                id,
-                role,
-                text,
-                thinking,
-                tools,
-                timestamp,
-            });
         }
-
-        if skipped_lines > 0 {
-            tracing::warn!(
-                path = %path.display(),
-                skipped_lines,
-                "session file contained invalid or non-message lines"
-            );
+        if sources.is_empty() {
+            return Err(AppError::not_found("任务没有会话记录"));
         }
-
-        Ok(RequirementTaskSessionResponse {
-            messages,
-            truncated: false,
-        })
+        Ok(sources)
     }
 
     pub fn requirement_task_session(
         &self,
         requirement_id: &str,
         task_id: &str,
-    ) -> Result<RequirementTaskSessionResponse, AppError> {
-        let path = self.requirement_task_session_path(requirement_id, task_id)?;
-        Self::read_task_session_file(&path)
+        before: Option<usize>,
+        limit: usize,
+    ) -> Result<SessionTranscriptPage, AppError> {
+        read_session_transcript(
+            &self.requirement_task_session_sources(requirement_id, task_id)?,
+            before,
+            limit,
+        )
+    }
+
+    pub fn requirement_session(
+        &self,
+        requirement_id: &str,
+        before: Option<usize>,
+        limit: usize,
+    ) -> Result<SessionTranscriptPage, AppError> {
+        read_session_transcript(
+            &self.requirement_session_sources(requirement_id)?,
+            before,
+            limit,
+        )
+    }
+
+    pub fn requirement_session_sources(
+        &self,
+        requirement_id: &str,
+    ) -> Result<Vec<(String, PathBuf)>, AppError> {
+        self.requirement_index(requirement_id)?;
+        let sources = self
+            .db
+            .requirement_sessions(requirement_id)?
+            .into_iter()
+            .enumerate()
+            .map(|(index, session_file)| {
+                Ok((
+                    format!("需求分析 {}", index + 1),
+                    self.resolve_managed_session_path(&session_file)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        if sources.is_empty() {
+            return Err(AppError::not_found("需求没有会话记录"));
+        }
+        Ok(sources)
+    }
+
+    pub fn project_chat_session(
+        &self,
+        project_id: &str,
+        before: Option<usize>,
+        limit: usize,
+    ) -> Result<SessionTranscriptPage, AppError> {
+        read_session_transcript(
+            &self.project_chat_session_sources(project_id)?,
+            before,
+            limit,
+        )
+    }
+
+    pub fn project_chat_session_sources(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<(String, PathBuf)>, AppError> {
+        let chat = self
+            .data
+            .project_chats
+            .iter()
+            .find(|chat| chat.project_id == project_id)
+            .ok_or_else(|| AppError::not_found("项目问答不存在"))?;
+        let session_file = chat
+            .pi_session_file
+            .as_deref()
+            .ok_or_else(|| AppError::not_found("项目问答没有会话记录"))?;
+        Ok(vec![(
+            "项目问答".to_owned(),
+            self.resolve_managed_session_path(session_file)?,
+        )])
     }
 
     pub fn requirement_conversation(
@@ -2280,100 +2274,191 @@ fn aggregate_project_token_usage<'a>(
     Some(usage)
 }
 
-fn parse_session_message_content(
-    message: &Value,
-) -> (String, Option<String>, Vec<RequirementTaskSessionTool>) {
-    let mut text_parts = Vec::new();
-    let mut thinking_parts = Vec::new();
-    let mut tools = Vec::new();
+pub fn read_session_transcript(
+    sources: &[(String, PathBuf)],
+    before: Option<usize>,
+    limit: usize,
+) -> Result<SessionTranscriptPage, AppError> {
+    // ponytail: Pi context files are local and bounded; one pass keeps ordering
+    // correct across retry/review sources. Add an on-disk index only if profiling
+    // shows session parsing is a real bottleneck.
+    let mut entries = Vec::new();
+    let mut invalid_lines = 0usize;
 
-    match message.get("content") {
-        Some(Value::String(text)) => {
-            text_parts.push(text.clone());
-        }
-        Some(Value::Array(content)) => {
-            for block in content {
-                match block.get("type").and_then(|t| t.as_str()) {
-                    Some("text") => {
-                        if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                            text_parts.push(text.to_owned());
-                        }
-                    }
-                    Some("thinking") => {
-                        if let Some(thinking) = block.get("thinking").and_then(|t| t.as_str()) {
-                            thinking_parts.push(thinking.to_owned());
-                        }
-                    }
-                    Some("toolCall") | Some("tool_call") => {
-                        tools.push(RequirementTaskSessionTool {
-                            id: block
-                                .get("id")
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_owned(),
-                            name: block
-                                .get("name")
-                                .and_then(Value::as_str)
-                                .unwrap_or("未知工具")
-                                .to_owned(),
-                            arguments: block
-                                .get("arguments")
-                                .cloned()
-                                .unwrap_or_else(|| serde_json::json!({})),
-                            output: String::new(),
-                            diff: None,
-                            is_error: false,
-                        });
-                    }
-                    _ => {}
+    for (source, path) in sources {
+        let file = std::fs::File::open(path)
+            .map_err(|_| AppError::not_found("会话记录不存在或无法读取"))?;
+        for (line_index, line) in std::io::BufReader::new(file).lines().enumerate() {
+            let line = match line {
+                Ok(line) => line,
+                Err(_) => {
+                    invalid_lines += 1;
+                    continue;
                 }
+            };
+            if line.trim().is_empty() {
+                continue;
             }
+            let raw: Value = match serde_json::from_str(&line) {
+                Ok(value) => value,
+                Err(_) => {
+                    invalid_lines += 1;
+                    continue;
+                }
+            };
+            let kind = raw
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_owned();
+            let message = (kind == "message").then(|| raw.get("message")).flatten();
+            entries.push(SessionEntry {
+                cursor: 0,
+                source: source.clone(),
+                line: line_index + 1,
+                kind,
+                id: raw.get("id").and_then(Value::as_str).map(ToOwned::to_owned),
+                role: message
+                    .and_then(|value| value.get("role"))
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                timestamp: raw
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                blocks: message.map(parse_session_blocks).unwrap_or_default(),
+                raw,
+            });
         }
-        _ => {}
     }
 
-    let text = text_parts.join("\n");
-    let thinking = if thinking_parts.is_empty() {
-        None
-    } else {
-        Some(thinking_parts.join("\n"))
-    };
-    (text, thinking, tools)
+    entries.sort_by(|left, right| {
+        let timestamp = |entry: &SessionEntry| {
+            entry
+                .timestamp
+                .as_deref()
+                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        };
+        timestamp(left)
+            .cmp(&timestamp(right))
+            .then_with(|| left.source.cmp(&right.source))
+            .then_with(|| left.line.cmp(&right.line))
+    });
+    for (cursor, entry) in entries.iter_mut().enumerate() {
+        entry.cursor = cursor;
+    }
+
+    let end = before.unwrap_or(entries.len()).min(entries.len());
+    let start = end.saturating_sub(limit.clamp(1, 200));
+    let page = entries.drain(start..end).collect();
+    Ok(SessionTranscriptPage {
+        entries: page,
+        next_before: (start > 0).then_some(start),
+        invalid_lines,
+    })
 }
 
-fn parse_session_tool_result(message: &Value) -> Option<RequirementTaskSessionTool> {
-    let id = message.get("toolCallId")?.as_str()?.to_owned();
-    let output = message
-        .get("content")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|block| {
-            (block.get("type").and_then(Value::as_str) == Some("text"))
-                .then(|| block.get("text").and_then(Value::as_str))
-                .flatten()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    Some(RequirementTaskSessionTool {
-        id,
-        name: message
-            .get("toolName")
-            .and_then(Value::as_str)
-            .unwrap_or("未知工具")
-            .to_owned(),
-        arguments: serde_json::json!({}),
-        output,
-        diff: message
-            .get("details")
-            .and_then(|details| details.get("diff"))
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
-        is_error: message
-            .get("isError")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    })
+fn parse_session_blocks(message: &Value) -> Vec<SessionContentBlock> {
+    if message.get("role").and_then(Value::as_str) == Some("toolResult") {
+        let content = message.get("content");
+        let output = match content {
+            Some(Value::String(text)) => text.clone(),
+            Some(Value::Array(content)) => content
+                .iter()
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        };
+        let mut blocks = vec![SessionContentBlock::ToolResult {
+            tool_call_id: message
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+            name: message
+                .get("toolName")
+                .and_then(Value::as_str)
+                .unwrap_or("未知工具")
+                .to_owned(),
+            output,
+            diff: message
+                .get("details")
+                .and_then(|details| details.get("diff"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            is_error: message
+                .get("isError")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }];
+        if let Some(Value::Array(content)) = content {
+            blocks.extend(
+                content
+                    .iter()
+                    .filter(|block| block.get("type").and_then(Value::as_str) != Some("text"))
+                    .map(|block| SessionContentBlock::Unknown {
+                        block_type: block
+                            .get("type")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unknown")
+                            .to_owned(),
+                        raw: block.clone(),
+                    }),
+            );
+        }
+        return blocks;
+    }
+
+    match message.get("content") {
+        Some(Value::String(text)) => vec![SessionContentBlock::Text { text: text.clone() }],
+        Some(Value::Array(content)) => content.iter().map(parse_session_block).collect(),
+        Some(raw) => vec![SessionContentBlock::Unknown {
+            block_type: "content".to_owned(),
+            raw: raw.clone(),
+        }],
+        None => Vec::new(),
+    }
+}
+
+fn parse_session_block(block: &Value) -> SessionContentBlock {
+    match block.get("type").and_then(Value::as_str) {
+        Some("text") => SessionContentBlock::Text {
+            text: block
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        },
+        Some("thinking") => SessionContentBlock::Thinking {
+            text: block
+                .get("thinking")
+                .or_else(|| block.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        },
+        Some("toolCall" | "tool_call") => SessionContentBlock::ToolCall {
+            id: block
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+            name: block
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("未知工具")
+                .to_owned(),
+            arguments: block
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+        },
+        block_type => SessionContentBlock::Unknown {
+            block_type: block_type.unwrap_or("unknown").to_owned(),
+            raw: block.clone(),
+        },
+    }
 }
 
 fn strip_task_detail(

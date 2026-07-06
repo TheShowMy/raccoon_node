@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -30,6 +30,9 @@ import {
 import ChatComposer from "../ui/ChatComposer";
 import ChatMessageBubble from "../ui/ChatMessageBubble";
 import LiveProcessCard from "../ui/LiveProcessCard";
+import AnchoredScroll from "../ui/AnchoredScroll";
+import SessionTranscript from "../ui/SessionTranscript";
+import { getRequirementSession } from "../../api/client";
 
 type Props = {
   conversation: RequirementConversation | null;
@@ -223,7 +226,6 @@ function RequirementTranscript({
   error: string | null;
   onCancel: () => void;
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const liveBubbles = useMemo(
     () => buildBubbleStreamFromEvents(streamEvents),
     [streamEvents],
@@ -232,29 +234,18 @@ function RequirementTranscript({
     (event) => event.event !== "pi_event",
   );
 
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      const element = scrollRef.current;
-      if (element) {
-        element.scrollTop = element.scrollHeight;
-      }
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [
-    conversation?.updated_at,
-    conversation?.items.length,
-    liveBubbles.length,
-    streamEvents.length,
-  ]);
-
   return (
-    <div ref={scrollRef} className="rq-transcript nowheel nodrag">
+    <AnchoredScroll
+      className="rq-transcript nowheel nodrag"
+      version={`${conversation?.updated_at ?? "empty"}:${streamEvents.length}:${liveBubbles.length}`}
+    >
       {conversation ? (
         <div className="rq-transcript__items">
-          {conversation.items.map((item) => (
+          {conversation.items.map((item, index) => (
             <RequirementTranscriptItem
               key={item.id}
               item={item}
+              continued={isContinuedItem(conversation.items[index - 1], item)}
               projectId={conversation.project_id}
             />
           ))}
@@ -286,6 +277,12 @@ function RequirementTranscript({
           {error ? (
             <div className="rq-notice rq-notice--warn">{error}</div>
           ) : null}
+          <SessionTranscript
+            scopeKey={`${conversation.id}:${conversation.updated_at}`}
+            loadPage={(before) =>
+              getRequirementSession(conversation.id, before)
+            }
+          />
         </div>
       ) : (
         <div className="rq-empty">
@@ -294,16 +291,18 @@ function RequirementTranscript({
           <span>Coordinator 会用对话澄清范围，并在准备好后给出确认卡片。</span>
         </div>
       )}
-    </div>
+    </AnchoredScroll>
   );
 }
 
 function RequirementTranscriptItem({
   item,
   projectId,
+  continued,
 }: {
   item: RequirementConversationItem;
   projectId: string;
+  continued: boolean;
 }) {
   if (item.kind === "process") {
     return (
@@ -344,7 +343,27 @@ function RequirementTranscriptItem({
       projectId={projectId}
       createdAt={item.created_at}
       assistantLabel="Coordinator"
+      continued={continued}
     />
+  );
+}
+
+function isContinuedItem(
+  previous: RequirementConversationItem | undefined,
+  current: RequirementConversationItem,
+) {
+  if (
+    !previous ||
+    (current.kind !== "user" && current.kind !== "assistant") ||
+    previous.kind !== current.kind
+  ) {
+    return false;
+  }
+  return (
+    Math.abs(
+      Date.parse(current.created_at) - Date.parse(previous.created_at),
+    ) <=
+    5 * 60 * 1000
   );
 }
 

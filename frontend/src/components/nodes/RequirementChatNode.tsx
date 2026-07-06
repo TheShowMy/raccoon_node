@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, MessageSquare, X } from "lucide-react";
-import type { StartNodeData } from "../../types/api";
+import type { ProjectChatMessage, StartNodeData } from "../../types/api";
 import {
   buildBubbleStreamFromEvents,
   buildBubbleStreamFromTrace,
@@ -12,13 +12,15 @@ import RequirementConversationWorkbench from "../requirements/RequirementConvers
 import ChatComposer from "../ui/ChatComposer";
 import ChatMessageBubble from "../ui/ChatMessageBubble";
 import LiveProcessCard from "../ui/LiveProcessCard";
+import AnchoredScroll from "../ui/AnchoredScroll";
+import SessionTranscript from "../ui/SessionTranscript";
+import { getProjectChatSession } from "../../api/client";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 type ActiveCard = "requirement" | "project";
 type ConfirmAction = "abandon-requirement" | "reset-project-chat";
 
 export default function RequirementChatNode({ data }: { data: ChatData }) {
-  const stackRef = useRef<HTMLDivElement>(null);
   const [activeCard, setActiveCard] = useState<ActiveCard>("requirement");
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(
     null,
@@ -29,29 +31,6 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
 
   useEffect(() => setActiveCard("requirement"), [data.project.id]);
   useEffect(() => setConfirmAction(null), [data.project.id]);
-
-  function handleCardKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    const target = event.target;
-    const fromComposer =
-      (target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLInputElement) &&
-      target.closest(".rq-composer");
-    if (
-      event.key !== "Tab" ||
-      (event.target !== event.currentTarget && !fromComposer)
-    ) {
-      return;
-    }
-    event.preventDefault();
-    const next = activeCard === "requirement" ? "project" : "requirement";
-    setActiveCard(next);
-    requestAnimationFrame(() => {
-      const input = stackRef.current?.querySelector<HTMLTextAreaElement>(
-        `[data-chat-card="${next}"] textarea:not(:disabled)`,
-      );
-      (input ?? stackRef.current)?.focus();
-    });
-  }
 
   async function confirm() {
     const action = confirmAction;
@@ -65,19 +44,31 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
 
   return (
     <>
-      <div
-        ref={stackRef}
-        className="chat-card-stack nodrag"
-        data-active-card={activeCard}
-        tabIndex={0}
-        aria-label="需求会话与项目问答"
-        onKeyDown={handleCardKeyDown}
-      >
-        <ChatCard
-          card="requirement"
-          title="需求会话"
-          active={activeCard === "requirement"}
-          onActivate={() => setActiveCard("requirement")}
+      <div className="chat-workspace nodrag" aria-label="需求会话与项目问答">
+        <div className="chat-workspace__tabs" role="tablist">
+          {(
+            [
+              ["requirement", "需求会话"],
+              ["project", "项目问答"],
+            ] as const
+          ).map(([card, title]) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeCard === card}
+              className={activeCard === card ? "is-active" : ""}
+              onClick={() => setActiveCard(card)}
+              key={card}
+            >
+              {title}
+            </button>
+          ))}
+        </div>
+        <section
+          className="chat-workspace__panel"
+          data-chat-card="requirement"
+          hidden={activeCard !== "requirement"}
+          inert={activeCard === "requirement" ? undefined : true}
         >
           <RequirementConversationWorkbench
             conversation={conversation}
@@ -104,19 +95,18 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
             onCancel={data.onCancel}
             onAbandon={() => setConfirmAction("abandon-requirement")}
           />
-        </ChatCard>
-
-        <ChatCard
-          card="project"
-          title="项目问答"
-          active={activeCard === "project"}
-          onActivate={() => setActiveCard("project")}
+        </section>
+        <section
+          className="chat-workspace__panel"
+          data-chat-card="project"
+          hidden={activeCard !== "project"}
+          inert={activeCard === "project" ? undefined : true}
         >
           <ProjectChatWorkbench
             data={data}
             onReset={() => setConfirmAction("reset-project-chat")}
           />
-        </ChatCard>
+        </section>
       </div>
       <ConfirmDialog
         open={confirmAction !== null}
@@ -140,44 +130,6 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
   );
 }
 
-function ChatCard({
-  card,
-  title,
-  active,
-  onActivate,
-  children,
-}: {
-  card: ActiveCard;
-  title: string;
-  active: boolean;
-  onActivate: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      className={`chat-stack-card ${active ? "is-active" : ""}`}
-      data-chat-card={card}
-    >
-      <button
-        className="chat-stack-card__switch nodrag"
-        type="button"
-        aria-label={`切换到${title}`}
-        tabIndex={active ? -1 : 0}
-        onClick={onActivate}
-      >
-        <span>{title}</span>
-      </button>
-      <div
-        className="chat-stack-card__body"
-        inert={active ? undefined : true}
-        aria-hidden={!active}
-      >
-        {children}
-      </div>
-    </section>
-  );
-}
-
 function ProjectChatWorkbench({
   data,
   onReset,
@@ -185,7 +137,6 @@ function ProjectChatWorkbench({
   data: ChatData;
   onReset: () => void;
 }) {
-  const transcriptRef = useRef<HTMLDivElement>(null);
   const running = data.projectChat?.running ?? false;
   const error = data.projectChatError ?? data.projectChat?.error ?? null;
   const liveBubbles = useMemo(
@@ -217,19 +168,6 @@ function ProjectChatWorkbench({
     !running &&
     data.projectChatInput.trim().length > 0;
 
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      const transcript = transcriptRef.current;
-      if (transcript) transcript.scrollTop = transcript.scrollHeight;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [
-    data.projectChat?.messages.length,
-    data.projectChat?.updated_at,
-    data.projectChatEvents.length,
-    liveBubbles.length,
-  ]);
-
   return (
     <>
       <div className="node-header node-header--projects">
@@ -255,7 +193,10 @@ function ProjectChatWorkbench({
       </div>
 
       <div className="rq-workbench project-chat-workbench">
-        <div ref={transcriptRef} className="rq-transcript nowheel nodrag">
+        <AnchoredScroll
+          className="rq-transcript nowheel nodrag"
+          version={`${data.projectChat?.updated_at ?? "empty"}:${data.projectChatEvents.length}`}
+        >
           {data.projectChat?.messages.length ||
           (running && liveBubbles.length) ||
           transientEvents.length ||
@@ -272,6 +213,10 @@ function ProjectChatWorkbench({
                     projectId={data.project.id}
                     createdAt={message.created_at}
                     assistantLabel="Pi Agent"
+                    continued={isContinuedProjectMessage(
+                      data.projectChat?.messages[index - 1],
+                      message,
+                    )}
                   >
                     {message.role === "assistant" && message.metadata ? (
                       <LiveProcessCard
@@ -317,6 +262,14 @@ function ProjectChatWorkbench({
                   {error}
                 </div>
               ) : null}
+              {data.projectChat?.messages.length ? (
+                <SessionTranscript
+                  scopeKey={`project-chat:${data.project.id}:${data.projectChat.updated_at}`}
+                  loadPage={(before) =>
+                    getProjectChatSession(data.project.id, before)
+                  }
+                />
+              ) : null}
             </div>
           ) : (
             <div className="rq-empty">
@@ -325,7 +278,7 @@ function ProjectChatWorkbench({
               <span>消息会持久保存，Pi Agent 过程会在这里实时显示。</span>
             </div>
           )}
-        </div>
+        </AnchoredScroll>
 
         <ChatComposer
           value={data.projectChatInput}
@@ -345,6 +298,20 @@ function ProjectChatWorkbench({
         />
       </div>
     </>
+  );
+}
+
+function isContinuedProjectMessage(
+  previous: ProjectChatMessage | undefined,
+  current: ProjectChatMessage,
+) {
+  return Boolean(
+    previous &&
+    previous.role === current.role &&
+    Math.abs(
+      Date.parse(current.created_at) - Date.parse(previous.created_at),
+    ) <=
+      5 * 60 * 1000,
   );
 }
 

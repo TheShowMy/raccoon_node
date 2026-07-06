@@ -82,9 +82,11 @@ pub async fn read_repo_file(repo_path: &Path, relative_path: &str) -> Result<Str
     if metadata.len() > MAX_REF_BYTES {
         return Err(AppError::bad_request("引用文件超过 64KB"));
     }
-    tokio::fs::read_to_string(path)
-        .await
-        .map_err(|_| AppError::bad_request("引用文件必须是 UTF-8 文本"))
+    let bytes = tokio::fs::read(path).await?;
+    if bytes.iter().take(1024).any(|byte| *byte == 0) {
+        return Err(AppError::bad_request("引用文件必须是 UTF-8 文本"));
+    }
+    String::from_utf8(bytes).map_err(|_| AppError::bad_request("引用文件必须是 UTF-8 文本"))
 }
 
 pub async fn build_reference_context(
@@ -366,6 +368,17 @@ mod tests {
         );
         assert!(read_repo_file(&repo, "../secret").await.is_err());
         assert!(read_repo_file(&repo, ".").await.is_err());
+        tokio::fs::write(repo.join("binary.bin"), b"text\0binary")
+            .await
+            .unwrap();
+        assert!(read_repo_file(&repo, "binary.bin").await.is_err());
+        tokio::fs::write(
+            repo.join("large.txt"),
+            vec![b'x'; MAX_REF_BYTES as usize + 1],
+        )
+        .await
+        .unwrap();
+        assert!(read_repo_file(&repo, "large.txt").await.is_err());
     }
 
     #[tokio::test]

@@ -30,6 +30,13 @@
     --accent-model: #f97316;
     --accent-danger: #fb7185;
     --success: #22c55e;
+    --surface-code: #080d18;
+    --surface-raised: rgba(20, 29, 48, 0.96);
+    --diff-add: #4ade80;
+    --diff-add-bg: rgba(34, 197, 94, 0.11);
+    --diff-remove: #fb7185;
+    --diff-remove-bg: rgba(251, 113, 133, 0.11);
+    --focus-ring: color-mix(in srgb, var(--accent-create) 62%, transparent);
     --glow-create: rgba(59, 130, 246, 0.32);
     --glow-projects: rgba(20, 184, 166, 0.32);
     --glow-style: rgba(101, 163, 13, 0.28);
@@ -61,6 +68,12 @@
     --accent-model: #c2410c;
     --accent-danger: #be123c;
     --success: #16a34a;
+    --surface-code: #18201a;
+    --surface-raised: rgba(252, 253, 249, 0.98);
+    --diff-add: #15803d;
+    --diff-add-bg: rgba(22, 163, 74, 0.1);
+    --diff-remove: #be123c;
+    --diff-remove-bg: rgba(190, 18, 60, 0.09);
     --glow-create: rgba(37, 99, 235, 0.16);
     --glow-projects: rgba(15, 118, 110, 0.16);
     --glow-style: rgba(77, 124, 15, 0.18);
@@ -530,59 +543,6 @@
     border-color: #475569;
     color: #e2e8f0;
     background: rgba(15, 23, 42, 0.92);
-  }
-
-  .chat-card-stack {
-    @apply relative h-full w-full;
-    outline: none;
-  }
-
-  .chat-stack-card {
-    @apply absolute top-0 left-0 flex h-[742px] w-[696px] flex-col overflow-hidden rounded-[18px] border px-4 pb-4 pt-0 backdrop-blur;
-    border-color: var(--card-border);
-    background: var(--card-bg);
-    box-shadow:
-      var(--shadow-card),
-      0 0 32px var(--glow-model);
-    opacity: 0.76;
-    transform: translate(24px, 18px) scale(0.985);
-    transform-origin: top left;
-    transition:
-      transform 220ms ease,
-      opacity 220ms ease,
-      z-index 0ms linear 110ms;
-    z-index: 1;
-  }
-
-  .chat-stack-card.is-active {
-    opacity: 1;
-    transform: translate(0, 0) scale(1);
-    transition:
-      transform 220ms ease,
-      opacity 220ms ease,
-      z-index 0ms;
-    z-index: 2;
-  }
-
-  .chat-stack-card__switch {
-    @apply absolute top-0 right-0 bottom-0 z-10 flex cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-[10px] font-bold;
-    color: var(--text-soft);
-  }
-
-  .chat-stack-card.is-active .chat-stack-card__switch {
-    @apply pointer-events-none;
-  }
-
-  .chat-stack-card__switch span {
-    writing-mode: vertical-rl;
-  }
-
-  .chat-stack-card__body {
-    @apply flex min-h-0 flex-1 flex-col;
-  }
-
-  .chat-stack-card:not(.is-active) .chat-stack-card__body {
-    @apply pointer-events-none;
   }
 
   .node-card--requirement-dag {
@@ -4381,5 +4341,522 @@
 @media (prefers-reduced-motion: reduce) {
   .model-setup-guide__spotlight {
     animation: none;
+  }
+}
+
+@layer components {
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible,
+  a:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  .chat-workspace {
+    @apply flex h-[742px] w-[696px] flex-col overflow-hidden rounded-[18px] border p-3 backdrop-blur;
+    border-color: var(--card-border);
+    background: var(--card-bg);
+    box-shadow:
+      var(--shadow-card),
+      0 0 32px var(--glow-model);
+  }
+
+  .chat-workspace__tabs {
+    @apply mb-1 grid shrink-0 grid-cols-2 gap-1 rounded-[12px] border p-1;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+  }
+
+  .chat-workspace__tabs button {
+    @apply cursor-pointer rounded-[9px] border-0 bg-transparent px-3 py-2 text-xs font-semibold transition;
+    color: var(--text-soft);
+  }
+
+  .chat-workspace__tabs button.is-active {
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--accent-model) 18%, transparent);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--accent-model) 28%, transparent);
+  }
+
+  .chat-workspace__panel {
+    @apply min-h-0 flex-1 px-1 pb-1;
+  }
+
+  .chat-workspace__panel:not([hidden]) {
+    @apply flex flex-col;
+  }
+
+  .anchored-scroll {
+    @apply relative flex min-h-0 flex-1;
+  }
+
+  .anchored-scroll > .rq-transcript {
+    @apply w-full;
+  }
+
+  .anchored-scroll__new {
+    @apply absolute right-1/2 bottom-[86px] z-30 flex translate-x-1/2 cursor-pointer items-center gap-1 rounded-full border px-3 py-1.5 text-[11px] font-semibold;
+    border-color: color-mix(in srgb, var(--accent-model) 44%, transparent);
+    color: var(--text-strong);
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-card);
+  }
+
+  .rich-content {
+    @apply min-w-0 text-[13px] leading-[1.65];
+    color: var(--text-soft);
+    overflow-wrap: anywhere;
+  }
+
+  .rq-message__body > .rich-content {
+    @apply rounded-[14px] border px-3.5 py-2.5;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
+  }
+
+  .rq-message--assistant .rq-message__body > .rich-content {
+    @apply rounded-tl-[4px];
+    border-color: color-mix(in srgb, var(--accent-model) 22%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 6%, transparent);
+  }
+
+  .rq-message--user .rq-message__body > .rich-content {
+    @apply rounded-tr-[4px];
+    border-color: color-mix(in srgb, var(--accent-create) 34%, transparent);
+    background: color-mix(in srgb, var(--accent-create) 16%, transparent);
+    color: var(--text-strong);
+  }
+
+  .rq-message--system .rq-message__body > .rich-content {
+    border-color: color-mix(in srgb, var(--accent-danger) 24%, transparent);
+    background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
+  }
+
+  .rq-message--continued {
+    @apply -mt-2;
+  }
+
+  .rq-message--continued .rq-message__avatar {
+    visibility: hidden;
+  }
+
+  .rq-message--continued .rq-message__meta {
+    @apply sr-only;
+  }
+
+  .rich-content > :first-child,
+  .rich-content > :first-child > :first-child {
+    margin-top: 0;
+  }
+
+  .rich-content > :last-child,
+  .rich-content > :last-child > :last-child {
+    margin-bottom: 0;
+  }
+
+  .rich-content p {
+    @apply my-2 whitespace-normal;
+    color: inherit;
+  }
+
+  .rq-message__body .rich-content p {
+    @apply rounded-none border-0 bg-transparent p-0;
+    color: inherit;
+  }
+
+  .rich-content h1,
+  .rich-content h2,
+  .rich-content h3,
+  .rich-content h4 {
+    @apply mt-4 mb-2 font-bold;
+    color: var(--text-strong);
+  }
+
+  .rich-content h1 {
+    @apply text-lg;
+  }
+
+  .rich-content h2 {
+    @apply text-base;
+  }
+
+  .rich-content h3,
+  .rich-content h4 {
+    @apply text-sm;
+  }
+
+  .rich-content ul,
+  .rich-content ol {
+    @apply my-2 pl-5;
+  }
+
+  .rich-content li {
+    @apply my-1;
+  }
+
+  .rich-content blockquote {
+    @apply my-3 border-l-2 pl-3;
+    border-color: var(--accent-model);
+    color: var(--text-muted);
+  }
+
+  .rich-content a {
+    color: var(--accent-create);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .rich-content :not(pre) > code {
+    @apply rounded px-1 py-0.5 font-mono text-[0.92em];
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--surface-code) 82%, transparent);
+  }
+
+  .rich-content table {
+    @apply my-3 w-full border-collapse text-xs;
+  }
+
+  .rich-content th,
+  .rich-content td {
+    @apply border px-2 py-1.5 text-left;
+    border-color: var(--card-border-strong);
+  }
+
+  .rich-content__code {
+    @apply my-3 overflow-hidden rounded-[10px] border;
+    border-color: var(--card-border-strong);
+    background: var(--surface-code);
+  }
+
+  .rich-content__code > div {
+    @apply flex items-center justify-between border-b px-3 py-1.5 text-[10px] font-semibold;
+    border-color: var(--card-border);
+    color: var(--text-muted);
+  }
+
+  .rich-content__copy,
+  .document-preview__copy {
+    @apply inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 text-[10px];
+    color: var(--text-soft);
+  }
+
+  .rich-content__code pre {
+    @apply m-0 max-h-[420px] overflow-auto p-3 text-xs leading-relaxed;
+    color: #d8dee9;
+  }
+
+  .rich-content__code code {
+    font-family:
+      ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  .document-preview {
+    @apply min-w-0 max-w-full rounded-[9px] border;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 36%, transparent);
+  }
+
+  .document-preview > button {
+    @apply flex w-full cursor-pointer items-center gap-1.5 border-0 bg-transparent px-2 py-1.5 text-left text-[10px] font-semibold;
+    color: var(--text-soft);
+  }
+
+  .document-preview > button span {
+    @apply min-w-0 flex-1 truncate;
+  }
+
+  .document-preview > button svg:last-child {
+    @apply transition;
+  }
+
+  .document-preview.is-open > button svg:last-child {
+    transform: rotate(180deg);
+  }
+
+  .document-preview__body {
+    @apply relative max-h-[360px] overflow-auto border-t p-3;
+    border-color: var(--card-border);
+  }
+
+  .document-preview__body > pre {
+    @apply m-0 whitespace-pre-wrap font-mono text-[11px] leading-relaxed;
+    color: var(--text-soft);
+  }
+
+  .document-preview__copy {
+    @apply absolute top-2 right-2 z-10 rounded border px-2 py-1;
+    border-color: var(--card-border);
+    background: var(--surface-raised);
+  }
+
+  .document-preview__state {
+    @apply flex items-center gap-2 text-xs;
+    color: var(--text-muted);
+  }
+
+  .document-preview__state.is-error {
+    color: var(--accent-danger);
+  }
+
+  .session-transcript {
+    @apply overflow-hidden rounded-[12px] border;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 32%, transparent);
+  }
+
+  .session-transcript__toggle {
+    @apply flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-3 py-2 text-left text-xs font-semibold;
+    color: var(--text-soft);
+  }
+
+  .session-transcript__toggle span {
+    @apply min-w-0 flex-1;
+    color: var(--text-strong);
+  }
+
+  .session-transcript__toggle em {
+    @apply text-[10px] not-italic;
+    color: var(--text-muted);
+  }
+
+  .session-transcript__toggle svg:last-child {
+    @apply transition;
+  }
+
+  .session-transcript.is-open .session-transcript__toggle svg:last-child {
+    transform: rotate(180deg);
+  }
+
+  .session-transcript__panel {
+    @apply border-t;
+    border-color: var(--card-border);
+  }
+
+  .session-transcript__filters {
+    @apply flex flex-wrap items-center gap-1 border-b p-2;
+    border-color: var(--card-border);
+  }
+
+  .session-transcript__filters button {
+    @apply cursor-pointer rounded-full border px-2 py-1 text-[10px] font-semibold;
+    border-color: var(--card-border);
+    color: var(--text-muted);
+    background: transparent;
+  }
+
+  .session-transcript__filters button.is-active {
+    border-color: color-mix(in srgb, var(--accent-model) 38%, transparent);
+    color: var(--accent-model);
+    background: color-mix(in srgb, var(--accent-model) 9%, transparent);
+  }
+
+  .session-transcript__filters label {
+    @apply ml-auto flex items-center gap-1.5 text-[10px];
+    color: var(--text-muted);
+  }
+
+  .session-transcript__entries {
+    @apply grid max-h-[520px] gap-2 overflow-y-auto p-2;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .session-transcript__warning,
+  .session-transcript__empty {
+    @apply m-2 flex items-center justify-center gap-1.5 rounded-[8px] border px-2 py-2 text-[10px];
+    border-color: var(--card-border);
+    color: var(--text-muted);
+  }
+
+  .session-transcript__empty button {
+    @apply cursor-pointer rounded border px-2 py-0.5 text-[10px] font-semibold;
+    border-color: currentColor;
+    color: inherit;
+    background: transparent;
+  }
+
+  .session-transcript__warning,
+  .session-transcript__empty.is-error {
+    border-color: color-mix(in srgb, var(--accent-danger) 28%, transparent);
+    color: var(--accent-danger);
+  }
+
+  .session-transcript__earlier {
+    @apply mx-auto cursor-pointer rounded-full border px-3 py-1 text-[10px] font-semibold;
+    border-color: var(--card-border);
+    color: var(--accent-model);
+    background: transparent;
+  }
+
+  .session-entry {
+    @apply min-w-0 rounded-[10px] border p-3 text-xs;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--card-bg) 62%, transparent);
+  }
+
+  .session-entry--user {
+    border-left: 3px solid var(--accent-create);
+  }
+
+  .session-entry--assistant {
+    border-left: 3px solid var(--accent-model);
+  }
+
+  .session-entry--system {
+    border-left: 3px solid var(--text-muted);
+  }
+
+  .session-entry--toolResult {
+    border-left: 3px solid var(--success);
+  }
+
+  .session-entry > header,
+  .session-entry--meta {
+    @apply flex items-center justify-between gap-2 text-[10px];
+    color: var(--text-muted);
+  }
+
+  .session-entry > header span {
+    @apply flex min-w-0 items-center gap-2;
+  }
+
+  .session-entry > header b,
+  .session-entry--meta b {
+    @apply truncate rounded-full px-2 py-0.5;
+    color: var(--text-strong);
+    background: color-mix(in srgb, var(--accent-model) 12%, transparent);
+  }
+
+  .session-entry__blocks {
+    @apply mt-2 grid gap-2;
+  }
+
+  .session-thinking,
+  .session-unknown,
+  .session-raw,
+  .session-tool {
+    @apply overflow-hidden rounded-[8px] border;
+    border-color: var(--card-border);
+    background: color-mix(in srgb, var(--canvas-bg) 38%, transparent);
+  }
+
+  .session-thinking summary,
+  .session-unknown summary,
+  .session-raw summary,
+  .session-tool summary {
+    @apply flex cursor-pointer items-center gap-1.5 px-2 py-1.5 text-[10px] font-semibold;
+    color: var(--text-soft);
+  }
+
+  .session-tool summary strong {
+    color: var(--text-strong);
+  }
+
+  .session-tool summary span {
+    @apply ml-auto;
+    color: var(--text-muted);
+  }
+
+  .session-tool.is-error {
+    border-color: color-mix(in srgb, var(--accent-danger) 38%, transparent);
+  }
+
+  .session-thinking pre,
+  .session-unknown pre,
+  .session-raw pre,
+  .session-tool pre {
+    @apply m-0 max-h-[360px] overflow-auto border-t p-3 whitespace-pre-wrap font-mono text-[11px] leading-relaxed;
+    border-color: var(--card-border);
+    color: var(--text-soft);
+  }
+
+  .session-raw {
+    @apply mt-2;
+  }
+
+  .session-diff {
+    @apply border-t;
+    border-color: var(--card-border);
+  }
+
+  .session-diff > div {
+    @apply flex items-center justify-between px-3 py-1.5 text-[10px];
+    color: var(--text-muted);
+  }
+
+  .session-diff button {
+    @apply inline-flex cursor-pointer items-center gap-1 border-0 bg-transparent text-[10px];
+    color: var(--accent-create);
+  }
+
+  .session-diff pre {
+    @apply whitespace-pre;
+    background: var(--surface-code);
+  }
+
+  .session-diff pre span {
+    @apply block min-w-max px-3;
+  }
+
+  .session-diff .is-added {
+    color: var(--diff-add);
+    background: var(--diff-add-bg);
+  }
+
+  .session-diff .is-removed {
+    color: var(--diff-remove);
+    background: var(--diff-remove-bg);
+  }
+
+  .session-diff .is-hunk {
+    color: var(--accent-create);
+  }
+
+  .task-detail-dialog__body {
+    scrollbar-gutter: stable;
+  }
+
+  @media (max-width: 760px) {
+    .toolbar {
+      @apply px-3 pt-3;
+    }
+
+    .canvas-shell {
+      @apply mx-2 mb-2 rounded-[14px];
+    }
+
+    .chat-workspace {
+      width: min(696px, calc(100vw - 24px));
+    }
+
+    .rq-transcript {
+      @apply px-3;
+    }
+
+    .rq-message--user,
+    .rq-message--assistant,
+    .rq-message--system {
+      @apply max-w-full;
+    }
+
+    .task-detail-dialog__panel {
+      @apply rounded-none;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node-card,
+  .document-preview > button svg,
+  .session-transcript__toggle svg,
+  .chat-workspace__tabs button {
+    transition: none !important;
+  }
+
+  .node-card:hover {
+    transform: none;
   }
 }

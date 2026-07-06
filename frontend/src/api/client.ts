@@ -15,7 +15,8 @@ import {
   type BasicSettingsUpdate,
   type RestartResponse,
   type RequirementTaskDetail,
-  type RequirementTaskSession,
+  type SessionTranscriptPage,
+  type ProjectFileContent,
   type PublicationReadiness,
   type TerminalCommandProfile,
   type TerminalCommandProfileDraft,
@@ -91,15 +92,53 @@ export async function getRequirementTask(
 export async function getTaskSession(
   requirementId: string,
   taskId: string,
-): Promise<RequirementTaskSession> {
+  before?: number | null,
+): Promise<SessionTranscriptPage> {
+  const query = before == null ? "" : `?before=${before}`;
   const response = await fetch(
-    `/api/requirements/${encodeURIComponent(requirementId)}/tasks/${encodeURIComponent(taskId)}/session`,
+    `/api/requirements/${encodeURIComponent(requirementId)}/tasks/${encodeURIComponent(taskId)}/session${query}`,
   );
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
     } | null;
     throw new Error(body?.message ?? "读取任务会话失败");
+  }
+  return response.json();
+}
+
+export async function getRequirementSession(
+  requirementId: string,
+  before?: number | null,
+): Promise<SessionTranscriptPage> {
+  const query = before == null ? "" : `?before=${before}`;
+  return sessionResponse(
+    await fetch(
+      `/api/requirements/${encodeURIComponent(requirementId)}/session${query}`,
+    ),
+  );
+}
+
+export async function getProjectChatSession(
+  projectId: string,
+  before?: number | null,
+): Promise<SessionTranscriptPage> {
+  const query = before == null ? "" : `?before=${before}`;
+  return sessionResponse(
+    await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/chat/session${query}`,
+    ),
+  );
+}
+
+async function sessionResponse(
+  response: Response,
+): Promise<SessionTranscriptPage> {
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取会话记录失败");
   }
   return response.json();
 }
@@ -291,6 +330,22 @@ export async function getProjectFiles(
       message?: string;
     } | null;
     throw new Error(body?.message ?? "读取项目文件失败");
+  }
+  return response.json();
+}
+
+export async function getProjectFileContent(
+  projectId: string,
+  path: string,
+): Promise<ProjectFileContent> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/files/content?path=${encodeURIComponent(path)}`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取文件失败");
   }
   return response.json();
 }

@@ -19,15 +19,17 @@ use tokio::task::JoinSet;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 
 use crate::api::AppState;
-use crate::file_refs::{content_type_value, list_repo_files, read_attachment, save_attachment};
+use crate::file_refs::{
+    content_type_value, list_repo_files, read_attachment, read_repo_file, save_attachment,
+};
 use crate::models::{
     AttachmentUploadRequest, BasicSettings, BasicSettingsUpdate, ClarificationAnswerPayload,
     CurrentProjectResponse, FileReference, ImageAttachment, ModelSettings, ModelSettingsResponse,
     ProjectCanvasResponse, ProjectChatEventEmitter, ProjectChatMessageRequest, ProjectChatResponse,
-    RequirementAnalysisInput, RequirementClarification, RequirementConfirmRequest,
-    RequirementConversationResponse, RequirementEvent, RequirementEventEmitter,
-    RequirementMessageRequest, RequirementStatus, RequirementTaskDetailResponse,
-    RequirementTaskExecutionInput, RequirementTaskSessionResponse, RpcStatus,
+    ProjectFileContent, RequirementAnalysisInput, RequirementClarification,
+    RequirementConfirmRequest, RequirementConversationResponse, RequirementEvent,
+    RequirementEventEmitter, RequirementMessageRequest, RequirementStatus,
+    RequirementTaskDetailResponse, RequirementTaskExecutionInput, RpcStatus, SessionTranscriptPage,
     TerminalClientMessage, TerminalCommandProfile, TerminalCommandProfilesUpdate,
     TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
 };
@@ -212,15 +214,59 @@ pub async fn get_requirement_task(
 pub async fn get_requirement_task_session(
     State(state): State<AppState>,
     AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
-) -> Result<Json<RequirementTaskSessionResponse>, AppError> {
-    let path = {
+    Query(query): Query<SessionPageQuery>,
+) -> Result<Json<SessionTranscriptPage>, AppError> {
+    let sources = {
         let store = state.store.read().await;
-        store.requirement_task_session_path(&requirement_id, &task_id)?
+        store.requirement_task_session_sources(&requirement_id, &task_id)?
     };
-    let response =
-        tokio::task::spawn_blocking(move || crate::store::JsonStore::read_task_session_file(&path))
-            .await
-            .map_err(|_| AppError::internal("读取会话任务失败"))??;
+    read_session_page(sources, query).await
+}
+
+pub async fn get_requirement_session(
+    State(state): State<AppState>,
+    AxumPath(requirement_id): AxumPath<String>,
+    Query(query): Query<SessionPageQuery>,
+) -> Result<Json<SessionTranscriptPage>, AppError> {
+    let sources = {
+        let store = state.store.read().await;
+        store.requirement_session_sources(&requirement_id)?
+    };
+    read_session_page(sources, query).await
+}
+
+pub async fn get_project_chat_session(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<String>,
+    Query(query): Query<SessionPageQuery>,
+) -> Result<Json<SessionTranscriptPage>, AppError> {
+    let sources = {
+        let store = state.store.read().await;
+        store.project_chat_session_sources(&project_id)?
+    };
+    read_session_page(sources, query).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionPageQuery {
+    before: Option<usize>,
+    #[serde(default = "default_session_page_size")]
+    limit: usize,
+}
+
+fn default_session_page_size() -> usize {
+    100
+}
+
+async fn read_session_page(
+    sources: Vec<(String, std::path::PathBuf)>,
+    query: SessionPageQuery,
+) -> Result<Json<SessionTranscriptPage>, AppError> {
+    let response = tokio::task::spawn_blocking(move || {
+        crate::store::read_session_transcript(&sources, query.before, query.limit)
+    })
+    .await
+    .map_err(|_| AppError::internal("读取会话记录失败"))??;
     Ok(Json(response))
 }
 
@@ -228,6 +274,11 @@ pub async fn get_requirement_task_session(
 pub struct ProjectFilesQuery {
     #[serde(default)]
     search: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProjectFileContentQuery {
+    path: String,
 }
 
 pub async fn get_project_files(
@@ -248,6 +299,27 @@ pub async fn get_project_files(
     Ok(Json(
         list_repo_files(std::path::Path::new(&project.local_path), &query.search).await?,
     ))
+}
+
+pub async fn get_project_file_content(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<ProjectFileContentQuery>,
+) -> Result<Json<ProjectFileContent>, AppError> {
+    let project = {
+        let store = state.store.read().await;
+        store
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?
+    };
+    Ok(Json(ProjectFileContent {
+        path: query.path.clone(),
+        content: read_repo_file(std::path::Path::new(&project.local_path), &query.path).await?,
+    }))
 }
 
 pub async fn upload_project_attachment(

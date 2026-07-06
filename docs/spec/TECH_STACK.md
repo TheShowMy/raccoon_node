@@ -4,7 +4,8 @@
 
 - 后端：Rust 2024（MSRV 1.96）、Axum、Tokio、serde/JSON、rusqlite、chrono、tracing。
 - Pi RPC：低层 RPC 依赖 `pi-rpc-rs`，应用层仍由本项目封装模型、会话、受管 extension 和任务流程。
-- 前端：React、TypeScript、Vite、React Flow（`@xyflow/react`）、lucide-react、Tailwind CSS。
+- 前端：React、TypeScript、Vite、React Flow（`@xyflow/react`）、lucide-react、Tailwind CSS、
+  `react-markdown` 与 `remark-gfm`。
 - CLI/TUI：clap、ratatui、crossterm。
 - 静态资源：Vite 产物通过 rust-embed 嵌入 `raccoon` 单二进制。
 - 存储：`<git_root>/.raccoon-node/data.db` 是唯一业务主存储。
@@ -22,6 +23,7 @@
 - 项目配置：`<git_root>/.raccoon-node/config.toml`
 - 应用数据：`<git_root>/.raccoon-node/data.db`
 - Pi Agent RPC 完整模型上下文：`<git_root>/.raccoon-node/sessions/`
+- JSONL 会话查看：后端按需解析 session 文件并分页返回，原始记录不复制进 SQLite。
 - 每日滚动日志（最多 7 个文件）：`<git_root>/.raccoon-node/logs/`
 - 内置受管 Pi extension：`<git_root>/.raccoon-node/extensions/`
 - 任务 worktree：`<git_root>/.raccoon-node/worktrees/`

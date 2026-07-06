@@ -1072,7 +1072,7 @@ async fn requirement_task_session_parses_messages() {
 {"type":"message","id":"m1","timestamp":"2026-07-01T00:01:00Z","message":{"role":"system","content":[{"type":"text","text":"system prompt"}]}}
 {"type":"message","id":"m2","timestamp":"2026-07-01T00:02:00Z","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
 {"type":"message","id":"m3","timestamp":"2026-07-01T00:03:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"thinking text"},{"type":"text","text":"reply"},{"type":"toolCall","id":"edit-1","name":"edit","arguments":{"path":"file.txt","edits":[{"oldText":"old","newText":"new"}]}}]}}
-{"type":"message","id":"m4","timestamp":"2026-07-01T00:04:00Z","message":{"role":"toolResult","toolCallId":"edit-1","toolName":"edit","content":[{"type":"text","text":"Successfully replaced 1 block in file.txt."}],"details":{"diff":"@@ -1 +1 @@\n-old\n+new"},"isError":false}}
+{"type":"message","id":"m4","timestamp":"2026-07-01T00:04:00Z","message":{"role":"toolResult","toolCallId":"edit-1","toolName":"edit","content":[{"type":"text","text":"Successfully replaced 1 block in file.txt."},{"type":"image","data":"preview"}],"details":{"diff":"@@ -1 +1 @@\n-old\n+new"},"isError":false}}
 {"type":"not_a_message","id":"n1"}
 not valid json
 "#,
@@ -1093,32 +1093,117 @@ not valid json
     });
     store.data.requirements.push(active);
 
-    let session = store.requirement_task_session("req-1", "task-1").unwrap();
-    assert_eq!(session.messages.len(), 3);
-    assert!(session.messages.iter().any(|m| m.role == "system"));
+    let session = store
+        .requirement_task_session("req-1", "task-1", None, 100)
+        .unwrap();
+    assert_eq!(session.entries.len(), 6);
+    assert_eq!(session.invalid_lines, 1);
+    assert!(session.entries.iter().any(|entry| entry.kind == "session"));
     let system = session
-        .messages
+        .entries
         .iter()
-        .find(|m| m.role == "system")
+        .find(|entry| entry.role.as_deref() == Some("system"))
         .unwrap();
-    assert_eq!(system.text, "system prompt");
-    let user = session.messages.iter().find(|m| m.role == "user").unwrap();
-    assert_eq!(user.text, "hello");
+    assert!(matches!(
+        &system.blocks[0],
+        SessionContentBlock::Text { text } if text == "system prompt"
+    ));
+    let user = session
+        .entries
+        .iter()
+        .find(|entry| entry.role.as_deref() == Some("user"))
+        .unwrap();
+    assert!(matches!(
+        &user.blocks[0],
+        SessionContentBlock::Text { text } if text == "hello"
+    ));
     let assistant = session
-        .messages
+        .entries
         .iter()
-        .find(|m| m.role == "assistant")
+        .find(|entry| entry.role.as_deref() == Some("assistant"))
         .unwrap();
-    assert_eq!(assistant.text, "reply");
-    assert_eq!(assistant.thinking.as_deref(), Some("thinking text"));
-    assert_eq!(assistant.tools.len(), 1);
-    let tool = &assistant.tools[0];
-    assert_eq!(tool.name, "edit");
-    assert_eq!(tool.arguments["path"], "file.txt");
-    assert!(tool.output.contains("Successfully replaced"));
-    assert_eq!(tool.diff.as_deref(), Some("@@ -1 +1 @@\n-old\n+new"));
-    assert!(!tool.is_error);
-    assert!(!session.truncated);
+    assert!(matches!(
+        &assistant.blocks[0],
+        SessionContentBlock::Thinking { text } if text == "thinking text"
+    ));
+    assert!(matches!(
+        &assistant.blocks[1],
+        SessionContentBlock::Text { text } if text == "reply"
+    ));
+    assert!(matches!(
+        &assistant.blocks[2],
+        SessionContentBlock::ToolCall { id, name, arguments }
+            if id == "edit-1" && name == "edit" && arguments["path"] == "file.txt"
+    ));
+    let tool_result = session
+        .entries
+        .iter()
+        .find(|entry| entry.role.as_deref() == Some("toolResult"))
+        .unwrap();
+    assert!(matches!(
+        &tool_result.blocks[0],
+        SessionContentBlock::ToolResult {
+            tool_call_id,
+            output,
+            diff,
+            is_error,
+            ..
+        } if tool_call_id == "edit-1"
+            && output.contains("Successfully replaced")
+            && diff.as_deref() == Some("@@ -1 +1 @@\n-old\n+new")
+            && !is_error
+    ));
+    assert!(matches!(
+        &tool_result.blocks[1],
+        SessionContentBlock::Unknown { block_type, .. } if block_type == "image"
+    ));
+
+    let page = store
+        .requirement_task_session("req-1", "task-1", None, 3)
+        .unwrap();
+    assert_eq!(page.entries.len(), 3);
+    assert_eq!(page.next_before, Some(3));
+}
+
+#[tokio::test]
+async fn requirement_session_keeps_retry_history_and_paginates() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+        .await
+        .unwrap();
+    let session_dir = store.data_root.join("sessions");
+    tokio::fs::create_dir_all(&session_dir).await.unwrap();
+    for (name, id, timestamp) in [
+        ("analysis-1.jsonl", "m1", "2026-07-01T00:00:00Z"),
+        ("analysis-2.jsonl", "m2", "2026-07-01T00:01:00Z"),
+    ] {
+        tokio::fs::write(
+            session_dir.join(name),
+            format!(
+                r#"{{"type":"message","id":"{id}","timestamp":"{timestamp}","message":{{"role":"assistant","content":"reply"}}}}"#
+            ),
+        )
+        .await
+        .unwrap();
+    }
+
+    let mut active = requirement("req-1");
+    active.pi_session_file = Some("analysis-1.jsonl".to_owned());
+    store.data.requirements.push(active);
+    store.persist().await.unwrap();
+    store.data.requirements[0].pi_session_file = Some("analysis-2.jsonl".to_owned());
+    store.persist().await.unwrap();
+
+    let page = store.requirement_session("req-1", None, 1).unwrap();
+    assert_eq!(page.entries.len(), 1);
+    assert_eq!(page.entries[0].source, "需求分析 2");
+    assert_eq!(page.next_before, Some(1));
+
+    let earlier = store
+        .requirement_session("req-1", page.next_before, 1)
+        .unwrap();
+    assert_eq!(earlier.entries[0].source, "需求分析 1");
+    assert_eq!(earlier.next_before, None);
 }
 
 #[tokio::test]
@@ -1144,7 +1229,7 @@ async fn requirement_task_session_rejects_missing_and_escaping_paths() {
     store.data.requirements.push(active);
 
     let error = store
-        .requirement_task_session("req-1", "task-1")
+        .requirement_task_session("req-1", "task-1", None, 100)
         .unwrap_err()
         .to_string();
     assert!(error.contains("路径必须位于数据目录内"));
@@ -1173,7 +1258,7 @@ async fn requirement_task_session_returns_not_found_when_file_missing() {
     store.data.requirements.push(active);
 
     let error = store
-        .requirement_task_session("req-1", "task-1")
+        .requirement_task_session("req-1", "task-1", None, 100)
         .unwrap_err()
         .to_string();
     assert!(error.contains("不存在"));
