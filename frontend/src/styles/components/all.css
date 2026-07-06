@@ -1,197 +1,76 @@
 @import "tailwindcss";
 
-@theme {
-  --font-sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
-}
-
-@layer base {
-  :root {
-    color: var(--text-strong);
-    background: var(--canvas-bg);
-    font-family: var(--font-sans);
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-
-    --canvas-bg: #0b1120;
-    --canvas-dot: rgba(148, 163, 184, 0.14);
-    --panel-bg: rgba(15, 23, 42, 0.55);
-    --card-bg: rgba(15, 23, 42, 0.72);
-    --card-bg-hover: rgba(23, 33, 56, 0.78);
-    --card-border: rgba(148, 163, 184, 0.12);
-    --card-border-strong: rgba(148, 163, 184, 0.24);
-    --text-strong: #f1f5f9;
-    --text-soft: #94a3b8;
-    --text-muted: #64748b;
-    --accent-create: #3b82f6;
-    --accent-projects: #14b8a6;
-    --accent-style: #65a30d;
-    --accent-model: #f97316;
-    --accent-danger: #fb7185;
-    --success: #22c55e;
-    --surface-code: #080d18;
-    --surface-raised: rgba(20, 29, 48, 0.96);
-    --diff-add: #4ade80;
-    --diff-add-bg: rgba(34, 197, 94, 0.11);
-    --diff-remove: #fb7185;
-    --diff-remove-bg: rgba(251, 113, 133, 0.11);
-    --focus-ring: color-mix(in srgb, var(--accent-create) 62%, transparent);
-    --glow-create: rgba(59, 130, 246, 0.32);
-    --glow-projects: rgba(20, 184, 166, 0.32);
-    --glow-style: rgba(101, 163, 13, 0.28);
-    --glow-model: rgba(249, 115, 22, 0.32);
-    --glow-danger: rgba(251, 113, 133, 0.28);
-    --shadow-card:
-      0 0 0 1px rgba(255, 255, 255, 0.05), 0 12px 36px rgba(0, 0, 0, 0.35);
-    --shadow-hover:
-      0 0 0 1px rgba(255, 255, 255, 0.1), 0 20px 48px rgba(0, 0, 0, 0.45);
-  }
-
-  [data-theme="light"] {
-    color: var(--text-strong);
-    background: var(--canvas-bg);
-
-    --canvas-bg: #eef3e8;
-    --canvas-dot: rgba(91, 115, 81, 0.2);
-    --panel-bg: rgba(251, 252, 246, 0.76);
-    --card-bg: rgba(250, 252, 244, 0.86);
-    --card-bg-hover: rgba(244, 249, 236, 0.95);
-    --card-border: rgba(91, 115, 81, 0.18);
-    --card-border-strong: rgba(91, 115, 81, 0.3);
-    --text-strong: #243126;
-    --text-soft: #5c6d5d;
-    --text-muted: #7d8b7a;
-    --accent-create: #2563eb;
-    --accent-projects: #0f766e;
-    --accent-style: #4d7c0f;
-    --accent-model: #c2410c;
-    --accent-danger: #be123c;
-    --success: #16a34a;
-    --surface-code: #18201a;
-    --surface-raised: rgba(252, 253, 249, 0.98);
-    --diff-add: #15803d;
-    --diff-add-bg: rgba(22, 163, 74, 0.1);
-    --diff-remove: #be123c;
-    --diff-remove-bg: rgba(190, 18, 60, 0.09);
-    --glow-create: rgba(37, 99, 235, 0.16);
-    --glow-projects: rgba(15, 118, 110, 0.16);
-    --glow-style: rgba(77, 124, 15, 0.18);
-    --glow-model: rgba(194, 65, 12, 0.16);
-    --glow-danger: rgba(190, 18, 60, 0.16);
-    --shadow-card:
-      0 0 0 1px rgba(80, 100, 72, 0.06), 0 12px 28px rgba(74, 91, 62, 0.14);
-    --shadow-hover:
-      0 0 0 1px rgba(80, 100, 72, 0.12), 0 18px 36px rgba(74, 91, 62, 0.18);
-  }
-
-  * {
-    @apply box-border;
-  }
-
-  html,
-  body,
-  #root {
-    @apply m-0 h-full w-full;
-  }
-
-  button,
-  input,
-  textarea {
-    font: inherit;
-  }
-}
-
 @layer components {
   .app-shell {
     @apply grid min-h-full grid-rows-[auto_1fr];
-    background:
-      radial-gradient(
-        circle at 18% 22%,
-        color-mix(in srgb, var(--accent-create) 8%, transparent) 0%,
-        transparent 28%
-      ),
-      radial-gradient(
-        circle at 82% 78%,
-        color-mix(in srgb, var(--accent-style) 8%, transparent) 0%,
-        transparent 30%
-      ),
-      var(--canvas-bg);
+    background: var(--canvas-bg);
   }
 
   .toolbar {
-    @apply flex items-center justify-between gap-4 px-7 pt-5 pb-3.5;
+    @apply flex items-center justify-between gap-4 px-6;
+    height: 52px;
+    border-bottom: 1px solid var(--card-border);
+    background: var(--panel-bg);
   }
 
   .toolbar__brand {
-    @apply flex min-w-0 items-center gap-2.5;
+    @apply flex min-w-0 items-center gap-3;
   }
 
   .app-logo {
-    @apply h-9 w-9 shrink-0 rounded-[10px] border object-cover;
-    border-color: var(--card-border);
+    @apply h-8 w-8 shrink-0 rounded-[10px] object-cover;
     box-shadow: var(--shadow-card);
   }
 
   .toolbar h1 {
-    @apply m-0 text-[22px] leading-tight font-bold;
+    @apply m-0 text-sm leading-tight font-semibold tracking-tight;
     color: var(--text-strong);
   }
 
   .toolbar p {
-    @apply mt-1 mb-0 text-[13px];
-    color: var(--text-soft);
+    @apply mt-0 mb-0 text-xs;
+    color: var(--text-muted);
   }
 
   .status-pill {
-    @apply rounded-full border px-3 py-1.5 text-xs font-semibold backdrop-blur;
-    border-color: var(--card-border-strong);
-    background: var(--panel-bg);
-    color: var(--text-soft);
+    @apply rounded-full px-3 py-1.5 text-xs font-medium;
+    color: var(--text-muted);
+    background: var(--surface-subtle);
+    border: 1px solid var(--card-border);
   }
 
   .canvas-shell {
-    @apply relative mx-6 mb-6 min-h-[620px] overflow-hidden rounded-[20px] border;
-    border-color: var(--card-border);
+    @apply relative min-h-0 overflow-hidden;
     background:
       radial-gradient(
-        circle at 24px 24px,
+        circle at 32px 32px,
         var(--canvas-dot) 1.5px,
         transparent 1.5px
       ),
       var(--canvas-bg);
-    background-size: 28px 28px;
-    box-shadow:
-      inset 0 0 60px rgba(0, 0, 0, 0.12),
-      0 0 0 1px rgba(255, 255, 255, 0.04);
+    background-size: 32px 32px;
   }
 
   .node-card {
-    @apply relative min-h-[134px] w-[252px] overflow-hidden rounded-[18px] border p-4 backdrop-blur transition duration-200;
-    border-color: var(--card-border);
+    @apply relative min-h-[134px] w-[252px] overflow-hidden p-4 transition duration-200;
+    border-radius: var(--radius-node);
     background: var(--card-bg);
+    border: 1px solid var(--card-border);
     box-shadow: var(--shadow-card);
   }
 
   .node-card:hover {
-    border-color: var(--card-border-strong);
-    background: var(--card-bg-hover);
     box-shadow: var(--shadow-hover);
-    transform: translateY(-2px);
+    border-color: var(--card-border-strong);
+    transform: translateY(-1px);
   }
 
   .node-card--project-github {
-    @apply h-[90px] w-[137px] cursor-pointer;
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px var(--glow-projects);
+    @apply h-[90px] w-[140px] cursor-pointer;
   }
 
   .node-card--requirement-list {
     @apply flex h-[680px] w-[290px] flex-col overflow-hidden p-0;
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px color-mix(in srgb, var(--accent-projects) 18%, transparent);
   }
 
   .node-card--token-usage {
@@ -199,31 +78,30 @@
   }
 
   .node-card--requirement-chat {
-    @apply h-[760px] w-[720px] overflow-visible border-0 bg-transparent p-0 backdrop-blur-none;
+    @apply h-[760px] w-[720px] overflow-visible p-0;
+    /* Visual appearance delegated to inner chat-workspace */
+    border: none;
+    background: transparent;
     box-shadow: none;
   }
 
   .node-card--requirement-chat:hover {
-    border-color: transparent;
-    background: transparent;
+    border: none;
     box-shadow: none;
     transform: none;
   }
 
   .node-card--project-terminal {
     @apply h-full w-[720px] min-h-0 overflow-hidden p-0;
+    border-radius: var(--radius-node);
     display: flex;
     flex-direction: column;
     background: var(--card-bg);
-    border: 1px solid
-      color-mix(in srgb, var(--accent-projects) 30%, transparent);
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px color-mix(in srgb, var(--accent-projects) 20%, transparent);
+    box-shadow: var(--shadow-card);
   }
 
   .node-card--project-terminal:hover {
-    transform: none;
+    transform: translateY(-1px);
   }
 
   .terminal-node {
@@ -236,7 +114,7 @@
   }
 
   .terminal-node__icon {
-    @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-lg;
+    @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px];
     color: var(--accent-projects);
     background: color-mix(in srgb, var(--accent-projects) 12%, transparent);
   }
@@ -274,7 +152,7 @@
   .terminal-node__titlebar {
     @apply flex shrink-0 items-center justify-between gap-3 px-4 py-2.5;
     border-bottom: 1px solid var(--card-border);
-    background: var(--panel-bg);
+    background: var(--surface-subtle);
   }
 
   .terminal-node__title {
@@ -325,7 +203,7 @@
     @apply inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
     border-color: var(--card-border-strong);
     color: var(--text-strong);
-    background: var(--panel-bg);
+    background: var(--surface-subtle);
   }
 
   .terminal-node__command-tag:hover:not(:disabled) {
@@ -348,7 +226,7 @@
   .terminal-node__profiles {
     @apply max-h-[150px] shrink-0 overflow-y-auto border-b px-4 py-3;
     border-color: var(--card-border);
-    background: var(--panel-bg);
+    background: var(--surface-subtle);
   }
 
   .terminal-node__profiles-head {
@@ -379,7 +257,7 @@
     @apply min-w-0 rounded-lg border px-3 py-1.5 text-xs outline-none transition;
     border-color: var(--card-border-strong);
     color: var(--text-strong);
-    background: var(--panel-bg);
+    background: var(--surface-subtle);
   }
 
   .terminal-node__profile-row input:focus {
@@ -547,16 +425,12 @@
 
   .node-card--requirement-dag {
     @apply flex h-[260px] w-[360px] flex-col overflow-hidden;
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px color-mix(in srgb, var(--accent-model) 20%, transparent);
+    box-shadow: var(--shadow-hover);
   }
 
   .node-card--requirement-task {
     @apply flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden;
-    box-shadow:
-      var(--shadow-card),
-      0 0 24px color-mix(in srgb, var(--accent-create) 16%, transparent);
+    box-shadow: var(--shadow-card);
     transition:
       background-color 180ms ease,
       border-color 180ms ease,
@@ -631,10 +505,9 @@
   }
 
   .node-icon {
-    @apply relative flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px] border;
-    border-color: color-mix(in srgb, currentColor 30%, transparent);
-    background: color-mix(in srgb, currentColor 14%, transparent);
-    box-shadow: 0 0 12px color-mix(in srgb, currentColor 18%, transparent);
+    @apply relative flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border;
+    border-color: color-mix(in srgb, currentColor 20%, transparent);
+    background: color-mix(in srgb, currentColor 8%, transparent);
   }
 
   .node-icon svg {
@@ -658,36 +531,39 @@
   }
 
   .node-header strong {
-    @apply block overflow-hidden text-ellipsis whitespace-nowrap text-[13px] leading-tight font-bold;
+    @apply block overflow-hidden text-ellipsis whitespace-nowrap text-sm leading-tight font-semibold;
     color: var(--text-strong);
   }
 
   .node-header span {
-    @apply mt-1 block overflow-hidden text-ellipsis whitespace-nowrap text-[11px] leading-snug;
+    @apply mt-0.5 block overflow-hidden text-ellipsis whitespace-nowrap text-xs leading-snug;
     color: var(--text-soft);
   }
 
   .node-header__action {
-    @apply flex h-[28px] w-[28px] cursor-pointer items-center justify-center rounded-lg border-0 transition disabled:cursor-not-allowed disabled:opacity-45;
+    @apply flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-45;
     margin-left: auto;
-    color: var(--accent-danger);
-    background: color-mix(in srgb, var(--accent-danger) 14%, transparent);
+    border-color: var(--card-border);
+    color: var(--text-soft);
+    background: transparent;
   }
 
   .node-header__action:hover:not(:disabled) {
-    filter: brightness(1.08);
+    border-color: var(--card-border-strong);
+    color: var(--accent-danger);
+    background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
   }
 
   .node-card--requirement-list .node-header,
   .node-card--requirement-chat .node-header {
-    @apply h-11 shrink-0 items-center gap-2 border-b px-4 py-0;
+    @apply h-10 shrink-0 items-center gap-2 border-b px-4 py-0;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--panel-bg) 80%, transparent);
+    background: var(--panel-bg);
   }
 
   .node-card--requirement-list .node-header .node-icon,
   .node-card--requirement-chat .node-header .node-icon {
-    @apply h-7 w-7 rounded-lg;
+    @apply h-7 w-7 rounded-md;
   }
 
   .node-card--requirement-list .node-header strong,
@@ -697,189 +573,37 @@
 
   .node-card--requirement-list .node-header span,
   .node-card--requirement-chat .node-header span {
-    @apply mt-0 text-[9px];
-    color: var(--text-muted);
-  }
-
-  .requirement-input textarea {
-    @apply min-w-0 rounded-[10px] border px-3 py-2.5 text-xs outline-none transition;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 56%, transparent);
-    color: var(--text-strong);
-  }
-
-  .requirement-input textarea::placeholder {
-    color: var(--text-muted);
-  }
-
-  .requirement-input textarea:focus {
-    border-color: var(--accent-create);
-    box-shadow: 0 0 0 3px
-      color-mix(in srgb, var(--accent-create) 20%, transparent);
-  }
-
-  .model-actions button,
-  .requirement-input button,
-  .requirement-draft__confirm {
-    @apply cursor-pointer rounded-[10px] border-0 px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-55;
-  }
-
-  .form-error {
-    @apply mt-2.5 mb-0 text-xs;
-    color: var(--accent-danger);
-  }
-
-  .model-config-grid {
-    @apply mt-4 grid gap-3;
-  }
-
-  .settings-list {
-    @apply mt-4 grid gap-3;
-  }
-
-  .settings-list button {
-    @apply grid cursor-pointer grid-cols-[24px_1fr] gap-x-2 rounded-xl border p-3 text-left transition;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 32%, transparent);
-    color: var(--accent-model);
-  }
-
-  .settings-list button:hover,
-  .settings-list button:focus-visible {
-    border-color: color-mix(in srgb, var(--accent-model) 45%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 10%, transparent);
-  }
-
-  .settings-list button strong,
-  .settings-list button small {
-    grid-column: 2;
-  }
-
-  .settings-list button strong {
-    @apply text-[13px];
-    color: var(--text-strong);
-  }
-
-  .settings-list button small {
-    @apply text-[11px];
-    color: var(--text-soft);
-  }
-
-  .settings-list button > svg,
-  .settings-list__icons {
-    grid-row: 1 / span 2;
-  }
-
-  .settings-list__icons {
-    @apply relative block h-5 w-6;
-  }
-
-  .settings-list__icons svg {
-    @apply absolute;
-  }
-
-  .settings-list__icons svg:last-child {
-    @apply right-0 bottom-0;
-  }
-
-  .settings-close {
-    @apply mt-3 w-full cursor-pointer rounded-[10px] border px-3 py-2 text-xs font-bold transition;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 40%, transparent);
-    color: var(--text-soft);
-  }
-
-  .basic-settings {
-    @apply mt-4 grid gap-4;
-  }
-
-  .basic-settings fieldset {
-    @apply grid grid-cols-2 gap-2 rounded-xl border p-3;
-    border-color: var(--card-border);
-  }
-
-  .basic-settings legend,
-  .basic-settings__port > span {
-    @apply text-xs font-bold;
-    color: var(--text-strong);
-  }
-
-  .basic-settings fieldset label {
-    @apply flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs;
-    border-color: var(--card-border);
-    color: var(--text-soft);
-  }
-
-  .basic-settings input[type="radio"] {
-    accent-color: var(--accent-model);
-  }
-
-  .basic-settings__port {
-    @apply grid gap-1.5;
-  }
-
-  .basic-settings__port input {
-    @apply rounded-[10px] border px-3 py-2 text-xs outline-none;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 56%, transparent);
-    color: var(--text-strong);
-  }
-
-  .basic-settings__port small {
-    @apply text-[10px] leading-normal;
+    @apply mt-0 text-[10px];
     color: var(--text-muted);
   }
 
   .requirement-list {
-    @apply mt-4 grid min-h-0 flex-1 content-start gap-3 overflow-y-auto px-4;
+    @apply mt-3 grid min-h-0 flex-1 content-start gap-2 overflow-y-auto px-3;
     overscroll-behavior: contain;
   }
 
-  .model-config-tier,
-  .requirement-list__item,
-  .requirement-draft {
-    @apply grid min-w-0 gap-2 rounded-xl border p-3;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 32%, transparent);
-  }
-
-  .model-config-tier > strong,
-  .requirement-list__item strong,
-  .requirement-draft strong,
-  .requirement-empty strong {
-    @apply text-[13px] font-bold;
-    color: var(--text-strong);
-  }
-
-  .model-config-tier label {
-    @apply grid gap-1.5;
-  }
-
-  .model-config-tier label > span,
-  .requirement-message strong {
-    @apply text-[10px] font-bold;
-    color: var(--text-muted);
-  }
-
   .requirement-list__item em {
-    @apply inline-flex w-fit items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] leading-none font-bold not-italic;
-    background: color-mix(in srgb, var(--accent-model) 14%, transparent);
+    @apply inline-flex w-fit items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] leading-none font-medium not-italic;
+    background: color-mix(in srgb, var(--accent-model) 12%, transparent);
     color: var(--accent-model);
   }
 
   .requirement-list__item {
-    @apply cursor-pointer text-left transition;
+    @apply cursor-pointer rounded-[12px] px-3 py-3 text-left transition;
+    background: var(--surface-raised);
     color: var(--text-soft);
+    border: 1px solid var(--card-border);
   }
 
   .requirement-list__item:hover,
   .requirement-list__item--selected {
-    border-color: color-mix(in srgb, var(--accent-model) 38%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 10%, transparent);
+    background: var(--surface-subtle);
+    border-color: var(--card-border-strong);
+    box-shadow: var(--shadow-card);
   }
 
   .requirement-list__item:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--accent-model) 60%, transparent);
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
   }
 
@@ -888,15 +612,14 @@
   }
 
   .requirement-list__status {
-    @apply shrink-0 rounded-full px-2 py-0.5 text-[10px] leading-none font-bold;
-    border: 1px solid transparent;
+    @apply shrink-0 rounded-full border px-2 py-0.5 text-[10px] leading-none font-medium;
   }
 
   .requirement-list__status--analyzing,
   .requirement-list__status--clarifying,
   .requirement-list__status--planning {
-    border-color: color-mix(in srgb, var(--accent-model) 30%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 14%, transparent);
+    border-color: color-mix(in srgb, var(--accent-model) 24%, transparent);
+    background: color-mix(in srgb, var(--accent-model) 10%, transparent);
     color: var(--accent-model);
   }
 
@@ -904,20 +627,20 @@
   .requirement-list__status--plan_ready,
   .requirement-list__status--queued,
   .requirement-list__status--running {
-    border-color: color-mix(in srgb, var(--accent-create) 35%, transparent);
-    background: color-mix(in srgb, var(--accent-create) 16%, transparent);
+    border-color: color-mix(in srgb, var(--accent-create) 24%, transparent);
+    background: color-mix(in srgb, var(--accent-create) 10%, transparent);
     color: var(--accent-create);
   }
 
   .requirement-list__status--completed {
-    border-color: color-mix(in srgb, var(--success) 35%, transparent);
-    background: color-mix(in srgb, var(--success) 16%, transparent);
+    border-color: color-mix(in srgb, var(--success) 24%, transparent);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
     color: var(--success);
   }
 
   .requirement-list__status--failed {
-    border-color: color-mix(in srgb, var(--accent-danger) 36%, transparent);
-    background: color-mix(in srgb, var(--accent-danger) 16%, transparent);
+    border-color: color-mix(in srgb, var(--accent-danger) 24%, transparent);
+    background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
     color: var(--accent-danger);
   }
 
@@ -927,10 +650,10 @@
 
   .requirement-list__actions button,
   .requirement-list__actions span {
-    @apply inline-flex w-fit items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] leading-none font-bold;
-    border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 10%, transparent);
-    color: var(--accent-model);
+    @apply inline-flex w-fit items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] leading-none font-medium;
+    border-color: var(--card-border);
+    background: var(--surface-subtle);
+    color: var(--text-soft);
   }
 
   .requirement-list__actions button {
@@ -942,9 +665,9 @@
   }
 
   .simple-select__trigger {
-    @apply flex w-full items-center justify-between gap-2 rounded-[10px] border px-2.5 py-2 text-left text-xs outline-none transition;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 52%, transparent);
+    @apply flex w-full items-center justify-between gap-2 rounded-[8px] border px-2.5 py-2 text-left text-xs outline-none transition;
+    border-color: var(--card-border-strong);
+    background: var(--surface-subtle);
     color: var(--text-strong);
   }
 
@@ -967,12 +690,12 @@
   }
 
   .simple-select__dropdown {
-    @apply absolute left-0 right-0 z-50 mt-1.5 grid max-h-[220px] overflow-y-auto rounded-[10px] border p-1 shadow-xl;
+    @apply absolute left-0 right-0 z-50 mt-1.5 grid max-h-[220px] overflow-y-auto rounded-[8px] border p-1 shadow-xl;
     border-color: var(--card-border-strong);
     background: var(--card-bg);
-    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
+    box-shadow: var(--shadow-popover);
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--accent-model) 42%, transparent)
+    scrollbar-color: color-mix(in srgb, var(--text-tertiary) 36%, transparent)
       transparent;
   }
 
@@ -1012,133 +735,6 @@
     color: color-mix(in srgb, var(--accent-model) 72%, var(--text-strong));
   }
 
-  .model-actions {
-    @apply mt-4 grid grid-cols-2 gap-2;
-  }
-
-  .model-actions__close {
-    @apply border;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 40%, transparent);
-    color: var(--text-soft);
-  }
-
-  .model-actions__save,
-  .requirement-input button {
-    @apply inline-flex items-center justify-center gap-1.5 text-white;
-    border-color: color-mix(in srgb, var(--accent-danger) 45%, transparent);
-    background: var(--accent-danger);
-  }
-
-  .model-actions__save {
-    background: var(--accent-model);
-  }
-
-  .requirement-chat {
-    @apply mt-4 flex min-h-0 flex-1 flex-col gap-3;
-  }
-
-  .requirement-chat__scrollable {
-    @apply flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1 pb-1;
-    overscroll-behavior: contain;
-  }
-
-  .requirement-empty {
-    @apply grid flex-1 place-content-center justify-items-center gap-2 rounded-[14px] border border-dashed px-5 py-10 text-center;
-    border-color: var(--card-border-strong);
-    background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
-    color: var(--text-muted);
-  }
-
-  .requirement-messages {
-    @apply flex flex-col gap-3;
-  }
-
-  .requirement-message {
-    @apply grid max-w-[90%] gap-1;
-    grid-template-columns: auto 1fr;
-  }
-
-  .requirement-message__avatar {
-    @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold;
-  }
-
-  .requirement-message__content {
-    @apply grid gap-1;
-  }
-
-  .requirement-message__meta {
-    @apply flex items-center gap-2 text-[10px] font-medium;
-    color: var(--text-muted);
-  }
-
-  .requirement-message__bubble {
-    @apply rounded-2xl rounded-tl-md border px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 32%, transparent);
-    color: var(--text-soft);
-    overflow-wrap: anywhere;
-  }
-
-  .requirement-message--user {
-    @apply ml-auto;
-    grid-template-columns: 1fr auto;
-  }
-
-  .requirement-message--user .requirement-message__avatar {
-    order: 2;
-    background: color-mix(in srgb, var(--accent-create) 18%, transparent);
-    color: var(--accent-create);
-  }
-
-  .requirement-message--user .requirement-message__content {
-    order: 1;
-  }
-
-  .requirement-message--user .requirement-message__meta {
-    @apply justify-end;
-  }
-
-  .requirement-message--user .requirement-message__bubble {
-    @apply rounded-tl-2xl rounded-tr-md;
-    border-color: color-mix(in srgb, var(--accent-create) 28%, transparent);
-    background: color-mix(in srgb, var(--accent-create) 10%, transparent);
-    color: var(--text-strong);
-  }
-
-  .requirement-message--assistant .requirement-message__avatar {
-    background: color-mix(in srgb, var(--accent-model) 18%, transparent);
-    color: var(--accent-model);
-  }
-
-  .requirement-message--assistant .requirement-message__bubble {
-    border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 8%, transparent);
-  }
-
-  .requirement-message--system {
-    @apply max-w-full;
-    grid-template-columns: auto 1fr;
-  }
-
-  .requirement-message--system .requirement-message__avatar {
-    background: color-mix(in srgb, var(--accent-danger) 18%, transparent);
-    color: var(--accent-danger);
-  }
-
-  .requirement-message--system .requirement-message__bubble {
-    border-color: color-mix(in srgb, var(--accent-danger) 28%, transparent);
-    background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
-    color: color-mix(in srgb, var(--accent-danger) 92%, var(--text-strong));
-  }
-
-  .requirement-message p,
-  .requirement-draft p {
-    @apply m-0 text-xs leading-relaxed whitespace-pre-wrap;
-    color: var(--text-soft);
-    overflow-wrap: anywhere;
-  }
-
   .requirement-draft {
     @apply grid gap-2.5;
     border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
@@ -1159,17 +755,6 @@
     color: var(--text-soft);
   }
 
-  .requirement-action-panel {
-    @apply max-h-[260px] overflow-y-auto rounded-xl border p-3;
-    border-color: color-mix(in srgb, var(--accent-model) 28%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 8%, transparent);
-  }
-
-  .requirement-action-panel .clarification-panel,
-  .requirement-action-panel .requirement-draft {
-    @apply overflow-visible;
-  }
-
   .requirement-draft__confirm {
     @apply mt-1 inline-flex items-center justify-center gap-1.5 text-white;
     border-color: color-mix(in srgb, var(--accent-model) 45%, transparent);
@@ -1183,7 +768,7 @@
   .dag-node__close {
     @apply ml-auto flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border transition;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-soft);
   }
 
@@ -1672,7 +1257,7 @@
     @apply inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border;
     border-color: var(--card-border);
     color: var(--text-soft);
-    background: var(--panel-bg);
+    background: var(--surface-subtle);
   }
 
   .task-detail-dialog__body {
@@ -1685,7 +1270,7 @@
     @apply grid gap-3 rounded-[10px] border p-4;
     align-content: start;
     border-color: var(--card-border);
-    background: var(--panel-bg);
+    background: var(--surface-subtle);
   }
 
   .task-detail-dialog__section--wide {
@@ -1742,7 +1327,7 @@
   .task-detail-dialog__round > header > span {
     @apply rounded-full px-2 py-1 text-[10px] font-bold;
     color: var(--text-soft);
-    background: var(--panel-bg);
+    background: var(--surface-subtle);
   }
 
   .task-detail-dialog__round > header > .is-approved {
@@ -1772,7 +1357,7 @@
   .task-detail-dialog__stage {
     @apply min-w-0 rounded-[9px] border p-3;
     border-color: var(--card-border);
-    background: var(--panel-bg);
+    background: var(--surface-subtle);
   }
 
   .task-detail-dialog__step.is-approved,
@@ -1822,7 +1407,7 @@
   .task-detail-dialog__details {
     @apply rounded-[10px] border;
     border-color: var(--card-border);
-    background: var(--panel-bg);
+    background: var(--surface-subtle);
   }
 
   .task-detail-dialog__details summary {
@@ -1893,165 +1478,18 @@
     }
   }
 
-  .task-session-messages {
-    @apply flex max-h-[360px] flex-col gap-3 overflow-y-auto;
-    overscroll-behavior: contain;
-  }
-
-  .task-session-message {
-    @apply rounded-lg border p-3 text-sm;
-    border-color: color-mix(in srgb, var(--text-secondary) 18%, transparent);
-    background: color-mix(in srgb, var(--canvas-bg) 80%, transparent);
-  }
-
-  .task-session-message--user {
-    border-left: 3px solid var(--accent-model);
-  }
-
-  .task-session-message--assistant {
-    border-left: 3px solid var(--success);
-  }
-
-  .task-session-message--system {
-    border-left: 3px solid var(--text-secondary);
-  }
-
-  .task-session-message__header {
-    @apply mb-2 flex items-center justify-between gap-2 text-xs;
-    color: var(--text-secondary);
-  }
-
-  .task-session-message__header > span {
-    @apply flex items-center gap-2;
-  }
-
-  .task-session-message__source {
-    @apply rounded-full px-2 py-0.5 font-semibold;
-    color: var(--text-strong);
-    background: color-mix(in srgb, var(--accent-model) 18%, transparent);
-  }
-
-  .task-session-message__role {
-    @apply font-medium uppercase;
-  }
-
-  .task-session-message__content pre,
-  .task-session-message__thinking pre,
-  .task-session-message__tools pre {
-    @apply whitespace-pre-wrap break-words font-mono text-xs leading-relaxed;
-    color: var(--text-primary);
-  }
-
-  .task-session-message__content,
-  .task-session-message__thinking,
-  .task-session-message__tools {
-    @apply mt-2 rounded border p-2;
-    border-color: color-mix(in srgb, var(--text-secondary) 12%, transparent);
-    background: color-mix(in srgb, var(--canvas-bg) 60%, transparent);
-  }
-
-  .task-session-message__content summary,
-  .task-session-message__thinking summary,
-  .task-session-message__tools summary {
-    @apply cursor-pointer text-xs font-medium;
-    color: var(--text-secondary);
-  }
-
-  .task-session-messages__toggle {
-    @apply mt-2 text-xs underline;
-    color: var(--accent-model);
-  }
-
-  .task-session-messages__warning {
-    @apply mb-2 whitespace-pre-wrap rounded-lg border px-3 py-2 text-xs;
-    border-color: color-mix(in srgb, var(--accent-model) 35%, transparent);
-    color: var(--accent-model);
-  }
-
   .task-session-tools {
     @apply mt-2 flex flex-col gap-2;
   }
 
-  .task-session-tool {
-    @apply overflow-hidden rounded-md border;
-    border-color: color-mix(in srgb, var(--text-soft) 18%, transparent);
-  }
-
-  .task-session-tool.is-error {
-    border-color: color-mix(in srgb, var(--accent-danger) 45%, transparent);
-  }
-
-  .task-session-tool > summary {
-    @apply flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs;
-    background: color-mix(in srgb, var(--canvas-bg) 72%, transparent);
-  }
-
-  .task-session-tool > summary > span:not(.task-session-tool__stats) {
-    @apply min-w-0 flex-1 truncate font-mono;
-    color: var(--text-soft);
-  }
-
-  .task-session-tool__stats {
-    @apply ml-auto flex gap-1 font-mono;
-  }
-
-  .task-session-tool__stats b {
-    color: var(--success);
-  }
-
-  .task-session-tool__stats i {
-    @apply not-italic;
-    color: var(--accent-danger);
-  }
-
-  .task-session-tool__diff,
-  .task-session-tool__code,
-  .task-session-tool__output,
-  .task-session-tool > pre {
-    @apply m-0 max-h-[360px] overflow-auto whitespace-pre font-mono text-xs leading-relaxed;
-  }
-
-  .task-session-tool__diff > span {
-    @apply block min-w-max px-3;
-  }
-
-  .task-session-tool__diff .is-added {
-    color: var(--success);
-    background: color-mix(in srgb, var(--success) 10%, transparent);
-  }
-
-  .task-session-tool__diff .is-removed {
-    color: var(--accent-danger);
-    background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
-  }
-
-  .task-session-tool__diff .is-hunk {
-    color: var(--accent-model);
-  }
-
-  .task-session-tool__code,
-  .task-session-tool__output,
-  .task-session-tool > pre {
-    @apply border-t p-3;
-    border-color: color-mix(in srgb, var(--text-soft) 12%, transparent);
-  }
-
-  .task-session-tool__output {
-    color: var(--text-soft);
-  }
-
   .rq-workbench {
-    @apply relative mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[16px] border;
-    border-color: color-mix(in srgb, var(--accent-model) 18%, transparent);
-    background: linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--canvas-bg) 68%, transparent),
-      color-mix(in srgb, var(--canvas-bg) 46%, transparent)
-    );
+    @apply relative mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[16px];
+    background: var(--surface-subtle);
+    border: 1px solid var(--card-border);
   }
 
   .rq-transcript {
-    @apply min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-[188px];
+    @apply min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-[80px];
     overscroll-behavior: contain;
     cursor: text;
     user-select: text;
@@ -2071,7 +1509,7 @@
   .requirement-list {
     scrollbar-gutter: stable;
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--accent-model) 42%, transparent)
+    scrollbar-color: color-mix(in srgb, var(--text-muted) 40%, transparent)
       transparent;
   }
 
@@ -2134,7 +1572,7 @@
   }
 
   .rq-message {
-    @apply grid gap-2;
+    @apply grid gap-2.5;
     grid-template-columns: 28px minmax(0, 1fr);
   }
 
@@ -2146,13 +1584,14 @@
   .rq-message__avatar {
     @apply flex h-7 w-7 items-center justify-center rounded-full border;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-soft);
   }
 
   .rq-message--user .rq-message__avatar {
     @apply order-2;
-    border-color: color-mix(in srgb, var(--accent-create) 30%, transparent);
+    border-color: color-mix(in srgb, var(--accent-create) 24%, transparent);
+    background: color-mix(in srgb, var(--accent-create) 10%, transparent);
     color: var(--accent-create);
   }
 
@@ -2161,7 +1600,7 @@
   }
 
   .rq-message__meta {
-    @apply mb-1.5 flex items-center gap-2 text-[10px] font-semibold;
+    @apply mb-1 flex items-center gap-2 text-[10px] font-medium;
     color: var(--text-muted);
   }
 
@@ -2170,10 +1609,10 @@
   }
 
   .rq-message__body p {
-    @apply m-0 rounded-[14px] border px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
-    color: var(--text-soft);
+    @apply m-0 rounded-[12px] px-4 py-3 text-[13px] leading-relaxed whitespace-pre-wrap;
+    background: var(--surface-raised);
+    color: var(--text-secondary);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
     overflow-wrap: anywhere;
   }
 
@@ -2182,28 +1621,15 @@
   }
 
   .rq-message__attachments .rq-process {
-    @apply rounded-[12px];
+    @apply rounded-xl;
   }
 
   .rq-message__attachments .rq-process__body {
     @apply max-h-[180px];
   }
 
-  .rq-message__refs,
-  .requirement-message__refs {
-    @apply mb-2 flex flex-wrap items-center gap-1.5;
-  }
-
-  .rq-message__refs span,
-  .requirement-message__refs span {
-    @apply inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 42%, transparent);
-    color: var(--text-soft);
-  }
-
   .rq-message__refs img {
-    @apply h-14 w-14 rounded-[8px] border object-cover;
+    @apply h-14 w-14 rounded-lg border object-cover;
     border-color: var(--card-border);
   }
 
@@ -2212,9 +1638,9 @@
   }
 
   .rq-message--assistant .rq-message__body p {
-    @apply rounded-tl-[4px];
-    border-color: color-mix(in srgb, var(--accent-model) 22%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 6%, transparent);
+    @apply rounded-bl-md;
+    background: var(--surface-subtle);
+    color: var(--text-secondary);
   }
 
   .rq-message--system {
@@ -2222,26 +1648,30 @@
   }
 
   .rq-message--system .rq-message__avatar {
-    border-color: color-mix(in srgb, var(--accent-danger) 30%, transparent);
+    border-color: color-mix(in srgb, var(--accent-danger) 24%, transparent);
+    background: color-mix(in srgb, var(--accent-danger) 10%, transparent);
     color: var(--accent-danger);
   }
 
   .rq-message--system .rq-message__body p {
-    border-color: color-mix(in srgb, var(--accent-danger) 24%, transparent);
-    background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
+    @apply rounded-xl;
+    border-color: color-mix(in srgb, var(--accent-danger) 20%, transparent);
+    background: color-mix(in srgb, var(--accent-danger) 6%, transparent);
+    color: var(--text-secondary);
   }
 
   .rq-message--user .rq-message__body p {
-    @apply rounded-tr-[4px];
-    border-color: color-mix(in srgb, var(--accent-create) 34%, transparent);
-    background: color-mix(in srgb, var(--accent-create) 16%, transparent);
-    color: var(--text-strong);
+    @apply rounded-br-md;
+    background: var(--accent-create);
+    color: #ffffff;
+    box-shadow: 0 2px 8px
+      color-mix(in srgb, var(--accent-create) 28%, transparent);
   }
 
   .rq-notice {
     @apply mx-auto flex w-fit max-w-full items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 40%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-soft);
   }
 
@@ -2254,7 +1684,7 @@
   .rq-process {
     @apply overflow-hidden rounded-[14px] border;
     border-color: color-mix(in srgb, var(--accent-model) 24%, transparent);
-    background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
+    background: var(--surface-subtle);
   }
 
   .rq-process--running {
@@ -2278,7 +1708,7 @@
 
   .rq-process__head span:not(.rq-process__icon) {
     @apply shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold;
-    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-muted);
   }
 
@@ -2294,7 +1724,7 @@
   .rq-process-step {
     @apply grid gap-1 rounded-[10px] border px-3 py-2 text-xs;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-soft);
   }
 
@@ -2324,10 +1754,14 @@
   }
 
   .rq-shelf {
-    @apply pointer-events-auto mx-auto grid max-h-[330px] max-w-[620px] gap-3 overflow-y-auto rounded-[16px] border p-4 backdrop-blur-xl;
-    border-color: color-mix(in srgb, var(--accent-model) 35%, transparent);
-    background: color-mix(in srgb, var(--card-bg) 92%, transparent);
-    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
+    @apply pointer-events-auto mx-auto grid max-h-[330px] max-w-[620px] gap-3 overflow-y-auto rounded-[14px] border p-4 backdrop-blur-xl;
+    border-color: color-mix(
+      in srgb,
+      var(--card-border-strong) 80%,
+      var(--accent-model)
+    );
+    background: color-mix(in srgb, var(--card-bg) 95%, transparent);
+    box-shadow: var(--shadow-popover);
   }
 
   .rq-shelf__topline {
@@ -2358,7 +1792,7 @@
   .rq-ask__crumbs button {
     @apply inline-flex h-7 min-w-7 cursor-pointer items-center justify-center gap-1 rounded-full border px-2 text-[11px] font-bold transition;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-soft);
   }
 
@@ -2376,7 +1810,7 @@
   .rq-ask textarea {
     @apply rounded-[12px] border px-3 py-2 text-xs leading-relaxed;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 38%, transparent);
+    background: var(--surface-subtle);
   }
 
   .rq-ask__options {
@@ -2386,7 +1820,7 @@
   .rq-ask__options button {
     @apply grid cursor-pointer gap-1 rounded-[12px] border px-3 py-2 text-left transition;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-soft);
   }
 
@@ -2423,10 +1857,10 @@
   }
 
   .rq-composer {
-    @apply absolute right-4 bottom-4 left-4 z-20 grid grid-cols-[minmax(0,1fr)_42px] items-end gap-2 rounded-[16px] border p-2 backdrop-blur-xl;
-    border-color: var(--card-border-strong);
-    background: color-mix(in srgb, var(--card-bg) 92%, transparent);
-    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.32);
+    @apply absolute right-4 bottom-4 left-4 z-20 grid grid-cols-[minmax(0,1fr)_42px] items-end gap-2 rounded-[16px] p-2;
+    background: var(--surface-raised);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--shadow-popover);
   }
 
   .rq-composer textarea {
@@ -2439,13 +1873,13 @@
   }
 
   .rq-composer button {
-    @apply flex h-[42px] w-[42px] cursor-pointer items-center justify-center rounded-[12px] border-0 text-white transition disabled:cursor-not-allowed disabled:opacity-45;
+    @apply flex h-[42px] w-[42px] cursor-pointer items-center justify-center rounded-xl border-0 text-white transition disabled:cursor-not-allowed disabled:opacity-45;
     background: var(--accent-model);
   }
 
   .rq-composer button:hover:not(:disabled),
   .rq-shelf__actions button:hover:not(:disabled) {
-    filter: brightness(1.08);
+    filter: brightness(1.05);
   }
 
   .rq-composer__stop {
@@ -2453,14 +1887,14 @@
   }
 
   .rq-composer__suggestions {
-    @apply absolute right-2 bottom-[calc(100%+6px)] left-2 z-40 grid max-h-[210px] overflow-auto rounded-[12px] border p-1;
+    @apply absolute right-2 bottom-[calc(100%+6px)] left-2 z-40 grid max-h-[210px] overflow-auto rounded-xl border p-1;
     border-color: var(--card-border-strong);
-    background: var(--card-bg);
-    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-popover);
   }
 
   .rq-composer__suggestions button {
-    @apply grid h-8 w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-[8px] bg-transparent px-2 text-left text-[11px] font-semibold text-current;
+    @apply grid h-8 w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-lg bg-transparent px-2 text-left text-[11px] font-medium text-current;
     color: var(--text-soft);
   }
 
@@ -2470,7 +1904,7 @@
   }
 
   .rq-composer__suggestions button:hover {
-    background: color-mix(in srgb, var(--accent-model) 12%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-strong);
     filter: none;
   }
@@ -2481,9 +1915,9 @@
 
   .rq-composer__chips button,
   .rq-composer__chips > span {
-    @apply inline-flex h-7 max-w-[210px] items-center gap-1.5 rounded-full border px-2 text-[10px] font-semibold;
+    @apply inline-flex h-7 max-w-[210px] items-center gap-1.5 rounded-full border px-2 text-[10px] font-medium;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 42%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-soft);
   }
 
@@ -2497,14 +1931,8 @@
   }
 
   .token-usage-node {
-    @apply relative flex h-full w-full flex-col overflow-hidden rounded-xl border p-2;
-    border-color: var(--card-border);
-    background: linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--accent-primary) 6%, var(--card-bg)) 0%,
-      var(--card-bg) 60%
-    );
-    box-shadow: var(--card-shadow);
+    @apply relative flex h-full w-full flex-col overflow-hidden;
+    color: var(--text-strong);
   }
 
   .token-usage-node__header {
@@ -2512,7 +1940,7 @@
   }
 
   .token-usage-node__title {
-    @apply text-left text-xs font-semibold;
+    @apply text-left text-xs font-medium;
     color: var(--text-strong);
   }
 
@@ -2521,7 +1949,7 @@
   }
 
   .token-usage-node__total {
-    @apply text-right text-xs font-bold;
+    @apply text-right text-xs font-semibold;
     color: var(--accent-primary);
   }
 
@@ -2541,7 +1969,7 @@
 
   .token-usage-node__item {
     @apply flex flex-col justify-center rounded-lg py-1;
-    background: color-mix(in srgb, var(--surface-subtle) 60%, transparent);
+    background: var(--surface-subtle);
   }
 
   .token-usage-node__item--left {
@@ -2572,50 +2000,13 @@
   }
 
   .token-usage-node__value {
-    @apply w-full text-[11px] font-bold leading-tight;
+    @apply w-full text-[11px] font-semibold leading-tight;
     color: var(--text-strong);
   }
 
   .token-usage-node__label {
     @apply w-full text-[9px] leading-tight;
     color: var(--text-muted);
-  }
-
-  .requirement-input {
-    @apply grid grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-xl border p-2;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 42%, transparent);
-    backdrop-filter: blur(8px);
-  }
-
-  .requirement-input textarea {
-    @apply min-h-[44px] max-h-[160px] resize-y rounded-lg border-0 bg-transparent px-2.5 py-2 text-xs outline-none;
-    color: var(--text-strong);
-  }
-
-  .requirement-input textarea::placeholder {
-    color: var(--text-muted);
-  }
-
-  .requirement-input button {
-    @apply self-end rounded-lg px-3.5 py-2;
-  }
-
-  .requirement-events {
-    @apply grid gap-1.5;
-  }
-
-  .requirement-events span,
-  .requirement-analyzing,
-  .trace-status {
-    @apply flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px];
-    background: color-mix(in srgb, var(--canvas-bg) 36%, transparent);
-    color: var(--text-soft);
-  }
-
-  .requirement-analyzing svg,
-  .spin-icon {
-    @apply animate-spin;
   }
 
   .trace-bubble {
@@ -2687,7 +2078,7 @@
 
   .trace-item pre {
     @apply m-0 max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded-md px-2 py-1.5 font-sans text-[11px] leading-relaxed;
-    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-soft);
   }
 
@@ -2759,7 +2150,7 @@
   .clarification-card textarea {
     @apply min-h-[72px] resize-y rounded-lg border px-3 py-2 text-xs outline-none;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-strong);
   }
 
@@ -2770,7 +2161,7 @@
   .clarification-options button {
     @apply grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-left transition;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 38%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-soft);
   }
 
@@ -2834,7 +2225,7 @@
   }
 
   .clarification-panel__prev {
-    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+    background: var(--surface-subtle);
     color: var(--text-strong);
   }
 
@@ -3034,11 +2425,8 @@
   min-height: 0;
   overflow: hidden;
   padding: 0;
-  border-color: color-mix(in srgb, var(--accent-projects) 34%, transparent);
   background: var(--card-bg);
-  box-shadow:
-    var(--shadow-card),
-    0 0 28px color-mix(in srgb, var(--accent-projects) 20%, transparent);
+  box-shadow: var(--shadow-card);
   transition:
     width 260ms ease,
     height 260ms ease,
@@ -3065,7 +2453,7 @@
 }
 
 .github-node__collapsed:hover {
-  background: color-mix(in srgb, var(--accent-projects) 8%, transparent);
+  background: color-mix(in srgb, var(--text-strong) 5%, transparent);
 }
 
 .github-node__collapsed > span:first-child {
@@ -3101,7 +2489,7 @@
 .github-node__titlebar {
   @apply flex h-11 shrink-0 items-center gap-2 border-b px-4;
   border-color: var(--card-border);
-  background: var(--panel-bg);
+  background: var(--surface-subtle);
 }
 
 .github-node__titlebar strong {
@@ -3127,7 +2515,7 @@
 .github-node__meta {
   @apply grid gap-1 rounded-xl border p-3 text-xs;
   border-color: var(--card-border);
-  background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
+  background: var(--surface-subtle);
 }
 
 .github-node__meta span:first-child {
@@ -3167,11 +2555,8 @@
 /* === Token usage node === */
 .node-card--token-usage {
   @apply h-full w-full min-h-0 overflow-hidden p-0;
-  border-color: color-mix(in srgb, var(--success) 34%, transparent);
   background: var(--card-bg);
-  box-shadow:
-    var(--shadow-card),
-    0 0 28px color-mix(in srgb, var(--success) 20%, transparent);
+  box-shadow: var(--shadow-card);
   transition:
     width 260ms ease,
     height 260ms ease,
@@ -3197,12 +2582,29 @@
 }
 
 .token-usage-node__collapsed:hover {
-  background: color-mix(in srgb, var(--success) 8%, transparent);
+  background: color-mix(in srgb, var(--text-strong) 5%, transparent);
+}
+
+/* Expanded state — looks like a proper titlebar */
+.token-usage-node__collapsed[aria-expanded="true"] {
+  @apply shrink-0;
+  border-bottom: 1px solid var(--card-border);
+  background: var(--surface-subtle);
+  cursor: pointer;
+}
+
+.token-usage-node__collapsed[aria-expanded="true"]:hover {
+  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-subtle));
 }
 
 .token-usage-node__collapsed > svg:first-child {
   @apply shrink-0;
   color: var(--success);
+}
+
+/* Icon becomes neutral when header is acting as titlebar */
+.token-usage-node__collapsed[aria-expanded="true"] > svg:first-child {
+  color: var(--text-muted);
 }
 
 .token-usage-node__collapsed > span {
@@ -3223,7 +2625,7 @@
 }
 
 .token-usage-node__detail {
-  @apply flex min-h-0 flex-1 flex-col p-3;
+  @apply p-3;
 }
 
 .token-usage-node__grid {
@@ -3233,7 +2635,7 @@
 .token-usage-node__item {
   @apply grid place-content-center gap-1 rounded-lg border px-3 py-2;
   border-color: var(--card-border);
-  background: color-mix(in srgb, var(--canvas-bg) 30%, transparent);
+  background: var(--surface-subtle);
 }
 
 .token-usage-node__value {
@@ -3249,6 +2651,80 @@
 .token-usage-node__empty {
   @apply flex h-full items-center justify-center text-xs;
   color: var(--text-muted);
+}
+
+/* =====================================================================
+   NodeBar — unified collapsible header for all small canvas nodes
+   (Settings / Token / GitHub / Terminal / Git)
+   ===================================================================== */
+
+.node-bar {
+  @apply flex h-11 w-full shrink-0 items-center gap-3 px-4;
+  color: var(--text-strong);
+}
+
+/* Collapsed state — full-width toggle button */
+button.node-bar {
+  @apply border-0 text-left;
+  background: transparent;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+button.node-bar:hover {
+  background: color-mix(in srgb, var(--text-strong) 5%, transparent);
+}
+
+/* Expanded state — static titlebar row */
+.node-bar--titlebar {
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--card-border);
+}
+
+/* Icon slot */
+.node-bar__icon {
+  @apply flex shrink-0 items-center justify-center;
+}
+
+/* Text copy: title + subtitle */
+.node-bar__copy {
+  @apply flex min-w-0 flex-1 flex-col;
+}
+
+.node-bar__copy strong {
+  @apply text-xs font-semibold leading-tight;
+  color: var(--text-strong);
+}
+
+.node-bar__copy small {
+  @apply mt-0.5 truncate text-[10px] leading-none;
+  color: var(--text-muted);
+}
+
+/* Trailing chevron (collapsed only) */
+.node-bar__chevron {
+  @apply shrink-0;
+  color: var(--text-muted);
+}
+
+/* Action buttons group in expanded titlebar */
+.node-bar__actions {
+  @apply flex shrink-0 items-center gap-1;
+}
+
+/* Shared button style for all node-bar action/close buttons */
+.node-bar__btn {
+  @apply flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-[6px] border transition
+         disabled:cursor-not-allowed disabled:opacity-40;
+  border-color: var(--card-border);
+  color: var(--text-soft);
+  background: transparent;
+}
+
+.node-bar__btn:hover:not(:disabled) {
+  border-color: var(--card-border-strong);
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--text-strong) 5%, transparent);
 }
 
 /* === React Flow controls === */
@@ -3321,11 +2797,8 @@
   min-height: 0;
   overflow: hidden;
   padding: 0;
-  border-color: color-mix(in srgb, var(--accent-model) 34%, transparent);
   background: var(--card-bg);
-  box-shadow:
-    var(--shadow-card),
-    0 0 28px color-mix(in srgb, var(--accent-model) 20%, transparent);
+  box-shadow: var(--shadow-card);
   transition:
     width 260ms ease,
     height 260ms ease,
@@ -3350,7 +2823,7 @@
 }
 
 .git-node__collapsed:hover {
-  background: color-mix(in srgb, var(--accent-model) 8%, transparent);
+  background: color-mix(in srgb, var(--text-strong) 5%, transparent);
 }
 
 .git-node__collapsed > span {
@@ -3367,7 +2840,8 @@
   color: var(--text-soft);
 }
 
-.git-node__collapsed em {
+.git-node__collapsed em,
+.git-node__collapsed-error {
   @apply flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold not-italic;
   color: var(--accent-danger);
   background: color-mix(in srgb, var(--accent-danger) 14%, transparent);
@@ -3380,7 +2854,7 @@
 .git-node__titlebar {
   @apply flex h-11 shrink-0 items-center gap-2 px-4;
   border-bottom: 1px solid var(--card-border);
-  background: var(--panel-bg);
+  background: var(--surface-subtle);
 }
 
 .git-node__titlebar strong {
@@ -3417,7 +2891,7 @@
   width: 122px;
   border-color: var(--card-border-strong);
   color: var(--text-strong);
-  background: var(--panel-bg);
+  background: var(--surface-subtle);
 }
 
 .git-node__toolbar input {
@@ -3430,8 +2904,8 @@
 
 .git-node__toolbar button:hover:not(:disabled),
 .git-node__titlebar button:hover:not(:disabled) {
-  border-color: color-mix(in srgb, #f59e0b 60%, transparent);
-  background: color-mix(in srgb, #f59e0b 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-warning) 60%, transparent);
+  background: color-mix(in srgb, var(--accent-warning) 10%, transparent);
 }
 
 .git-node__toolbar-spacer {
@@ -3478,11 +2952,11 @@
 }
 
 .git-node__file.is-active {
-  background: color-mix(in srgb, #f59e0b 12%, transparent);
+  background: color-mix(in srgb, var(--accent-warning) 12%, transparent);
 }
 
 .git-node__file input {
-  accent-color: #f59e0b;
+  accent-color: var(--accent-warning);
 }
 
 .git-node__file button {
@@ -3496,8 +2970,8 @@
 
 .git-node__change {
   @apply inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-bold;
-  color: #f59e0b;
-  background: color-mix(in srgb, #f59e0b 12%, transparent);
+  color: var(--accent-warning);
+  background: color-mix(in srgb, var(--accent-warning) 12%, transparent);
 }
 
 .git-node__change--deleted,
@@ -3524,7 +2998,7 @@
 .git-node__diff > div {
   @apply sticky top-0 flex items-center justify-between gap-2 px-3 py-2 text-xs;
   border-bottom: 1px solid var(--card-border);
-  background: var(--panel-bg);
+  background: var(--surface-subtle);
 }
 
 .git-node__diff > p {
@@ -3541,8 +3015,8 @@
 
 .git-node__diff > small {
   @apply absolute bottom-2 right-3 rounded px-2 py-1 text-[10px];
-  color: #f59e0b;
-  background: var(--panel-bg);
+  color: var(--accent-warning);
+  background: var(--surface-subtle);
 }
 
 .git-node__commit {
@@ -3554,21 +3028,21 @@
   @apply min-w-0 flex-1 resize-none rounded-md border p-2 text-xs outline-none;
   border-color: var(--card-border-strong);
   color: var(--text-strong);
-  background: var(--panel-bg);
+  background: var(--surface-subtle);
 }
 
 .git-node__commit button {
   @apply flex w-20 cursor-pointer items-center justify-center gap-1.5 rounded-md border text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40;
-  border-color: color-mix(in srgb, #f59e0b 55%, transparent);
-  color: #f59e0b;
-  background: color-mix(in srgb, #f59e0b 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-warning) 55%, transparent);
+  color: var(--accent-warning);
+  background: color-mix(in srgb, var(--accent-warning) 10%, transparent);
 }
 
 .git-node__status {
   @apply flex h-8 shrink-0 items-center justify-between gap-3 px-3 text-[11px];
   border-top: 1px solid var(--card-border);
   color: var(--text-soft);
-  background: var(--panel-bg);
+  background: var(--surface-subtle);
 }
 
 .git-node__status span {
@@ -3605,8 +3079,8 @@
 }
 
 .git-node__confirm button:last-child {
-  border-color: color-mix(in srgb, #f59e0b 55%, transparent);
-  color: #f59e0b;
+  border-color: color-mix(in srgb, var(--accent-warning) 55%, transparent);
+  color: var(--accent-warning);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3624,11 +3098,8 @@
 
 .node-card--project-settings {
   @apply h-full w-full min-h-0 overflow-hidden p-0;
-  border-color: color-mix(in srgb, var(--accent-model) 26%, var(--card-border));
-  background: color-mix(in srgb, var(--canvas-bg) 94%, var(--accent-model) 6%);
-  box-shadow:
-    var(--shadow-card),
-    0 0 28px var(--glow-model);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
   transition:
     width 260ms ease,
     height 260ms ease,
@@ -3672,7 +3143,7 @@
 .settings-node__titlebar {
   @apply flex h-11 items-center justify-between gap-3 border-b px-4;
   border-color: var(--card-border);
-  background: color-mix(in srgb, var(--panel-bg) 80%, transparent);
+  background: var(--surface-subtle);
 }
 
 .settings-node__title {
@@ -3744,7 +3215,7 @@
   @apply rounded-lg border p-3 text-xs leading-5;
   border-color: var(--card-border);
   color: var(--text-soft);
-  background: var(--panel-bg);
+  background: var(--surface-subtle);
 }
 
 .settings-node__banner {
@@ -3882,7 +3353,7 @@
 .settings-choice-list label {
   @apply relative flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition;
   border-color: var(--card-border);
-  background: color-mix(in srgb, var(--canvas-bg) 40%, transparent);
+  background: var(--surface-subtle);
 }
 
 .settings-choice-list label:hover {
@@ -4129,7 +3600,7 @@
   --terminal-header-bg: #111827;
   --terminal-button-bg: #0f172a;
   --terminal-button-fg: #cbd5e1;
-  --terminal-accent: #f59e0b;
+  --terminal-accent: var(--accent-warning);
   --terminal-accent-strong: #fbbf24;
   --terminal-muted: #94a3b8;
   --terminal-error-bg: #450a0a;
@@ -4355,30 +3826,37 @@
   }
 
   .chat-workspace {
-    @apply flex h-[742px] w-[696px] flex-col overflow-hidden rounded-[18px] border p-3 backdrop-blur;
-    border-color: var(--card-border);
+    @apply flex h-full w-full flex-col overflow-hidden p-4;
+    border-radius: var(--radius-node);
     background: var(--card-bg);
-    box-shadow:
-      var(--shadow-card),
-      0 0 32px var(--glow-model);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--shadow-card);
+    transition:
+      box-shadow 200ms ease,
+      border-color 200ms ease,
+      transform 200ms ease;
+  }
+
+  .node-card--requirement-chat:hover .chat-workspace {
+    box-shadow: var(--shadow-hover);
+    border-color: var(--card-border-strong);
+    transform: translateY(-1px);
   }
 
   .chat-workspace__tabs {
-    @apply mb-1 grid shrink-0 grid-cols-2 gap-1 rounded-[12px] border p-1;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 48%, transparent);
+    @apply mb-3 grid shrink-0 grid-cols-2 gap-1 rounded-full p-1;
+    background: var(--surface-subtle);
   }
 
   .chat-workspace__tabs button {
-    @apply cursor-pointer rounded-[9px] border-0 bg-transparent px-3 py-2 text-xs font-semibold transition;
+    @apply cursor-pointer rounded-full border-0 bg-transparent px-3 py-1.5 text-xs font-medium transition;
     color: var(--text-soft);
   }
 
   .chat-workspace__tabs button.is-active {
     color: var(--text-strong);
-    background: color-mix(in srgb, var(--accent-model) 18%, transparent);
-    box-shadow: inset 0 0 0 1px
-      color-mix(in srgb, var(--accent-model) 28%, transparent);
+    background: var(--surface-raised);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   }
 
   .chat-workspace__panel {
@@ -4398,8 +3876,8 @@
   }
 
   .anchored-scroll__new {
-    @apply absolute right-1/2 bottom-[86px] z-30 flex translate-x-1/2 cursor-pointer items-center gap-1 rounded-full border px-3 py-1.5 text-[11px] font-semibold;
-    border-color: color-mix(in srgb, var(--accent-model) 44%, transparent);
+    @apply absolute right-1/2 bottom-[86px] z-30 flex translate-x-1/2 cursor-pointer items-center gap-1 rounded-full border px-3 py-1.5 text-[11px] font-medium;
+    border-color: var(--card-border-strong);
     color: var(--text-strong);
     background: var(--surface-raised);
     box-shadow: var(--shadow-card);
@@ -4407,32 +3885,50 @@
 
   .rich-content {
     @apply min-w-0 text-[13px] leading-[1.65];
-    color: var(--text-soft);
+    color: var(--color-text-secondary);
     overflow-wrap: anywhere;
   }
 
   .rq-message__body > .rich-content {
-    @apply rounded-[14px] border px-3.5 py-2.5;
-    border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 34%, transparent);
+    @apply rounded-[20px] px-4 py-3;
+    background: var(--surface-raised);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   }
 
   .rq-message--assistant .rq-message__body > .rich-content {
-    @apply rounded-tl-[4px];
-    border-color: color-mix(in srgb, var(--accent-model) 22%, transparent);
-    background: color-mix(in srgb, var(--accent-model) 6%, transparent);
+    @apply rounded-bl-md;
+    background: var(--surface-subtle);
   }
 
   .rq-message--user .rq-message__body > .rich-content {
-    @apply rounded-tr-[4px];
-    border-color: color-mix(in srgb, var(--accent-create) 34%, transparent);
-    background: color-mix(in srgb, var(--accent-create) 16%, transparent);
-    color: var(--text-strong);
+    @apply rounded-br-md;
+    background: #2563eb;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
   }
 
   .rq-message--system .rq-message__body > .rich-content {
-    border-color: color-mix(in srgb, var(--accent-danger) 24%, transparent);
+    @apply rounded-xl;
     background: color-mix(in srgb, var(--accent-danger) 8%, transparent);
+  }
+
+  .rq-message--user .rq-message__body > .rich-content a,
+  .rq-message--user .rq-message__body > .rich-content code,
+  .rq-message--user .rq-message__body > .rich-content h1,
+  .rq-message--user .rq-message__body > .rich-content h2,
+  .rq-message--user .rq-message__body > .rich-content h3,
+  .rq-message--user .rq-message__body > .rich-content h4,
+  .rq-message--user .rq-message__body > .rich-content th {
+    color: #ffffff;
+  }
+
+  .rq-message--user .rq-message__body > .rich-content blockquote {
+    border-color: rgba(255, 255, 255, 0.4);
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  .rq-message--user .rq-message__body > .rich-content :not(pre) > code {
+    background: rgba(255, 255, 255, 0.15);
   }
 
   .rq-message--continued {
@@ -4500,7 +3996,7 @@
   .rich-content blockquote {
     @apply my-3 border-l-2 pl-3;
     border-color: var(--accent-model);
-    color: var(--text-muted);
+    color: var(--color-text-tertiary);
   }
 
   .rich-content a {
@@ -4511,7 +4007,7 @@
 
   .rich-content :not(pre) > code {
     @apply rounded px-1 py-0.5 font-mono text-[0.92em];
-    color: var(--text-strong);
+    color: var(--color-text-primary);
     background: color-mix(in srgb, var(--surface-code) 82%, transparent);
   }
 
@@ -4519,10 +4015,23 @@
     @apply my-3 w-full border-collapse text-xs;
   }
 
+  .rich-content thead {
+    background: color-mix(in srgb, var(--canvas-bg) 50%, transparent);
+  }
+
   .rich-content th,
   .rich-content td {
     @apply border px-2 py-1.5 text-left;
     border-color: var(--card-border-strong);
+  }
+
+  .rich-content th {
+    @apply font-semibold;
+    color: var(--color-text-primary);
+  }
+
+  .rich-content tbody tr:nth-child(even) {
+    background: color-mix(in srgb, var(--canvas-bg) 22%, transparent);
   }
 
   .rich-content__code {
@@ -4545,7 +4054,7 @@
 
   .rich-content__code pre {
     @apply m-0 max-h-[420px] overflow-auto p-3 text-xs leading-relaxed;
-    color: #d8dee9;
+    color: var(--color-text-primary);
   }
 
   .rich-content__code code {
@@ -4583,7 +4092,7 @@
 
   .document-preview__body > pre {
     @apply m-0 whitespace-pre-wrap font-mono text-[11px] leading-relaxed;
-    color: var(--text-soft);
+    color: var(--color-text-primary);
   }
 
   .document-preview__copy {
@@ -4740,7 +4249,7 @@
   .session-tool {
     @apply overflow-hidden rounded-[8px] border;
     border-color: var(--card-border);
-    background: color-mix(in srgb, var(--canvas-bg) 38%, transparent);
+    background: var(--surface-subtle);
   }
 
   .session-thinking summary,
@@ -4770,7 +4279,7 @@
   .session-tool pre {
     @apply m-0 max-h-[360px] overflow-auto border-t p-3 whitespace-pre-wrap font-mono text-[11px] leading-relaxed;
     border-color: var(--card-border);
-    color: var(--text-soft);
+    color: var(--color-text-primary);
   }
 
   .session-raw {
@@ -4784,7 +4293,7 @@
 
   .session-diff > div {
     @apply flex items-center justify-between px-3 py-1.5 text-[10px];
-    color: var(--text-muted);
+    color: var(--color-text-tertiary);
   }
 
   .session-diff button {
@@ -4794,7 +4303,7 @@
 
   .session-diff pre {
     @apply whitespace-pre;
-    background: var(--surface-code);
+    background: color-mix(in srgb, var(--canvas-bg) 60%, transparent);
   }
 
   .session-diff pre span {
@@ -4858,5 +4367,87 @@
 
   .node-card:hover {
     transform: none;
+  }
+}
+
+/* =========================================================
+   React Flow controls — Notion-style overrides
+   ========================================================= */
+@layer components {
+  /* Controls panel */
+  .react-flow__controls {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--card-border);
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-card);
+    gap: 0;
+  }
+
+  .react-flow__controls-button {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-bottom: 1px solid var(--card-border);
+    background: transparent;
+    color: var(--text-secondary);
+    fill: var(--text-secondary);
+    transition:
+      background 150ms ease,
+      color 150ms ease;
+  }
+
+  .react-flow__controls-button:last-child {
+    border-bottom: none;
+  }
+
+  .react-flow__controls-button:hover {
+    background: color-mix(in srgb, var(--text-strong) 6%, transparent);
+    color: var(--text-strong);
+    fill: var(--text-strong);
+  }
+
+  .react-flow__controls-button svg {
+    max-width: 14px;
+    max-height: 14px;
+  }
+
+  /* MiniMap */
+  .react-flow__minimap {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--card-border);
+    background: var(--surface-raised) !important;
+    box-shadow: var(--shadow-card);
+  }
+
+  .react-flow__minimap-mask {
+    fill: color-mix(in srgb, var(--canvas-bg) 55%, transparent);
+  }
+
+  /* Attribution */
+  .react-flow__attribution {
+    background: transparent;
+    font-size: 10px;
+    color: var(--text-muted);
+    opacity: 0.5;
+  }
+
+  .react-flow__attribution a {
+    color: var(--text-muted);
+  }
+
+  /* Edge handles */
+  .react-flow__handle {
+    width: 8px;
+    height: 8px;
+    border: 2px solid var(--card-border-strong);
+    background: var(--surface-raised);
+  }
+
+  /* Selection box */
+  .react-flow__selection {
+    background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 36%, transparent);
   }
 }

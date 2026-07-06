@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronRight, Gauge } from "lucide-react";
+import { Gauge } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import { formatCompactNumber } from "../../utils/format";
+import NodeBar from "../ui/NodeBar";
 
 type Data = Extract<StartNodeData, { kind: "token-usage" }>;
 
@@ -20,23 +21,17 @@ export default function TokenUsageNode({ data }: { data: Data }) {
   const total = usage
     ? usage.input + usage.output + usage.cache_read + usage.cache_write
     : 0;
-  const ExpandIcon = data.expanded ? ChevronDown : ChevronRight;
 
   return (
     <section className="token-usage-node">
-      <button
-        type="button"
-        className="token-usage-node__collapsed nodrag"
-        aria-expanded={data.expanded}
-        onClick={data.onToggleExpanded}
-      >
-        <Gauge size={17} />
-        <span>
-          <strong>Token 使用</strong>
-          <small>{usage ? formatCompactNumber(total) : "--"} total</small>
-        </span>
-        <ExpandIcon size={16} />
-      </button>
+      <NodeBar
+        icon={<Gauge size={16} />}
+        accent="var(--color-success)"
+        title="Token 使用"
+        subtitle={`${usage ? formatCompactNumber(total) : "--"} total`}
+        expanded={data.expanded}
+        onToggle={data.onToggleExpanded}
+      />
 
       {data.expanded ? (
         <div className="token-usage-node__detail nodrag nowheel">

@@ -1,7 +1,5 @@
 import {
   AlertTriangle,
-  ChevronDown,
-  ChevronRight,
   Plus,
   Settings2,
   Terminal,
@@ -14,6 +12,7 @@ import type {
   TerminalCommandProfileDraft,
 } from "../../types/api";
 import TerminalSessionView from "../terminal/TerminalSessionView";
+import NodeBar from "../ui/NodeBar";
 
 type TerminalData = Extract<StartNodeData, { kind: "project-terminal" }>;
 
@@ -44,7 +43,6 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
     [data.activeSessionId, data.sessions],
   );
   const hasSessions = data.sessions.length > 0;
-  const ExpandIcon = data.collapsed ? ChevronRight : ChevronDown;
   const disabledReason = useDisabledReason(
     data.terminalDisabled,
     data.terminalDisabledReason,
@@ -75,56 +73,48 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
       className={`terminal-node ${data.collapsed ? "terminal-node--collapsed" : ""}`}
     >
       {data.collapsed ? (
-        <button
-          type="button"
-          className="terminal-node__collapsed-bar nodrag"
-          aria-expanded={!data.collapsed}
-          onClick={data.onToggleCollapsed}
-        >
-          <span className="terminal-node__icon" aria-hidden="true">
-            <Terminal size={17} />
-          </span>
-          <span className="terminal-node__collapsed-copy">
-            <strong>项目终端</strong>
-            <small>
-              {hasSessions
-                ? `${data.sessions.length} 个终端 · ${activeSession?.title ?? "未选择"}`
-                : "默认在项目根目录启动"}
-            </small>
-          </span>
-          {data.error ? (
-            <span className="terminal-node__error">{data.error}</span>
-          ) : null}
-          <ExpandIcon size={16} />
-        </button>
+        <NodeBar
+          icon={<Terminal size={16} />}
+          accent="var(--accent-projects)"
+          title="项目终端"
+          subtitle={
+            hasSessions
+              ? `${data.sessions.length} 个终端 · ${activeSession?.title ?? "未选择"}`
+              : "默认在项目根目录启动"
+          }
+          expanded={false}
+          onToggle={data.onToggleCollapsed}
+          extras={
+            data.error ? (
+              <span className="terminal-node__error">{data.error}</span>
+            ) : null
+          }
+        />
       ) : (
         <div className="terminal-node__body">
-          <header className="terminal-node__titlebar nodrag">
-            <span className="terminal-node__icon" aria-hidden="true">
-              <Terminal size={17} />
-            </span>
-            <span className="terminal-node__title">项目终端</span>
-            <div className="terminal-node__titlebar-actions">
-              {data.error ? (
-                <span className="terminal-node__error">{data.error}</span>
-              ) : null}
-              <button
-                type="button"
-                aria-label="新建"
-                disabled={data.busy || data.terminalDisabled}
-                onClick={() => void data.onCreateTerminal()}
-              >
-                <Plus size={14} />
-              </button>
-              <button
-                type="button"
-                aria-label="收起"
-                onClick={data.onToggleCollapsed}
-              >
-                <ChevronDown size={16} />
-              </button>
-            </div>
-          </header>
+          <NodeBar
+            icon={<Terminal size={16} />}
+            accent="var(--accent-projects)"
+            title="项目终端"
+            expanded={true}
+            onToggle={data.onToggleCollapsed}
+            actions={
+              <>
+                {data.error ? (
+                  <span className="terminal-node__error">{data.error}</span>
+                ) : null}
+                <button
+                  type="button"
+                  className="node-bar__btn"
+                  aria-label="新建"
+                  disabled={data.busy || data.terminalDisabled}
+                  onClick={() => void data.onCreateTerminal()}
+                >
+                  <Plus size={14} />
+                </button>
+              </>
+            }
+          />
 
           {disabledReason ? (
             <div className="terminal-node__notice nodrag">

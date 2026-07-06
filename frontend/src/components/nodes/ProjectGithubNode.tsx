@@ -1,6 +1,7 @@
-import { CheckCircle2, Github, TriangleAlert, X } from "lucide-react";
+import { CheckCircle2, Github, TriangleAlert } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import { githubUrlFromGitUrl, shortenGitUrl } from "../../utils/format";
+import NodeBar from "../ui/NodeBar";
 
 type GithubData = Extract<StartNodeData, { kind: "project-github" }>;
 
@@ -10,42 +11,42 @@ export default function ProjectGithubNode({ data }: { data: GithubData }) {
   const local = readiness.mode === "local";
   const StatusIcon = readiness.ready ? CheckCircle2 : TriangleAlert;
 
+  const collapsedIcon = local ? <Github size={16} /> : <StatusIcon size={16} />;
+  const collapsedAccent = local
+    ? "var(--accent-projects)"
+    : readiness.ready
+      ? "var(--color-success)"
+      : "var(--color-warning)";
+  const collapsedSubtitle = local
+    ? "无需 PR"
+    : readiness.ready
+      ? "前置检查通过"
+      : `${readiness.issues.length} 项待处理`;
+
   if (!data.expanded) {
     return (
-      <button
-        type="button"
-        className="github-node__collapsed nodrag"
-        aria-expanded="false"
-        onClick={data.onToggleExpanded}
-      >
-        <span>{local ? <Github size={17} /> : <StatusIcon size={17} />}</span>
-        <span>
-          <strong>{local ? "本地发布" : "PR 发布"}</strong>
-          <small className={readiness.ready ? "is-ready" : "is-blocked"}>
-            {local
-              ? "无需 PR"
-              : readiness.ready
-                ? "前置检查通过"
-                : `${readiness.issues.length} 项待处理`}
-          </small>
-        </span>
-      </button>
+      <NodeBar
+        icon={collapsedIcon}
+        accent={collapsedAccent}
+        title={local ? "本地发布" : "PR 发布"}
+        subtitle={collapsedSubtitle}
+        expanded={false}
+        onToggle={data.onToggleExpanded}
+      />
     );
   }
 
   return (
     <section className="github-node">
-      <header className="github-node__titlebar nodrag">
-        <StatusIcon size={17} />
-        <strong>{readiness.summary}</strong>
-        <button
-          type="button"
-          aria-label="收起发布检查"
-          onClick={data.onToggleExpanded}
-        >
-          <X size={15} />
-        </button>
-      </header>
+      <NodeBar
+        icon={collapsedIcon}
+        expandedIcon={<StatusIcon size={16} />}
+        accent={collapsedAccent}
+        title={local ? "本地发布" : "PR 发布"}
+        expandedTitle={readiness.summary}
+        expanded={true}
+        onToggle={data.onToggleExpanded}
+      />
 
       <div className="github-node__body nodrag nowheel">
         <div className="github-node__meta">

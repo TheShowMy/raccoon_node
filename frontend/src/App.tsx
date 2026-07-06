@@ -17,7 +17,7 @@ import {
 } from "@xyflow/react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from "lucide-react";
 import "@xyflow/react/dist/style.css";
-import "./styles.css";
+import "./styles/index.css";
 
 import type {
   GitExpansionPhase,
@@ -605,23 +605,25 @@ function TokenUsageViewportController({ expanded }: { expanded: boolean }) {
 function minimapNodeColor(node: Node<StartNodeData>): string {
   switch (node.data.kind) {
     case "requirement-chat":
-      return "#f97316";
+      return "var(--accent-model)";
     case "project-terminal":
-      return "#14b8a6";
+      return "var(--accent-projects)";
     case "project-git":
-      return "#f59e0b";
+      return "var(--accent-warning)";
     case "project-settings":
-      return "#f97316";
+      return "var(--accent-model)";
     case "requirement-list":
-      return node.data.tone === "done" ? "#22c55e" : "#f59e0b";
+      return node.data.tone === "done"
+        ? "var(--success)"
+        : "var(--accent-warning)";
     case "requirement-dag":
-      return "#a855f7";
+      return "var(--color-info)";
     case "requirement-task":
-      return "#6366f1";
+      return "var(--accent-create)";
     case "token-usage":
-      return "#22c55e";
+      return "var(--success)";
     default:
-      return "#94a3b8";
+      return "var(--text-soft)";
   }
 }
 
@@ -980,7 +982,7 @@ export default function App() {
             targetHandle: "requirement-chat-left",
             type: "smoothstep",
             animated: true,
-            style: { stroke: "rgba(20, 184, 166, 0.62)", strokeWidth: 2 },
+            style: { stroke: "var(--edge-secondary)", strokeWidth: 2 },
           },
           {
             id: "requirement-chat-to-queued-requirements",
@@ -990,7 +992,7 @@ export default function App() {
             targetHandle: "requirement-list-left",
             type: "smoothstep",
             animated: true,
-            style: { stroke: "rgba(249, 115, 22, 0.68)", strokeWidth: 2 },
+            style: { stroke: "var(--edge-model)", strokeWidth: 2 },
           },
         ];
 
@@ -1074,7 +1076,7 @@ export default function App() {
                 },
               }}
             >
-              <Background color="rgba(148, 163, 184, 0.18)" gap={24} />
+              <Background color="var(--canvas-dot)" gap={32} size={1.5} />
               {project.selectedDagRequirement ? (
                 <MiniMap
                   position="bottom-left"
@@ -1082,7 +1084,7 @@ export default function App() {
                   zoomable
                   nodeColor={minimapNodeColor}
                   nodeStrokeWidth={2}
-                  nodeStrokeColor="rgba(255, 255, 255, 0.5)"
+                  nodeStrokeColor="var(--card-border-strong)"
                 />
               ) : null}
               <RequirementsReturnButton nodes={requirementHomeNodes} />

@@ -319,10 +319,10 @@ export function buildProjectNodes({
       id: "token-usage",
       type: "startNode",
       className: "token-usage-flow-node",
-      position: tokenUsageExpanded ? { x: 780, y: -156 } : { x: 780, y: 20 },
+      position: tokenUsageExpanded ? { x: 780, y: -100 } : { x: 780, y: 20 },
       style: {
         width: 290,
-        height: tokenUsageExpanded ? 220 : 44,
+        height: tokenUsageExpanded ? 164 : 44,
         zIndex: tokenUsageExpanded ? 20 : 1,
       },
       data: {

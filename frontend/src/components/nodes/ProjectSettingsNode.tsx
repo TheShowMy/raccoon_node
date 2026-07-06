@@ -1,16 +1,12 @@
 import { useCallback, useState } from "react";
-import {
-  AlertTriangle,
-  ChevronRight,
-  Settings,
-  SlidersHorizontal,
-  X,
-} from "lucide-react";
+import type React from "react";
+import { AlertTriangle, Settings, SlidersHorizontal } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import { restartApplication } from "../../api/client";
 import { readError } from "../../utils/format";
 import BasicSettingsPanel from "../settings/BasicSettingsPanel";
 import ModelSettingsPanel from "../settings/ModelSettingsPanel";
+import NodeBar from "../ui/NodeBar";
 
 type SettingsData = Extract<StartNodeData, { kind: "project-settings" }>;
 
@@ -61,47 +57,34 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
 
   if (!data.expanded) {
     return (
-      <button
-        type="button"
-        className="settings-node__collapsed nodrag"
-        data-model-setup-target="settings"
-        aria-expanded="false"
-        onClick={data.onToggleExpanded}
-      >
-        <SlidersHorizontal size={17} />
-        <span>
-          <strong>设置</strong>
-          <small>
-            {data.basicSettings?.theme === "dark" ? "暗色" : "亮色"} ·
-            基础与模型
-          </small>
-        </span>
-        <ChevronRight size={16} />
-      </button>
+      <NodeBar
+        icon={<SlidersHorizontal size={16} />}
+        accent="var(--accent-model)"
+        title="设置"
+        subtitle={`${data.basicSettings?.theme === "dark" ? "暗色" : "亮色"} · 基础与模型`}
+        expanded={false}
+        onToggle={data.onToggleExpanded}
+        buttonProps={
+          {
+            "data-model-setup-target": "settings",
+          } as React.ButtonHTMLAttributes<HTMLButtonElement>
+        }
+      />
     );
   }
 
   return (
     <section className="settings-node">
-      <header className="settings-node__titlebar nodrag">
-        <span className="settings-node__title">
-          <span className="settings-node__title-icon">
-            <Settings size={17} />
-          </span>
-          <span className="settings-node__title-text">
-            <strong>设置工作台</strong>
-            <span>基础设置与 Pi 模型</span>
-          </span>
-        </span>
-        <button
-          type="button"
-          className="settings-node__close"
-          aria-label="收起设置节点"
-          onClick={data.onToggleExpanded}
-        >
-          <X size={15} />
-        </button>
-      </header>
+      <NodeBar
+        icon={<SlidersHorizontal size={16} />}
+        expandedIcon={<Settings size={16} />}
+        accent="var(--accent-model)"
+        title="设置"
+        expandedTitle="设置工作台"
+        expandedSubtitle="基础设置与 Pi 模型"
+        expanded={true}
+        onToggle={data.onToggleExpanded}
+      />
       <nav
         className="settings-node__tabs nodrag"
         role="tablist"

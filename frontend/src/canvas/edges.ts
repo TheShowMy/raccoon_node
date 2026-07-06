@@ -20,7 +20,7 @@ export function buildRequirementDagEdges(
     type: "smoothstep",
     animated: true,
     style: {
-      stroke: "rgba(249, 115, 22, 0.68)",
+      stroke: "var(--edge-model)",
       strokeWidth: 2,
     },
   });
@@ -44,7 +44,7 @@ export function buildRequirementDagEdges(
         type: "smoothstep",
         animated: task.status === "running",
         style: {
-          stroke: "rgba(249, 115, 22, 0.64)",
+          stroke: "var(--edge-model)",
           strokeWidth: 2,
         },
       });
@@ -62,7 +62,7 @@ export function buildRequirementDagEdges(
         type: "smoothstep",
         animated: task.status === "running",
         style: {
-          stroke: "rgba(20, 184, 166, 0.62)",
+          stroke: "var(--edge-secondary)",
           strokeWidth: 2,
         },
       });
@@ -88,14 +88,14 @@ export function buildRequirementDagEdges(
       animated: summary.status === "running",
       markerStart: {
         type: MarkerType.ArrowClosed,
-        color: "rgba(20, 184, 166, 0.62)",
+        color: "var(--edge-secondary)",
       },
       markerEnd: {
         type: MarkerType.ArrowClosed,
-        color: "rgba(20, 184, 166, 0.62)",
+        color: "var(--edge-secondary)",
       },
       style: {
-        stroke: "rgba(20, 184, 166, 0.62)",
+        stroke: "var(--edge-secondary)",
         strokeWidth: 1.4,
       },
     });
@@ -110,14 +110,14 @@ export function buildRequirementDagEdges(
         animated: review.status === "running" || summary.status === "running",
         markerStart: {
           type: MarkerType.ArrowClosed,
-          color: "rgba(99, 102, 241, 0.58)",
+          color: "var(--edge-info)",
         },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: "rgba(99, 102, 241, 0.58)",
+          color: "var(--edge-info)",
         },
         style: {
-          stroke: "rgba(99, 102, 241, 0.58)",
+          stroke: "var(--edge-info)",
           strokeWidth: 1.3,
         },
       });

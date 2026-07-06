@@ -1,7 +1,5 @@
 import { useMemo, useState } from "react";
 import {
-  ChevronDown,
-  ChevronRight,
   Download,
   GitBranch,
   GitCommit,
@@ -16,6 +14,7 @@ import type {
   GitFileStatus,
   StartNodeData,
 } from "../../types/api";
+import NodeBar from "../ui/NodeBar";
 
 type GitData = Extract<StartNodeData, { kind: "project-git" }>;
 
@@ -130,46 +129,48 @@ export default function ProjectGitNode({ data }: { data: GitData }) {
 
   if (data.phase === "collapsed") {
     return (
-      <button
-        type="button"
-        className="git-node__collapsed nodrag"
-        aria-expanded="false"
-        onClick={data.onToggleExpanded}
-      >
-        <GitBranch size={17} />
-        <span>
-          <strong>{status?.branch ?? "Git"}</strong>
-          <small>{summary}</small>
-        </span>
-        {data.error ? <em title={data.error}>!</em> : null}
-        {data.busy ? <Loader2 size={14} className="spin-icon" /> : null}
-        <ChevronRight size={16} />
-      </button>
+      <NodeBar
+        icon={<GitBranch size={16} />}
+        accent="var(--accent-projects)"
+        title={status?.branch ?? "Git"}
+        subtitle={summary}
+        expanded={false}
+        onToggle={data.onToggleExpanded}
+        extras={
+          <>
+            {data.error ? (
+              <em className="git-node__collapsed-error" title={data.error}>
+                !
+              </em>
+            ) : null}
+            {data.busy ? <Loader2 size={14} className="spin-icon" /> : null}
+          </>
+        }
+      />
     );
   }
 
   return (
     <section className="git-node">
-      <header className="git-node__titlebar nodrag">
-        <GitBranch size={17} />
-        <strong>{status?.branch ?? "Git 仓库"}</strong>
-        <span>{summary}</span>
-        <button
-          type="button"
-          aria-label="刷新 Git 状态"
-          disabled={data.busy}
-          onClick={() => void data.onRefresh()}
-        >
-          <RefreshCw size={14} className={data.busy ? "spin-icon" : ""} />
-        </button>
-        <button
-          type="button"
-          aria-label="收起 Git 节点"
-          onClick={data.onToggleExpanded}
-        >
-          <ChevronDown size={16} />
-        </button>
-      </header>
+      <NodeBar
+        icon={<GitBranch size={16} />}
+        accent="var(--accent-projects)"
+        title={status?.branch ?? "Git 仓库"}
+        subtitle={summary}
+        expanded={true}
+        onToggle={data.onToggleExpanded}
+        actions={
+          <button
+            type="button"
+            className="node-bar__btn"
+            aria-label="刷新 Git 状态"
+            disabled={data.busy}
+            onClick={() => void data.onRefresh()}
+          >
+            <RefreshCw size={14} className={data.busy ? "spin-icon" : ""} />
+          </button>
+        }
+      />
 
       {data.phase === "expanded" ? (
         <>

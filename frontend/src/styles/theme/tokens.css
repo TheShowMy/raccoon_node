@@ -1,0 +1,242 @@
+@theme {
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-mono:
+    "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, monospace;
+
+  /* Type scale */
+  --text-2xs: 0.625rem; /* 10px */
+  --text-xs: 0.75rem; /* 12px */
+  --text-sm: 0.8125rem; /* 13px */
+  --text-base: 0.875rem; /* 14px */
+  --text-md: 0.9375rem; /* 15px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-xl: 1.25rem; /* 20px */
+  --text-2xl: 1.5rem; /* 24px */
+
+  /* Line heights */
+  --leading-tight: 1.25;
+  --leading-snug: 1.375;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* Radii */
+  --radius-xs: 5px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 22px;
+  --radius-node: 14px;
+  --radius-full: 9999px;
+}
+
+@layer base {
+  :root {
+    color: var(--text-strong);
+    background: var(--canvas-bg);
+    font-family: var(--font-sans);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+
+    /* Canvas - Notion paper warmth */
+    --color-canvas: #efede8;
+    --color-canvas-dot: rgba(55, 53, 47, 0.07);
+
+    /* Surfaces */
+    --color-surface-panel: #ffffff;
+    --color-surface-card: #ffffff;
+    --color-surface-card-hover: #fdfcfb;
+    --color-surface-raised: #ffffff;
+    --color-surface-subtle: #f7f6f2;
+    --color-surface-code: #f0efe9;
+
+    /* Borders - Notion warm near-black */
+    --color-border-default: rgba(55, 53, 47, 0.09);
+    --color-border-strong: rgba(55, 53, 47, 0.16);
+
+    /* Text - Notion warm near-black palette */
+    --color-text-primary: #37352f;
+    --color-text-secondary: #6b6862;
+    --color-text-tertiary: #9b9895;
+    --color-text-inverse: #ffffff;
+
+    /* Accents - refined, purposeful */
+    --color-accent: #2383e2;
+    --color-accent-secondary: #0d9088;
+    --color-accent-tertiary: #529b36;
+    --color-accent-model: #c4860a;
+    --color-success: #1e7e34;
+    --color-warning: #c4860a;
+    --color-danger: #c9353a;
+    --color-info: #6b3fa0;
+
+    /* Shadows - warm, barely-there */
+    --shadow-card:
+      0 0 0 1px rgba(55, 53, 47, 0.08), 0 1px 3px rgba(55, 53, 47, 0.05);
+    --shadow-hover:
+      0 0 0 1px rgba(55, 53, 47, 0.1), 0 2px 8px rgba(55, 53, 47, 0.07),
+      0 8px 20px rgba(55, 53, 47, 0.05);
+    --shadow-popover:
+      0 0 0 1px rgba(55, 53, 47, 0.1), 0 6px 20px rgba(55, 53, 47, 0.1),
+      0 20px 48px rgba(55, 53, 47, 0.08);
+
+    /* Glows - minimal */
+    --glow-accent: rgba(35, 131, 226, 0.08);
+    --glow-secondary: rgba(13, 144, 136, 0.08);
+    --glow-tertiary: rgba(82, 155, 54, 0.06);
+    --glow-model: rgba(196, 134, 10, 0.08);
+    --glow-danger: rgba(201, 53, 58, 0.07);
+
+    /* Focus */
+    --color-focus-ring: color-mix(
+      in srgb,
+      var(--color-accent) 50%,
+      transparent
+    );
+
+    /* Edges */
+    --edge-model: rgba(196, 134, 10, 0.5);
+    --edge-secondary: rgba(13, 144, 136, 0.5);
+    --edge-info: rgba(107, 63, 160, 0.48);
+
+    /* Diff */
+    --diff-add: #1e7e34;
+    --diff-add-bg: rgba(30, 126, 52, 0.09);
+    --diff-remove: #c9353a;
+    --diff-remove-bg: rgba(201, 53, 58, 0.08);
+
+    /* Legacy aliases (kept during migration) */
+    --text-strong: var(--color-text-primary);
+    --text-soft: var(--color-text-secondary);
+    --text-muted: var(--color-text-tertiary);
+    --panel-bg: var(--color-surface-panel);
+    --card-bg: var(--color-surface-card);
+    --card-bg-hover: var(--color-surface-card-hover);
+    --card-border: var(--color-border-default);
+    --card-border-strong: var(--color-border-strong);
+    --canvas-bg: var(--color-canvas);
+    --canvas-dot: var(--color-canvas-dot);
+    --accent-create: var(--color-accent);
+    --accent-projects: var(--color-accent-secondary);
+    --accent-style: var(--color-accent-tertiary);
+    --accent-model: var(--color-accent-model);
+    --accent-danger: var(--color-danger);
+    --accent-warning: var(--color-warning);
+    --accent-primary: var(--color-accent-model);
+    --text-primary: var(--color-text-primary);
+    --text-secondary: var(--color-text-secondary);
+    --surface-subtle: var(--color-surface-subtle);
+    --card-shadow: var(--shadow-card);
+    --success: var(--color-success);
+    --surface-code: var(--color-surface-code);
+    --surface-raised: var(--color-surface-raised);
+    --shadow-card: var(--shadow-card);
+    --shadow-hover: var(--shadow-hover);
+    --focus-ring: var(--color-focus-ring);
+  }
+
+  [data-theme="dark"] {
+    color: var(--text-strong);
+    background: var(--canvas-bg);
+
+    /* Canvas - Obsidian warm dark */
+    --color-canvas: #191918;
+    --color-canvas-dot: rgba(255, 255, 255, 0.05);
+
+    /* Surfaces */
+    --color-surface-panel: #242423;
+    --color-surface-card: #2b2a28;
+    --color-surface-card-hover: #323130;
+    --color-surface-raised: #323130;
+    --color-surface-subtle: #242423;
+    --color-surface-code: #1d1c1b;
+
+    /* Borders */
+    --color-border-default: rgba(255, 255, 255, 0.07);
+    --color-border-strong: rgba(255, 255, 255, 0.12);
+
+    /* Text - Obsidian warm near-white */
+    --color-text-primary: #e8e6e1;
+    --color-text-secondary: #9b9895;
+    --color-text-tertiary: #6b6864;
+    --color-text-inverse: #191918;
+
+    /* Accents - slightly brighter for dark contrast */
+    --color-accent: #3b8fe8;
+    --color-accent-secondary: #1ba8a0;
+    --color-accent-tertiary: #6db547;
+    --color-accent-model: #e09b1d;
+    --color-success: #22c55e;
+    --color-warning: #e09b1d;
+    --color-danger: #f26a6a;
+    --color-info: #a78bfa;
+
+    /* Shadows - deeper for dark */
+    --shadow-card:
+      0 0 0 1px rgba(255, 255, 255, 0.04), 0 2px 8px rgba(0, 0, 0, 0.28),
+      0 4px 16px rgba(0, 0, 0, 0.22);
+    --shadow-hover:
+      0 0 0 1px rgba(255, 255, 255, 0.05), 0 4px 16px rgba(0, 0, 0, 0.34),
+      0 12px 32px rgba(0, 0, 0, 0.28);
+    --shadow-popover:
+      0 0 0 1px rgba(255, 255, 255, 0.05), 0 8px 24px rgba(0, 0, 0, 0.38),
+      0 24px 56px rgba(0, 0, 0, 0.32);
+
+    /* Glows */
+    --glow-accent: rgba(59, 143, 232, 0.14);
+    --glow-secondary: rgba(27, 168, 160, 0.14);
+    --glow-tertiary: rgba(109, 181, 71, 0.1);
+    --glow-model: rgba(224, 155, 29, 0.14);
+    --glow-danger: rgba(242, 106, 106, 0.12);
+
+    /* Focus */
+    --color-focus-ring: color-mix(
+      in srgb,
+      var(--color-accent) 50%,
+      transparent
+    );
+
+    /* Edges */
+    --edge-model: rgba(224, 155, 29, 0.54);
+    --edge-secondary: rgba(27, 168, 160, 0.54);
+    --edge-info: rgba(167, 139, 250, 0.52);
+
+    /* Diff */
+    --diff-add: #4ade80;
+    --diff-add-bg: rgba(34, 197, 94, 0.11);
+    --diff-remove: #f26a6a;
+    --diff-remove-bg: rgba(242, 106, 106, 0.1);
+
+    /* Legacy aliases (kept during migration) */
+    --text-strong: var(--color-text-primary);
+    --text-soft: var(--color-text-secondary);
+    --text-muted: var(--color-text-tertiary);
+    --panel-bg: var(--color-surface-panel);
+    --card-bg: var(--color-surface-card);
+    --card-bg-hover: var(--color-surface-card-hover);
+    --card-border: var(--color-border-default);
+    --card-border-strong: var(--color-border-strong);
+    --canvas-bg: var(--color-canvas);
+    --canvas-dot: var(--color-canvas-dot);
+    --accent-create: var(--color-accent);
+    --accent-projects: var(--color-accent-secondary);
+    --accent-style: var(--color-accent-tertiary);
+    --accent-model: var(--color-accent-model);
+    --accent-danger: var(--color-danger);
+    --accent-warning: var(--color-warning);
+    --accent-primary: var(--color-accent-model);
+    --text-primary: var(--color-text-primary);
+    --text-secondary: var(--color-text-secondary);
+    --surface-subtle: var(--color-surface-subtle);
+    --card-shadow: var(--shadow-card);
+    --success: var(--color-success);
+    --surface-code: var(--color-surface-code);
+    --surface-raised: var(--color-surface-raised);
+    --shadow-card: var(--shadow-card);
+    --shadow-hover: var(--shadow-hover);
+    --focus-ring: var(--color-focus-ring);
+  }
+}
