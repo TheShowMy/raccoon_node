@@ -152,8 +152,8 @@ See prompts/contracts/task_result.schema.json
   - `build_requirement_task_prompt`
   - `build_recovery_guidance_prompt`
   - `build_*_json_repair_prompt`
-- [ ] `prompts/requirement_coordinator.txt`
-  - 迁移为 `prompts/skills/requirement_coordinator.md`
+- [x] `prompts/skills/requirement_coordinator.md`
+  - 已完成迁移并作为当前生效模板保留
 
 迁移目标：
 
@@ -214,7 +214,7 @@ See prompts/contracts/task_result.schema.json
 
 需要做：
 
-- [ ] 建立 `prompts/skills/requirement_coordinator.md`
+- [x] 已建立 `prompts/skills/requirement_coordinator.md`
 - [ ] 明确只负责需求分析、澄清问题、确认草案
 - [ ] 明确不生成执行 DAG
 - [ ] 明确不承诺代码实现

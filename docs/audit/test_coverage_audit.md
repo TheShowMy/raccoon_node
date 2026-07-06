@@ -45,7 +45,7 @@
 | **`JsonStore::open` 已有文件加载** | `src/main.rs:639-663` | 验证已存在 `app.json` 时正确反序列化，而非覆盖 |
 | **`derive_requirement_title` 边界** | `src/main.rs:2297-2310` | 空字符串、超长字符串、全空白字符、Unicode 字符截断 |
 | **`slugify` 边界** | `src/main.rs:2278-2295` | 全非法字符、纯空格、Unicode、连续分隔符去重 |
-| **`build_requirement_prompt` 输出结构** | `src/main.rs:1183-1297` | 验证生成的 prompt 包含项目上下文、历史消息、澄清项、已有草案 |
+| **`build_requirement_prompt` 输出结构** | `src/requirement/analysis.rs:16-129` | 验证生成的 prompt 包含项目上下文、历史消息、澄清项、已有草案 |
 | **`build_pi_trace_metadata` / `collect_message_update` / `upsert_trace_tool`** | `src/main.rs:1577-1697` | 验证空事件返回 `None`、thinking_delta 累加、tool 事件 upsert 逻辑、重复 toolCallId 更新而非追加 |
 | **`validate_model_settings` 空模型列表** | `src/main.rs:2096-2119` | 模型列表为空时，任何非空 `model_id` 都应报错 |
 | **`get_model_settings` 降级响应结构** | `src/main.rs:516-540` | RPC 错误时 `models` 为空数组、`rpc_error` 有内容、`rpc_status` 为 `error` |

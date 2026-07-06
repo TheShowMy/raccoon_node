@@ -137,7 +137,7 @@
     - `extract_json_object` / `find_balanced_braces` / `sanitize_json_fragment` — JSON 提取和修复逻辑
     - `build_pi_trace_metadata` — 将 Pi Agent 事件转换为 trace 元数据
     - `upsert_trace_tool` — 工具调用状态的合并逻辑
-- **改进建议**：为所有非平凡的纯函数和解析逻辑添加单行 rustdoc/注释，说明输入/输出/边界行为；提示词模板（`build_requirement_prompt` 的 70 行内嵌字符串）可抽离到独立文件或常量。
+- **改进建议**：为所有非平凡的纯函数和解析逻辑添加单行 rustdoc/注释，说明输入/输出/边界行为；`build_requirement_prompt` 已迁移为 `prompts/skills/requirement_coordinator.md`，后续可继续将其他内联 prompt 抽离到独立文件或常量。
 - **预期收益**：降低代码理解成本，方便后续修改提示词。
 
 ---

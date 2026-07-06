@@ -84,12 +84,12 @@
 - **影响**：样式优先级难以预测，维护困难。
 - **改善建议**：合并重复样式；用 Tailwind 的 `@apply` 或 CSS 变量替代 `!important`。
 
-### 8. `build_requirement_prompt` 硬编码巨型提示词
+### 8. `build_requirement_prompt` 已完成模板文件化
 
-- **文件**：`src/main.rs:1183-1297`
-- **问题**：约 110 行的 raw string 提示词直接嵌入代码，难以维护和版本控制。
-- **影响**：修改提示词需要改代码并重新编译；非程序员无法参与提示词优化。
-- **改善建议**：将提示词提取为独立文件（如 `prompts/requirement_coordinator.txt`），编译时通过 `include_str!` 嵌入。
+- **当前文件**：`src/requirement/analysis.rs:16-65`
+- **现状**：需求澄清 prompt 已迁移到 `prompts/skills/requirement_coordinator.md`，并通过 `include_str!` 嵌入。
+- **收益**：提示词可独立维护、版本化，也便于非程序员参与优化。
+- **后续建议**：继续用同一模式迁移其他仍在代码内联的 prompt。
 
 ### 9. `requirement_events` SSE handler 中序列化失败丢失上下文
 
@@ -149,4 +149,4 @@
 
 4. **将 `git clone` 移出 `JsonStore` 锁范围** — 在 `src/main.rs:665-725` 中，先计算路径、执行 clone，成功后再获取锁写入数据，消除并发瓶颈。
 
-5. **提取硬编码提示词为外部文件** — 将 `build_requirement_prompt` 的 110 行提示词移入 `prompts/` 目录，使用 `include_str!` 加载，便于非程序员维护提示词。
+5. **沿用 prompt 文件化模式** — `build_requirement_prompt` 已迁移到 `prompts/skills/requirement_coordinator.md`；后续继续将其他内联 prompt 迁移到 `prompts/` 目录并统一用 `include_str!` 加载。

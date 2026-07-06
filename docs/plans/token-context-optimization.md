@@ -11,7 +11,7 @@
 
 本轮补充研究 `GaosCode/PlanWeave` 后，结论调整为：
 
-1. **当前项目最需要先建立 Prompt 工程骨架**：把分散在 `src/chat/mod.rs`、`src/requirement/analysis.rs`、`src/requirement/execution.rs`、`prompts/requirement_coordinator.txt` 等位置的提示词，汇总成可版本化、可审计、可测试、可调试的 Prompt/Skill 系统。
+1. **当前项目最需要先建立 Prompt 工程骨架**：把分散在 `src/chat/mod.rs`、`src/requirement/analysis.rs`、`src/requirement/execution.rs`、`prompts/skills/requirement_coordinator.md` 等位置的提示词，汇总成可版本化、可审计、可测试、可调试的 Prompt/Skill 系统。
 2. **token 消耗高是结构混乱的结果之一**：同一需求上下文、草案、澄清、review feedback、recovery guidance 被多处拼接；没有统一 Prompt Surface，就很难知道每一层为什么进入 prompt、占多少、是否重复。
 3. **PlanWeave 的核心启发不是“更省 token”，而是“把工作流变成可执行的提示词图”**：角色化 Skill、分层 Prompt Composition、block 级 prompt、review/audit/recovery 一等公民、Prompt Source metadata、结构化提交契约。
 4. **重排优先级**：
@@ -221,7 +221,7 @@ raccoon_node 当前已有 ReviewSubAgent、ReviewSummary、GuidedRecovery，但 
 | 领域 | 当前位置 | 问题 |
 |---|---|---|
 | 项目问答 | `src/chat/mod.rs` | prompt 与历史拼接逻辑耦合在代码中 |
-| 需求分析 | `src/requirement/analysis.rs`、`prompts/requirement_coordinator.txt` | 模板文件和 Rust 拼接混合，显式历史与 Pi session 可能重复 |
+| 需求分析 | `src/requirement/analysis.rs`、`prompts/skills/requirement_coordinator.md` | 模板文件和 Rust 拼接混合，显式历史与 Pi session 可能重复 |
 | 执行规划 | `src/requirement/execution.rs` | plan prompt、JSON repair、task prompt、review prompt、recovery prompt 混在一个文件 |
 | 引用上下文 | `src/file_refs.rs` | 文件/图片进入 prompt 的策略与 prompt layer 没有关联 |
 | Pi RPC 调用 | `src/pi/mod.rs` | 负责 session 恢复、模型/thinking 设置和 prompt 发送，但缺少统一 RenderedPrompt metadata |
@@ -389,7 +389,7 @@ pub enum PromptSourceKind {
 
 ### P1.1 Requirement Coordinator
 
-对应当前：`prompts/requirement_coordinator.txt` + `src/requirement/analysis.rs`
+对应当前：`prompts/skills/requirement_coordinator.md` + `src/requirement/analysis.rs`
 
 职责：
 

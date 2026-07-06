@@ -235,7 +235,7 @@
 - [ ] 拆分 `src/main.rs` 为 `models.rs`、`store.rs`、`api/`、`pi_rpc.rs`、`requirement_analysis.rs`、`error.rs`、`utils.rs`
 - [ ] 拆分 `frontend/src/main.tsx` 为 `types/`、`components/nodes/`、`components/ui/`、`hooks/`、`api/`、`utils/`、`App.tsx`
 - [ ] 新建 `README.md`、`docs/api/README.md` 或 `openapi.yaml`
-- [ ] 提取 `build_requirement_prompt` 到 `prompts/requirement_coordinator.txt`
+- [x] 已将 `build_requirement_prompt` 对应模板迁移到 `prompts/skills/requirement_coordinator.md`
 - [ ] 建立前后端共享类型机制（推荐 `ts-rs` 或 `specta`）
 
 ### 第三阶段：补齐测试与优化性能（1-2 月）
