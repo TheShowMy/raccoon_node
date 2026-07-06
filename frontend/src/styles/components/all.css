@@ -577,6 +577,11 @@
     color: var(--text-muted);
   }
 
+  .empty-state {
+    @apply flex items-center justify-center px-5 py-6 text-center text-xs;
+    color: var(--text-muted);
+  }
+
   .requirement-list {
     @apply mt-3 grid min-h-0 flex-1 content-start gap-2 overflow-y-auto px-3;
     overscroll-behavior: contain;

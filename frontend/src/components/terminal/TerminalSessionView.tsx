@@ -15,26 +15,26 @@ type OverlayPlacement = {
 function terminalTheme(fixedDark: boolean) {
   if (fixedDark) {
     return {
-      background: "#1a1917",
-      foreground: "#e8e6e1",
-      cursor: "#e09b1d",
-      selectionBackground: "#3d3b38",
-      black: "#1a1917",
-      red: "#f26a6a",
+      background: "#0b1120",
+      foreground: "#e2e8f0",
+      cursor: "#f59e0b",
+      selectionBackground: "#334155",
+      black: "#0f172a",
+      red: "#fb7185",
       green: "#4ade80",
       yellow: "#fbbf24",
       blue: "#60a5fa",
       magenta: "#c084fc",
       cyan: "#22d3ee",
-      white: "#e8e6e1",
-      brightBlack: "#6b6864",
+      white: "#e2e8f0",
+      brightBlack: "#64748b",
       brightRed: "#fda4af",
       brightGreen: "#86efac",
       brightYellow: "#fde047",
       brightBlue: "#93c5fd",
       brightMagenta: "#d8b4fe",
       brightCyan: "#67e8f9",
-      brightWhite: "#f8f7f5",
+      brightWhite: "#f8fafc",
     };
   }
   const styles = getComputedStyle(document.documentElement);
