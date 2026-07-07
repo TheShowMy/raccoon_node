@@ -1,4 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Button } from "@astryxdesign/core";
+import { ChatComposer as AstryxChatComposer } from "@astryxdesign/core/Chat";
+import { Token } from "@astryxdesign/core/Token";
 import { FileText, Image, Send, Square, X } from "lucide-react";
 import { getProjectFiles, uploadProjectAttachment } from "../../api/client";
 import type { FileReference, ImageAttachment } from "../../types/api";
@@ -142,9 +145,131 @@ export default function ChatComposer({
     }
   }
 
+  const attachments =
+    references.length || images.length || uploadError ? (
+      <div className="rq-composer__chips">
+        {references.map((reference) => (
+          <Token
+            key={reference.path}
+            size="sm"
+            icon={<FileText size={13} />}
+            label={reference.path}
+            onRemove={() =>
+              onReferencesChange?.(
+                references.filter((item) => item.path !== reference.path),
+              )
+            }
+          />
+        ))}
+        {images.map((image) => (
+          <Token
+            key={image.path}
+            size="sm"
+            icon={<Image size={13} />}
+            label={image.name}
+            onRemove={() =>
+              onImagesChange?.(
+                images.filter((item) => item.path !== image.path),
+              )
+            }
+          />
+        ))}
+        {uploadError ? <span role="alert">{uploadError}</span> : null}
+      </div>
+    ) : undefined;
+
   return (
-    <form
+    <AstryxChatComposer
       className="rq-composer nowheel nodrag"
+      value={value}
+      onChange={onChange}
+      onSubmit={submit}
+      onStop={onStop}
+      isStopShown={running}
+      isDisabled={disabled}
+      placeholder={placeholder}
+      density="compact"
+      drawer={attachments}
+      input={
+        <div className="rq-composer__input">
+          <textarea
+            ref={textareaRef}
+            value={value}
+            disabled={disabled}
+            onChange={(event) => {
+              onChange(event.target.value);
+              setSlashDismissed(false);
+              detectMention(event.target.value, event.target.selectionStart);
+            }}
+            onPaste={(event) => {
+              void uploadImages(event.clipboardData.files);
+            }}
+            onKeyDown={(event) => {
+              const composing =
+                event.nativeEvent.isComposing || event.keyCode === 229;
+              if (
+                showRequirementCommand &&
+                ["ArrowDown", "ArrowUp"].includes(event.key)
+              ) {
+                event.preventDefault();
+                return;
+              }
+              if (showRequirementCommand && event.key === "Escape") {
+                event.preventDefault();
+                setSlashDismissed(true);
+                return;
+              }
+              if (event.key !== "Enter" || event.shiftKey || composing) return;
+              event.preventDefault();
+              submit();
+            }}
+            placeholder={placeholder}
+            rows={1}
+          />
+          {showRequirementCommand ? (
+            <div className="rq-composer__suggestions" role="listbox">
+              <button
+                type="button"
+                role="option"
+                aria-selected="true"
+                onClick={submit}
+              >
+                <span>/生成需求说明</span>
+              </button>
+            </div>
+          ) : null}
+          {fileOptions.length > 0 && mention ? (
+            <div className="rq-composer__suggestions">
+              {fileOptions.slice(0, 8).map((file) => (
+                <button
+                  type="button"
+                  key={file.path}
+                  onClick={() => selectReference(file)}
+                >
+                  <FileText size={13} />
+                  <span>{file.path}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      }
+      sendButton={
+        <Button
+          label={running ? stopLabel : sendLabel}
+          isIconOnly
+          variant={running ? "secondary" : "primary"}
+          isDisabled={!running && !canSend}
+          onClick={running ? onStop : submit}
+          icon={
+            running ? (
+              <Square size={15} fill="currentColor" />
+            ) : (
+              <Send size={15} />
+            )
+          }
+        />
+      }
       onDrop={(event) => {
         if (!projectId) return;
         event.preventDefault();
@@ -153,121 +278,6 @@ export default function ChatComposer({
       onDragOver={(event) => {
         if (projectId) event.preventDefault();
       }}
-      onSubmit={(event) => {
-        event.preventDefault();
-        submit();
-      }}
-    >
-      <textarea
-        ref={textareaRef}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => {
-          onChange(event.target.value);
-          setSlashDismissed(false);
-          detectMention(event.target.value, event.target.selectionStart);
-        }}
-        onPaste={(event) => {
-          void uploadImages(event.clipboardData.files);
-        }}
-        onKeyDown={(event) => {
-          const composing =
-            event.nativeEvent.isComposing || event.keyCode === 229;
-          if (
-            showRequirementCommand &&
-            ["ArrowDown", "ArrowUp"].includes(event.key)
-          ) {
-            event.preventDefault();
-            return;
-          }
-          if (showRequirementCommand && event.key === "Escape") {
-            event.preventDefault();
-            setSlashDismissed(true);
-            return;
-          }
-          if (event.key !== "Enter" || event.shiftKey || composing) return;
-          event.preventDefault();
-          submit();
-        }}
-        placeholder={placeholder}
-        rows={1}
-      />
-      {showRequirementCommand ? (
-        <div className="rq-composer__suggestions" role="listbox">
-          <button
-            type="button"
-            role="option"
-            aria-selected="true"
-            onClick={submit}
-          >
-            <span>/生成需求说明</span>
-          </button>
-        </div>
-      ) : null}
-      {fileOptions.length > 0 && mention ? (
-        <div className="rq-composer__suggestions">
-          {fileOptions.slice(0, 8).map((file) => (
-            <button
-              type="button"
-              key={file.path}
-              onClick={() => selectReference(file)}
-            >
-              <FileText size={13} />
-              <span>{file.path}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {running ? (
-        <button
-          type="button"
-          className="rq-composer__stop"
-          onClick={onStop}
-          aria-label={stopLabel}
-          title={stopLabel}
-        >
-          <Square size={15} fill="currentColor" />
-        </button>
-      ) : (
-        <button type="submit" disabled={!canSend} aria-label={sendLabel}>
-          <Send size={15} />
-        </button>
-      )}
-      {references.length || images.length || uploadError ? (
-        <div className="rq-composer__chips">
-          {references.map((reference) => (
-            <button
-              type="button"
-              key={reference.path}
-              onClick={() =>
-                onReferencesChange?.(
-                  references.filter((item) => item.path !== reference.path),
-                )
-              }
-            >
-              <FileText size={13} />
-              <span>{reference.path}</span>
-              <X size={12} />
-            </button>
-          ))}
-          {images.map((image) => (
-            <button
-              type="button"
-              key={image.path}
-              onClick={() =>
-                onImagesChange?.(
-                  images.filter((item) => item.path !== image.path),
-                )
-              }
-            >
-              <Image size={13} />
-              <span>{image.name}</span>
-              <X size={12} />
-            </button>
-          ))}
-          {uploadError ? <span role="alert">{uploadError}</span> : null}
-        </div>
-      ) : null}
-    </form>
+    />
   );
 }

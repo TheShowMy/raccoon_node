@@ -8,7 +8,8 @@ vi.mock("../terminal/TerminalSessionView", () => ({
 }));
 
 const basicSettings = {
-  theme: "dark" as const,
+  theme_pack: "neutral" as const,
+  theme_mode: "dark" as const,
   host: "0.0.0.0",
   port: 3001,
   host_overridden: false,

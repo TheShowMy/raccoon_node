@@ -1,12 +1,21 @@
 // WARNING: These types must stay in sync with src/models.rs.
 // When modifying Rust types, update this file and run `cargo test`.
 
+export type ThemePack =
+  | "neutral"
+  | "stone"
+  | "matcha"
+  | "y2k"
+  | "chocolate"
+  | "gothic"
+  | "butter";
 export type ThemeMode = "dark" | "light";
 
 export type CommitMode = "local" | "pull_request";
 
 export type BasicSettings = {
-  theme: ThemeMode;
+  theme_pack: ThemePack;
+  theme_mode: ThemeMode;
   host: string;
   port: number;
   host_overridden: boolean;
@@ -18,7 +27,8 @@ export type BasicSettings = {
 };
 
 export type BasicSettingsUpdate = {
-  theme?: ThemeMode;
+  theme_pack?: ThemePack;
+  theme_mode?: ThemeMode;
   host?: string;
   port?: number;
   commit_mode?: CommitMode;
@@ -630,7 +640,9 @@ export type StartNodeData =
       onOpenBasic: () => void;
       onOpenModels: () => void;
       onBasicChange: (settings: BasicSettings) => void;
-      onThemeChange: (theme: ThemeMode) => Promise<void>;
+      onThemeChange: (
+        update: Pick<BasicSettingsUpdate, "theme_pack" | "theme_mode">,
+      ) => Promise<void>;
       onSaveBasic: (
         confirmedExternal?: boolean,
       ) => Promise<BasicSettings | null>;

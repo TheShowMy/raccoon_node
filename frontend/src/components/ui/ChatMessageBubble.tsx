@@ -1,4 +1,10 @@
 import type { ReactNode } from "react";
+import {
+  ChatMessage,
+  ChatMessageBubble as AstryxChatMessageBubble,
+  ChatMessageMetadata,
+  ChatSystemMessage,
+} from "@astryxdesign/core/Chat";
 import { AlertTriangle, Bot, FileText, User } from "lucide-react";
 import type { FileReference, ImageAttachment } from "../../types/api";
 import { formatDate } from "../../utils/format";
@@ -30,61 +36,83 @@ export default function ChatMessageBubble({
 }) {
   const label =
     role === "user" ? "你" : role === "assistant" ? assistantLabel : "系统";
+  const metadata = (
+    <ChatMessageMetadata
+      timestamp={<time dateTime={createdAt}>{formatDate(createdAt)}</time>}
+    />
+  );
+  const body = (
+    <div className="rq-message__body">
+      {children ? (
+        <div className="rq-message__attachments">{children}</div>
+      ) : null}
+      {references.length || images.length ? (
+        <div className="rq-message__refs">
+          {references.map((reference) =>
+            projectId ? (
+              <DocumentPreview
+                key={reference.path}
+                projectId={projectId}
+                path={reference.path}
+              />
+            ) : (
+              <span key={reference.path}>
+                <FileText size={13} />
+                {reference.path}
+              </span>
+            ),
+          )}
+          {images.map((image) =>
+            projectId ? (
+              <a
+                key={image.path}
+                href={`/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(image.path.split("/").pop() ?? "")}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <img
+                  src={`/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(image.path.split("/").pop() ?? "")}`}
+                  alt={image.name}
+                />
+              </a>
+            ) : (
+              <span key={image.path}>{image.name}</span>
+            ),
+          )}
+        </div>
+      ) : null}
+      <RichContent content={content} />
+    </div>
+  );
+
+  if (role === "system") {
+    return (
+      <ChatSystemMessage
+        className={`rq-message rq-message--system ${continued ? "rq-message--continued" : ""}`}
+        icon={<AlertTriangle size={14} />}
+      >
+        {body}
+      </ChatSystemMessage>
+    );
+  }
 
   return (
-    <article
+    <ChatMessage
+      sender={role}
       className={`rq-message rq-message--${role} ${continued ? "rq-message--continued" : ""}`}
+      avatar={
+        <span className="rq-message__avatar">
+          {role === "user" ? <User size={14} /> : <Bot size={14} />}
+        </span>
+      }
     >
-      <div className="rq-message__avatar">
-        {role === "user" ? <User size={14} /> : null}
-        {role === "assistant" ? <Bot size={14} /> : null}
-        {role === "system" ? <AlertTriangle size={14} /> : null}
-      </div>
-      <div className="rq-message__body">
-        <div className="rq-message__meta">
-          <span>{label}</span>
-          <time dateTime={createdAt}>{formatDate(createdAt)}</time>
-        </div>
-        {children ? (
-          <div className="rq-message__attachments">{children}</div>
-        ) : null}
-        {references.length || images.length ? (
-          <div className="rq-message__refs">
-            {references.map((reference) =>
-              projectId ? (
-                <DocumentPreview
-                  key={reference.path}
-                  projectId={projectId}
-                  path={reference.path}
-                />
-              ) : (
-                <span key={reference.path}>
-                  <FileText size={13} />
-                  {reference.path}
-                </span>
-              ),
-            )}
-            {images.map((image) =>
-              projectId ? (
-                <a
-                  key={image.path}
-                  href={`/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(image.path.split("/").pop() ?? "")}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <img
-                    src={`/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(image.path.split("/").pop() ?? "")}`}
-                    alt={image.name}
-                  />
-                </a>
-              ) : (
-                <span key={image.path}>{image.name}</span>
-              ),
-            )}
-          </div>
-        ) : null}
-        <RichContent content={content} />
-      </div>
-    </article>
+      <AstryxChatMessageBubble
+        className="rq-message__bubble"
+        name={label}
+        metadata={metadata}
+      >
+        {body}
+      </AstryxChatMessageBubble>
+    </ChatMessage>
   );
 }

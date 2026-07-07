@@ -36,12 +36,14 @@ describe("ProcessStreamRows", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("expands a running thinking row and hides its loader", () => {
+  it("shows a running thinking row with Astryx loading state", () => {
     render(<ProcessStreamRows rows={[thinkingRow("running", "step 1")]} />);
 
-    expect(screen.getByText("step 1")).toBeInTheDocument();
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(document.querySelector(".rq-spin")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Thinking/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("step 1")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
   });
 
   it("keeps a completed thinking row collapsed by default", () => {
@@ -60,6 +62,6 @@ describe("ProcessStreamRows", () => {
   it("shows a loader on a running tool row", () => {
     render(<ProcessStreamRows rows={[toolRow("running")]} />);
 
-    expect(document.querySelector(".rq-spin")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
   });
 });

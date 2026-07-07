@@ -2,6 +2,7 @@ import type { Node } from "@xyflow/react";
 import type {
   DraftClarificationAnswer,
   BasicSettings,
+  BasicSettingsUpdate,
   FileReference,
   ImageAttachment,
   Project,
@@ -27,7 +28,6 @@ import type {
   ModelTierSetting,
   PiModel,
   SettingsPage,
-  ThemeMode,
 } from "../types/api";
 import { buildRequirementDagEdges } from "./edges";
 import {
@@ -127,7 +127,9 @@ export interface BuildProjectSettingsNodeParams {
   onOpenBasic: () => void;
   onOpenModels: () => void;
   onBasicChange: (settings: BasicSettings) => void;
-  onThemeChange: (theme: ThemeMode) => Promise<void>;
+  onThemeChange: (
+    update: Pick<BasicSettingsUpdate, "theme_pack" | "theme_mode">,
+  ) => Promise<void>;
   onSaveBasic: (confirmedExternal?: boolean) => Promise<BasicSettings | null>;
   onModelChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
   onSaveModels: () => Promise<void>;

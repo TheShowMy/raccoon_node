@@ -1,6 +1,9 @@
 import { useCallback, useState } from "react";
 import type React from "react";
-import { AlertTriangle, Settings, SlidersHorizontal } from "lucide-react";
+import { AlertDialog } from "@astryxdesign/core/AlertDialog";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Tab, TabList } from "@astryxdesign/core/TabList";
+import { Settings, SlidersHorizontal } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import { restartApplication } from "../../api/client";
 import { readError } from "../../utils/format";
@@ -61,7 +64,9 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
         icon={<SlidersHorizontal size={16} />}
         accent="var(--accent-model)"
         title="设置"
-        subtitle={`${data.basicSettings?.theme === "dark" ? "暗色" : "亮色"} · 基础与模型`}
+        subtitle={`${data.basicSettings?.theme_pack ?? "neutral"} · ${
+          data.basicSettings?.theme_mode === "light" ? "亮色" : "暗色"
+        } · 基础与模型`}
         expanded={false}
         onToggle={data.onToggleExpanded}
         buttonProps={
@@ -85,31 +90,32 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
         expanded={true}
         onToggle={data.onToggleExpanded}
       />
-      <nav
+      <TabList
         className="settings-node__tabs nodrag"
-        role="tablist"
         aria-label="设置页面"
+        value={data.page}
+        onChange={(page) => {
+          if (page === "basic") data.onOpenBasic();
+          if (page === "models") data.onOpenModels();
+        }}
+        hasDivider
       >
-        <button
-          type="button"
+        <Tab
+          value="basic"
+          label="基础设置"
+          icon={<Settings size={14} />}
           role="tab"
           aria-selected={data.page === "basic"}
-          className={data.page === "basic" ? "active" : ""}
-          onClick={data.onOpenBasic}
-        >
-          <Settings size={14} /> 基础设置
-        </button>
-        <button
-          type="button"
+        />
+        <Tab
+          value="models"
+          label="模型设置"
+          icon={<SlidersHorizontal size={14} />}
           role="tab"
-          data-model-setup-target="models"
           aria-selected={data.page === "models"}
-          className={data.page === "models" ? "active" : ""}
-          onClick={data.onOpenModels}
-        >
-          <SlidersHorizontal size={14} /> 模型设置
-        </button>
-      </nav>
+          data-model-setup-target="models"
+        />
+      </TabList>
       <div
         className="settings-node__body nodrag nowheel"
         role="tabpanel"
@@ -117,14 +123,10 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
         aria-label={data.page === "basic" ? "基础设置" : "模型设置"}
       >
         {restartError ? (
-          <p className="settings-node__banner settings-node__banner--error">
-            {restartError}
-          </p>
+          <Banner status="error" title="重启失败" description={restartError} />
         ) : null}
         {restarting ? (
-          <p className="settings-node__banner settings-node__banner--info">
-            服务正在重启，等待恢复…
-          </p>
+          <Banner status="info" title="服务正在重启" description="等待恢复…" />
         ) : null}
         {data.page === "basic" ? (
           <BasicSettingsPanel
@@ -133,7 +135,7 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
             saving={data.savingBasic || restarting}
             savingTheme={data.savingTheme}
             onChange={data.onBasicChange}
-            onThemeChange={(theme) => void data.onThemeChange(theme)}
+            onThemeChange={(update) => void data.onThemeChange(update)}
             onSave={() => void saveBasic()}
           />
         ) : (
@@ -164,28 +166,16 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
         )}
       </div>
 
-      {confirmExternal ? (
-        <div className="settings-node__confirm" role="alertdialog">
-          <div>
-            <span className="settings-node__confirm-icon">
-              <AlertTriangle size={22} />
-            </span>
-            <strong>确认监听所有网络接口？</strong>
-            <p>
-              当前 API 没有身份验证。使用 0.0.0.0
-              后，同一网络中的设备可能访问项目数据和操作接口。
-            </p>
-            <span>
-              <button type="button" onClick={() => setConfirmExternal(false)}>
-                取消
-              </button>
-              <button type="button" onClick={() => void saveBasic(true)}>
-                我了解风险，继续
-              </button>
-            </span>
-          </div>
-        </div>
-      ) : null}
+      <AlertDialog
+        isOpen={confirmExternal}
+        onOpenChange={setConfirmExternal}
+        title="确认监听所有网络接口？"
+        description="当前 API 没有身份验证。使用 0.0.0.0 后，同一网络中的设备可能访问项目数据和操作接口。"
+        cancelLabel="取消"
+        actionLabel="我了解风险，继续"
+        actionVariant="destructive"
+        onAction={() => void saveBasic(true)}
+      />
     </section>
   );
 }

@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { AlertTriangle, MessageSquare, X } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { AlertDialog, Button, Card, Tab, TabList } from "@astryxdesign/core";
+import { ChatMessageList } from "@astryxdesign/core/Chat";
+import { MessageSquare, X } from "lucide-react";
 import type {
   ProjectChatMessage,
   RequirementDraft,
@@ -59,25 +60,27 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
   return (
     <>
       <div className="chat-workspace nodrag" aria-label="需求会话与项目问答">
-        <div className="chat-workspace__tabs" role="tablist">
-          {(
-            [
-              ["requirement", "需求会话"],
-              ["project", "项目问答"],
-            ] as const
-          ).map(([card, title]) => (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeCard === card}
-              className={activeCard === card ? "is-active" : ""}
-              onClick={() => setActiveCard(card)}
-              key={card}
-            >
-              {title}
-            </button>
-          ))}
-        </div>
+        <TabList
+          className="chat-workspace__tabs"
+          value={activeCard}
+          onChange={(value) => setActiveCard(value as ActiveCard)}
+          layout="fill"
+          hasDivider
+          aria-label="对话类型"
+        >
+          <Tab
+            value="requirement"
+            label="需求会话"
+            role="tab"
+            aria-selected={activeCard === "requirement"}
+          />
+          <Tab
+            value="project"
+            label="项目问答"
+            role="tab"
+            aria-selected={activeCard === "project"}
+          />
+        </TabList>
         <section
           className="chat-workspace__panel"
           data-chat-card="requirement"
@@ -184,16 +187,17 @@ function ProjectChatWorkbench({
             {data.project.name} · {running ? "Pi Agent 处理中" : "随时可问"}
           </span>
         </div>
-        <button
-          type="button"
+        <Button
           className="node-header__action"
-          disabled={data.projectChatBusy || running}
-          aria-label="关闭项目问答会话"
-          title="关闭项目问答会话"
+          label="关闭项目问答会话"
+          isIconOnly
+          variant="ghost"
+          size="sm"
+          isDisabled={data.projectChatBusy || running}
+          tooltip="关闭项目问答会话"
           onClick={onReset}
-        >
-          <X size={15} />
-        </button>
+          icon={<X size={15} />}
+        />
       </div>
 
       <div className="rq-workbench project-chat-workbench">
@@ -207,7 +211,12 @@ function ProjectChatWorkbench({
           notices.length ||
           running ||
           error ? (
-            <div className="rq-transcript__items">
+            <ChatMessageList
+              className="rq-transcript__items"
+              density="compact"
+              gap={2}
+              isStreaming={running}
+            >
               {data.projectChat?.messages.map((message, index) => (
                 <ProjectChatMessageItem
                   key={`${message.created_at}-${index}`}
@@ -257,7 +266,7 @@ function ProjectChatWorkbench({
                   {error}
                 </div>
               ) : null}
-            </div>
+            </ChatMessageList>
           ) : (
             <div className="rq-empty">
               <MessageSquare size={24} />
@@ -301,7 +310,7 @@ function RequirementSummaryCard({
   onContinue: () => void;
 }) {
   return (
-    <section className="rq-shelf rq-confirm" aria-label="需求说明">
+    <Card className="rq-shelf rq-confirm" aria-label="需求说明" padding={4}>
       <div className="rq-shelf__topline">
         <span>需求说明</span>
       </div>
@@ -313,11 +322,14 @@ function RequirementSummaryCard({
         ))}
       </ul>
       <div className="rq-shelf__actions">
-        <button type="button" disabled={disabled} onClick={onContinue}>
-          作为需求继续
-        </button>
+        <Button
+          label="作为需求继续"
+          variant="primary"
+          isDisabled={disabled}
+          onClick={onContinue}
+        />
       </div>
-    </section>
+    </Card>
   );
 }
 
@@ -396,50 +408,18 @@ function ConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (open && !dialog.open) {
-      if (typeof dialog.showModal === "function") dialog.showModal();
-      else dialog.setAttribute("open", "");
-    } else if (!open && dialog.open) {
-      if (typeof dialog.close === "function") dialog.close();
-      else dialog.removeAttribute("open");
-    }
-  }, [open]);
-
-  if (!open) return null;
-
-  return createPortal(
-    <dialog
-      ref={dialogRef}
-      className="chat-confirm-dialog"
-      onClose={onCancel}
-      onClick={onCancel}
-    >
-      <section
-        className="node-card chat-confirm-dialog__panel"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="chat-confirm-dialog__icon">
-          <AlertTriangle size={22} />
-        </div>
-        <div>
-          <strong>{title}</strong>
-          <p>{description}</p>
-        </div>
-        <div className="chat-confirm-dialog__actions">
-          <button type="button" onClick={onCancel}>
-            取消
-          </button>
-          <button type="button" className="is-danger" onClick={onConfirm}>
-            {confirmLabel}
-          </button>
-        </div>
-      </section>
-    </dialog>,
-    document.body,
+  return (
+    <AlertDialog
+      isOpen={open}
+      onOpenChange={(isOpen) => {
+        if (!isOpen) onCancel();
+      }}
+      title={title}
+      description={description}
+      cancelLabel="取消"
+      actionLabel={confirmLabel}
+      actionVariant="destructive"
+      onAction={onConfirm}
+    />
   );
 }

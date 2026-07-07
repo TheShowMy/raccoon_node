@@ -26,6 +26,7 @@ import {
   type GitDiff,
   type GitDiffArea,
   type GitStatus,
+  type ThemePack,
   type ChatAccepted,
   type RequirementAccepted,
   type AcceptedOperation,
@@ -33,7 +34,8 @@ import {
 
 export async function getCurrentProject(): Promise<{
   project: Project;
-  theme: ThemeMode;
+  theme_pack: ThemePack;
+  theme_mode: ThemeMode;
   publication_readiness: PublicationReadiness;
 }> {
   const response = await fetch("/api/project/current");
@@ -45,17 +47,34 @@ export async function getCurrentProject(): Promise<{
   }
   const current = (await response.json()) as {
     project: Project;
-    theme: unknown;
+    theme_pack: unknown;
+    theme_mode: unknown;
     publication_readiness: PublicationReadiness;
   };
-  if (current.theme !== "dark" && current.theme !== "light") {
-    throw new Error("后端返回了无效主题");
+  if (!isThemePack(current.theme_pack)) {
+    throw new Error("后端返回了无效主题包");
+  }
+  if (current.theme_mode !== "dark" && current.theme_mode !== "light") {
+    throw new Error("后端返回了无效明暗模式");
   }
   return {
     project: current.project,
-    theme: current.theme,
+    theme_pack: current.theme_pack,
+    theme_mode: current.theme_mode,
     publication_readiness: current.publication_readiness,
   };
+}
+
+function isThemePack(value: unknown): value is ThemePack {
+  return (
+    value === "neutral" ||
+    value === "stone" ||
+    value === "matcha" ||
+    value === "y2k" ||
+    value === "chocolate" ||
+    value === "gothic" ||
+    value === "butter"
+  );
 }
 
 export async function getProjectCanvas(

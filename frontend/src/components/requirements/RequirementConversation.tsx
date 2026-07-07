@@ -1,4 +1,6 @@
 import React, { useMemo, useState } from "react";
+import { Banner, Button, Card, TextArea } from "@astryxdesign/core";
+import { ChatMessageList } from "@astryxdesign/core/Chat";
 import {
   AlertTriangle,
   Check,
@@ -148,14 +150,13 @@ export default function RequirementConversationWorkbench({
         />
 
         {requirement?.status === "failed" && !requirement.draft ? (
-          <button
-            type="button"
+          <Button
+            label="重新分析"
+            variant="secondary"
             className="requirement-draft__confirm"
-            disabled={busy}
+            isDisabled={busy}
             onClick={() => void onRetryAnalysis(requirement)}
-          >
-            重新分析
-          </button>
+          />
         ) : null}
 
         {prompt && requirement ? (
@@ -238,7 +239,12 @@ function RequirementTranscript({
       version={`${conversation?.updated_at ?? "empty"}:${streamEvents.length}:${liveRows.length}`}
     >
       {conversation ? (
-        <div className="rq-transcript__items">
+        <ChatMessageList
+          className="rq-transcript__items"
+          density="compact"
+          gap={2}
+          isStreaming={running}
+        >
           {conversation.items.map((item, index) => (
             <RequirementTranscriptItem
               key={item.id}
@@ -248,21 +254,26 @@ function RequirementTranscript({
             />
           ))}
           {notices.length > 0 ? (
-            <div className="rq-notice rq-notice--info">
-              {notices.at(-1)?.message}
-            </div>
+            <Banner
+              className="rq-notice rq-notice--info"
+              status="info"
+              title={notices.at(-1)?.message ?? ""}
+            />
           ) : null}
           {streamEvents.some((e) => e.event === "coordinator_time_warning") ? (
-            <div className="rq-notice rq-notice--warn" role="alert">
-              <span>分析耗时较长，是否继续等待？</span>
-              <button
-                className="rq-btn rq-btn--danger"
-                type="button"
-                onClick={onCancel}
-              >
-                停止分析
-              </button>
-            </div>
+            <Banner
+              className="rq-notice rq-notice--warn"
+              status="warning"
+              title="分析耗时较长，是否继续等待？"
+              endContent={
+                <Button
+                  label="停止分析"
+                  variant="destructive"
+                  size="sm"
+                  onClick={onCancel}
+                />
+              }
+            />
           ) : null}
           {liveRows.length > 0 || running ? (
             <>
@@ -273,9 +284,13 @@ function RequirementTranscript({
             </>
           ) : null}
           {error ? (
-            <div className="rq-notice rq-notice--warn">{error}</div>
+            <Banner
+              className="rq-notice rq-notice--warn"
+              status="error"
+              title={error}
+            />
           ) : null}
-        </div>
+        </ChatMessageList>
       ) : (
         <div className="rq-empty">
           <Sparkles size={24} />
@@ -400,7 +415,7 @@ function RequirementAskCard({
   }
 
   return (
-    <section className="rq-shelf rq-ask">
+    <Card className="rq-shelf rq-ask" padding={4}>
       <div className="rq-shelf__topline">
         <span>澄清 · 第 {prompt.round} 轮</span>
         <span>
@@ -409,30 +424,34 @@ function RequirementAskCard({
       </div>
       <div className="rq-ask__crumbs">
         {prompt.questions.map((item, index) => (
-          <button
+          <Button
             key={item.id}
-            type="button"
+            label={`${index + 1}`}
+            size="sm"
+            variant={index === activeIndex ? "primary" : "ghost"}
             className={index === activeIndex ? "is-active" : ""}
             onClick={() => setActiveIndex(index)}
-          >
-            {index + 1}
-            {hasDraftAnswer(
-              item,
-              answers[item.id] ?? createDraftAnswer(item),
-            ) ? (
-              <Check size={11} />
-            ) : null}
-          </button>
+            endContent={
+              hasDraftAnswer(
+                item,
+                answers[item.id] ?? createDraftAnswer(item),
+              ) ? (
+                <Check size={11} />
+              ) : null
+            }
+          />
         ))}
       </div>
       <strong>{question.question}</strong>
       {question.question_type === "free_text" ? (
-        <textarea
+        <TextArea
+          label="补充说明"
+          isLabelHidden
           value={answer.customText}
-          onChange={(event) =>
+          onChange={(value) =>
             onAnswerChange(question, {
               ...answer,
-              customText: event.target.value,
+              customText: value,
             })
           }
           placeholder="输入你的补充说明"
@@ -443,9 +462,10 @@ function RequirementAskCard({
           {question.options.map((option) => {
             const selected = answer.selectedOptions.includes(option.value);
             return (
-              <button
+              <Button
                 key={option.value}
-                type="button"
+                label={option.label}
+                variant={selected ? "primary" : "secondary"}
                 className={selected ? "is-selected" : ""}
                 onClick={() => {
                   const next = toggleClarificationOption(
@@ -461,33 +481,33 @@ function RequirementAskCard({
                     setActiveIndex(activeIndex + 1);
                   }
                 }}
-              >
-                <span>{option.label}</span>
-                {option.description ? (
-                  <small>{option.description}</small>
-                ) : null}
-              </button>
+                endContent={
+                  option.description ? (
+                    <small>{option.description}</small>
+                  ) : null
+                }
+              />
             );
           })}
         </div>
       )}
       <div className="rq-shelf__actions">
-        <button
-          type="button"
-          disabled={busy || !hasDraftAnswer(question, answer)}
+        <Button
+          label={
+            activeIndex < prompt.questions.length - 1 ? "继续" : "提交澄清"
+          }
+          variant="primary"
+          isDisabled={busy || !hasDraftAnswer(question, answer)}
           onClick={advance}
-        >
-          {activeIndex < prompt.questions.length - 1 ? "继续" : "提交澄清"}
-        </button>
-        <button
-          type="button"
-          disabled={busy || !allAnswered}
+        />
+        <Button
+          label="全部提交"
+          variant="secondary"
+          isDisabled={busy || !allAnswered}
           onClick={onSubmit}
-        >
-          全部提交
-        </button>
+        />
       </div>
-    </section>
+    </Card>
   );
 }
 
@@ -505,7 +525,7 @@ function RequirementConfirmCard({
   onContinueEditing: () => void;
 }) {
   return (
-    <section className="rq-shelf rq-confirm">
+    <Card className="rq-shelf rq-confirm" padding={4}>
       <div className="rq-shelf__topline">
         <span>需求确认</span>
         <span>{requirementStatusText(requirement.status)}</span>
@@ -518,13 +538,19 @@ function RequirementConfirmCard({
         ))}
       </ul>
       <div className="rq-shelf__actions">
-        <button type="button" disabled={busy} onClick={onConfirm}>
-          确认并执行
-        </button>
-        <button type="button" disabled={busy} onClick={onContinueEditing}>
-          继续补充
-        </button>
+        <Button
+          label="确认并执行"
+          variant="primary"
+          isDisabled={busy}
+          onClick={onConfirm}
+        />
+        <Button
+          label="继续补充"
+          variant="secondary"
+          isDisabled={busy}
+          onClick={onContinueEditing}
+        />
       </div>
-    </section>
+    </Card>
   );
 }

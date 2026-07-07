@@ -569,7 +569,8 @@ mod tests {
             serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
                 .unwrap();
         assert_eq!(body["project"]["id"], "current");
-        assert_eq!(body["theme"], "light");
+        assert_eq!(body["theme_pack"], "neutral");
+        assert_eq!(body["theme_mode"], "dark");
         assert_eq!(body["publication_readiness"]["mode"], "local");
         assert_eq!(body["publication_readiness"]["ready"], true);
 
@@ -837,7 +838,8 @@ mod tests {
             store,
             fake_provider(Vec::new()),
             AppConfig {
-                theme: raccoon_node::config::Theme::Dark,
+                theme_pack: "gothic".to_owned(),
+                theme_mode: raccoon_node::config::ThemeMode::Dark,
                 host: "0.0.0.0".to_owned(),
                 port: 3001,
                 commit_mode: raccoon_node::config::CommitMode::PullRequest,
@@ -861,7 +863,8 @@ mod tests {
         assert_eq!(
             body,
             json!({
-                "theme": "dark",
+                "theme_pack": "gothic",
+                "theme_mode": "dark",
                 "host": "0.0.0.0",
                 "port": 3001,
                 "host_overridden": false,
@@ -880,7 +883,9 @@ mod tests {
                     .method("PUT")
                     .uri("/api/settings/basic")
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"theme":"light","port":4321}"#))
+                    .body(Body::from(
+                        r#"{"theme_pack":"matcha","theme_mode":"light","port":4321}"#,
+                    ))
                     .unwrap(),
             )
             .await
@@ -889,7 +894,8 @@ mod tests {
         assert_eq!(
             AppConfig::load(&config_path).unwrap(),
             Some(AppConfig {
-                theme: raccoon_node::config::Theme::Light,
+                theme_pack: "matcha".to_owned(),
+                theme_mode: raccoon_node::config::ThemeMode::Light,
                 host: "0.0.0.0".to_owned(),
                 port: 4321,
                 commit_mode: raccoon_node::config::CommitMode::PullRequest,
@@ -909,7 +915,8 @@ mod tests {
         let body: serde_json::Value =
             serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
                 .unwrap();
-        assert_eq!(body["theme"], "light");
+        assert_eq!(body["theme_pack"], "matcha");
+        assert_eq!(body["theme_mode"], "light");
 
         for port in [0, 65_536] {
             let response = app
@@ -920,7 +927,7 @@ mod tests {
                         .uri("/api/settings/basic")
                         .header("content-type", "application/json")
                         .body(Body::from(
-                            json!({"theme": "dark", "port": port}).to_string(),
+                            json!({"theme_mode": "dark", "port": port}).to_string(),
                         ))
                         .unwrap(),
                 )
@@ -963,7 +970,7 @@ mod tests {
                     .method("PUT")
                     .uri("/api/settings/basic")
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"theme":"dark"}"#))
+                    .body(Body::from(r#"{"theme_mode":"dark"}"#))
                     .unwrap(),
             )
             .await

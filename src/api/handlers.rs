@@ -37,7 +37,10 @@ use crate::models::{
     TerminalCommandProfilesUpdate, TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
 };
 use crate::store::{ProjectScheduleAction, TaskExecutionDisposition};
-use crate::{config::CommitMode, error::AppError};
+use crate::{
+    config::{CommitMode, THEME_PACKS},
+    error::AppError,
+};
 
 static ACTIVE_EXECUTIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static TURN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -142,7 +145,8 @@ pub async fn get_current_project(
         .ok_or_else(|| AppError::not_found("项目不存在"))?;
     Ok(Json(CurrentProjectResponse {
         project,
-        theme: state.config.read().await.theme.as_str().to_owned(),
+        theme_pack: state.config.read().await.theme_pack.clone(),
+        theme_mode: state.config.read().await.theme_mode,
         publication_readiness: state.publication_readiness.read().await.clone(),
     }))
 }
@@ -168,6 +172,13 @@ pub async fn put_basic_settings(
         return Err(AppError::bad_request(
             "监听 0.0.0.0 会将无鉴权 API 暴露到所有网络接口，请先确认风险",
         ));
+    }
+    if payload
+        .theme_pack
+        .as_deref()
+        .is_some_and(|theme_pack| !THEME_PACKS.contains(&theme_pack))
+    {
+        return Err(AppError::bad_request("主题包不在支持列表内"));
     }
 
     let current = state.config.read().await.clone();
@@ -195,7 +206,11 @@ pub async fn put_basic_settings(
 
     let mut config = state.config.write().await;
     let updated = crate::config::AppConfig {
-        theme: payload.theme.unwrap_or(config.theme),
+        theme_pack: payload
+            .theme_pack
+            .clone()
+            .unwrap_or_else(|| config.theme_pack.clone()),
+        theme_mode: payload.theme_mode.unwrap_or(config.theme_mode),
         host: payload.host.clone().unwrap_or_else(|| config.host.clone()),
         port: payload.port.map(|port| port as u16).unwrap_or(config.port),
         commit_mode: payload.commit_mode.unwrap_or(config.commit_mode),
@@ -233,7 +248,8 @@ fn basic_settings_response(state: &AppState, config: &crate::config::AppConfig) 
             .effective_port
             .is_some_and(|effective| effective != desired_port);
     BasicSettings {
-        theme: config.theme,
+        theme_pack: config.theme_pack.clone(),
+        theme_mode: config.theme_mode,
         host: config.host.clone(),
         port: config.port,
         host_overridden: state.runtime.host_override.is_some(),

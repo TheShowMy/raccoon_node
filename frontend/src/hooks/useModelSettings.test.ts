@@ -22,7 +22,8 @@ vi.mock("../api/client", () => ({
 }));
 
 const settings = (overrides: Partial<BasicSettings> = {}): BasicSettings => ({
-  theme: "dark",
+  theme_pack: "neutral",
+  theme_mode: "dark",
   host: "127.0.0.1",
   port: 3000,
   host_overridden: false,
@@ -178,16 +179,16 @@ it("switches theme immediately, saves only theme, and preserves other drafts", a
 
   let saving = Promise.resolve();
   act(() => {
-    saving = result.current.changeTheme("light");
+    saving = result.current.changeTheme({ theme_mode: "light" });
   });
-  expect(result.current.basicSettings?.theme).toBe("light");
-  expect(onThemeChange).toHaveBeenCalledWith("light");
-  expect(saveBasicSettings).toHaveBeenCalledWith({ theme: "light" });
+  expect(result.current.basicSettings?.theme_mode).toBe("light");
+  expect(onThemeChange).toHaveBeenCalledWith("neutral", "light");
+  expect(saveBasicSettings).toHaveBeenCalledWith({ theme_mode: "light" });
 
-  finishSave(settings({ theme: "light" }));
+  finishSave(settings({ theme_mode: "light" }));
   await act(async () => saving);
   expect(result.current.basicSettings).toMatchObject({
-    theme: "light",
+    theme_mode: "light",
     host: "0.0.0.0",
     port: 4321,
   });
@@ -199,10 +200,10 @@ it("rolls theme back when persistence fails", async () => {
   const { result } = renderHook(() => useModelSettings(onThemeChange));
   await waitFor(() => expect(result.current.basicSettings).not.toBeNull());
 
-  await act(async () => result.current.changeTheme("light"));
+  await act(async () => result.current.changeTheme({ theme_mode: "light" }));
 
-  expect(result.current.basicSettings?.theme).toBe("dark");
-  expect(onThemeChange).toHaveBeenLastCalledWith("dark");
+  expect(result.current.basicSettings?.theme_mode).toBe("dark");
+  expect(onThemeChange).toHaveBeenLastCalledWith("neutral", "dark");
   expect(result.current.basicSettingsError).toContain("offline");
 });
 

@@ -106,7 +106,8 @@ pub struct Project {
 #[derive(Debug, Clone, Serialize)]
 pub struct CurrentProjectResponse {
     pub project: Project,
-    pub theme: String,
+    pub theme_pack: String,
+    pub theme_mode: crate::config::ThemeMode,
     pub publication_readiness: PublicationReadiness,
 }
 
@@ -172,7 +173,8 @@ impl PublicationReadiness {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BasicSettings {
-    pub theme: crate::config::Theme,
+    pub theme_pack: String,
+    pub theme_mode: crate::config::ThemeMode,
     pub host: String,
     pub port: u16,
     pub host_overridden: bool,
@@ -186,7 +188,9 @@ pub struct BasicSettings {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct BasicSettingsUpdate {
     #[serde(default)]
-    pub theme: Option<crate::config::Theme>,
+    pub theme_pack: Option<String>,
+    #[serde(default)]
+    pub theme_mode: Option<crate::config::ThemeMode>,
     #[serde(default)]
     pub host: Option<String>,
     #[serde(default)]

@@ -35,7 +35,8 @@
     "created_at": "2026-06-29T10:00:00Z",
     "updated_at": "2026-06-29T10:00:00Z"
   },
-  "theme": "dark",
+  "theme_pack": "neutral",
+  "theme_mode": "dark",
   "publication_readiness": {
     "mode": "pull_request",
     "ready": true,
@@ -428,7 +429,8 @@ SSE 不作为状态存储；重连后应重新获取项目画布。
 
 ```json
 {
-  "theme": "dark",
+  "theme_pack": "neutral",
+  "theme_mode": "dark",
   "host": "127.0.0.1",
   "port": 3001,
   "host_overridden": false,
@@ -449,7 +451,8 @@ SSE 不作为状态存储；重连后应重新获取项目画布。
 
 ```json
 {
-  "theme": "light",
+  "theme_pack": "matcha",
+  "theme_mode": "light",
   "host": "0.0.0.0",
   "port": 4321,
   "commit_mode": "local",
@@ -457,8 +460,8 @@ SSE 不作为状态存储；重连后应重新获取项目画布。
 }
 ```
 
-主题可通过仅提交 `{ "theme": "light" }` 独立持久化，不触发发布条件检查。提交
-模式显式保存后生效，只有模式实际变化时才重新检查发布条件。host 仅支持
+主题可通过仅提交 `{ "theme_mode": "light" }` 或
+`{ "theme_pack": "matcha" }` 独立持久化，不触发发布条件检查。提交模式显式保存后生效，只有模式实际变化时才重新检查发布条件。host 仅支持
 `127.0.0.1` / `0.0.0.0`；保存 `0.0.0.0` 必须传
 `confirmed_external: true`，否则返回 `400`。端口范围为 `1..=65535`。若实际
 监听值需要变化，响应中的 `restart_required` 为 `true`。

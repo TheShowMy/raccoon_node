@@ -5,15 +5,25 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+pub const THEME_PACKS: &[&str] = &[
+    "neutral",
+    "stone",
+    "matcha",
+    "y2k",
+    "chocolate",
+    "gothic",
+    "butter",
+];
+
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum Theme {
-    #[default]
+pub enum ThemeMode {
     Light,
+    #[default]
     Dark,
 }
 
-impl Theme {
+impl ThemeMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Light => "light",
@@ -42,7 +52,8 @@ impl CommitMode {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct AppConfig {
-    pub theme: Theme,
+    pub theme_pack: String,
+    pub theme_mode: ThemeMode,
     pub host: String,
     pub port: u16,
     pub commit_mode: CommitMode,
@@ -51,7 +62,8 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            theme: Theme::Light,
+            theme_pack: "neutral".to_owned(),
+            theme_mode: ThemeMode::Dark,
             host: "127.0.0.1".to_owned(),
             port: 3001,
             commit_mode: CommitMode::PullRequest,
@@ -98,6 +110,12 @@ impl AppConfig {
                 "host 仅支持 127.0.0.1 或 0.0.0.0",
             ));
         }
+        if !THEME_PACKS.contains(&self.theme_pack.as_str()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "主题包不在支持列表内",
+            ));
+        }
         Ok(())
     }
 }
@@ -117,7 +135,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.toml");
         let expected = AppConfig::default();
-        assert_eq!(expected.theme, Theme::Light);
+        assert_eq!(expected.theme_pack, "neutral");
+        assert_eq!(expected.theme_mode, ThemeMode::Dark);
         assert_eq!(expected.commit_mode, CommitMode::PullRequest);
         expected.save(&path).unwrap();
         assert_eq!(AppConfig::load(&path).unwrap(), Some(expected));

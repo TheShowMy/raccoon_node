@@ -15,6 +15,7 @@ import {
   useStore,
   useViewport,
 } from "@xyflow/react";
+import { Theme } from "@astryxdesign/core/theme";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import "./styles/index.css";
@@ -1039,106 +1040,108 @@ export default function App() {
   );
 
   return (
-    <main className="app-shell" data-theme={current.theme}>
-      <section className="toolbar">
-        <div className="toolbar__brand">
-          <img
-            className="app-logo"
-            src="/raccoon-icon-180.png"
-            alt=""
-            width="36"
-            height="36"
-          />
-          <div>
-            <h1>Raccoon Node</h1>
-            <p>
-              {current.project
-                ? `${current.project.name} / 项目画布`
-                : "项目画布"}
-            </p>
+    <Theme theme={current.theme} mode={current.themeMode}>
+      <main className="app-shell">
+        <section className="toolbar">
+          <div className="toolbar__brand">
+            <img
+              className="app-logo"
+              src="/raccoon-icon-180.png"
+              alt=""
+              width="36"
+              height="36"
+            />
+            <div>
+              <h1>Raccoon Node</h1>
+              <p>
+                {current.project
+                  ? `${current.project.name} / 项目画布`
+                  : "项目画布"}
+              </p>
+            </div>
           </div>
-        </div>
-        <div className="status-pill">
-          {current.error
-            ? current.error
-            : current.loading
-              ? "加载中"
-              : "已连接"}
-        </div>
-      </section>
-      <section
-        className={`canvas-shell${nodeDragging ? " canvas-shell--dragging" : ""}`}
-      >
-        <RequirementTaskEventsProvider
-          requirementId={project.observedRequirementId}
-          events={requirement.requirementStreamEvents}
+          <div className="status-pill">
+            {current.error
+              ? current.error
+              : current.loading
+                ? "加载中"
+                : "已连接"}
+          </div>
+        </section>
+        <section
+          className={`canvas-shell${nodeDragging ? " canvas-shell--dragging" : ""}`}
         >
-          <ReactFlowProvider>
-            <ReactFlow
-              key={getReactFlowKey({
-                projectId: selectedProjectId,
-                projectLoaded: Boolean(project.projectCanvas),
-              })}
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              fitView
-              fitViewOptions={{ padding: 0.08, duration: 0 }}
-              minZoom={0.05}
-              maxZoom={2}
-              nodesDraggable
-              onNodeDragStart={() => setNodeDragging(true)}
-              onNodeDragStop={() => setNodeDragging(false)}
-              nodesConnectable={false}
-              elementsSelectable
-              panOnScroll
-              panActivationKeyCode="Space"
-              selectionOnDrag
-              defaultEdgeOptions={{
-                type: "smoothstep",
-                style: { strokeWidth: 2 },
-                markerEnd: {
-                  type: MarkerType.ArrowClosed,
-                  width: 12,
-                  height: 12,
-                },
-              }}
-            >
-              <Background color="var(--canvas-dot)" gap={32} size={1.5} />
-              {project.selectedDagRequirement ? (
-                <MiniMap
-                  position="bottom-left"
-                  pannable
-                  zoomable
-                  nodeColor={minimapNodeColor}
-                  nodeStrokeWidth={2}
-                  nodeStrokeColor="var(--card-border-strong)"
+          <RequirementTaskEventsProvider
+            requirementId={project.observedRequirementId}
+            events={requirement.requirementStreamEvents}
+          >
+            <ReactFlowProvider>
+              <ReactFlow
+                key={getReactFlowKey({
+                  projectId: selectedProjectId,
+                  projectLoaded: Boolean(project.projectCanvas),
+                })}
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={nodeTypes}
+                fitView
+                fitViewOptions={{ padding: 0.08, duration: 0 }}
+                minZoom={0.05}
+                maxZoom={2}
+                nodesDraggable
+                onNodeDragStart={() => setNodeDragging(true)}
+                onNodeDragStop={() => setNodeDragging(false)}
+                nodesConnectable={false}
+                elementsSelectable
+                panOnScroll
+                panActivationKeyCode="Space"
+                selectionOnDrag
+                defaultEdgeOptions={{
+                  type: "smoothstep",
+                  style: { strokeWidth: 2 },
+                  markerEnd: {
+                    type: MarkerType.ArrowClosed,
+                    width: 12,
+                    height: 12,
+                  },
+                }}
+              >
+                <Background color="var(--canvas-dot)" gap={32} size={1.5} />
+                {project.selectedDagRequirement ? (
+                  <MiniMap
+                    position="bottom-left"
+                    pannable
+                    zoomable
+                    nodeColor={minimapNodeColor}
+                    nodeStrokeWidth={2}
+                    nodeStrokeColor="var(--card-border-strong)"
+                  />
+                ) : null}
+                <RequirementsReturnButton nodes={requirementHomeNodes} />
+                {modelSetupGuideStep ? (
+                  <ModelSetupGuide
+                    step={modelSetupGuideStep}
+                    onSkip={models.skipModelSetupGuide}
+                  />
+                ) : null}
+                <Controls position="bottom-right" />
+                <ProjectCanvasViewportController
+                  projectLoaded={Boolean(project.projectCanvas)}
+                  selectedDagRequirementId={project.selectedDagRequirementId}
                 />
-              ) : null}
-              <RequirementsReturnButton nodes={requirementHomeNodes} />
-              {modelSetupGuideStep ? (
-                <ModelSetupGuide
-                  step={modelSetupGuideStep}
-                  onSkip={models.skipModelSetupGuide}
+                <SettingsViewportController
+                  expanded={models.settingsExpanded}
+                  node={projectSettingsNode}
                 />
-              ) : null}
-              <Controls position="bottom-right" />
-              <ProjectCanvasViewportController
-                projectLoaded={Boolean(project.projectCanvas)}
-                selectedDagRequirementId={project.selectedDagRequirementId}
-              />
-              <SettingsViewportController
-                expanded={models.settingsExpanded}
-                node={projectSettingsNode}
-              />
-              <TerminalViewportController collapsed={terminals.collapsed} />
-              <GitViewportController phase={git.phase} />
-              <GithubViewportController expanded={githubExpanded} />
-              <TokenUsageViewportController expanded={tokenUsageExpanded} />
-            </ReactFlow>
-          </ReactFlowProvider>
-        </RequirementTaskEventsProvider>
-      </section>
-    </main>
+                <TerminalViewportController collapsed={terminals.collapsed} />
+                <GitViewportController phase={git.phase} />
+                <GithubViewportController expanded={githubExpanded} />
+                <TokenUsageViewportController expanded={tokenUsageExpanded} />
+              </ReactFlow>
+            </ReactFlowProvider>
+          </RequirementTaskEventsProvider>
+        </section>
+      </main>
+    </Theme>
   );
 }

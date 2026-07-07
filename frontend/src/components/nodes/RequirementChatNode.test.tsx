@@ -170,7 +170,7 @@ describe("RequirementChatNode", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "放弃当前需求" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("放弃当前需求？");
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("放弃当前需求？");
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(onAbandon).not.toHaveBeenCalled();
 
@@ -186,7 +186,7 @@ describe("RequirementChatNode", () => {
     );
     fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
     fireEvent.click(screen.getByRole("button", { name: "关闭项目问答会话" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("关闭项目问答？");
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("关闭项目问答？");
     fireEvent.click(screen.getByRole("button", { name: "确认关闭" }));
     expect(onProjectChatReset).toHaveBeenCalledTimes(1);
   });
@@ -241,6 +241,7 @@ describe("RequirementChatNode", () => {
     expect(screen.getByText("入口在 src/main.rs。")).toBeInTheDocument();
     expect(screen.getByText("Thinking")).toBeInTheDocument();
     expect(screen.queryByText("等待 Pi Agent 事件...")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Thinking"));
     expect(screen.getByText("正在查看入口。")).toBeInTheDocument();
     expect(screen.queryByText(/assistantMessageEvent/)).not.toBeInTheDocument();
   });
@@ -286,13 +287,13 @@ describe("RequirementChatNode", () => {
     fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
 
     expect(screen.getByText("Thinking")).toBeInTheDocument();
-    expect(screen.getByText("rg")).toBeInTheDocument();
+    expect(screen.getAllByText("rg").length).toBeGreaterThan(0);
     expect(screen.queryByText("src/main.rs")).not.toBeInTheDocument();
     expect(screen.queryByText("检查入口文件")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Thinking"));
     expect(screen.getByText("检查入口文件")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("rg"));
+    fireEvent.click(screen.getAllByRole("button", { name: /rg/ }).at(-1)!);
     expect(screen.getByText("src/main.rs")).toBeInTheDocument();
 
     expect(
@@ -415,6 +416,7 @@ describe("RequirementChatNode", () => {
 
     expect(screen.getByText("Thinking")).toBeInTheDocument();
     expect(screen.queryByText("等待 Pi Agent 事件...")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Thinking"));
     expect(screen.getByText("正在查看入口。")).toBeInTheDocument();
     expect(screen.getByText("入口在 src/main.rs")).toBeInTheDocument();
 

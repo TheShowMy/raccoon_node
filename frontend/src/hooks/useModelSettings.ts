@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   BasicSettings,
+  BasicSettingsUpdate,
   ModelSettings,
   ModelTierKey,
   ModelTierSetting,
   SettingsPage,
   ThemeMode,
+  ThemePack,
 } from "../types/api";
 import {
   getBasicSettings,
@@ -25,7 +27,7 @@ function hasAllModelTiers(settings: ModelSettings) {
 export const MODEL_SETUP_GUIDE_KEY = "raccoon:model-setup-guide-dismissed:v1";
 
 export function useModelSettings(
-  onThemeChange?: (theme: ThemeMode) => void,
+  onThemeChange?: (themePack: ThemePack, themeMode: ThemeMode) => void,
   onBasicSettingsSaved?: () => Promise<void>,
 ) {
   const [settingsExpanded, setSettingsExpanded] = useState(false);
@@ -143,26 +145,48 @@ export function useModelSettings(
   }, [openSettings, settingsExpanded]);
 
   const changeTheme = useCallback(
-    async (theme: ThemeMode) => {
-      if (!basicSettings || savingTheme || basicSettings.theme === theme)
+    async (update: Pick<BasicSettingsUpdate, "theme_pack" | "theme_mode">) => {
+      if (!basicSettings || savingTheme) return;
+      const nextThemePack = update.theme_pack ?? basicSettings.theme_pack;
+      const nextThemeMode = update.theme_mode ?? basicSettings.theme_mode;
+      if (
+        nextThemePack === basicSettings.theme_pack &&
+        nextThemeMode === basicSettings.theme_mode
+      ) {
         return;
-      const previousTheme = basicSettings.theme;
+      }
+      const previous = {
+        theme_pack: basicSettings.theme_pack,
+        theme_mode: basicSettings.theme_mode,
+      };
       setSavingTheme(true);
       setBasicSettingsError(null);
       setBasicSettings((current) =>
-        current ? { ...current, theme } : current,
+        current
+          ? {
+              ...current,
+              theme_pack: nextThemePack,
+              theme_mode: nextThemeMode,
+            }
+          : current,
       );
-      onThemeChange?.(theme);
+      onThemeChange?.(nextThemePack, nextThemeMode);
       try {
-        const saved = await saveBasicSettings({ theme });
+        const saved = await saveBasicSettings(update);
         setBasicSettings((current) =>
-          current ? { ...current, theme: saved.theme } : saved,
+          current
+            ? {
+                ...current,
+                theme_pack: saved.theme_pack,
+                theme_mode: saved.theme_mode,
+              }
+            : saved,
         );
       } catch (reason) {
         setBasicSettings((current) =>
-          current ? { ...current, theme: previousTheme } : current,
+          current ? { ...current, ...previous } : current,
         );
-        onThemeChange?.(previousTheme);
+        onThemeChange?.(previous.theme_pack, previous.theme_mode);
         setBasicSettingsError(`主题保存失败：${readError(reason)}`);
       } finally {
         setSavingTheme(false);
@@ -236,7 +260,7 @@ export function useModelSettings(
           confirmed_external: confirmedExternal,
         });
         setBasicSettings(saved);
-        onThemeChange?.(saved.theme);
+        onThemeChange?.(saved.theme_pack, saved.theme_mode);
         try {
           await onBasicSettingsSaved?.();
           return saved;

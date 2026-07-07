@@ -1,14 +1,26 @@
-import { Moon, Sun, type LucideIcon } from "lucide-react";
-import type { BasicSettings, CommitMode, ThemeMode } from "../../types/api";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
+import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@astryxdesign/core/SegmentedControl";
+import { Selector } from "@astryxdesign/core/Selector";
+import { Stack } from "@astryxdesign/core/Stack";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { Moon, Sun } from "lucide-react";
+import { THEME_PACK_OPTIONS } from "../../theme/astryxThemes";
+import type {
+  BasicSettings,
+  BasicSettingsUpdate,
+  CommitMode,
+  ThemePack,
+} from "../../types/api";
 
 const COMMIT_MODES: [CommitMode, string, string][] = [
   ["local", "本地提交", "完成任务后直接合并到当前分支"],
   ["pull_request", "PR / MR 合并", "通过远端平台创建合并请求"],
-];
-
-const THEMES: [ThemeMode, string, LucideIcon][] = [
-  ["light", "亮色", Sun],
-  ["dark", "暗色", Moon],
 ];
 
 export default function BasicSettingsPanel({
@@ -25,7 +37,9 @@ export default function BasicSettingsPanel({
   saving: boolean;
   savingTheme: boolean;
   onChange: (settings: BasicSettings) => void;
-  onThemeChange: (theme: ThemeMode) => void;
+  onThemeChange: (
+    update: Pick<BasicSettingsUpdate, "theme_pack" | "theme_mode">,
+  ) => void;
   onSave: () => void;
 }) {
   if (!settings) {
@@ -40,108 +54,106 @@ export default function BasicSettingsPanel({
     settings.port <= 65535;
 
   return (
-    <div className="settings-form">
+    <Stack className="settings-form settings-form--astryx" gap={4}>
       {error ? (
-        <p className="settings-node__banner settings-node__banner--error">
-          {error}
-        </p>
+        <Banner status="error" title="设置保存失败" description={error} />
       ) : null}
 
-      <div className="settings-form__content">
-        <div className="settings-form__column">
-          <section className="settings-section">
-            <div className="settings-section__header">
-              <h3>外观</h3>
-              <p>点击后立即切换并保存。</p>
-            </div>
-            <div
-              className="settings-theme-grid"
-              role="radiogroup"
-              aria-label="主题"
-            >
-              {THEMES.map(([theme, label, Icon]) => {
-                const active = settings.theme === theme;
-                return (
-                  <button
-                    key={theme}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    disabled={savingTheme}
-                    className={active ? "active" : ""}
-                    onClick={() => onThemeChange(theme)}
-                  >
-                    <Icon size={20} />
-                    <span>{label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
+      <Stack className="settings-form__content" direction="horizontal" gap={4}>
+        <Stack className="settings-form__column" gap={4}>
+          <Card className="settings-section" padding={4}>
+            <Stack gap={3}>
+              <div className="settings-section__header">
+                <h3>外观</h3>
+                <p>点击后立即切换并保存。</p>
+              </div>
+              <Stack gap={3}>
+                <Selector
+                  label="主题包"
+                  value={settings.theme_pack}
+                  options={THEME_PACK_OPTIONS}
+                  isDisabled={savingTheme}
+                  onChange={(themePack) =>
+                    onThemeChange({ theme_pack: themePack as ThemePack })
+                  }
+                />
+                <SegmentedControl
+                  label="明暗模式"
+                  value={settings.theme_mode}
+                  onChange={(themeMode) =>
+                    onThemeChange({
+                      theme_mode: themeMode === "light" ? "light" : "dark",
+                    })
+                  }
+                  isDisabled={savingTheme}
+                  layout="fill"
+                >
+                  <SegmentedControlItem
+                    value="light"
+                    label="亮色"
+                    icon={<Sun size={14} />}
+                  />
+                  <SegmentedControlItem
+                    value="dark"
+                    label="暗色"
+                    icon={<Moon size={14} />}
+                  />
+                </SegmentedControl>
+              </Stack>
+            </Stack>
+          </Card>
 
-          <section className="settings-section">
-            <div className="settings-section__header">
-              <h3>提交模式</h3>
-              <p>保存后用于后续任务。</p>
-            </div>
-            <div
-              className="settings-choice-list"
-              role="radiogroup"
-              aria-label="提交模式"
+          <Card className="settings-section" padding={4}>
+            <RadioList
+              label="提交模式"
+              description="保存后用于后续任务。"
+              value={settings.commit_mode}
+              onChange={(mode) =>
+                onChange({ ...settings, commit_mode: mode as CommitMode })
+              }
             >
-              {COMMIT_MODES.map(([mode, label, description]) => {
-                const checked = settings.commit_mode === mode;
-                return (
-                  <label key={mode} className={checked ? "active" : ""}>
-                    <input
-                      type="radio"
-                      name="commit-mode"
-                      checked={checked}
-                      onChange={() =>
-                        onChange({ ...settings, commit_mode: mode })
-                      }
-                    />
-                    <span className="settings-choice-list__indicator" />
-                    <span className="settings-choice-list__content">
-                      <strong>{label}</strong>
-                      <small>{description}</small>
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-          </section>
-        </div>
+              {COMMIT_MODES.map(([mode, label, description]) => (
+                <RadioListItem
+                  key={mode}
+                  value={mode}
+                  label={label}
+                  description={description}
+                />
+              ))}
+            </RadioList>
+          </Card>
+        </Stack>
 
-        <section className="settings-section settings-section--service">
-          <div className="settings-section__header">
-            <h3>服务监听</h3>
-            <p>地址或端口修改后需要重启服务。</p>
-          </div>
-          <div className="settings-network-grid">
-            <label className="settings-field">
-              <span>监听地址</span>
-              <select
+        <Card
+          className="settings-section settings-section--service"
+          padding={4}
+        >
+          <Stack gap={4}>
+            <div className="settings-section__header">
+              <h3>服务监听</h3>
+              <p>地址或端口修改后需要重启服务。</p>
+            </div>
+            <Stack direction="horizontal" gap={3} wrap="wrap">
+              <Selector
+                label="监听地址"
+                width={220}
                 value={settings.host}
-                onChange={(event) =>
-                  onChange({ ...settings, host: event.target.value })
+                options={[
+                  { value: "127.0.0.1", label: "127.0.0.1（仅本机）" },
+                  { value: "0.0.0.0", label: "0.0.0.0（所有网络接口）" },
+                ]}
+                onChange={(host) => onChange({ ...settings, host })}
+              />
+              <TextInput
+                label="端口"
+                width={140}
+                value={settings.port ? String(settings.port) : ""}
+                status={
+                  validPort
+                    ? undefined
+                    : { type: "error", message: "端口必须是 1 到 65535" }
                 }
-              >
-                <option value="127.0.0.1">127.0.0.1（仅本机）</option>
-                <option value="0.0.0.0">0.0.0.0（所有网络接口）</option>
-              </select>
-            </label>
-            <label className="settings-field">
-              <span>端口</span>
-              <input
-                type="number"
-                min="1"
-                max="65535"
-                step="1"
-                value={settings.port || ""}
-                aria-invalid={!validPort}
-                onChange={(event) => {
-                  const value = event.target.value;
+                onChange={(value) => {
                   const port = value === "" ? 0 : Number(value);
                   onChange({
                     ...settings,
@@ -149,7 +161,7 @@ export default function BasicSettingsPanel({
                   });
                 }}
               />
-            </label>
+            </Stack>
             <div className="settings-effective">
               <span className="settings-effective__label">
                 当前生效
@@ -165,20 +177,19 @@ export default function BasicSettingsPanel({
                 </p>
               ) : null}
             </div>
-          </div>
-        </section>
-      </div>
+          </Stack>
+        </Card>
+      </Stack>
 
       <div className="settings-node__footer">
-        <button
-          className="settings-primary"
-          type="button"
-          disabled={saving || !validPort}
+        <Button
+          label="保存并按需重启"
+          variant="primary"
+          isLoading={saving}
+          isDisabled={!validPort}
           onClick={onSave}
-        >
-          {saving ? "保存中…" : "保存并按需重启"}
-        </button>
+        />
       </div>
-    </div>
+    </Stack>
   );
 }
