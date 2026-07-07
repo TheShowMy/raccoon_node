@@ -18,6 +18,7 @@ vi.mock("../api/client", () => ({
   submitRequirementClarifications: vi.fn(),
   confirmRequirement: vi.fn(),
   retryRequirementAnalysis: vi.fn(),
+  requirementConversationWebSocketUrl: (id: string) => `ws://test/${id}`,
 }));
 
 const now = "2026-06-25T00:00:00Z";
@@ -87,11 +88,20 @@ class FakeEventSource {
   }
 }
 
+class FakeWebSocket {
+  onopen: (() => void) | null = null;
+  onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  close = vi.fn();
+}
+
 describe("useRequirementFlow", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("WebSocket", FakeWebSocket);
     vi.mocked(getRequirementConversation).mockResolvedValue(conversation);
   });
 

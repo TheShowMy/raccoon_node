@@ -31,8 +31,6 @@ import ChatComposer from "../ui/ChatComposer";
 import ChatMessageBubble from "../ui/ChatMessageBubble";
 import LiveProcessCard from "../ui/LiveProcessCard";
 import AnchoredScroll from "../ui/AnchoredScroll";
-import SessionTranscript from "../ui/SessionTranscript";
-import { getRequirementSession } from "../../api/client";
 
 type Props = {
   conversation: RequirementConversation | null;
@@ -277,12 +275,6 @@ function RequirementTranscript({
           {error ? (
             <div className="rq-notice rq-notice--warn">{error}</div>
           ) : null}
-          <SessionTranscript
-            scopeKey={`${conversation.id}:${conversation.updated_at}`}
-            loadPage={(before) =>
-              getRequirementSession(conversation.id, before)
-            }
-          />
         </div>
       ) : (
         <div className="rq-empty">

@@ -413,6 +413,7 @@ fn project_chat_response_from(chat: &ProjectChat) -> ProjectChatResponse {
         messages: chat.messages.clone(),
         running: chat.running,
         error: chat.error.clone(),
+        requirement_summary: chat.requirement_summary.clone(),
         updated_at: chat.updated_at,
     }
 }

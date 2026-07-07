@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 
 const PROTOCOL = "raccoon:requirements:v2";
+const SUMMARY_PROTOCOL = "raccoon:project-requirement-summary:v1";
 const QuestionType = Type.Union([
   Type.Literal("single_choice"),
   Type.Literal("multi_choice"),
@@ -55,6 +56,38 @@ export default function (pi) {
     description: "Raccoon 受管需求澄清协议 v1（兼容能力标记）",
     handler: async (_args, ctx) => {
       ctx.ui.notify("Raccoon 需求澄清协议 v1 兼容模式已启用", "info");
+    },
+  });
+
+  pi.registerCommand("raccoon-project-requirement-summary-v1", {
+    description: "Raccoon 项目问答需求说明协议 v1（能力标记）",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify("Raccoon 项目问答需求说明协议 v1 已启用", "info");
+    },
+  });
+
+  pi.registerTool({
+    name: "submit_project_requirement_summary",
+    label: "提交项目问答需求说明",
+    description: "仅在系统明确要求根据项目问答生成需求说明时使用。",
+    parameters: Type.Object({
+      title: Type.String(),
+      summary: Type.String(),
+      acceptance_criteria: Type.Array(Type.String(), { minItems: 1 }),
+    }),
+    async execute(_toolCallId, params) {
+      const summary = {
+        title: params.title.trim(),
+        summary: params.summary.trim(),
+        acceptance_criteria: params.acceptance_criteria.map((item) => item.trim()).filter(Boolean),
+      };
+      if (!summary.title || !summary.summary || summary.acceptance_criteria.length === 0) {
+        throw new Error(`${SUMMARY_PROTOCOL}: 标题、摘要和验收标准不能为空`);
+      }
+      return {
+        content: [{ type: "text", text: "项目问答需求说明已提交。" }],
+        details: { protocol: SUMMARY_PROTOCOL, summary },
+      };
     },
   });
 

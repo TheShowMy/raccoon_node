@@ -10,7 +10,7 @@ import type {
   Requirement,
   RequirementConversation,
   RequirementExecutionTask,
-  ProjectChatEvent,
+  ConversationEvent,
   ProjectChatResponse,
   TerminalCommandProfile,
   TerminalCommandProfileDraft,
@@ -200,7 +200,7 @@ export interface BuildProjectChatNodeParams {
   projectChatImages?: ImageAttachment[];
   projectChatBusy: boolean;
   projectChatError: string | null;
-  projectChatEvents: ProjectChatEvent[];
+  projectChatEvents: ConversationEvent[];
   clarificationAnswers: Record<string, DraftClarificationAnswer>;
   dismissedPromptRequirementId: string | null;
   setRequirementInput: (value: string) => void;
@@ -211,6 +211,8 @@ export interface BuildProjectChatNodeParams {
   setProjectChatReferences?: (references: FileReference[]) => void;
   setProjectChatImages?: (images: ImageAttachment[]) => void;
   sendProjectChatMessage: () => Promise<void>;
+  abortProjectChat?: () => Promise<void>;
+  generateProjectRequirementSummary?: () => Promise<void>;
   resetProjectChat: () => Promise<void>;
   updateClarificationAnswer: (
     clarification: import("../types/api").RequirementClarification,
@@ -542,6 +544,8 @@ export function buildProjectChatNode({
   setProjectChatReferences = () => {},
   setProjectChatImages = () => {},
   sendProjectChatMessage,
+  abortProjectChat = async () => {},
+  generateProjectRequirementSummary = async () => {},
   resetProjectChat,
   updateClarificationAnswer,
   submitClarifications,
@@ -591,6 +595,8 @@ export function buildProjectChatNode({
         onProjectChatReferencesChange: setProjectChatReferences,
         onProjectChatImagesChange: setProjectChatImages,
         onProjectChatSend: sendProjectChatMessage,
+        onProjectChatAbort: abortProjectChat,
+        onProjectChatGenerateRequirement: generateProjectRequirementSummary,
         onProjectChatReset: resetProjectChat,
         onAnswerChange: updateClarificationAnswer,
         onSubmitClarifications: submitClarifications,

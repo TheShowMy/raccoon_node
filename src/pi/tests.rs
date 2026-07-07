@@ -17,6 +17,41 @@ use crate::utils::commit_staged_changes;
 use std::path::Path;
 
 #[test]
+fn parses_only_one_valid_project_requirement_summary_tool_result() {
+    let event = serde_json::json!({
+        "type": "tool_execution_end",
+        "toolName": "submit_project_requirement_summary",
+        "isError": false,
+        "result": {"details": {
+            "protocol": "raccoon:project-requirement-summary:v1",
+            "summary": {
+                "title": "导出",
+                "summary": "增加导出入口",
+                "acceptance_criteria": ["可以导出 CSV"]
+            }
+        }}
+    });
+    let summary = parse_project_requirement_summary(std::slice::from_ref(&event)).unwrap();
+    assert_eq!(summary.title, "导出");
+    assert!(parse_project_requirement_summary(&[event.clone(), event]).is_err());
+    assert!(
+        parse_project_requirement_summary(&[serde_json::json!({
+            "type": "tool_execution_end",
+            "toolName": "submit_project_requirement_summary",
+            "result": {"details": {
+                "protocol": "wrong",
+                "summary": {
+                    "title": "导出",
+                    "summary": "增加导出入口",
+                    "acceptance_criteria": ["可以导出 CSV"]
+                }
+            }}
+        })])
+        .is_err()
+    );
+}
+
+#[test]
 fn parse_default_branch_falls_back_to_main() {
     assert_eq!(parse_default_branch("origin/main\n"), "main");
     assert_eq!(parse_default_branch("origin/trunk\n"), "trunk");

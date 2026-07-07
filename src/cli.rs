@@ -21,8 +21,8 @@ pub struct Cli {
     #[arg(long)]
     pub no_tui: bool,
 
-    /// Git 仓库根目录；必须直接指向仓库根
-    #[arg(long)]
+    /// Git 仓库根目录；必须直接指向仓库根。也可通过 RACCOON_PROJECT_ROOT 环境变量设置。
+    #[arg(long, env = "RACCOON_PROJECT_ROOT")]
     pub project_root: Option<PathBuf>,
 
     /// 开发模式下前端 URL（例：http://localhost:5173），启用后服务端不再提供嵌入的前端资源，

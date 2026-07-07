@@ -35,6 +35,8 @@ function data(projectId: string, overrides: Partial<ChatData> = {}): ChatData {
     onSend: vi.fn(),
     onProjectChatInputChange: vi.fn(),
     onProjectChatSend: vi.fn(),
+    onProjectChatAbort: vi.fn(),
+    onProjectChatGenerateRequirement: vi.fn(),
     onProjectChatReset: vi.fn(),
     onAnswerChange: vi.fn(),
     onSubmitClarifications: vi.fn(),
@@ -213,15 +215,10 @@ describe("RequirementChatNode", () => {
           },
           projectChatEvents: [
             {
-              project_id: "project-1",
-              event: "pi_event",
-              message: "正在生成内容。",
-              pi_type: "message_update",
+              type: "assistant.thinking.delta",
               payload: {
-                assistantMessageEvent: {
-                  type: "thinking_delta",
-                  delta: "正在查看入口。",
-                },
+                project_id: "project-1",
+                delta: "正在查看入口。",
               },
             },
           ],
@@ -324,19 +321,7 @@ describe("RequirementChatNode", () => {
               },
             ],
           },
-          projectChatEvents: [
-            {
-              project_id: "project-1",
-              event: "project_chat_completed",
-              message: "项目问答已完成。",
-            },
-            {
-              project_id: "project-1",
-              event: "pi_event",
-              message: "本轮处理完成。",
-              pi_type: "turn_end",
-            },
-          ],
+          projectChatEvents: [],
         })}
       />,
     );
@@ -369,39 +354,24 @@ describe("RequirementChatNode", () => {
           },
           projectChatEvents: [
             {
-              project_id: "project-1",
-              event: "pi_event",
-              message: "正在生成内容。",
-              pi_type: "message_update",
+              type: "assistant.thinking.delta",
               payload: {
-                assistantMessageEvent: {
-                  type: "thinking_delta",
-                  delta: "正在查看入口。",
-                },
+                project_id: "project-1",
+                delta: "正在查看入口。",
               },
             },
             {
-              project_id: "project-1",
-              event: "pi_event",
-              message: "正在生成内容。",
-              pi_type: "message_update",
+              type: "assistant.delta",
               payload: {
-                assistantMessageEvent: {
-                  type: "text_delta",
-                  delta: "入口在",
-                },
+                project_id: "project-1",
+                delta: "入口在",
               },
             },
             {
-              project_id: "project-1",
-              event: "pi_event",
-              message: "正在生成内容。",
-              pi_type: "message_update",
+              type: "assistant.delta",
               payload: {
-                assistantMessageEvent: {
-                  type: "text_delta",
-                  delta: " src/main.rs",
-                },
+                project_id: "project-1",
+                delta: " src/main.rs",
               },
             },
           ],
@@ -426,5 +396,104 @@ describe("RequirementChatNode", () => {
       card.compareDocumentPosition(screen.getByText("入口在 src/main.rs")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("runs the slash command without sending a chat message", () => {
+    const onProjectChatGenerateRequirement = vi.fn();
+    const onProjectChatSend = vi.fn();
+    render(
+      <RequirementChatNode
+        data={data("project-1", {
+          projectChatInput: "/生成",
+          onProjectChatGenerateRequirement,
+          onProjectChatSend,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+    fireEvent.click(screen.getByRole("option", { name: "/生成需求说明" }));
+
+    expect(onProjectChatGenerateRequirement).toHaveBeenCalledTimes(1);
+    expect(onProjectChatSend).not.toHaveBeenCalled();
+  });
+
+  it("prefills a confirmed summary without sending or moving attachments", () => {
+    const onInputChange = vi.fn();
+    const onSend = vi.fn();
+    const onReferencesChange = vi.fn();
+    render(
+      <RequirementChatNode
+        data={data("project-1", {
+          projectChat: {
+            project_id: "project-1",
+            messages: [],
+            running: false,
+            error: null,
+            updated_at: "2026-06-25T00:00:00Z",
+            requirement_summary: {
+              title: "统一对话",
+              summary: "重构项目问答。",
+              acceptance_criteria: ["保留澄清流程"],
+            },
+          },
+          onInputChange,
+          onSend,
+          onReferencesChange,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "作为需求继续" }));
+
+    expect(screen.getByRole("tab", { name: "需求会话" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(onInputChange).toHaveBeenCalledWith(
+      "# 统一对话\n\n重构项目问答。\n\n## 验收标准\n\n- 保留澄清流程",
+    );
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onReferencesChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps tool updates paired by the nested Pi event id", () => {
+    render(
+      <RequirementChatNode
+        data={data("project-1", {
+          projectChat: {
+            project_id: "project-1",
+            messages: [],
+            running: true,
+            error: null,
+            updated_at: "2026-06-25T00:00:00Z",
+          },
+          projectChatEvents: [
+            {
+              type: "tool.start",
+              payload: {
+                project_id: "project-1",
+                event: { toolCallId: "tool-1", toolName: "read" },
+              },
+            },
+            {
+              type: "tool.end",
+              payload: {
+                project_id: "project-1",
+                event: {
+                  toolCallId: "tool-1",
+                  toolName: "read",
+                  result: { content: [{ text: "src/main.rs" }] },
+                },
+              },
+            },
+          ],
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+
+    expect(screen.getAllByText("read")).toHaveLength(1);
+    fireEvent.click(screen.getByText("查看输出"));
+    expect(screen.getByText("src/main.rs")).toBeInTheDocument();
   });
 });

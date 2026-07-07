@@ -28,13 +28,38 @@ async fn unsupported_database_schema_is_rejected() {
         .expect("future schema must fail");
     assert!(error.to_string().contains("不支持的数据库版本"));
 }
+
+#[tokio::test]
+async fn version_two_database_adds_project_requirement_summary_column() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let data_root = temp_dir.path().to_path_buf();
+    drop(JsonStore::open(data_root.clone()).await.unwrap());
+    let connection = rusqlite::Connection::open(data_root.join("data.db")).unwrap();
+    connection
+        .execute(
+            "ALTER TABLE project_chats DROP COLUMN requirement_summary",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    drop(JsonStore::open(data_root.clone()).await.unwrap());
+    let connection = rusqlite::Connection::open(data_root.join("data.db")).unwrap();
+    let has_column = connection
+        .prepare("PRAGMA table_info(project_chats)")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .any(|name| name.unwrap() == "requirement_summary");
+    assert!(has_column);
+}
 use crate::error::AppError;
 use crate::models::{
-    Project, ProjectChatMessage, ProjectChatMessageRole, Requirement, RequirementDraft,
-    RequirementExecutionPlan, RequirementExecutionTask, RequirementMessage, RequirementMessageRole,
-    RequirementModelTier, RequirementRecoveryStage, RequirementReviewRoundStatus,
-    RequirementReviewStatus, RequirementStatus, RequirementTaskExecutionOutput,
-    RequirementTaskKind, RequirementTaskStatus,
+    Project, ProjectChatMessage, ProjectChatMessageRole, ProjectRequirementSummaryOutput,
+    Requirement, RequirementDraft, RequirementExecutionPlan, RequirementExecutionTask,
+    RequirementMessage, RequirementMessageRole, RequirementModelTier, RequirementRecoveryStage,
+    RequirementReviewRoundStatus, RequirementReviewStatus, RequirementStatus,
+    RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
 };
 
 #[test]
@@ -1347,11 +1372,41 @@ async fn resetting_project_chat_clears_context_and_rejects_running_chat() {
     });
     chat.error = Some("旧错误".to_owned());
     chat.pi_session_file = Some("old.jsonl".to_owned());
+    chat.requirement_summary = Some(RequirementDraft {
+        title: "旧需求".to_owned(),
+        summary: "旧摘要".to_owned(),
+        acceptance_criteria: vec!["旧标准".to_owned()],
+    });
+
+    store
+        .apply_project_requirement_summary(
+            "project",
+            Ok(ProjectRequirementSummaryOutput {
+                summary: RequirementDraft {
+                    title: "新需求".to_owned(),
+                    summary: "新摘要".to_owned(),
+                    acceptance_criteria: vec!["新标准".to_owned()],
+                },
+                pi_session_file: Some("new.jsonl".to_owned()),
+                trace: None,
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.data.project_chats[0]
+            .requirement_summary
+            .as_ref()
+            .unwrap()
+            .title,
+        "新需求"
+    );
 
     let response = store.reset_project_chat("project").await.unwrap();
     assert!(response.messages.is_empty());
     assert!(response.error.is_none());
     assert!(store.data.project_chats[0].pi_session_file.is_none());
+    assert!(response.requirement_summary.is_none());
 
     store.data.project_chats[0].running = true;
     assert!(store.reset_project_chat("project").await.is_err());

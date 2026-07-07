@@ -428,7 +428,25 @@ export type ProjectChatResponse = {
   messages: ProjectChatMessage[];
   running: boolean;
   error: string | null;
+  requirement_summary?: RequirementDraft | null;
   updated_at: string;
+};
+
+export type ConversationEventType =
+  | "message.append"
+  | "assistant.delta"
+  | "assistant.thinking.delta"
+  | "tool.start"
+  | "tool.update"
+  | "tool.end"
+  | "message.end"
+  | "status.update"
+  | "snapshot.changed"
+  | "session.error";
+
+export type ConversationEvent = {
+  type: ConversationEventType;
+  payload: Record<string, unknown>;
 };
 
 export type ProjectChatEvent = {
@@ -437,6 +455,21 @@ export type ProjectChatEvent = {
   message: string;
   pi_type?: string;
   payload?: unknown;
+};
+
+export type ChatAccepted = {
+  accepted: true;
+  turn_id: string;
+};
+
+export type RequirementAccepted = {
+  accepted: true;
+  requirement_id: string;
+  turn_id?: string;
+};
+
+export type AcceptedOperation = {
+  accepted: true;
 };
 
 export type ClarificationQuestionType =
@@ -630,7 +663,7 @@ export type StartNodeData =
       projectChatImages?: ImageAttachment[];
       projectChatBusy: boolean;
       projectChatError: string | null;
-      projectChatEvents: ProjectChatEvent[];
+      projectChatEvents: ConversationEvent[];
       answers: Record<string, DraftClarificationAnswer>;
       onInputChange: (value: string) => void;
       onReferencesChange?: (references: FileReference[]) => void;
@@ -640,6 +673,8 @@ export type StartNodeData =
       onProjectChatReferencesChange?: (references: FileReference[]) => void;
       onProjectChatImagesChange?: (images: ImageAttachment[]) => void;
       onProjectChatSend: () => Promise<void>;
+      onProjectChatAbort: () => Promise<void>;
+      onProjectChatGenerateRequirement: () => Promise<void>;
       onProjectChatReset: () => Promise<void>;
       onAnswerChange: (
         clarification: RequirementClarification,

@@ -54,6 +54,8 @@ pub struct ProjectChat {
     pub error: Option<String>,
     #[serde(skip_serializing)]
     pub pi_session_file: Option<String>,
+    #[serde(default)]
+    pub requirement_summary: Option<ProjectRequirementSummary>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -85,8 +87,11 @@ pub struct ProjectChatResponse {
     pub messages: Vec<ProjectChatMessage>,
     pub running: bool,
     pub error: Option<String>,
+    pub requirement_summary: Option<ProjectRequirementSummary>,
     pub updated_at: DateTime<Utc>,
 }
+
+pub type ProjectRequirementSummary = RequirementDraft;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Project {
@@ -847,6 +852,8 @@ pub type RequirementTaskExecutionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<RequirementTaskExecutionOutput, AppError>> + Send + 'a>>;
 pub type ProjectChatFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ProjectChatOutput, AppError>> + Send + 'a>>;
+pub type ProjectRequirementSummaryFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<ProjectRequirementSummaryOutput, AppError>> + Send + 'a>>;
 pub type ModelProviderActionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + 'a>>;
 
@@ -873,6 +880,19 @@ pub trait ModelProvider: Send + Sync {
         _events: Option<ProjectChatEventEmitter>,
     ) -> ProjectChatFuture<'_> {
         Box::pin(async { Err(AppError::internal("项目问答暂不可用")) })
+    }
+    fn generate_project_requirement_summary(
+        &self,
+        _input: ProjectChatInput,
+        _events: Option<ProjectChatEventEmitter>,
+    ) -> ProjectRequirementSummaryFuture<'_> {
+        Box::pin(async { Err(AppError::internal("需求说明生成暂不可用")) })
+    }
+    fn begin_project_chat(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
+    fn cancel_project_chat(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
+        Box::pin(async { Ok(()) })
     }
     fn release_project(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })
@@ -910,6 +930,13 @@ pub struct ProjectChatInput {
 #[derive(Debug, Clone)]
 pub struct ProjectChatOutput {
     pub assistant_message: String,
+    pub pi_session_file: Option<String>,
+    pub trace: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectRequirementSummaryOutput {
+    pub summary: ProjectRequirementSummary,
     pub pi_session_file: Option<String>,
     pub trace: Option<Value>,
 }

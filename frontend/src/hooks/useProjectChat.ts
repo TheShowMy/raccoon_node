@@ -1,29 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  abortProjectChat,
+  generateProjectRequirementSummary,
   getProjectChat,
+  projectChatWebSocketUrl,
   resetProjectChat,
   sendProjectChatMessage,
 } from "../api/client";
 import type {
+  ConversationEvent,
   FileReference,
   ImageAttachment,
-  ProjectChatEvent,
   ProjectChatResponse,
 } from "../types/api";
 import { readError } from "../utils/format";
-
-function isProjectChatEvent(value: unknown): value is ProjectChatEvent {
-  if (!value || typeof value !== "object") return false;
-  const event = value as Record<string, unknown>;
-  return (
-    typeof event.project_id === "string" &&
-    typeof event.event === "string" &&
-    typeof event.message === "string"
-  );
-}
+import { useConversationSocket } from "./useConversationSocket";
 
 export function useProjectChat(projectId: string | null) {
   const projectIdRef = useRef(projectId);
+  projectIdRef.current = projectId;
   const [projectChat, setProjectChat] = useState<ProjectChatResponse | null>(
     null,
   );
@@ -37,166 +32,146 @@ export function useProjectChat(projectId: string | null) {
   const [projectChatBusy, setProjectChatBusy] = useState(false);
   const [projectChatError, setProjectChatError] = useState<string | null>(null);
   const [projectChatEvents, setProjectChatEvents] = useState<
-    ProjectChatEvent[]
+    ConversationEvent[]
   >([]);
-  const chatEventBufferRef = useRef<ProjectChatEvent[]>([]);
-  const chatFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-
-  const loadProjectChat = useCallback(async (id: string) => {
-    const data = await getProjectChat(id);
-    if (projectIdRef.current !== id) return data;
-    setProjectChat(data);
-    setProjectChatError(data.error);
-    return data;
-  }, []);
 
   useEffect(() => {
-    projectIdRef.current = projectId;
     setProjectChat(null);
     setProjectChatInput("");
     setProjectChatReferences([]);
     setProjectChatImages([]);
+    setProjectChatBusy(false);
     setProjectChatError(null);
     setProjectChatEvents([]);
-    chatEventBufferRef.current = [];
-    if (chatFlushTimeoutRef.current !== null) {
-      clearTimeout(chatFlushTimeoutRef.current);
-      chatFlushTimeoutRef.current = null;
+  }, [projectId]);
+
+  const loadProjectChat = useCallback(async () => {
+    if (!projectId) throw new Error("项目未加载");
+    return getProjectChat(projectId);
+  }, [projectId]);
+
+  const applySnapshot = useCallback((snapshot: ProjectChatResponse) => {
+    if (projectIdRef.current !== snapshot.project_id) return;
+    setProjectChat(snapshot);
+    setProjectChatError(snapshot.error);
+    setProjectChatEvents([]);
+  }, []);
+
+  const handleEvent = useCallback((event: ConversationEvent) => {
+    const eventProjectId = event.payload.project_id;
+    if (
+      typeof eventProjectId === "string" &&
+      eventProjectId !== projectIdRef.current
+    ) {
+      return;
     }
-    if (!projectId) return;
-
-    void loadProjectChat(projectId).catch((reason) =>
-      setProjectChatError(readError(reason)),
-    );
-
-    const finalEvents = new Set([
-      "project_chat_completed",
-      "project_chat_failed",
-      "chat_completed",
-      "chat_failed",
-      "completed",
-      "failed",
-    ]);
-
-    const flushChatEvents = () => {
-      chatFlushTimeoutRef.current = null;
-      const batch = chatEventBufferRef.current;
-      if (batch.length === 0) return;
-      chatEventBufferRef.current = [];
-      setProjectChatEvents((current) => [...current, ...batch]);
-      if (batch.some((event) => finalEvents.has(event.event))) {
-        void loadProjectChat(projectId)
-          .then(() => {
-            if (projectIdRef.current === projectId) {
-              setProjectChatEvents([]);
-            }
-          })
-          .catch((reason) => setProjectChatError(readError(reason)));
-      }
-    };
-
-    const scheduleChatFlush = () => {
-      if (chatFlushTimeoutRef.current !== null) return;
-      chatFlushTimeoutRef.current = setTimeout(flushChatEvents, 50);
-    };
-
-    const source = new EventSource(
-      `/api/projects/${encodeURIComponent(projectId)}/chat/events`,
-    );
-    const handleEvent = (event: MessageEvent<string>) => {
-      try {
-        const parsed: unknown = JSON.parse(event.data);
-        if (!isProjectChatEvent(parsed) || parsed.project_id !== projectId) {
-          return;
-        }
-        chatEventBufferRef.current.push(parsed);
-        scheduleChatFlush();
-      } catch (error) {
-        console.error(
-          "Project chat EventSource parse error",
-          error,
-          event.data,
+    if (event.type === "session.error") {
+      setProjectChatError(
+        typeof event.payload.message === "string"
+          ? event.payload.message
+          : "项目问答失败",
+      );
+    }
+    if (event.type === "status.update") {
+      const running = event.payload.running;
+      if (typeof running === "boolean") {
+        setProjectChat((current) =>
+          current ? { ...current, running } : current,
         );
       }
-    };
-
-    source.onmessage = handleEvent;
-    for (const eventName of [
-      "pi_event",
-      "project_chat_started",
-      "project_chat_completed",
-      "project_chat_failed",
-      "chat_started",
-      "chat_updated",
-      "chat_completed",
-      "chat_failed",
-      "started",
-      "completed",
-      "failed",
-    ]) {
-      source.addEventListener(eventName, handleEvent);
     }
-    return () => {
-      if (chatFlushTimeoutRef.current !== null) {
-        clearTimeout(chatFlushTimeoutRef.current);
-        chatFlushTimeoutRef.current = null;
+    setProjectChatEvents((current) => [...current, event]);
+  }, []);
+
+  useConversationSocket({
+    url: useMemo(
+      () => (projectId ? projectChatWebSocketUrl(projectId) : null),
+      [projectId],
+    ),
+    loadSnapshot: loadProjectChat,
+    onSnapshot: applySnapshot,
+    onEvent: handleEvent,
+    onError: setProjectChatError,
+  });
+
+  const run = useCallback(
+    async (operation: () => Promise<unknown>, clearComposer = false) => {
+      if (!projectId || projectChatBusy || projectChat?.running) return;
+      setProjectChatBusy(true);
+      setProjectChatError(null);
+      try {
+        await operation();
+        setProjectChat((current) =>
+          current ? { ...current, running: true, error: null } : current,
+        );
+        if (clearComposer) {
+          setProjectChatInput("");
+          setProjectChatReferences([]);
+          setProjectChatImages([]);
+        }
+      } catch (reason) {
+        setProjectChatError(readError(reason));
+      } finally {
+        setProjectChatBusy(false);
       }
-      chatEventBufferRef.current = [];
-      source.close();
-    };
-  }, [loadProjectChat, projectId]);
+    },
+    [projectChat?.running, projectChatBusy, projectId],
+  );
 
   const sendProjectChat = useCallback(async () => {
     const message = projectChatInput.trim();
-    if (!projectId || !message || projectChatBusy) return;
-
-    setProjectChatBusy(true);
-    setProjectChatError(null);
-    try {
-      const data = await sendProjectChatMessage(projectId, {
-        message,
-        references: projectChatReferences,
-        images: projectChatImages,
-      });
-      setProjectChat(data);
-      setProjectChatInput("");
-      setProjectChatReferences([]);
-      setProjectChatImages([]);
-      setProjectChatEvents([]);
-      setProjectChatError(data.error);
-    } catch (reason) {
-      setProjectChatError(readError(reason));
-    } finally {
-      setProjectChatBusy(false);
-    }
+    if (!projectId || !message) return;
+    await run(
+      () =>
+        sendProjectChatMessage(projectId, {
+          message,
+          references: projectChatReferences,
+          images: projectChatImages,
+        }),
+      true,
+    );
   }, [
-    projectChatBusy,
     projectChatImages,
     projectChatInput,
     projectChatReferences,
     projectId,
+    run,
   ]);
 
-  const closeProjectChat = useCallback(async () => {
-    if (!projectId || projectChatBusy || projectChat?.running) return;
+  const generateRequirementSummary = useCallback(async () => {
+    if (!projectId) return;
+    setProjectChatInput("");
+    await run(() => generateProjectRequirementSummary(projectId));
+  }, [projectId, run]);
 
+  const abort = useCallback(async () => {
+    if (!projectId || projectChatBusy || !projectChat?.running) return;
     setProjectChatBusy(true);
     setProjectChatError(null);
     try {
-      const data = await resetProjectChat(projectId);
-      setProjectChat(data);
-      setProjectChatInput("");
-      setProjectChatReferences([]);
-      setProjectChatImages([]);
-      setProjectChatEvents([]);
+      await abortProjectChat(projectId);
     } catch (reason) {
       setProjectChatError(readError(reason));
     } finally {
       setProjectChatBusy(false);
     }
-  }, [projectChat?.running, projectChatBusy, projectId]);
+  }, [applySnapshot, projectChat?.running, projectChatBusy, projectId]);
+
+  const closeProjectChat = useCallback(async () => {
+    if (!projectId || projectChatBusy || projectChat?.running) return;
+    setProjectChatBusy(true);
+    setProjectChatError(null);
+    try {
+      applySnapshot(await resetProjectChat(projectId));
+      setProjectChatInput("");
+      setProjectChatReferences([]);
+      setProjectChatImages([]);
+    } catch (reason) {
+      setProjectChatError(readError(reason));
+    } finally {
+      setProjectChatBusy(false);
+    }
+  }, [applySnapshot, projectChat?.running, projectChatBusy, projectId]);
 
   return {
     projectChat,
@@ -210,6 +185,8 @@ export function useProjectChat(projectId: string | null) {
     setProjectChatReferences,
     setProjectChatImages,
     sendProjectChat,
+    generateRequirementSummary,
+    abortProjectChat: abort,
     closeProjectChat,
   };
 }

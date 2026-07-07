@@ -715,6 +715,74 @@ impl JsonStore {
         Ok(response)
     }
 
+    pub async fn start_project_requirement_summary(
+        &mut self,
+        project_id: &str,
+    ) -> Result<ProjectChatInput, AppError> {
+        self.ensure_project_chat(project_id).await?;
+        let index = self.project_chat_index(project_id)?;
+        let chat = &self.data.project_chats[index];
+        if chat.running {
+            return Err(AppError::conflict("项目问答正在运行"));
+        }
+        if !chat
+            .messages
+            .iter()
+            .any(|message| message.role == ProjectChatMessageRole::User)
+            || !chat
+                .messages
+                .iter()
+                .any(|message| message.role == ProjectChatMessageRole::Assistant)
+        {
+            return Err(AppError::bad_request(
+                "至少完成一轮项目问答后才能生成需求说明",
+            ));
+        }
+        let project = self
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == project_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+        let chat = &mut self.data.project_chats[index];
+        chat.running = true;
+        chat.error = None;
+        chat.updated_at = Utc::now();
+        let input = ProjectChatInput {
+            project,
+            messages: chat.messages.clone(),
+            reference_context: None,
+            prompt_images: Vec::new(),
+            model_settings: self.data.model_settings.clone(),
+            pi_session_file: chat.pi_session_file.clone(),
+        };
+        self.write_persist().await?;
+        Ok(input)
+    }
+
+    pub async fn apply_project_requirement_summary(
+        &mut self,
+        project_id: &str,
+        output: Result<crate::models::ProjectRequirementSummaryOutput, AppError>,
+    ) -> Result<ProjectChatResponse, AppError> {
+        let index = self.project_chat_index(project_id)?;
+        let chat = &mut self.data.project_chats[index];
+        chat.running = false;
+        chat.updated_at = Utc::now();
+        match output {
+            Ok(output) => {
+                chat.error = None;
+                chat.pi_session_file = output.pi_session_file;
+                chat.requirement_summary = Some(output.summary);
+            }
+            Err(error) => chat.error = Some(error.to_string()),
+        }
+        let response = project_chat_response_from(chat);
+        self.write_persist().await?;
+        Ok(response)
+    }
+
     pub async fn reset_project_chat(
         &mut self,
         project_id: &str,
@@ -728,6 +796,7 @@ impl JsonStore {
         chat.messages.clear();
         chat.error = None;
         chat.pi_session_file = None;
+        chat.requirement_summary = None;
         chat.updated_at = Utc::now();
         let response = project_chat_response_from(chat);
         self.write_persist().await?;
@@ -759,6 +828,7 @@ impl JsonStore {
             running: false,
             error: None,
             pi_session_file: None,
+            requirement_summary: None,
             created_at: now,
             updated_at: now,
         });
@@ -857,6 +927,9 @@ impl JsonStore {
         images: Vec<ImageAttachment>,
     ) -> Result<(String, RequirementAnalysisInput), AppError> {
         let index = self.requirement_index(requirement_id)?;
+        if self.data.requirements[index].status == RequirementStatus::Analyzing {
+            return Err(AppError::conflict("需求正在分析，请等待本轮完成"));
+        }
         if !matches!(
             self.data.requirements[index].status,
             RequirementStatus::Clarifying

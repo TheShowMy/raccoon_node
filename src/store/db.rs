@@ -90,6 +90,7 @@ impl Database {
                 running INTEGER NOT NULL DEFAULT 0,
                 error TEXT,
                 pi_session_file TEXT,
+                requirement_summary TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -127,6 +128,7 @@ impl Database {
             "clarification_history",
             "TEXT NOT NULL DEFAULT '[]'",
         )?;
+        add_column_if_missing(&tx, "project_chats", "requirement_summary", "TEXT")?;
         tx.execute("DELETE FROM schema_version", [])?;
         tx.execute(
             "INSERT INTO schema_version (version) VALUES (?1)",
@@ -418,14 +420,15 @@ fn save_project_chat(tx: &Transaction<'_>, chat: &ProjectChat) -> Result<(), App
     }
     tx.execute(
         "INSERT OR REPLACE INTO project_chats
-         (project_id, messages, running, error, pi_session_file, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         (project_id, messages, running, error, pi_session_file, requirement_summary, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             chat.project_id,
             serde_json::to_string(&messages)?,
             i64::from(chat.running),
             chat.error,
             chat.pi_session_file,
+            optional_json(&chat.requirement_summary)?,
             chat.created_at.to_rfc3339(),
             chat.updated_at.to_rfc3339(),
         ],
@@ -557,7 +560,7 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
 
 fn load_project_chats(conn: &Connection) -> Result<Vec<ProjectChat>, AppError> {
     let mut statement = conn.prepare(
-        "SELECT project_id, messages, running, error, pi_session_file, created_at, updated_at
+        "SELECT project_id, messages, running, error, pi_session_file, requirement_summary, created_at, updated_at
          FROM project_chats",
     )?;
     let rows = statement.query_map([], |row| {
@@ -567,19 +570,32 @@ fn load_project_chats(conn: &Connection) -> Result<Vec<ProjectChat>, AppError> {
             row.get::<_, i64>(2)?,
             row.get::<_, Option<String>>(3)?,
             row.get::<_, Option<String>>(4)?,
-            row.get::<_, String>(5)?,
+            row.get::<_, Option<String>>(5)?,
             row.get::<_, String>(6)?,
+            row.get::<_, String>(7)?,
         ))
     })?;
     let mut chats = Vec::new();
     for row in rows {
-        let (project_id, messages, running, error, pi_session_file, created_at, updated_at) = row?;
+        let (
+            project_id,
+            messages,
+            running,
+            error,
+            pi_session_file,
+            requirement_summary,
+            created_at,
+            updated_at,
+        ) = row?;
         chats.push(ProjectChat {
             project_id,
             messages: parse_json(&messages, "project_chats.messages")?,
             running: running != 0,
             error,
             pi_session_file,
+            requirement_summary: requirement_summary
+                .map(|value| parse_json(&value, "project_chats.requirement_summary"))
+                .transpose()?,
             created_at: parse_date(&created_at, "project_chats.created_at")?,
             updated_at: parse_date(&updated_at, "project_chats.updated_at")?,
         });

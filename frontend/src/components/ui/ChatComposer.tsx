@@ -20,6 +20,7 @@ export default function ChatComposer({
   projectId,
   onSubmit,
   onStop,
+  onGenerateRequirementSummary,
 }: {
   value: string;
   disabled: boolean;
@@ -35,6 +36,7 @@ export default function ChatComposer({
   projectId?: string;
   onSubmit: () => void | Promise<void>;
   onStop?: () => void;
+  onGenerateRequirementSummary?: () => void | Promise<void>;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [fileOptions, setFileOptions] = useState<FileReference[]>([]);
@@ -44,6 +46,13 @@ export default function ChatComposer({
   } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const running = Boolean(onStop);
+  const [slashDismissed, setSlashDismissed] = useState(false);
+  const slashQuery = value.trim();
+  const showRequirementCommand =
+    Boolean(onGenerateRequirementSummary) &&
+    !slashDismissed &&
+    slashQuery.startsWith("/") &&
+    "/生成需求说明".startsWith(slashQuery);
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
@@ -59,6 +68,12 @@ export default function ChatComposer({
   }, [value]);
 
   function submit() {
+    if (showRequirementCommand) {
+      onChange("");
+      setSlashDismissed(true);
+      void onGenerateRequirementSummary?.();
+      return;
+    }
     if (canSend) void onSubmit();
   }
 
@@ -149,6 +164,7 @@ export default function ChatComposer({
         disabled={disabled}
         onChange={(event) => {
           onChange(event.target.value);
+          setSlashDismissed(false);
           detectMention(event.target.value, event.target.selectionStart);
         }}
         onPaste={(event) => {
@@ -157,6 +173,18 @@ export default function ChatComposer({
         onKeyDown={(event) => {
           const composing =
             event.nativeEvent.isComposing || event.keyCode === 229;
+          if (
+            showRequirementCommand &&
+            ["ArrowDown", "ArrowUp"].includes(event.key)
+          ) {
+            event.preventDefault();
+            return;
+          }
+          if (showRequirementCommand && event.key === "Escape") {
+            event.preventDefault();
+            setSlashDismissed(true);
+            return;
+          }
           if (event.key !== "Enter" || event.shiftKey || composing) return;
           event.preventDefault();
           submit();
@@ -164,6 +192,18 @@ export default function ChatComposer({
         placeholder={placeholder}
         rows={1}
       />
+      {showRequirementCommand ? (
+        <div className="rq-composer__suggestions" role="listbox">
+          <button
+            type="button"
+            role="option"
+            aria-selected="true"
+            onClick={submit}
+          >
+            <span>/生成需求说明</span>
+          </button>
+        </div>
+      ) : null}
       {fileOptions.length > 0 && mention ? (
         <div className="rq-composer__suggestions">
           {fileOptions.slice(0, 8).map((file) => (

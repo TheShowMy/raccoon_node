@@ -8,7 +8,6 @@ import {
   type TraceData,
   type TraceMetadata,
   type StreamEvent,
-  type ProjectChatEvent,
   type ModelSettings,
   type ModelTierKey,
   type ModelTierSetting,
@@ -166,7 +165,10 @@ export function buildBubbleStreamFromTrace(trace: TraceData): LiveBubble[] {
   return bubbles;
 }
 
-type PiStreamEvent = StreamEvent | ProjectChatEvent;
+type PiStreamEvent = Pick<
+  StreamEvent,
+  "event" | "message" | "pi_type" | "payload"
+>;
 
 type ToolOutputState = {
   content: string;

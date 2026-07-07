@@ -1309,10 +1309,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(value["running"], true);
+        assert_eq!(value["accepted"], true);
+        assert!(value["turn_id"].as_str().unwrap().starts_with("turn-"));
 
         let chat = wait_for_project_chat_answer(&data_root, &project.id).await;
         assert!(!chat.running);
@@ -1746,15 +1747,14 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let canvas: raccoon_node::models::ProjectCanvasResponse =
-            serde_json::from_slice(&body).unwrap();
-        let active = canvas.active_requirement.unwrap();
-        assert_eq!(active.status, RequirementStatus::Analyzing);
+        let accepted: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(accepted["accepted"], true);
+        let requirement_id = accepted["requirement_id"].as_str().unwrap();
 
         let active =
-            wait_for_requirement_status(&data_root, &active.id, RequirementStatus::DraftReady)
+            wait_for_requirement_status(&data_root, requirement_id, RequirementStatus::DraftReady)
                 .await;
         assert_eq!(active.draft.as_ref().unwrap().title, "新增登录");
 

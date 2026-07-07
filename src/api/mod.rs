@@ -19,16 +19,17 @@ async fn api_not_found() -> StatusCode {
 
 use crate::api::git::{execute_git_action, get_git_diff, get_git_status};
 use crate::api::handlers::{
-    append_requirement_message, cancel_requirement_analysis, confirm_requirement,
-    create_project_terminal, create_requirement, delete_project_terminal, delete_requirement,
-    get_basic_settings, get_current_project, get_model_settings, get_project_attachment,
-    get_project_canvas, get_project_chat, get_project_chat_session, get_project_file_content,
-    get_project_files, get_requirement_conversation, get_requirement_session, get_requirement_task,
+    abort_project_chat, append_requirement_message, cancel_requirement_analysis,
+    confirm_requirement, create_project_terminal, create_requirement, delete_project_terminal,
+    delete_requirement, generate_project_requirement_summary, get_basic_settings,
+    get_current_project, get_model_settings, get_project_attachment, get_project_canvas,
+    get_project_chat, get_project_chat_session, get_project_file_content, get_project_files,
+    get_requirement_conversation, get_requirement_session, get_requirement_task,
     get_requirement_task_session, get_terminal_access_status, get_terminal_command_profiles,
     list_project_terminals, plan_requirement_execution, project_chat_events, put_basic_settings,
     put_model_settings, put_terminal_command_profiles, recover_task_group, reload_model_settings,
-    requirement_events, reset_project_chat, restart_system, retry_requirement_analysis,
-    send_project_chat_message, spawn_startup_requirement_scheduler,
+    requirement_conversation_events, requirement_events, reset_project_chat, restart_system,
+    retry_requirement_analysis, send_project_chat_message, spawn_startup_requirement_scheduler,
     submit_requirement_clarifications, terminal_websocket, unlock_terminal_access,
     upload_project_attachment,
 };
@@ -70,6 +71,8 @@ pub struct AppState {
     >,
     pub pending_requirement_interactions:
         std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, (String, String)>>>,
+    pub active_requirement_analyses:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 pub async fn build_app(
@@ -201,6 +204,9 @@ fn build_app_with_startup_requirements(
         pending_requirement_interactions: Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+        active_requirement_analyses: Arc::new(std::sync::Mutex::new(
+            std::collections::HashSet::new(),
+        )),
     };
 
     let api = Router::new()
@@ -229,6 +235,11 @@ fn build_app_with_startup_requirements(
             post(send_project_chat_message),
         )
         .route("/projects/{id}/chat/events", get(project_chat_events))
+        .route(
+            "/projects/{id}/chat/commands/requirement-summary",
+            post(generate_project_requirement_summary),
+        )
+        .route("/projects/{id}/chat/abort", post(abort_project_chat))
         .route(
             "/projects/{id}/terminals",
             get(list_project_terminals).post(create_project_terminal),
@@ -260,6 +271,10 @@ fn build_app_with_startup_requirements(
         .route(
             "/requirements/{id}/conversation",
             get(get_requirement_conversation),
+        )
+        .route(
+            "/requirements/{id}/conversation/events",
+            get(requirement_conversation_events),
         )
         .route("/requirements/{id}/session", get(get_requirement_session))
         .route(

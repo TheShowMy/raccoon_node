@@ -1,7 +1,13 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, MessageSquare, X } from "lucide-react";
-import type { ProjectChatMessage, StartNodeData } from "../../types/api";
+import type {
+  ConversationEvent,
+  ProjectChatMessage,
+  RequirementDraft,
+  StartNodeData,
+  StreamEvent,
+} from "../../types/api";
 import {
   buildBubbleStreamFromEvents,
   buildBubbleStreamFromTrace,
@@ -13,8 +19,6 @@ import ChatComposer from "../ui/ChatComposer";
 import ChatMessageBubble from "../ui/ChatMessageBubble";
 import LiveProcessCard from "../ui/LiveProcessCard";
 import AnchoredScroll from "../ui/AnchoredScroll";
-import SessionTranscript from "../ui/SessionTranscript";
-import { getProjectChatSession } from "../../api/client";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 type ActiveCard = "requirement" | "project";
@@ -40,6 +44,18 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
     } else if (action === "reset-project-chat") {
       await data.onProjectChatReset();
     }
+  }
+
+  function continueWithSummary(summary: RequirementDraft) {
+    setActiveCard("requirement");
+    data.onInputChange(formatRequirementSummary(summary));
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLTextAreaElement>(
+          '[data-chat-card="requirement"] textarea:not(:disabled)',
+        )
+        ?.focus();
+    });
   }
 
   return (
@@ -105,6 +121,7 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
           <ProjectChatWorkbench
             data={data}
             onReset={() => setConfirmAction("reset-project-chat")}
+            onContinueWithSummary={continueWithSummary}
           />
         </section>
       </div>
@@ -133,21 +150,27 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
 function ProjectChatWorkbench({
   data,
   onReset,
+  onContinueWithSummary,
 }: {
   data: ChatData;
   onReset: () => void;
+  onContinueWithSummary: (summary: RequirementDraft) => void;
 }) {
   const running = data.projectChat?.running ?? false;
   const error = data.projectChatError ?? data.projectChat?.error ?? null;
-  const liveBubbles = useMemo(
-    () => buildBubbleStreamFromEvents(data.projectChatEvents),
+  const streamEvents = useMemo(
+    () => data.projectChatEvents.map(projectEventToStreamEvent),
     [data.projectChatEvents],
+  );
+  const liveBubbles = useMemo(
+    () => buildBubbleStreamFromEvents(streamEvents),
+    [streamEvents],
   );
   const streamingText = useMemo(
-    () => buildStreamingTextFromEvents(data.projectChatEvents),
-    [data.projectChatEvents],
+    () => buildStreamingTextFromEvents(streamEvents),
+    [streamEvents],
   );
-  const transientEvents = data.projectChatEvents.filter(
+  const transientEvents = streamEvents.filter(
     (event) =>
       event.event !== "pi_event" &&
       ![
@@ -198,6 +221,7 @@ function ProjectChatWorkbench({
           version={`${data.projectChat?.updated_at ?? "empty"}:${data.projectChatEvents.length}`}
         >
           {data.projectChat?.messages.length ||
+          data.projectChat?.requirement_summary ||
           (running && liveBubbles.length) ||
           transientEvents.length ||
           running ||
@@ -235,6 +259,17 @@ function ProjectChatWorkbench({
                   </ChatMessageBubble>
                 </Fragment>
               ))}
+              {data.projectChat?.requirement_summary ? (
+                <RequirementSummaryCard
+                  summary={data.projectChat.requirement_summary}
+                  disabled={data.projectChatBusy || running}
+                  onContinue={() =>
+                    onContinueWithSummary(
+                      data.projectChat!.requirement_summary!,
+                    )
+                  }
+                />
+              ) : null}
               {transientEvents.length > 0 ? (
                 <div className="rq-notice rq-notice--info">
                   {transientEvents.at(-1)?.message}
@@ -262,14 +297,6 @@ function ProjectChatWorkbench({
                   {error}
                 </div>
               ) : null}
-              {data.projectChat?.messages.length ? (
-                <SessionTranscript
-                  scopeKey={`project-chat:${data.project.id}:${data.projectChat.updated_at}`}
-                  loadPage={(before) =>
-                    getProjectChatSession(data.project.id, before)
-                  }
-                />
-              ) : null}
             </div>
           ) : (
             <div className="rq-empty">
@@ -295,10 +322,89 @@ function ProjectChatWorkbench({
           sendLabel="发送项目问答"
           onChange={data.onProjectChatInputChange}
           onSubmit={data.onProjectChatSend}
+          onStop={running ? () => void data.onProjectChatAbort() : undefined}
+          stopLabel="停止项目问答"
+          onGenerateRequirementSummary={data.onProjectChatGenerateRequirement}
         />
       </div>
     </>
   );
+}
+
+function RequirementSummaryCard({
+  summary,
+  disabled,
+  onContinue,
+}: {
+  summary: RequirementDraft;
+  disabled: boolean;
+  onContinue: () => void;
+}) {
+  return (
+    <section className="rq-shelf rq-confirm" aria-label="需求说明">
+      <div className="rq-shelf__topline">
+        <span>需求说明</span>
+      </div>
+      <strong>{summary.title}</strong>
+      <p>{summary.summary}</p>
+      <ul>
+        {summary.acceptance_criteria.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+      <div className="rq-shelf__actions">
+        <button type="button" disabled={disabled} onClick={onContinue}>
+          作为需求继续
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function formatRequirementSummary(summary: RequirementDraft) {
+  const criteria = summary.acceptance_criteria
+    .map((item) => `- ${item}`)
+    .join("\n");
+  return `# ${summary.title}\n\n${summary.summary}\n\n## 验收标准\n\n${criteria}`;
+}
+
+function projectEventToStreamEvent(event: ConversationEvent): StreamEvent {
+  const payload =
+    event.payload.event && typeof event.payload.event === "object"
+      ? event.payload.event
+      : event.payload.payload && typeof event.payload.payload === "object"
+        ? event.payload.payload
+        : event.payload;
+  const delta =
+    typeof event.payload.delta === "string" ? event.payload.delta : "";
+  const message =
+    typeof event.payload.message === "string" ? event.payload.message : delta;
+  const assistantType =
+    event.type === "assistant.thinking.delta" ? "thinking_delta" : "text_delta";
+  const normalizedPayload =
+    event.type.startsWith("assistant.") &&
+    !("assistantMessageEvent" in (payload as Record<string, unknown>))
+      ? { assistantMessageEvent: { type: assistantType, delta } }
+      : payload;
+  const piType =
+    typeof event.payload.pi_type === "string"
+      ? event.payload.pi_type
+      : event.type.startsWith("assistant.")
+        ? "message_update"
+        : event.type === "tool.start"
+          ? "tool_execution_start"
+          : event.type === "tool.update"
+            ? "tool_execution_update"
+            : event.type === "tool.end"
+              ? "tool_execution_end"
+              : undefined;
+  return {
+    requirement_id: String(event.payload.project_id ?? "current"),
+    event: piType ? "pi_event" : event.type,
+    message,
+    pi_type: piType,
+    payload: normalizedPayload,
+  };
 }
 
 function isContinuedProjectMessage(

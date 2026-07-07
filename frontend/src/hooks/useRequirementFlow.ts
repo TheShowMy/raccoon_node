@@ -7,6 +7,7 @@ import type {
   Requirement,
   RequirementClarification,
   RequirementConversation,
+  ConversationEvent,
   StreamEvent,
 } from "../types/api";
 import {
@@ -16,8 +17,10 @@ import {
   retryRequirementAnalysis,
   submitRequirementClarifications,
   confirmRequirement,
+  requirementConversationWebSocketUrl,
 } from "../api/client";
 import { readError, buildClarificationAnswerPayload } from "../utils/format";
+import { useConversationSocket } from "./useConversationSocket";
 
 function isStreamEvent(value: unknown): value is StreamEvent {
   if (typeof value !== "object" || value === null) return false;
@@ -77,14 +80,8 @@ export function useRequirementFlow(
     setRequirementStreamEvents([]);
     setClarificationAnswers({});
     setDismissedPromptRequirementId(null);
-    if (activeRequirementId) {
-      void loadRequirementConversation(activeRequirementId).catch((reason) =>
-        setRequirementError(readError(reason)),
-      );
-      return;
-    }
-    setRequirementConversation(null);
-  }, [activeRequirementId, loadRequirementConversation]);
+    if (!activeRequirementId) setRequirementConversation(null);
+  }, [activeRequirementId]);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -112,7 +109,7 @@ export function useRequirementFlow(
     setRequirementBusy(true);
     setRequirementError(null);
     try {
-      const data = activeRequirementId
+      const accepted = activeRequirementId
         ? await appendRequirementMessage(activeRequirementId, {
             message,
             references: requirementReferences,
@@ -126,14 +123,13 @@ export function useRequirementFlow(
       setRequirementStreamEvents([]);
       setClarificationAnswers({});
       setDismissedPromptRequirementId(null);
+      const data = await loadProjectCanvas(selectedProjectId);
       setProjectCanvas(data);
-      if (data.active_requirement) {
-        void loadRequirementConversation(data.active_requirement.id).catch(
-          (reason) => setRequirementError(readError(reason)),
-        );
-      } else {
-        setRequirementConversation(null);
-      }
+      const nextRequirementId =
+        data.active_requirement?.id ?? accepted.requirement_id;
+      void loadRequirementConversation(nextRequirementId).catch((reason) =>
+        setRequirementError(readError(reason)),
+      );
       setRequirementInput("");
       setRequirementReferences([]);
       setRequirementImages([]);
@@ -145,12 +141,55 @@ export function useRequirementFlow(
   }, [
     activeRequirementId,
     loadRequirementConversation,
+    loadProjectCanvas,
     requirementInput,
     requirementImages,
     requirementReferences,
     selectedProjectId,
     setProjectCanvas,
   ]);
+
+  const handleConversationEvent = useCallback(
+    (event: ConversationEvent) => {
+      if (!activeRequirementId) return;
+      const eventRequirementId = event.payload.requirement_id;
+      if (
+        typeof eventRequirementId === "string" &&
+        eventRequirementId !== activeRequirementId
+      ) {
+        return;
+      }
+      if (event.type === "session.error") {
+        setRequirementError(
+          typeof event.payload.message === "string"
+            ? event.payload.message
+            : "需求分析失败",
+        );
+      }
+      setRequirementStreamEvents((current) => [
+        ...current,
+        conversationEventToStreamEvent(activeRequirementId, event),
+      ]);
+    },
+    [activeRequirementId],
+  );
+
+  useConversationSocket({
+    url: activeRequirementId
+      ? requirementConversationWebSocketUrl(activeRequirementId)
+      : null,
+    loadSnapshot: useCallback(() => {
+      if (!activeRequirementId) throw new Error("需求未加载");
+      return getRequirementConversation(activeRequirementId);
+    }, [activeRequirementId]),
+    onSnapshot: useCallback((snapshot: RequirementConversation) => {
+      setRequirementConversation(snapshot);
+      setRequirementError(snapshot.error);
+      setRequirementStreamEvents([]);
+    }, []),
+    onEvent: handleConversationEvent,
+    onError: setRequirementError,
+  });
 
   const updateClarificationAnswer = useCallback(
     (
@@ -274,7 +313,11 @@ export function useRequirementFlow(
   }, []);
 
   useEffect(() => {
-    if (!observedRequirementId || !selectedProjectId) {
+    if (
+      !observedRequirementId ||
+      !selectedProjectId ||
+      observedRequirementId === activeRequirementId
+    ) {
       requirementEventBufferRef.current = [];
       if (requirementFlushTimeoutRef.current !== null) {
         clearTimeout(requirementFlushTimeoutRef.current);
@@ -283,15 +326,7 @@ export function useRequirementFlow(
       return;
     }
 
-    const dagSummaryMode =
-      activeRequirementId === null ||
-      observedRequirementId !== activeRequirementId;
-    const transientEvents = new Set([
-      "coordinator_started",
-      "coordinator_progress",
-      "coordinator_time_warning",
-      "pi_event",
-    ]);
+    const dagSummaryMode = true;
     const canvasRefreshEvents = new Set([
       "clarifications_ready",
       "draft_ready",
@@ -312,18 +347,6 @@ export function useRequirementFlow(
       const batch = requirementEventBufferRef.current;
       if (batch.length === 0) return;
       requirementEventBufferRef.current = [];
-      if (!dagSummaryMode) {
-        setRequirementStreamEvents((current) => [...current, ...batch]);
-      }
-
-      if (
-        !dagSummaryMode &&
-        batch.some((event) => !transientEvents.has(event.event))
-      ) {
-        void loadRequirementConversation(observedRequirementId).catch(
-          (reason) => setRequirementError(readError(reason)),
-        );
-      }
       if (batch.some((event) => canvasRefreshEvents.has(event.event))) {
         void loadProjectCanvas(
           selectedProjectId,
@@ -401,7 +424,6 @@ export function useRequirementFlow(
     };
   }, [
     activeRequirementId,
-    loadRequirementConversation,
     loadProjectCanvas,
     observedRequirementId,
     selectedProjectId,
@@ -426,5 +448,30 @@ export function useRequirementFlow(
     confirmRequirement: confirm,
     retryRequirementAnalysis: retryAnalysis,
     continueEditingRequirement,
+  };
+}
+
+function conversationEventToStreamEvent(
+  requirementId: string,
+  event: ConversationEvent,
+): StreamEvent {
+  const message =
+    typeof event.payload.message === "string"
+      ? event.payload.message
+      : typeof event.payload.delta === "string"
+        ? event.payload.delta
+        : "";
+  return {
+    requirement_id: requirementId,
+    event:
+      event.type.startsWith("assistant.") || event.type.startsWith("tool.")
+        ? "pi_event"
+        : event.type,
+    message,
+    pi_type:
+      typeof event.payload.pi_type === "string"
+        ? event.payload.pi_type
+        : undefined,
+    payload: event.payload.event ?? event.payload.payload ?? event.payload,
   };
 }

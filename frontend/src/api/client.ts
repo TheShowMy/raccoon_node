@@ -26,6 +26,9 @@ import {
   type GitDiff,
   type GitDiffArea,
   type GitStatus,
+  type ChatAccepted,
+  type RequirementAccepted,
+  type AcceptedOperation,
 } from "../types/api";
 
 export async function getCurrentProject(): Promise<{
@@ -324,6 +327,23 @@ export function terminalWebSocketUrl(projectId: string, terminalId: string) {
   return `${protocol}//${window.location.host}/api/projects/${encodeURIComponent(projectId)}/terminals/${encodeURIComponent(terminalId)}/ws`;
 }
 
+function webSocketUrl(path: string) {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}${path}`;
+}
+
+export function projectChatWebSocketUrl(projectId: string) {
+  return webSocketUrl(
+    `/api/projects/${encodeURIComponent(projectId)}/chat/events`,
+  );
+}
+
+export function requirementConversationWebSocketUrl(requirementId: string) {
+  return webSocketUrl(
+    `/api/requirements/${encodeURIComponent(requirementId)}/conversation/events`,
+  );
+}
+
 export async function getProjectChat(
   projectId: string,
 ): Promise<ProjectChatResponse> {
@@ -420,7 +440,7 @@ export async function sendProjectChatMessage(
     references: FileReference[];
     images: ImageAttachment[];
   },
-): Promise<ProjectChatResponse> {
+): Promise<ChatAccepted> {
   const response = await fetch(
     `/api/projects/${encodeURIComponent(projectId)}/chat/messages`,
     {
@@ -438,6 +458,38 @@ export async function sendProjectChatMessage(
   return response.json();
 }
 
+export async function generateProjectRequirementSummary(
+  projectId: string,
+): Promise<ChatAccepted> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/chat/commands/requirement-summary`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "生成需求说明失败");
+  }
+  return response.json();
+}
+
+export async function abortProjectChat(
+  projectId: string,
+): Promise<AcceptedOperation> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/chat/abort`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "停止项目问答失败");
+  }
+  return response.json();
+}
+
 export async function createRequirement(
   projectId: string,
   payload: {
@@ -445,7 +497,7 @@ export async function createRequirement(
     references: FileReference[];
     images: ImageAttachment[];
   },
-): Promise<ProjectCanvasData> {
+): Promise<RequirementAccepted> {
   const response = await fetch(
     `/api/projects/${encodeURIComponent(projectId)}/requirements`,
     {
@@ -470,7 +522,7 @@ export async function appendRequirementMessage(
     references: FileReference[];
     images: ImageAttachment[];
   },
-): Promise<ProjectCanvasData> {
+): Promise<RequirementAccepted> {
   const response = await fetch(
     `/api/requirements/${encodeURIComponent(requirementId)}/messages`,
     {

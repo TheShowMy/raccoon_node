@@ -23,7 +23,8 @@ use crate::error::AppError;
 use crate::models::{
     GitProvider, ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings,
     ModelTierSetting, PI_RPC_REQUEST_ID, PiModel, ProjectChatEventEmitter, ProjectChatFuture,
-    ProjectChatInput, ProjectChatOutput, PromptImage, RequirementAnalysisFuture,
+    ProjectChatInput, ProjectChatOutput, ProjectRequirementSummaryFuture,
+    ProjectRequirementSummaryOutput, PromptImage, RequirementAnalysisFuture,
     RequirementAnalysisInput, RequirementAnalysisOutput, RequirementEventEmitter,
     RequirementModelTier, RequirementPlanFuture, RequirementPlanInput, RequirementReviewStatus,
     RequirementTaskExecutionFuture, RequirementTaskExecutionInput, RequirementTaskExecutionOutput,
@@ -66,6 +67,8 @@ pub struct PiRpcModelProvider {
     pub session_dir: PathBuf,
     pub global_client: Arc<tokio::sync::RwLock<Option<Arc<PiRpcClient>>>>,
     pub project_clients: tokio::sync::Mutex<HashMap<String, (Arc<PiRpcClient>, Instant)>>,
+    pub project_chat_clients: tokio::sync::Mutex<HashMap<String, Arc<PiRpcClient>>>,
+    pub project_chat_operations: tokio::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
     pub startup_error: Option<String>,
     /// 0=Ready, 1=Reconnecting, 2=Error
     pub rpc_status: Arc<AtomicU8>,
@@ -123,6 +126,8 @@ impl PiRpcModelProvider {
             session_dir,
             global_client,
             project_clients: tokio::sync::Mutex::new(HashMap::new()),
+            project_chat_clients: tokio::sync::Mutex::new(HashMap::new()),
+            project_chat_operations: tokio::sync::Mutex::new(HashMap::new()),
             startup_error,
             rpc_status,
             clarification_extension_path,
@@ -222,6 +227,16 @@ impl PiRpcModelProvider {
             .map(|(_, (client, _))| client)
             .collect::<Vec<_>>();
         for client in clients {
+            client.shutdown().await;
+        }
+        let chat_clients = self
+            .project_chat_clients
+            .lock()
+            .await
+            .drain()
+            .map(|(_, client)| client)
+            .collect::<Vec<_>>();
+        for client in chat_clients {
             client.shutdown().await;
         }
     }
@@ -424,12 +439,116 @@ impl ModelProvider for PiRpcModelProvider {
         events: Option<ProjectChatEventEmitter>,
     ) -> ProjectChatFuture<'_> {
         Box::pin(async move {
+            let operation = self
+                .project_chat_operations
+                .lock()
+                .await
+                .get(&input.project.id)
+                .cloned()
+                .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
             let working_dir =
                 resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
             let client = PiRpcClient::start(&self.session_dir, &working_dir).await?;
-            let output = client.ask_project_chat(input, events).await;
+            let client = Arc::new(client);
+            self.project_chat_clients
+                .lock()
+                .await
+                .insert(input.project.id.clone(), client.clone());
+            if operation.load(Ordering::Relaxed) {
+                client.cancel().await;
+            }
+            let output = client.ask_project_chat(input.clone(), events).await;
+            self.project_chat_clients
+                .lock()
+                .await
+                .remove(&input.project.id);
             client.shutdown().await;
+            self.project_chat_operations
+                .lock()
+                .await
+                .remove(&input.project.id);
             output
+        })
+    }
+
+    fn generate_project_requirement_summary(
+        &self,
+        input: ProjectChatInput,
+        events: Option<ProjectChatEventEmitter>,
+    ) -> ProjectRequirementSummaryFuture<'_> {
+        Box::pin(async move {
+            let operation = self
+                .project_chat_operations
+                .lock()
+                .await
+                .get(&input.project.id)
+                .cloned()
+                .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+            let working_dir =
+                resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
+            let extension_path = self
+                .clarification_extension_path
+                .as_deref()
+                .ok_or_else(|| AppError::internal("受管需求说明插件不可用"))?;
+            let client = Arc::new(
+                PiRpcClient::start_with_extension(&self.session_dir, &working_dir, extension_path)
+                    .await?,
+            );
+            self.project_chat_clients
+                .lock()
+                .await
+                .insert(input.project.id.clone(), client.clone());
+            if operation.load(Ordering::Relaxed) {
+                client.cancel().await;
+            }
+            let output = client
+                .generate_project_requirement_summary(input.clone(), events)
+                .await;
+            self.project_chat_clients
+                .lock()
+                .await
+                .remove(&input.project.id);
+            client.shutdown().await;
+            self.project_chat_operations
+                .lock()
+                .await
+                .remove(&input.project.id);
+            output
+        })
+    }
+
+    fn begin_project_chat(&self, project_id: &str) -> ModelProviderActionFuture<'_> {
+        let project_id = project_id.to_owned();
+        Box::pin(async move {
+            self.project_chat_operations
+                .lock()
+                .await
+                .insert(project_id, Arc::new(AtomicBool::new(false)));
+            Ok(())
+        })
+    }
+
+    fn cancel_project_chat(&self, project_id: &str) -> ModelProviderActionFuture<'_> {
+        let project_id = project_id.to_owned();
+        Box::pin(async move {
+            let operation = self
+                .project_chat_operations
+                .lock()
+                .await
+                .get(&project_id)
+                .cloned()
+                .ok_or_else(|| AppError::conflict("项目问答当前未运行"))?;
+            operation.store(true, Ordering::Relaxed);
+            if let Some(client) = self
+                .project_chat_clients
+                .lock()
+                .await
+                .get(&project_id)
+                .cloned()
+            {
+                client.cancel().await;
+            }
+            Ok(())
         })
     }
 
@@ -809,6 +928,28 @@ impl PiRpcClient {
         Ok(())
     }
 
+    async fn ensure_project_requirement_summary_extension(&self) -> Result<(), AppError> {
+        let response = self
+            .send_command(serde_json::json!({ "type": "get_commands" }))
+            .await?;
+        let available = response
+            .pointer("/data/commands")
+            .and_then(Value::as_array)
+            .is_some_and(|commands| {
+                commands.iter().any(|command| {
+                    command.get("name").and_then(Value::as_str)
+                        == Some("raccoon-project-requirement-summary-v1")
+                })
+            });
+        if available {
+            Ok(())
+        } else {
+            Err(AppError::internal(
+                "受管项目问答需求说明插件未加载或协议版本不兼容",
+            ))
+        }
+    }
+
     pub async fn plan_requirement_execution(
         &self,
         input: RequirementPlanInput,
@@ -1035,6 +1176,41 @@ impl PiRpcClient {
             assistant_message: response.assistant_text,
             pi_session_file: self.get_session_file().await?,
             trace: response.trace,
+        })
+    }
+
+    pub async fn generate_project_requirement_summary(
+        &self,
+        input: ProjectChatInput,
+        events: Option<ProjectChatEventEmitter>,
+    ) -> Result<ProjectRequirementSummaryOutput, AppError> {
+        let session_reused = self
+            .restore_or_new_session(input.pi_session_file.as_deref())
+            .await?;
+        self.ensure_project_requirement_summary_extension().await?;
+        self.prepare_model_tier(&input.model_settings, RequirementModelTier::Medium)
+            .await?;
+        let prompt = build_project_requirement_summary_prompt(&input, session_reused);
+        self.prompt_with_images(&prompt, &[]).await?;
+        let mut pi_events = Vec::new();
+        let no_requirement_events = None;
+        self.wait_for_agent_end_with_events(
+            Duration::from_secs(120),
+            Duration::from_secs(600),
+            &no_requirement_events,
+            |event| {
+                if let Some(emitter) = &events {
+                    emitter.emit_pi_event(event.clone());
+                }
+                pi_events.push(event);
+            },
+        )
+        .await?;
+        let summary = parse_project_requirement_summary(&pi_events)?;
+        Ok(ProjectRequirementSummaryOutput {
+            summary,
+            pi_session_file: self.get_session_file().await?,
+            trace: crate::requirement::build_pi_trace_metadata(&pi_events),
         })
     }
 
@@ -1523,6 +1699,82 @@ impl PiRpcClient {
 }
 
 use crate::utils::git;
+
+fn build_project_requirement_summary_prompt(
+    input: &ProjectChatInput,
+    session_reused: bool,
+) -> String {
+    let history = if session_reused {
+        String::new()
+    } else {
+        input
+            .messages
+            .iter()
+            .map(|message| {
+                let role = match message.role {
+                    crate::models::ProjectChatMessageRole::User => "用户",
+                    crate::models::ProjectChatMessageRole::Assistant => "助手",
+                    crate::models::ProjectChatMessageRole::System => "系统",
+                };
+                format!("{role}: {}", message.content.trim())
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "请基于当前项目问答的完整上下文生成可继续进入需求澄清的需求说明。必须且只能调用一次 submit_project_requirement_summary；不要调用其他受管工具，也不要只输出文本。{}",
+        if history.is_empty() {
+            String::new()
+        } else {
+            format!("\n\nSQLite 问答历史：\n{history}")
+        }
+    )
+}
+
+fn parse_project_requirement_summary(
+    events: &[Value],
+) -> Result<crate::models::ProjectRequirementSummary, AppError> {
+    let results = events
+        .iter()
+        .filter(|event| {
+            event.get("type").and_then(Value::as_str) == Some("tool_execution_end")
+                && event.get("isError").and_then(Value::as_bool) != Some(true)
+                && event.get("toolName").and_then(Value::as_str)
+                    == Some("submit_project_requirement_summary")
+        })
+        .collect::<Vec<_>>();
+    if results.len() != 1 {
+        return Err(AppError::internal(format!(
+            "需求说明必须提交一次受管工具结果，实际为 {} 次",
+            results.len()
+        )));
+    }
+    let details = results[0]
+        .pointer("/result/details")
+        .ok_or_else(|| AppError::internal("需求说明工具结果缺少 details"))?;
+    if details.get("protocol").and_then(Value::as_str)
+        != Some("raccoon:project-requirement-summary:v1")
+    {
+        return Err(AppError::internal("需求说明工具协议版本不匹配"));
+    }
+    let summary: crate::models::ProjectRequirementSummary = serde_json::from_value(
+        details
+            .get("summary")
+            .cloned()
+            .ok_or_else(|| AppError::internal("需求说明工具结果缺少 summary"))?,
+    )?;
+    if summary.title.trim().is_empty()
+        || summary.summary.trim().is_empty()
+        || summary.acceptance_criteria.is_empty()
+        || summary
+            .acceptance_criteria
+            .iter()
+            .any(|item| item.trim().is_empty())
+    {
+        return Err(AppError::internal("需求说明字段不能为空"));
+    }
+    Ok(summary)
+}
 
 fn is_terminal_agent_end(event: &Value) -> bool {
     event.get("type").and_then(Value::as_str) == Some("agent_end")

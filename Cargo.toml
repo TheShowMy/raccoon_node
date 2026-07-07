@@ -30,7 +30,7 @@ test-utils = []
 axum = { version = "0.8", features = ["ws"] }
 arboard = { version = "3", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 crossterm = "0.28"
 mime_guess = "2"
 pi-rpc-rs = "0.1.3"

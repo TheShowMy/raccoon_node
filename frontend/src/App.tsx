@@ -752,6 +752,9 @@ export default function App() {
         setProjectChatReferences: projectChat.setProjectChatReferences,
         setProjectChatImages: projectChat.setProjectChatImages,
         sendProjectChatMessage: projectChat.sendProjectChat,
+        abortProjectChat: projectChat.abortProjectChat,
+        generateProjectRequirementSummary:
+          projectChat.generateRequirementSummary,
         resetProjectChat: projectChat.closeProjectChat,
         updateClarificationAnswer: requirement.updateClarificationAnswer,
         submitClarifications: requirement.submitClarifications,
@@ -767,6 +770,8 @@ export default function App() {
       project.cancelRequirementAnalysis,
       project.projectCanvas,
       projectChat.closeProjectChat,
+      projectChat.abortProjectChat,
+      projectChat.generateRequirementSummary,
       projectChat.projectChat,
       projectChat.projectChatBusy,
       projectChat.projectChatError,

@@ -58,4 +58,47 @@ describe("ChatComposer", () => {
     fireEvent.keyDown(screen.getByPlaceholderText("输入"), { key: "Enter" });
     expect(onSubmit).not.toHaveBeenCalled();
   });
+
+  it("selects and dismisses the fixed requirement slash command by keyboard", () => {
+    const onSubmit = vi.fn();
+    const onGenerate = vi.fn();
+    const onChange = vi.fn();
+    const view = render(
+      <ChatComposer
+        value="/生成"
+        disabled={false}
+        canSend
+        placeholder="输入"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        onGenerateRequirementSummary={onGenerate}
+      />,
+    );
+    const input = screen.getByPlaceholderText("输入");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(
+      screen.getByRole("option", { name: "/生成需求说明" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onGenerate).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith("");
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    view.rerender(
+      <ChatComposer
+        value="/生成"
+        disabled={false}
+        canSend
+        placeholder="输入"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        onGenerateRequirementSummary={onGenerate}
+      />,
+    );
+    fireEvent.change(input, { target: { value: "/生" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(
+      screen.queryByRole("option", { name: "/生成需求说明" }),
+    ).not.toBeInTheDocument();
+  });
 });

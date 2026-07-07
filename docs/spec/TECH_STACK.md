@@ -24,6 +24,9 @@
 - 应用数据：`<git_root>/.raccoon-node/data.db`
 - Pi Agent RPC 完整模型上下文：`<git_root>/.raccoon-node/sessions/`
 - JSONL 会话查看：后端按需解析 session 文件并分页返回，原始记录不复制进 SQLite。
+- 对话传输：HTTP 接受项目问答、需求分析和停止操作；只读 WebSocket 推送统一增量
+  事件。前端先订阅并缓冲事件，再拉取 SQLite 快照并回放缓冲事件；重连后重新对账。
+- 任务传输：需求进入执行阶段后继续使用现有 SSE，不与对话 WebSocket 混用。
 - 每日滚动日志（最多 7 个文件）：`<git_root>/.raccoon-node/logs/`
 - 内置受管 Pi extension：`<git_root>/.raccoon-node/extensions/`
 - 任务 worktree：`<git_root>/.raccoon-node/worktrees/`
@@ -50,10 +53,15 @@
 - 根页面直接加载固定 `current` 项目画布，不提供 start 画布或项目增删。
 - `.raccoon-node/` 必须加入仓库 `.gitignore`，且运行数据不得逃逸该目录。
 - 所有 LLM、模型列表、模型选择和后续 Agent 能力必须基于 Pi Agent RPC。
-- 需求澄清和确认草案必须通过内置受管 Pi extension 的结构化工具提交；不得恢复
-  文本 JSON 提取。
+- 需求澄清、确认草案和项目问答生成的需求说明必须通过内置受管 Pi extension 的
+  结构化工具提交；不得恢复文本 JSON 提取。
 - 业务状态只以 SQLite 为准；Pi session 只保存完整模型历史，不承担 FIFO、DAG、
   worktree 或恢复状态。
+- 项目问答与需求澄清使用独立 Pi session；同一项目的需求分析保持单飞，繁忙时
+  拒绝新操作，不增加消息队列、steer 或 follow-up。
+- 对话事件协议固定为 `message.append`、`assistant.delta`、
+  `assistant.thinking.delta`、`tool.start`、`tool.update`、`tool.end`、
+  `message.end`、`status.update`、`snapshot.changed` 和 `session.error`。
 - 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。
 - 禁止直接读写 Pi Agent 的 auth/settings 文件；本项目只保存自身三档模型设置。
 - Pi 登录由用户在设置工作台内嵌的固定暗色 Web 终端中手动执行 `/login`；该会话

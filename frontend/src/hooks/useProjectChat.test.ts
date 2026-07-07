@@ -3,15 +3,20 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  abortProjectChat,
+  generateProjectRequirementSummary,
   getProjectChat,
   resetProjectChat,
   sendProjectChatMessage,
 } from "../api/client";
-import type { ProjectChatEvent, ProjectChatResponse } from "../types/api";
+import type { ConversationEvent, ProjectChatResponse } from "../types/api";
 import { useProjectChat } from "./useProjectChat";
 
 vi.mock("../api/client", () => ({
+  abortProjectChat: vi.fn(),
+  generateProjectRequirementSummary: vi.fn(),
   getProjectChat: vi.fn(),
+  projectChatWebSocketUrl: (id: string) => `ws://test/${id}`,
   resetProjectChat: vi.fn(),
   sendProjectChatMessage: vi.fn(),
 }));
@@ -21,64 +26,92 @@ const response: ProjectChatResponse = {
   messages: [],
   running: false,
   error: null,
+  requirement_summary: null,
   updated_at: "2026-06-25T00:00:00Z",
 };
 
-type MessageHandler = (event: MessageEvent<string>) => void;
-
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  onmessage: MessageHandler | null = null;
-  listeners = new Map<string, MessageHandler[]>();
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+  static OPEN = 1;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
   close = vi.fn();
 
   constructor(readonly url: string) {
-    FakeEventSource.instances.push(this);
+    FakeWebSocket.instances.push(this);
   }
 
-  addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
-    const handler = listener as MessageHandler;
-    this.listeners.set(type, [...(this.listeners.get(type) ?? []), handler]);
+  open() {
+    this.onopen?.();
   }
 
-  emit(type: string, payload: ProjectChatEvent) {
-    const event = new MessageEvent(type, { data: JSON.stringify(payload) });
-    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  emit(event: ConversationEvent) {
+    this.onmessage?.(
+      new MessageEvent("message", { data: JSON.stringify(event) }),
+    );
+  }
+
+  disconnect() {
+    this.onclose?.();
   }
 }
 
 describe("useProjectChat", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    FakeEventSource.instances = [];
-    vi.stubGlobal("EventSource", FakeEventSource);
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
     vi.mocked(getProjectChat).mockResolvedValue(response);
+    vi.mocked(sendProjectChatMessage).mockResolvedValue({
+      accepted: true,
+      turn_id: "turn-1",
+    });
+    vi.mocked(generateProjectRequirementSummary).mockResolvedValue({
+      accepted: true,
+      turn_id: "turn-summary",
+    });
+    vi.mocked(abortProjectChat).mockResolvedValue({ accepted: true });
     vi.mocked(resetProjectChat).mockResolvedValue(response);
   });
 
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
-  it("loads project chat and refreshes persisted messages after project completion", async () => {
-    const { result } = renderHook(() => useProjectChat("project-1"));
-
-    await waitFor(() => expect(result.current.projectChat).toEqual(response));
-    expect(FakeEventSource.instances[0].url).toBe(
-      "/api/projects/project-1/chat/events",
+  it("subscribes before loading the snapshot and buffers events during sync", async () => {
+    let resolveSnapshot!: (value: ProjectChatResponse) => void;
+    vi.mocked(getProjectChat).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSnapshot = resolve;
+      }),
     );
+    const { result } = renderHook(() => useProjectChat("project-1"));
+    const socket = FakeWebSocket.instances[0];
 
-    act(() => {
-      FakeEventSource.instances[0].emit("pi_event", {
-        project_id: "project-1",
-        event: "pi_event",
-        message: "本轮处理完成",
-        pi_type: "turn_end",
-      });
-    });
+    expect(socket.url).toBe("ws://test/project-1");
+    expect(getProjectChat).not.toHaveBeenCalled();
+    act(() => socket.open());
+    act(() =>
+      socket.emit({
+        type: "assistant.delta",
+        payload: { project_id: "project-1", delta: "回答" },
+      }),
+    );
+    expect(result.current.projectChatEvents).toHaveLength(0);
 
-    await waitFor(() => {
-      expect(result.current.projectChatEvents).toHaveLength(1);
-    });
-    expect(getProjectChat).toHaveBeenCalledTimes(1);
+    await act(async () => resolveSnapshot(response));
+    await waitFor(() => expect(result.current.projectChat).toEqual(response));
+    expect(result.current.projectChatEvents).toHaveLength(1);
+  });
+
+  it("reconciles final events with the persisted snapshot", async () => {
+    const { result } = renderHook(() => useProjectChat("project-1"));
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket.open());
+    await waitFor(() => expect(result.current.projectChat).toEqual(response));
 
     vi.mocked(getProjectChat).mockResolvedValueOnce({
       ...response,
@@ -90,66 +123,55 @@ describe("useProjectChat", () => {
         },
       ],
     });
+    act(() =>
+      socket.emit({
+        type: "message.end",
+        payload: { project_id: "project-1" },
+      }),
+    );
 
-    act(() => {
-      FakeEventSource.instances[0].emit("project_chat_completed", {
-        project_id: "project-1",
-        event: "project_chat_completed",
-        message: "完成",
-      });
-    });
-
-    await waitFor(() => {
-      expect(result.current.projectChat?.messages).toHaveLength(1);
-      expect(result.current.projectChatEvents).toHaveLength(0);
-      expect(getProjectChat).toHaveBeenCalledTimes(2);
-    });
+    await waitFor(() =>
+      expect(result.current.projectChat?.messages).toHaveLength(1),
+    );
+    expect(result.current.projectChatEvents).toHaveLength(0);
   });
 
-  it("refreshes persisted state after project chat failure", async () => {
-    const { result } = renderHook(() => useProjectChat("project-1"));
-    await waitFor(() => expect(result.current.projectChat).toEqual(response));
+  it("resyncs a reconnected socket after the previous snapshot fails", async () => {
+    vi.useFakeTimers();
+    let rejectSnapshot!: (reason: Error) => void;
+    vi.mocked(getProjectChat)
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          rejectSnapshot = reject;
+        }),
+      )
+      .mockResolvedValueOnce(response);
+    const { result, unmount } = renderHook(() => useProjectChat("project-1"));
+    const first = FakeWebSocket.instances[0];
 
-    vi.mocked(getProjectChat).mockResolvedValueOnce({
-      ...response,
-      error: "项目问答失败。",
+    act(() => first.open());
+    act(() => first.disconnect());
+    act(() => vi.advanceTimersByTime(500));
+    const second = FakeWebSocket.instances[1];
+    act(() => second.open());
+    expect(getProjectChat).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rejectSnapshot(new Error("旧连接已断开"));
+      await Promise.resolve();
     });
 
-    act(() => {
-      FakeEventSource.instances[0].emit("pi_event", {
-        project_id: "project-1",
-        event: "pi_event",
-        message: "正在生成内容。",
-        pi_type: "message_update",
-      });
-      FakeEventSource.instances[0].emit("project_chat_failed", {
-        project_id: "project-1",
-        event: "project_chat_failed",
-        message: "项目问答失败。",
-      });
+    expect(getProjectChat).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await Promise.resolve();
     });
-
-    await waitFor(() => {
-      expect(result.current.projectChatError).toBe("项目问答失败。");
-      expect(result.current.projectChatEvents).toHaveLength(0);
-      expect(getProjectChat).toHaveBeenCalledTimes(2);
-    });
+    expect(result.current.projectChat).toEqual(response);
+    unmount();
   });
 
-  it("sends trimmed input and clears transient state", async () => {
-    vi.mocked(sendProjectChatMessage).mockResolvedValue({
-      ...response,
-      messages: [
-        {
-          role: "user",
-          content: "项目入口在哪？",
-          references: [],
-          images: [],
-          created_at: response.updated_at,
-        },
-      ],
-    });
+  it("accepts a message, clears attachments, and waits for websocket state", async () => {
     const { result } = renderHook(() => useProjectChat("project-1"));
+    act(() => FakeWebSocket.instances[0].open());
     await waitFor(() => expect(result.current.projectChat).toEqual(response));
 
     act(() => result.current.setProjectChatInput("  项目入口在哪？  "));
@@ -161,41 +183,19 @@ describe("useProjectChat", () => {
       images: [],
     });
     expect(result.current.projectChatInput).toBe("");
-    expect(result.current.projectChat?.messages).toHaveLength(1);
+    expect(result.current.projectChat?.running).toBe(true);
   });
 
-  it("closes the current project chat and clears local transient state", async () => {
+  it("runs the requirement command without sending a user message", async () => {
     const { result } = renderHook(() => useProjectChat("project-1"));
+    act(() => FakeWebSocket.instances[0].open());
     await waitFor(() => expect(result.current.projectChat).toEqual(response));
+    act(() => result.current.setProjectChatInput("/生成需求说明"));
 
-    act(() => result.current.setProjectChatInput("未发送内容"));
-    await act(async () => result.current.closeProjectChat());
+    await act(async () => result.current.generateRequirementSummary());
 
-    expect(resetProjectChat).toHaveBeenCalledWith("project-1");
+    expect(generateProjectRequirementSummary).toHaveBeenCalledWith("project-1");
+    expect(sendProjectChatMessage).not.toHaveBeenCalled();
     expect(result.current.projectChatInput).toBe("");
-    expect(result.current.projectChat).toEqual(response);
-  });
-
-  it("does not restore stale chat after switching projects", async () => {
-    let resolveFirst!: (value: ProjectChatResponse) => void;
-    vi.mocked(getProjectChat)
-      .mockReturnValueOnce(
-        new Promise((resolve) => {
-          resolveFirst = resolve;
-        }),
-      )
-      .mockResolvedValueOnce({ ...response, project_id: "project-2" });
-    const { result, rerender } = renderHook(
-      ({ projectId }) => useProjectChat(projectId),
-      { initialProps: { projectId: "project-1" } },
-    );
-
-    rerender({ projectId: "project-2" });
-    await waitFor(() =>
-      expect(result.current.projectChat?.project_id).toBe("project-2"),
-    );
-    await act(async () => resolveFirst(response));
-
-    expect(result.current.projectChat?.project_id).toBe("project-2");
   });
 });
