@@ -54,7 +54,7 @@ export function useProjectChat(projectId: string | null) {
     if (projectIdRef.current !== snapshot.project_id) return;
     setProjectChat(snapshot);
     setProjectChatError(snapshot.error);
-    setProjectChatEvents([]);
+    setProjectChatEvents((current) => (snapshot.running ? current : []));
   }, []);
 
   const handleEvent = useCallback((event: ConversationEvent) => {
@@ -71,14 +71,6 @@ export function useProjectChat(projectId: string | null) {
           ? event.payload.message
           : "项目问答失败",
       );
-    }
-    if (event.type === "status.update") {
-      const running = event.payload.running;
-      if (typeof running === "boolean") {
-        setProjectChat((current) =>
-          current ? { ...current, running } : current,
-        );
-      }
     }
     setProjectChatEvents((current) => [...current, event]);
   }, []);

@@ -89,17 +89,33 @@ class FakeEventSource {
 }
 
 class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: MessageEvent<string>) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
   close = vi.fn();
+
+  constructor(readonly url: string) {
+    FakeWebSocket.instances.push(this);
+  }
+
+  open() {
+    this.onopen?.();
+  }
+
+  emit(event: { type: string; payload: Record<string, unknown> }) {
+    this.onmessage?.(
+      new MessageEvent("message", { data: JSON.stringify(event) }),
+    );
+  }
 }
 
 describe("useRequirementFlow", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     FakeEventSource.instances = [];
+    FakeWebSocket.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("WebSocket", FakeWebSocket);
     vi.mocked(getRequirementConversation).mockResolvedValue(conversation);
@@ -168,6 +184,61 @@ describe("useRequirementFlow", () => {
       expect(result.current.dismissedPromptRequirementId).toBeNull();
     });
     card.remove();
+  });
+
+  it("keeps live process events when a running conversation snapshot is reconciled", async () => {
+    const { result } = renderHook(() =>
+      useRequirementFlow(
+        "project-1",
+        requirement.id,
+        null,
+        vi.fn(),
+        vi.fn(),
+        vi.fn(),
+      ),
+    );
+    const socket = FakeWebSocket.instances[0];
+
+    act(() => socket.open());
+    await waitFor(() =>
+      expect(result.current.requirementConversation).toEqual(conversation),
+    );
+
+    act(() =>
+      socket.emit({
+        type: "agent.event",
+        payload: {
+          requirement_id: requirement.id,
+          pi_type: "tool_execution_start",
+          event: {
+            type: "tool_execution_start",
+            toolCallId: "tool-1",
+            toolName: "read",
+          },
+        },
+      }),
+    );
+    expect(
+      result.current.requirementStreamEvents.map((event) => event.event),
+    ).toEqual(["agent.event"]);
+
+    vi.mocked(getRequirementConversation).mockResolvedValueOnce({
+      ...conversation,
+      running: true,
+    });
+    act(() =>
+      socket.emit({
+        type: "snapshot.changed",
+        payload: { requirement_id: requirement.id },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(result.current.requirementConversation?.running).toBe(true),
+    );
+    expect(
+      result.current.requirementStreamEvents.map((event) => event.event),
+    ).toEqual(["agent.event", "snapshot.changed"]);
   });
 
   it("keeps DAG summary events out of memory and refreshes on task boundaries", async () => {

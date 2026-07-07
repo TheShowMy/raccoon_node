@@ -59,9 +59,8 @@
   worktree 或恢复状态。
 - 项目问答与需求澄清使用独立 Pi session；同一项目的需求分析保持单飞，繁忙时
   拒绝新操作，不增加消息队列、steer 或 follow-up。
-- 对话事件协议固定为 `message.append`、`assistant.delta`、
-  `assistant.thinking.delta`、`tool.start`、`tool.update`、`tool.end`、
-  `message.end`、`status.update`、`snapshot.changed` 和 `session.error`。
+- 对话事件协议固定为 `agent.event`、`snapshot.changed`、`session.error` 和
+  `notice.append`。`agent.event` 携带原始 Pi Agent 事件，前端统一归一展示。
 - 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。
 - 禁止直接读写 Pi Agent 的 auth/settings 文件；本项目只保存自身三档模型设置。
 - Pi 登录由用户在设置工作台内嵌的固定暗色 Web 终端中手动执行 `/login`；该会话

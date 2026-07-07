@@ -1553,16 +1553,14 @@
   }
 
   .rq-message__body,
-  .rq-process__body,
-  .rq-process-step pre {
+  .rq-process-row__content {
     cursor: text;
     user-select: text;
   }
 
   .rq-transcript,
   .rq-shelf,
-  .rq-process__body,
-  .rq-process-step pre,
+  .rq-process-row__content,
   .requirement-list {
     scrollbar-gutter: stable;
     scrollbar-width: thin;
@@ -1572,8 +1570,7 @@
 
   .rq-transcript::-webkit-scrollbar,
   .rq-shelf::-webkit-scrollbar,
-  .rq-process__body::-webkit-scrollbar,
-  .rq-process-step pre::-webkit-scrollbar,
+  .rq-process-row__content::-webkit-scrollbar,
   .requirement-list::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -1581,8 +1578,7 @@
 
   .rq-transcript::-webkit-scrollbar-track,
   .rq-shelf::-webkit-scrollbar-track,
-  .rq-process__body::-webkit-scrollbar-track,
-  .rq-process-step pre::-webkit-scrollbar-track,
+  .rq-process-row__content::-webkit-scrollbar-track,
   .requirement-list::-webkit-scrollbar-track {
     border-radius: 999px;
     background: transparent;
@@ -1590,8 +1586,7 @@
 
   .rq-transcript::-webkit-scrollbar-thumb,
   .rq-shelf::-webkit-scrollbar-thumb,
-  .rq-process__body::-webkit-scrollbar-thumb,
-  .rq-process-step pre::-webkit-scrollbar-thumb,
+  .rq-process-row__content::-webkit-scrollbar-thumb,
   .requirement-list::-webkit-scrollbar-thumb {
     border: 2px solid transparent;
     border-radius: 999px;
@@ -1602,8 +1597,7 @@
 
   .rq-transcript::-webkit-scrollbar-thumb:hover,
   .rq-shelf::-webkit-scrollbar-thumb:hover,
-  .rq-process__body::-webkit-scrollbar-thumb:hover,
-  .rq-process-step pre::-webkit-scrollbar-thumb:hover,
+  .rq-process-row__content::-webkit-scrollbar-thumb:hover,
   .requirement-list::-webkit-scrollbar-thumb:hover {
     background: color-mix(in srgb, var(--accent-model) 68%, var(--text-soft))
       content-box;
@@ -1677,14 +1671,6 @@
     @apply mb-2 grid gap-2;
   }
 
-  .rq-message__attachments .rq-process {
-    @apply rounded-xl;
-  }
-
-  .rq-message__attachments .rq-process__body {
-    @apply max-h-[180px];
-  }
-
   .rq-message__refs img {
     @apply h-14 w-14 rounded-lg border object-cover;
     border-color: var(--card-border);
@@ -1739,69 +1725,102 @@
   }
 
   .rq-process {
-    @apply overflow-hidden rounded-[14px] border;
-    border-color: color-mix(in srgb, var(--accent-model) 24%, transparent);
-    background: var(--surface-subtle);
-  }
-
-  .rq-process--running {
-    border-color: color-mix(in srgb, var(--accent-model) 40%, transparent);
-  }
-
-  .rq-process--error {
-    border-color: color-mix(in srgb, var(--accent-danger) 42%, transparent);
-  }
-
-  .rq-process__head {
-    @apply flex min-h-10 w-full cursor-pointer items-center gap-2 border-0 px-3 py-2 text-left text-xs;
-    background: transparent;
-    color: var(--text-soft);
-  }
-
-  .rq-process__head strong {
-    @apply min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-bold;
-    color: var(--text-strong);
-  }
-
-  .rq-process__head span:not(.rq-process__icon) {
-    @apply shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold;
-    background: var(--surface-subtle);
-    color: var(--text-muted);
+    @apply grid max-w-[92%] gap-1.5;
   }
 
   .rq-spin {
     @apply animate-spin;
   }
 
-  .rq-process__body {
-    @apply grid max-h-[320px] gap-2 overflow-y-auto border-t p-3;
-    border-color: var(--card-border);
-  }
-
-  .rq-process-step {
-    @apply grid gap-1 rounded-[10px] border px-3 py-2 text-xs;
-    border-color: var(--card-border);
-    background: var(--surface-subtle);
-    color: var(--text-soft);
-  }
-
-  .rq-process-step span {
-    @apply font-bold;
-    color: var(--text-strong);
-  }
-
-  .rq-process-step__head {
-    @apply flex w-full cursor-pointer items-center justify-between gap-3 border-0 bg-transparent p-0 text-left;
-    color: inherit;
-  }
-
-  .rq-process-step__head em {
-    @apply shrink-0 text-[10px] not-italic;
+  .rq-thinking-indicator {
+    @apply flex items-center gap-1 self-start text-xs;
     color: var(--text-muted);
   }
 
-  .rq-process-step pre {
-    @apply m-0 max-h-[180px] overflow-auto text-[11px] leading-relaxed whitespace-pre-wrap;
+  .rq-thinking-indicator__dots {
+    @apply inline-flex;
+  }
+
+  .rq-thinking-indicator__dots span {
+    @apply inline-block;
+    animation: rq-bounce-dots 1.4s infinite ease-in-out both;
+  }
+
+  .rq-thinking-indicator__dots span:nth-child(1) {
+    animation-delay: -0.32s;
+  }
+
+  .rq-thinking-indicator__dots span:nth-child(2) {
+    animation-delay: -0.16s;
+  }
+
+  .rq-thinking-indicator__dots span:nth-child(3) {
+    animation-delay: 0s;
+  }
+
+  @keyframes rq-bounce-dots {
+    0%,
+    80%,
+    100% {
+      transform: translateY(0);
+    }
+    40% {
+      transform: translateY(-4px);
+    }
+  }
+
+  .rq-process-row {
+    @apply overflow-hidden rounded-md border text-xs;
+    border-color: var(--card-border);
+    background: var(--surface-subtle);
+  }
+
+  .rq-process-row--tool {
+    border-color: color-mix(in srgb, var(--success) 28%, transparent);
+    background: color-mix(in srgb, var(--success) 7%, var(--surface-subtle));
+  }
+
+  .rq-process-row--error {
+    border-color: color-mix(in srgb, var(--accent-danger) 38%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--accent-danger) 8%,
+      var(--surface-subtle)
+    );
+  }
+
+  .rq-process-row__head {
+    @apply flex min-h-8 w-full cursor-pointer items-center gap-2 border-0 px-2.5 py-1.5 text-left;
+    background: transparent;
+    color: var(--text-muted);
+  }
+
+  .rq-process-row__head:disabled {
+    @apply cursor-default;
+  }
+
+  .rq-process-row__icon {
+    @apply flex h-3.5 w-3.5 shrink-0 items-center justify-center;
+    color: var(--text-muted);
+  }
+
+  .rq-process-row__head strong {
+    @apply shrink-0 font-mono text-[11px] font-semibold;
+    color: var(--text-strong);
+  }
+
+  .rq-process-row--tool .rq-process-row__head strong {
+    color: var(--success);
+  }
+
+  .rq-process-row__head span:not(.rq-process-row__icon) {
+    @apply min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11px];
+    color: var(--text-muted);
+  }
+
+  .rq-process-row__content {
+    @apply m-0 max-h-[220px] overflow-auto border-t px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap;
+    border-color: color-mix(in srgb, var(--card-border) 70%, transparent);
     color: var(--text-soft);
     overflow-wrap: anywhere;
   }

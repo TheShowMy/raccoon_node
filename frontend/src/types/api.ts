@@ -433,16 +433,10 @@ export type ProjectChatResponse = {
 };
 
 export type ConversationEventType =
-  | "message.append"
-  | "assistant.delta"
-  | "assistant.thinking.delta"
-  | "tool.start"
-  | "tool.update"
-  | "tool.end"
-  | "message.end"
-  | "status.update"
+  | "agent.event"
   | "snapshot.changed"
-  | "session.error";
+  | "session.error"
+  | "notice.append";
 
 export type ConversationEvent = {
   type: ConversationEventType;
@@ -516,10 +510,30 @@ export type TraceTool = {
   toolName: string;
   status: "running" | "done" | "error" | string;
   output: string;
+  input?: unknown;
   isError?: boolean;
 };
 
+export type TraceBlock =
+  | {
+      id: string;
+      type: "thinking";
+      content: string;
+      status: "running" | "done" | "error" | string;
+    }
+  | {
+      id: string;
+      type: "tool";
+      toolCallId: string;
+      toolName: string;
+      input?: unknown;
+      output: string;
+      status: "running" | "done" | "error" | string;
+      isError?: boolean;
+    };
+
 export type TraceData = {
+  blocks?: TraceBlock[];
   thinking: string;
   output: string;
   tools: TraceTool[];
@@ -552,6 +566,7 @@ export type LiveBubble = {
   type: "thinking" | "tool" | "output" | "status";
   label: string;
   content: string;
+  preview?: string;
   toolName?: string;
   status: "running" | "done" | "error";
 };

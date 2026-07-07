@@ -278,6 +278,7 @@ pub fn build_pi_trace_metadata(events: &[Value]) -> Option<Value> {
     let output = String::new();
     let mut statuses = Vec::new();
     let mut tools = Vec::new();
+    let mut blocks = Vec::new();
 
     for event in events {
         let pi_type = event
@@ -286,7 +287,7 @@ pub fn build_pi_trace_metadata(events: &[Value]) -> Option<Value> {
             .unwrap_or_default();
         match pi_type {
             "message_update" => {
-                collect_message_update(event, &mut thinking);
+                collect_message_update(event, &mut thinking, &mut blocks);
                 if event
                     .get("assistantMessageEvent")
                     .and_then(|assistant_event| assistant_event.get("type"))
@@ -300,10 +301,10 @@ pub fn build_pi_trace_metadata(events: &[Value]) -> Option<Value> {
                 }
             }
             "tool_execution_start" | "tool_execution_update" | "tool_execution_end" => {
-                upsert_trace_tool(&mut tools, event, pi_type)
+                upsert_trace_tool(&mut tools, event, pi_type);
+                upsert_trace_tool_block(&mut blocks, event, pi_type);
             }
-            "agent_start" | "agent_end" | "turn_start" | "turn_end" | "auto_retry_start"
-            | "auto_retry_end" | "compaction_start" | "compaction_end" | "extension_error" => {
+            "extension_error" => {
                 statuses.push(json!({
                     "type": pi_type,
                     "message": crate::pi_event::summarize_pi_event(pi_type, event),
@@ -315,8 +316,9 @@ pub fn build_pi_trace_metadata(events: &[Value]) -> Option<Value> {
 
     Some(json!({
         "type": "pi_trace",
-        "version": 1,
+        "version": 2,
         "trace": {
+            "blocks": blocks,
             "thinking": thinking,
             "output": output,
             "tools": tools,
@@ -476,7 +478,7 @@ fn value_error_text(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn collect_message_update(event: &Value, thinking: &mut String) {
+fn collect_message_update(event: &Value, thinking: &mut String, blocks: &mut Vec<Value>) {
     let assistant_event = match event.get("assistantMessageEvent") {
         Some(Value::Object(_)) => &event["assistantMessageEvent"],
         _ => return,
@@ -492,9 +494,32 @@ fn collect_message_update(event: &Value, thinking: &mut String) {
         .unwrap_or_default();
     if delta_type == "thinking_delta" {
         thinking.push_str(delta);
+        append_thinking_block(blocks, delta);
     }
     // text_delta contains the structured JSON response; it is parsed into the
     // assistant message and should not be duplicated in the trace output.
+}
+
+fn append_thinking_block(blocks: &mut Vec<Value>, delta: &str) {
+    if delta.is_empty() {
+        return;
+    }
+    if let Some(last) = blocks.last_mut()
+        && last.get("type").and_then(Value::as_str) == Some("thinking")
+    {
+        let current = last
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        last["content"] = json!(format!("{current}{delta}"));
+        return;
+    }
+    blocks.push(json!({
+        "id": format!("thinking-{}", blocks.len()),
+        "type": "thinking",
+        "content": delta,
+        "status": "done",
+    }));
 }
 
 fn message_update_text_delta(event: &Value) -> Option<&str> {
@@ -574,6 +599,81 @@ fn upsert_trace_tool(tools: &mut Vec<Value>, event: &Value, pi_type: &str) {
         tools[index] = tool;
     } else {
         tools.push(tool);
+    }
+}
+
+fn upsert_trace_tool_block(blocks: &mut Vec<Value>, event: &Value, pi_type: &str) {
+    let tool_call_id = event
+        .get("toolCallId")
+        .or_else(|| event.get("tool_call_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_owned();
+    let existing_index = blocks.iter().position(|block| {
+        block.get("type").and_then(Value::as_str) == Some("tool")
+            && block
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| id == tool_call_id)
+    });
+    let tool_name = event
+        .get("toolName")
+        .or_else(|| event.get("tool_name"))
+        .and_then(Value::as_str)
+        .unwrap_or("tool");
+    let status = match pi_type {
+        "tool_execution_start" | "tool_execution_update" => "running",
+        "tool_execution_end" => "done",
+        _ => "unknown",
+    };
+    let is_error = event
+        .get("isError")
+        .or_else(|| event.get("is_error"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let input = event
+        .get("input")
+        .or_else(|| event.get("arguments"))
+        .or_else(|| event.get("args"))
+        .or_else(|| event.get("toolInput"))
+        .or_else(|| event.get("tool_input"))
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    let mut block = existing_index
+        .and_then(|index| blocks.get(index).cloned())
+        .unwrap_or_else(|| {
+            json!({
+                "id": tool_call_id,
+                "type": "tool",
+                "toolCallId": tool_call_id,
+                "toolName": tool_name,
+                "input": input.clone(),
+                "output": "",
+                "status": status,
+                "isError": false,
+            })
+        });
+
+    block["toolName"] = json!(tool_name);
+    block["status"] = json!(if is_error { "error" } else { status });
+    block["isError"] = json!(is_error);
+    if block.get("input").is_none_or(Value::is_null) && !input.is_null() {
+        block["input"] = input;
+    }
+    if let Some(output) = extract_tool_text(event) {
+        let current = block
+            .get("output")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        block["output"] = json!(merge_stream_text(current, &output));
+    }
+
+    if let Some(index) = existing_index {
+        blocks[index] = block;
+    } else {
+        blocks.push(block);
     }
 }
 
@@ -863,6 +963,7 @@ mod tests {
         ];
 
         let trace = build_pi_trace_metadata(&events).unwrap();
+        assert_eq!(trace["version"], json!(2));
         let output = trace
             .pointer("/trace/tools/0/output")
             .and_then(Value::as_str)
@@ -870,6 +971,50 @@ mod tests {
         assert!(output.contains("第一段"));
         assert!(output.contains("第二段"));
         assert!(output.contains("第三段"));
+        assert_eq!(trace.pointer("/trace/blocks/0/type"), Some(&json!("tool")));
+        assert!(
+            trace
+                .pointer("/trace/blocks/0/output")
+                .and_then(Value::as_str)
+                .unwrap()
+                .contains("第三段")
+        );
+    }
+
+    #[test]
+    fn pi_trace_blocks_keep_thinking_tool_order() {
+        let events = vec![
+            json!({
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "thinking_delta", "delta": "先想。"}
+            }),
+            json!({
+                "type": "tool_execution_start",
+                "toolCallId": "tool-1",
+                "toolName": "Read",
+                "input": {"path": "src/main.rs"}
+            }),
+            json!({
+                "type": "tool_execution_end",
+                "toolCallId": "tool-1",
+                "toolName": "Read",
+                "result": {"content": [{"type": "text", "text": "内容"}]}
+            }),
+            json!({
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "thinking_delta", "delta": "再想。"}
+            }),
+        ];
+
+        let trace = build_pi_trace_metadata(&events).unwrap();
+        let blocks = trace
+            .pointer("/trace/blocks")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert_eq!(blocks[0]["type"], json!("thinking"));
+        assert_eq!(blocks[1]["type"], json!("tool"));
+        assert_eq!(blocks[1]["input"]["path"], json!("src/main.rs"));
+        assert_eq!(blocks[2]["type"], json!("thinking"));
     }
 
     #[test]

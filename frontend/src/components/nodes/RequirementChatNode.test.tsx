@@ -215,10 +215,17 @@ describe("RequirementChatNode", () => {
           },
           projectChatEvents: [
             {
-              type: "assistant.thinking.delta",
+              type: "agent.event",
               payload: {
                 project_id: "project-1",
-                delta: "正在查看入口。",
+                pi_type: "message_update",
+                event: {
+                  type: "message_update",
+                  assistantMessageEvent: {
+                    type: "thinking_delta",
+                    delta: "正在查看入口。",
+                  },
+                },
               },
             },
           ],
@@ -232,7 +239,8 @@ describe("RequirementChatNode", () => {
     expect(screen.getByText("入口在哪里？")).toBeInTheDocument();
     expect(screen.getAllByText("Pi Agent").length).toBeGreaterThan(0);
     expect(screen.getByText("入口在 src/main.rs。")).toBeInTheDocument();
-    expect(screen.getByText("正在回答")).toBeInTheDocument();
+    expect(screen.getByText("Thinking")).toBeInTheDocument();
+    expect(screen.queryByText("等待 Pi Agent 事件...")).not.toBeInTheDocument();
     expect(screen.getByText("正在查看入口。")).toBeInTheDocument();
     expect(screen.queryByText(/assistantMessageEvent/)).not.toBeInTheDocument();
   });
@@ -277,16 +285,19 @@ describe("RequirementChatNode", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
 
-    expect(screen.getByText("回答过程")).toBeInTheDocument();
-    expect(screen.queryByText("检查入口文件")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByText("回答过程"));
-    expect(screen.getByText("检查入口文件")).toBeInTheDocument();
+    expect(screen.getByText("Thinking")).toBeInTheDocument();
     expect(screen.getByText("rg")).toBeInTheDocument();
     expect(screen.queryByText("src/main.rs")).not.toBeInTheDocument();
+    expect(screen.queryByText("检查入口文件")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("查看输出"));
+    fireEvent.click(screen.getByText("Thinking"));
+    expect(screen.getByText("检查入口文件")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("rg"));
     expect(screen.getByText("src/main.rs")).toBeInTheDocument();
+
+    expect(
+      screen.getByText("Thinking").closest(".rq-message__body"),
+    ).toBeNull();
   });
 
   it("hides stale live process and completion notices after completion", () => {
@@ -330,7 +341,7 @@ describe("RequirementChatNode", () => {
 
     expect(screen.getByText("前端建议？")).toBeInTheDocument();
     expect(screen.getByText("建议统一设计系统。")).toBeInTheDocument();
-    expect(screen.getByText("回答过程")).toBeInTheDocument();
+    expect(screen.getByText("Thinking")).toBeInTheDocument();
     expect(screen.queryByText("正在回答")).not.toBeInTheDocument();
     expect(screen.queryByText("项目问答已完成。")).not.toBeInTheDocument();
   });
@@ -354,24 +365,45 @@ describe("RequirementChatNode", () => {
           },
           projectChatEvents: [
             {
-              type: "assistant.thinking.delta",
+              type: "agent.event",
               payload: {
                 project_id: "project-1",
-                delta: "正在查看入口。",
+                pi_type: "message_update",
+                event: {
+                  type: "message_update",
+                  assistantMessageEvent: {
+                    type: "thinking_delta",
+                    delta: "正在查看入口。",
+                  },
+                },
               },
             },
             {
-              type: "assistant.delta",
+              type: "agent.event",
               payload: {
                 project_id: "project-1",
-                delta: "入口在",
+                pi_type: "message_update",
+                event: {
+                  type: "message_update",
+                  assistantMessageEvent: {
+                    type: "text_delta",
+                    delta: "入口在",
+                  },
+                },
               },
             },
             {
-              type: "assistant.delta",
+              type: "agent.event",
               payload: {
                 project_id: "project-1",
-                delta: " src/main.rs",
+                pi_type: "message_update",
+                event: {
+                  type: "message_update",
+                  assistantMessageEvent: {
+                    type: "text_delta",
+                    delta: " src/main.rs",
+                  },
+                },
               },
             },
           ],
@@ -381,21 +413,51 @@ describe("RequirementChatNode", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
 
-    expect(screen.getByText("正在回答")).toBeInTheDocument();
+    expect(screen.getByText("Thinking")).toBeInTheDocument();
+    expect(screen.queryByText("等待 Pi Agent 事件...")).not.toBeInTheDocument();
     expect(screen.getByText("正在查看入口。")).toBeInTheDocument();
     expect(screen.getByText("入口在 src/main.rs")).toBeInTheDocument();
 
-    const body = screen
-      .getByText("入口在 src/main.rs")
-      .closest(".rq-message__body") as HTMLElement;
     const card = screen
-      .getByText("正在回答")
-      .closest(".rq-message__attachments") as HTMLElement;
-    expect(body).toContainElement(card);
+      .getByText("Thinking")
+      .closest(".rq-process") as HTMLElement;
+    expect(card.closest(".rq-message__body")).toBeNull();
     expect(
       card.compareDocumentPosition(screen.getByText("入口在 src/main.rs")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("shows a thinking indicator before Pi events arrive", () => {
+    render(
+      <RequirementChatNode
+        data={data("project-1", {
+          projectChat: {
+            project_id: "project-1",
+            running: true,
+            error: null,
+            updated_at: "2026-06-25T00:00:10Z",
+            messages: [
+              {
+                role: "user",
+                content: "入口在哪里？",
+                created_at: "2026-06-25T00:00:00Z",
+              },
+            ],
+          },
+          projectChatEvents: [],
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+
+    expect(screen.getByLabelText("正在思考")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Thinking" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("等待 Pi Agent 事件...")).not.toBeInTheDocument();
+    expect(screen.queryByText("正在处理...")).not.toBeInTheDocument();
   });
 
   it("runs the slash command without sending a chat message", () => {
@@ -469,20 +531,28 @@ describe("RequirementChatNode", () => {
           },
           projectChatEvents: [
             {
-              type: "tool.start",
+              type: "agent.event",
               payload: {
                 project_id: "project-1",
-                event: { toolCallId: "tool-1", toolName: "read" },
+                pi_type: "tool_execution_start",
+                event: {
+                  type: "tool_execution_start",
+                  toolCallId: "tool-1",
+                  toolName: "read",
+                  input: { path: "src/main.rs" },
+                },
               },
             },
             {
-              type: "tool.end",
+              type: "agent.event",
               payload: {
                 project_id: "project-1",
+                pi_type: "tool_execution_end",
                 event: {
+                  type: "tool_execution_end",
                   toolCallId: "tool-1",
                   toolName: "read",
-                  result: { content: [{ text: "src/main.rs" }] },
+                  result: { content: [{ text: "src/main.rs\nline 2" }] },
                 },
               },
             },
@@ -493,7 +563,9 @@ describe("RequirementChatNode", () => {
     fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
 
     expect(screen.getAllByText("read")).toHaveLength(1);
-    fireEvent.click(screen.getByText("查看输出"));
     expect(screen.getByText("src/main.rs")).toBeInTheDocument();
+    expect(screen.queryByText(/line 2/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("read"));
+    expect(screen.getByText(/line 2/)).toBeInTheDocument();
   });
 });

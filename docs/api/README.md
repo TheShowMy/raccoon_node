@@ -210,25 +210,21 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
 
 ```json
 {
-  "type": "assistant.delta",
+  "type": "agent.event",
   "payload": {}
 }
 ```
 
 事件类型：
 
-- `message.append`
-- `assistant.delta`
-- `assistant.thinking.delta`
-- `tool.start`、`tool.update`、`tool.end`
-- `message.end`
-- `status.update`
+- `agent.event`：携带原始 Pi Agent 事件
 - `snapshot.changed`
 - `session.error`
+- `notice.append`
 
 客户端先建立连接并缓冲事件，再调用问答查询接口加载 SQLite 快照，合并后回放
-缓冲事件。断线重连时重新执行该流程；`message.end` 以最终持久消息替换临时流。
-WebSocket 只提供实时增量，不是业务状态存储。
+缓冲事件。断线重连时重新执行该流程；`snapshot.changed` 后重新拉取快照，并以
+最终持久消息替换临时流。WebSocket 只提供实时增量，不是业务状态存储。
 
 ### 问答原始会话
 

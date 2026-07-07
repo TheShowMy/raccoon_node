@@ -100,9 +100,14 @@ describe("RequirementConversationWorkbench", () => {
 
     expect(screen.getByText("你")).toBeInTheDocument();
     expect(screen.getByText("我要新增登录")).toBeInTheDocument();
-    expect(screen.getByText("Coordinator")).toBeInTheDocument();
+    expect(screen.getAllByText("Coordinator").length).toBeGreaterThan(0);
     expect(screen.getByText("我会先澄清范围")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Coordinator 正在处理"));
+    const processCard = screen.getByText("Thinking").closest(".rq-process");
+    expect(processCard).not.toBeNull();
+    expect(processCard?.closest(".rq-message__body")).toBeNull();
+    expect(screen.queryByText("分析登录边界")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Thinking"));
     expect(screen.getByText("分析登录边界")).toBeInTheDocument();
   });
 
@@ -261,6 +266,12 @@ describe("RequirementConversationWorkbench", () => {
 
     const stopButton = screen.getByRole("button", { name: "停止分析" });
     expect(stopButton).toBeInTheDocument();
+    expect(screen.getByLabelText("正在思考")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Thinking" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("等待 Pi Agent 事件...")).not.toBeInTheDocument();
+    expect(screen.queryByText("正在处理...")).not.toBeInTheDocument();
     fireEvent.click(stopButton);
     expect(onCancel).toHaveBeenCalledTimes(1);
   });

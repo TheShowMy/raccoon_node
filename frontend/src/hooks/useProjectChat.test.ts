@@ -96,8 +96,15 @@ describe("useProjectChat", () => {
     act(() => socket.open());
     act(() =>
       socket.emit({
-        type: "assistant.delta",
-        payload: { project_id: "project-1", delta: "回答" },
+        type: "agent.event",
+        payload: {
+          project_id: "project-1",
+          pi_type: "message_update",
+          event: {
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "回答" },
+          },
+        },
       }),
     );
     expect(result.current.projectChatEvents).toHaveLength(0);
@@ -125,7 +132,7 @@ describe("useProjectChat", () => {
     });
     act(() =>
       socket.emit({
-        type: "message.end",
+        type: "snapshot.changed",
         payload: { project_id: "project-1" },
       }),
     );
@@ -134,6 +141,47 @@ describe("useProjectChat", () => {
       expect(result.current.projectChat?.messages).toHaveLength(1),
     );
     expect(result.current.projectChatEvents).toHaveLength(0);
+  });
+
+  it("keeps live process events when a running snapshot is reconciled", async () => {
+    const { result } = renderHook(() => useProjectChat("project-1"));
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket.open());
+    await waitFor(() => expect(result.current.projectChat).toEqual(response));
+
+    act(() =>
+      socket.emit({
+        type: "agent.event",
+        payload: {
+          project_id: "project-1",
+          pi_type: "tool_execution_start",
+          event: {
+            type: "tool_execution_start",
+            toolCallId: "tool-1",
+            toolName: "read",
+          },
+        },
+      }),
+    );
+    expect(result.current.projectChatEvents.map((event) => event.type)).toEqual(
+      ["agent.event"],
+    );
+
+    vi.mocked(getProjectChat).mockResolvedValueOnce({
+      ...response,
+      running: true,
+    });
+    act(() =>
+      socket.emit({
+        type: "snapshot.changed",
+        payload: { project_id: "project-1" },
+      }),
+    );
+
+    await waitFor(() => expect(result.current.projectChat?.running).toBe(true));
+    expect(result.current.projectChatEvents.map((event) => event.type)).toEqual(
+      ["agent.event", "snapshot.changed"],
+    );
   });
 
   it("resyncs a reconnected socket after the previous snapshot fails", async () => {

@@ -2,22 +2,20 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, MessageSquare, X } from "lucide-react";
 import type {
-  ConversationEvent,
   ProjectChatMessage,
   RequirementDraft,
   StartNodeData,
-  StreamEvent,
 } from "../../types/api";
 import {
-  buildBubbleStreamFromEvents,
-  buildBubbleStreamFromTrace,
-  buildStreamingTextFromEvents,
+  buildProcessRowsFromAgentEvents,
+  buildProcessRowsFromTrace,
+  buildStreamingTextFromAgentEvents,
   traceFromMetadata,
 } from "../../utils/format";
 import RequirementConversationWorkbench from "../requirements/RequirementConversation";
 import ChatComposer from "../ui/ChatComposer";
 import ChatMessageBubble from "../ui/ChatMessageBubble";
-import LiveProcessCard from "../ui/LiveProcessCard";
+import ProcessStreamRows, { ThinkingIndicator } from "../ui/ProcessStreamRows";
 import AnchoredScroll from "../ui/AnchoredScroll";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
@@ -158,33 +156,16 @@ function ProjectChatWorkbench({
 }) {
   const running = data.projectChat?.running ?? false;
   const error = data.projectChatError ?? data.projectChat?.error ?? null;
-  const streamEvents = useMemo(
-    () => data.projectChatEvents.map(projectEventToStreamEvent),
+  const liveRows = useMemo(
+    () => buildProcessRowsFromAgentEvents(data.projectChatEvents),
     [data.projectChatEvents],
   );
-  const liveBubbles = useMemo(
-    () => buildBubbleStreamFromEvents(streamEvents),
-    [streamEvents],
-  );
   const streamingText = useMemo(
-    () => buildStreamingTextFromEvents(streamEvents),
-    [streamEvents],
+    () => buildStreamingTextFromAgentEvents(data.projectChatEvents),
+    [data.projectChatEvents],
   );
-  const transientEvents = streamEvents.filter(
-    (event) =>
-      event.event !== "pi_event" &&
-      ![
-        "project_chat_started",
-        "project_chat_completed",
-        "project_chat_failed",
-        "chat_started",
-        "chat_updated",
-        "chat_completed",
-        "chat_failed",
-        "started",
-        "completed",
-        "failed",
-      ].includes(event.event),
+  const notices = data.projectChatEvents.filter(
+    (event) => event.type === "notice.append",
   );
   const canSend =
     !data.projectChatBusy &&
@@ -222,42 +203,18 @@ function ProjectChatWorkbench({
         >
           {data.projectChat?.messages.length ||
           data.projectChat?.requirement_summary ||
-          (running && liveBubbles.length) ||
-          transientEvents.length ||
+          liveRows.length ||
+          notices.length ||
           running ||
           error ? (
             <div className="rq-transcript__items">
               {data.projectChat?.messages.map((message, index) => (
-                <Fragment key={`${message.created_at}-${index}`}>
-                  <ChatMessageBubble
-                    role={message.role}
-                    content={message.content}
-                    references={message.references ?? []}
-                    images={message.images ?? []}
-                    projectId={data.project.id}
-                    createdAt={message.created_at}
-                    assistantLabel="Pi Agent"
-                    continued={isContinuedProjectMessage(
-                      data.projectChat?.messages[index - 1],
-                      message,
-                    )}
-                  >
-                    {message.role === "assistant" && message.metadata ? (
-                      <LiveProcessCard
-                        title="回答过程"
-                        status="done"
-                        bubbles={buildBubbleStreamFromTrace(
-                          traceFromMetadata(message.metadata) ?? {
-                            thinking: "",
-                            output: "",
-                            tools: [],
-                            statuses: [],
-                          },
-                        )}
-                      />
-                    ) : null}
-                  </ChatMessageBubble>
-                </Fragment>
+                <ProjectChatMessageItem
+                  key={`${message.created_at}-${index}`}
+                  message={message}
+                  previous={data.projectChat?.messages[index - 1]}
+                  projectId={data.project.id}
+                />
               ))}
               {data.projectChat?.requirement_summary ? (
                 <RequirementSummaryCard
@@ -270,12 +227,22 @@ function ProjectChatWorkbench({
                   }
                 />
               ) : null}
-              {transientEvents.length > 0 ? (
+              {notices.length > 0 ? (
                 <div className="rq-notice rq-notice--info">
-                  {transientEvents.at(-1)?.message}
+                  {String(notices.at(-1)?.payload.message ?? "")}
                 </div>
               ) : null}
-              {running ? (
+              {running || liveRows.length > 0 ? (
+                <>
+                  {running && liveRows.length === 0 && !streamingText ? (
+                    <ThinkingIndicator />
+                  ) : null}
+                  {liveRows.length > 0 ? (
+                    <ProcessStreamRows rows={liveRows} running={running} />
+                  ) : null}
+                </>
+              ) : null}
+              {streamingText ? (
                 <ChatMessageBubble
                   role="assistant"
                   content={streamingText}
@@ -283,14 +250,7 @@ function ProjectChatWorkbench({
                     data.projectChat?.updated_at ?? new Date().toISOString()
                   }
                   assistantLabel="Pi Agent"
-                >
-                  <LiveProcessCard
-                    title="正在回答"
-                    status="running"
-                    bubbles={liveBubbles}
-                    live
-                  />
-                </ChatMessageBubble>
+                />
               ) : null}
               {error ? (
                 <div className="rq-notice rq-notice--warn" role="alert">
@@ -361,50 +321,50 @@ function RequirementSummaryCard({
   );
 }
 
+function ProjectChatMessageItem({
+  message,
+  previous,
+  projectId,
+}: {
+  message: ProjectChatMessage;
+  previous: ProjectChatMessage | undefined;
+  projectId: string;
+}) {
+  const processRows =
+    message.role === "assistant"
+      ? buildProcessRowsFromTrace(
+          traceFromMetadata(message.metadata) ?? {
+            blocks: [],
+            thinking: "",
+            output: "",
+            tools: [],
+            statuses: [],
+          },
+        )
+      : [];
+
+  return (
+    <Fragment>
+      {processRows.length > 0 ? <ProcessStreamRows rows={processRows} /> : null}
+      <ChatMessageBubble
+        role={message.role}
+        content={message.content}
+        references={message.references ?? []}
+        images={message.images ?? []}
+        projectId={projectId}
+        createdAt={message.created_at}
+        assistantLabel="Pi Agent"
+        continued={isContinuedProjectMessage(previous, message)}
+      />
+    </Fragment>
+  );
+}
+
 function formatRequirementSummary(summary: RequirementDraft) {
   const criteria = summary.acceptance_criteria
     .map((item) => `- ${item}`)
     .join("\n");
   return `# ${summary.title}\n\n${summary.summary}\n\n## 验收标准\n\n${criteria}`;
-}
-
-function projectEventToStreamEvent(event: ConversationEvent): StreamEvent {
-  const payload =
-    event.payload.event && typeof event.payload.event === "object"
-      ? event.payload.event
-      : event.payload.payload && typeof event.payload.payload === "object"
-        ? event.payload.payload
-        : event.payload;
-  const delta =
-    typeof event.payload.delta === "string" ? event.payload.delta : "";
-  const message =
-    typeof event.payload.message === "string" ? event.payload.message : delta;
-  const assistantType =
-    event.type === "assistant.thinking.delta" ? "thinking_delta" : "text_delta";
-  const normalizedPayload =
-    event.type.startsWith("assistant.") &&
-    !("assistantMessageEvent" in (payload as Record<string, unknown>))
-      ? { assistantMessageEvent: { type: assistantType, delta } }
-      : payload;
-  const piType =
-    typeof event.payload.pi_type === "string"
-      ? event.payload.pi_type
-      : event.type.startsWith("assistant.")
-        ? "message_update"
-        : event.type === "tool.start"
-          ? "tool_execution_start"
-          : event.type === "tool.update"
-            ? "tool_execution_update"
-            : event.type === "tool.end"
-              ? "tool_execution_end"
-              : undefined;
-  return {
-    requirement_id: String(event.payload.project_id ?? "current"),
-    event: piType ? "pi_event" : event.type,
-    message,
-    pi_type: piType,
-    payload: normalizedPayload,
-  };
 }
 
 function isContinuedProjectMessage(

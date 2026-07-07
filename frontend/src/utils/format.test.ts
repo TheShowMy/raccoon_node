@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildBubbleStreamFromEvents,
-  buildStreamingTextFromEvents,
+  buildProcessRowsFromAgentEvents,
+  buildStreamingTextFromAgentEvents,
   formatCompactNumber,
   formatDate,
   githubUrlFromGitUrl,
   shortenGitUrl,
 } from "../utils/format";
-import type { ProjectChatEvent, StreamEvent } from "../types/api";
 
 describe("format utilities", () => {
   it("strips protocol from Git URLs", () => {
@@ -45,7 +44,7 @@ describe("format utilities", () => {
   });
 
   it("builds live bubbles from Pi thinking and tool events", () => {
-    const events: StreamEvent[] = [
+    const events = [
       {
         requirement_id: "req-1",
         event: "pi_event",
@@ -75,7 +74,11 @@ describe("format utilities", () => {
         event: "pi_event",
         message: "工具开始执行。",
         pi_type: "tool_execution_start",
-        payload: { toolCallId: "tool-1", toolName: "rg" },
+        payload: {
+          toolCallId: "tool-1",
+          toolName: "rg",
+          input: { command: "rg main src" },
+        },
       },
       {
         requirement_id: "req-1",
@@ -96,28 +99,80 @@ describe("format utilities", () => {
       },
     ];
 
-    expect(buildBubbleStreamFromEvents(events)).toMatchObject([
+    expect(buildProcessRowsFromAgentEvents(events)).toMatchObject([
       {
         type: "thinking",
         content: "先看入口。再看路由。",
-        status: "done",
+        status: "running",
       },
       {
         type: "tool",
-        label: "rg",
-        content: "src/main.rs",
-        status: "done",
-      },
-      {
-        type: "status",
-        label: "处理完成",
+        toolName: "rg",
+        output: "src/main.rs",
+        preview: "rg main src",
         status: "done",
       },
     ]);
   });
 
+  it("keeps thinking and tool rows in live event order", () => {
+    const events = [
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "正在生成内容。",
+        pi_type: "message_update",
+        payload: {
+          assistantMessageEvent: {
+            type: "thinking_delta",
+            delta: "先分析。",
+          },
+        },
+      },
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "工具开始执行。",
+        pi_type: "tool_execution_start",
+        payload: {
+          toolCallId: "tool-1",
+          toolName: "Read",
+          input: { path: "src/main.rs" },
+        },
+      },
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "工具执行完成。",
+        pi_type: "tool_execution_end",
+        payload: {
+          toolCallId: "tool-1",
+          result: { content: [{ text: "文件内容" }] },
+        },
+      },
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "正在生成内容。",
+        pi_type: "message_update",
+        payload: {
+          assistantMessageEvent: {
+            type: "thinking_delta",
+            delta: "再判断。",
+          },
+        },
+      },
+    ];
+
+    expect(buildProcessRowsFromAgentEvents(events)).toMatchObject([
+      { type: "thinking", content: "先分析。" },
+      { type: "tool", toolName: "Read", preview: "src/main.rs" },
+      { type: "thinking", content: "再判断。" },
+    ]);
+  });
+
   it("keeps old tool output when updates are deltas", () => {
-    const events: StreamEvent[] = [
+    const events = [
       {
         requirement_id: "req-1",
         event: "pi_event",
@@ -157,17 +212,17 @@ describe("format utilities", () => {
       },
     ];
 
-    const tool = buildBubbleStreamFromEvents(events).find(
+    const tool = buildProcessRowsFromAgentEvents(events).find(
       (bubble) => bubble.type === "tool",
     );
-    expect(tool?.content).toContain("第一段");
-    expect(tool?.content).toContain("第121段");
-    expect(tool?.content).toContain("最后一段");
+    expect(tool?.output).toContain("第一段");
+    expect(tool?.output).toContain("第121段");
+    expect(tool?.output).toContain("最后一段");
     expect(tool?.status).toBe("done");
   });
 
   it("creates a tool bubble when update arrives without start", () => {
-    const events: StreamEvent[] = [
+    const events = [
       {
         requirement_id: "req-1",
         event: "pi_event",
@@ -181,19 +236,61 @@ describe("format utilities", () => {
       },
     ];
 
-    expect(buildBubbleStreamFromEvents(events)).toMatchObject([
+    expect(buildProcessRowsFromAgentEvents(events)).toMatchObject([
       {
         id: "tool-late",
         type: "tool",
-        label: "Bash",
-        content: "输出",
+        toolName: "Bash",
+        output: "输出",
+        preview: "",
         status: "running",
       },
     ]);
   });
 
+  it("does not use tool output as the collapsed row preview", () => {
+    const events = [
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "工具开始执行。",
+        pi_type: "tool_execution_start",
+        payload: { toolCallId: "tool-1", toolName: "Read" },
+      },
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "工具执行完成。",
+        pi_type: "tool_execution_end",
+        payload: {
+          toolCallId: "tool-1",
+          result: { content: [{ text: "src/main.rs\nline 2" }] },
+        },
+      },
+    ];
+
+    const tool = buildProcessRowsFromAgentEvents(events).find(
+      (bubble) => bubble.type === "tool",
+    );
+    expect(tool?.preview).toBe("");
+    expect(tool?.output).toBe("src/main.rs\nline 2");
+  });
+
+  it("ignores non-agent events in the visible process stream", () => {
+    const events = [
+      {
+        requirement_id: "req-1",
+        event: "snapshot.changed",
+        message: "正在读取项目上下文。",
+        payload: {},
+      },
+    ];
+
+    expect(buildProcessRowsFromAgentEvents(events)).toEqual([]);
+  });
+
   it("extracts streaming answer text from text_delta events", () => {
-    const events: ProjectChatEvent[] = [
+    const events = [
       {
         project_id: "project-1",
         event: "pi_event",
@@ -214,11 +311,13 @@ describe("format utilities", () => {
       },
     ];
 
-    expect(buildStreamingTextFromEvents(events)).toBe("入口在 src/main.rs");
+    expect(buildStreamingTextFromAgentEvents(events)).toBe(
+      "入口在 src/main.rs",
+    );
   });
 
   it("ignores thinking_delta when extracting streaming text", () => {
-    const events: ProjectChatEvent[] = [
+    const events = [
       {
         project_id: "project-1",
         event: "pi_event",
@@ -239,11 +338,11 @@ describe("format utilities", () => {
       },
     ];
 
-    expect(buildStreamingTextFromEvents(events)).toBe("答案");
+    expect(buildStreamingTextFromAgentEvents(events)).toBe("答案");
   });
 
   it("falls back to text field when delta is absent", () => {
-    const events: ProjectChatEvent[] = [
+    const events = [
       {
         project_id: "project-1",
         event: "pi_event",
@@ -264,11 +363,11 @@ describe("format utilities", () => {
       },
     ];
 
-    expect(buildStreamingTextFromEvents(events)).toBe("第一段第二段");
+    expect(buildStreamingTextFromAgentEvents(events)).toBe("第一段第二段");
   });
 
   it("returns empty string when no text deltas exist", () => {
-    const events: ProjectChatEvent[] = [
+    const events = [
       {
         project_id: "project-1",
         event: "pi_event",
@@ -278,6 +377,85 @@ describe("format utilities", () => {
       },
     ];
 
-    expect(buildStreamingTextFromEvents(events)).toBe("");
+    expect(buildStreamingTextFromAgentEvents(events)).toBe("");
+  });
+
+  it("builds thinking rows from top-level thinking_delta events", () => {
+    const events = [
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "正在思考。",
+        pi_type: "thinking_delta",
+        payload: { type: "thinking_delta", delta: "第一步。" },
+      },
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "正在思考。",
+        pi_type: "thinking_delta",
+        payload: { type: "thinking_delta", delta: "第二步。" },
+      },
+    ];
+
+    expect(buildProcessRowsFromAgentEvents(events)).toMatchObject([
+      {
+        type: "thinking",
+        content: "第一步。第二步。",
+        status: "running",
+      },
+    ]);
+  });
+
+  it("extracts streaming text from top-level text_delta events", () => {
+    const events = [
+      {
+        project_id: "project-1",
+        event: "pi_event",
+        message: "正在生成内容。",
+        pi_type: "text_delta",
+        payload: { type: "text_delta", delta: "答案" },
+      },
+      {
+        project_id: "project-1",
+        event: "pi_event",
+        message: "正在生成内容。",
+        pi_type: "text_delta",
+        payload: { type: "text_delta", delta: "在这里" },
+      },
+    ];
+
+    expect(buildStreamingTextFromAgentEvents(events)).toBe("答案在这里");
+  });
+
+  it("keeps top-level thinking and text deltas separated", () => {
+    const events = [
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "正在思考。",
+        pi_type: "thinking_delta",
+        payload: { type: "thinking_delta", delta: "思考1" },
+      },
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "正在生成内容。",
+        pi_type: "text_delta",
+        payload: { type: "text_delta", delta: "文本1" },
+      },
+      {
+        requirement_id: "req-1",
+        event: "pi_event",
+        message: "正在思考。",
+        pi_type: "thinking_delta",
+        payload: { type: "thinking_delta", delta: "思考2" },
+      },
+    ];
+
+    expect(buildProcessRowsFromAgentEvents(events)).toMatchObject([
+      { type: "thinking", content: "思考1思考2" },
+    ]);
+    expect(buildStreamingTextFromAgentEvents(events)).toBe("文本1");
   });
 });

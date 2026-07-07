@@ -19,8 +19,8 @@ import type {
   StreamEvent,
 } from "../../types/api";
 import {
-  buildBubbleStreamFromEvents,
-  buildBubbleStreamFromTrace,
+  buildProcessRowsFromAgentEvents,
+  buildProcessRowsFromTrace,
   createDraftAnswer,
   hasDraftAnswer,
   requirementStatusText,
@@ -29,7 +29,7 @@ import {
 } from "../../utils/format";
 import ChatComposer from "../ui/ChatComposer";
 import ChatMessageBubble from "../ui/ChatMessageBubble";
-import LiveProcessCard from "../ui/LiveProcessCard";
+import ProcessStreamRows, { ThinkingIndicator } from "../ui/ProcessStreamRows";
 import AnchoredScroll from "../ui/AnchoredScroll";
 
 type Props = {
@@ -224,18 +224,18 @@ function RequirementTranscript({
   error: string | null;
   onCancel: () => void;
 }) {
-  const liveBubbles = useMemo(
-    () => buildBubbleStreamFromEvents(streamEvents),
+  const liveRows = useMemo(
+    () => buildProcessRowsFromAgentEvents(streamEvents),
     [streamEvents],
   );
-  const transientEvents = streamEvents.filter(
-    (event) => event.event !== "pi_event",
+  const notices = streamEvents.filter(
+    (event) => event.event === "notice.append",
   );
 
   return (
     <AnchoredScroll
       className="rq-transcript nowheel nodrag"
-      version={`${conversation?.updated_at ?? "empty"}:${streamEvents.length}:${liveBubbles.length}`}
+      version={`${conversation?.updated_at ?? "empty"}:${streamEvents.length}:${liveRows.length}`}
     >
       {conversation ? (
         <div className="rq-transcript__items">
@@ -247,9 +247,9 @@ function RequirementTranscript({
               projectId={conversation.project_id}
             />
           ))}
-          {transientEvents.length > 0 ? (
+          {notices.length > 0 ? (
             <div className="rq-notice rq-notice--info">
-              {transientEvents.at(-1)?.message}
+              {notices.at(-1)?.message}
             </div>
           ) : null}
           {streamEvents.some((e) => e.event === "coordinator_time_warning") ? (
@@ -264,13 +264,13 @@ function RequirementTranscript({
               </button>
             </div>
           ) : null}
-          {liveBubbles.length > 0 || running ? (
-            <LiveProcessCard
-              title="Coordinator 正在处理"
-              status={running ? "running" : "done"}
-              bubbles={liveBubbles}
-              live
-            />
+          {liveRows.length > 0 || running ? (
+            <>
+              {running && liveRows.length === 0 ? <ThinkingIndicator /> : null}
+              {liveRows.length > 0 ? (
+                <ProcessStreamRows rows={liveRows} running={running} />
+              ) : null}
+            </>
           ) : null}
           {error ? (
             <div className="rq-notice rq-notice--warn">{error}</div>
@@ -298,11 +298,10 @@ function RequirementTranscriptItem({
 }) {
   if (item.kind === "process") {
     return (
-      <LiveProcessCard
-        title={item.title}
-        status={item.status}
-        bubbles={buildBubbleStreamFromTrace(
+      <ProcessStreamRows
+        rows={buildProcessRowsFromTrace(
           traceFromMetadata(item.metadata) ?? {
+            blocks: [],
             thinking: "",
             output: "",
             tools: [],

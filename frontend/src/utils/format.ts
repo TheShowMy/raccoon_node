@@ -4,8 +4,10 @@ import {
   type DraftClarificationAnswer,
   type RequirementStatus,
   type RequirementMessage,
+  type ConversationEvent,
   type LiveBubble,
   type TraceData,
+  type TraceBlock,
   type TraceMetadata,
   type StreamEvent,
   type ModelSettings,
@@ -127,48 +129,28 @@ export function traceFromMetadata(
   return metadata?.type === "pi_trace" ? metadata.trace : null;
 }
 
-export function buildBubbleStreamFromTrace(trace: TraceData): LiveBubble[] {
-  const bubbles: LiveBubble[] = [];
-  let seq = 0;
+export type ProcessRow =
+  | {
+      id: string;
+      type: "thinking";
+      content: string;
+      status: "running" | "done" | "error";
+    }
+  | {
+      id: string;
+      type: "tool";
+      toolCallId: string;
+      toolName: string;
+      input?: unknown;
+      output: string;
+      preview: string;
+      status: "running" | "done" | "error";
+      isError?: boolean;
+    };
 
-  for (const status of trace.statuses ?? []) {
-    bubbles.push({
-      id: `status-${seq++}`,
-      type: "status",
-      label: status.message,
-      content: "",
-      status: "done",
-    });
-  }
-
-  if (trace.thinking?.trim()) {
-    bubbles.push({
-      id: `thinking-${seq++}`,
-      type: "thinking",
-      label: "思考过程",
-      content: trace.thinking,
-      status: "done",
-    });
-  }
-
-  for (const tool of trace.tools ?? []) {
-    bubbles.push({
-      id: tool.toolCallId,
-      type: "tool",
-      label: tool.toolName,
-      content: tool.output,
-      toolName: tool.toolName,
-      status: tool.isError || tool.status === "error" ? "error" : "done",
-    });
-  }
-
-  return bubbles;
-}
-
-type PiStreamEvent = Pick<
-  StreamEvent,
-  "event" | "message" | "pi_type" | "payload"
->;
+type AgentEventLike =
+  | Pick<ConversationEvent, "type" | "payload">
+  | Pick<StreamEvent, "event" | "message" | "pi_type" | "payload">;
 
 type ToolOutputState = {
   content: string;
@@ -192,57 +174,136 @@ function mergeStreamText(
 }
 
 export function buildBubbleStreamFromEvents(
-  events: PiStreamEvent[],
+  events: Pick<StreamEvent, "event" | "message" | "pi_type" | "payload">[],
 ): LiveBubble[] {
-  const bubbles: LiveBubble[] = [];
+  return buildProcessRowsFromAgentEvents(events).map((row) =>
+    row.type === "thinking"
+      ? {
+          id: row.id,
+          type: "thinking",
+          label: "Thinking",
+          content: row.content,
+          status: row.status,
+        }
+      : {
+          id: row.id,
+          type: "tool",
+          label: row.toolName,
+          content: row.output,
+          preview: row.preview,
+          toolName: row.toolName,
+          status: row.status,
+        },
+  );
+}
+
+export function buildBubbleStreamFromTrace(trace: TraceData): LiveBubble[] {
+  return buildProcessRowsFromTrace(trace).map((row) =>
+    row.type === "thinking"
+      ? {
+          id: row.id,
+          type: "thinking",
+          label: "Thinking",
+          content: row.content,
+          status: row.status,
+        }
+      : {
+          id: row.id,
+          type: "tool",
+          label: row.toolName,
+          content: row.output,
+          preview: row.preview,
+          toolName: row.toolName,
+          status: row.status,
+        },
+  );
+}
+
+export function buildProcessRowsFromTrace(trace: TraceData): ProcessRow[] {
+  if (trace.blocks?.length) {
+    return trace.blocks.flatMap((block) => processRowFromTraceBlock(block));
+  }
+  const rows: ProcessRow[] = [];
+  if (trace.thinking?.trim()) {
+    rows.push({
+      id: "thinking-0",
+      type: "thinking",
+      content: trace.thinking,
+      status: "done",
+    });
+  }
+  for (const tool of trace.tools ?? []) {
+    rows.push({
+      id: tool.toolCallId,
+      type: "tool",
+      toolCallId: tool.toolCallId,
+      toolName: tool.toolName,
+      input: tool.input,
+      output: tool.output,
+      preview: toolPreviewFromPayload(asRecord(tool.input)),
+      status: normalizeProcessStatus(tool.status, tool.isError),
+      isError: tool.isError,
+    });
+  }
+  return rows;
+}
+
+function processRowFromTraceBlock(block: TraceBlock): ProcessRow[] {
+  if (block.type === "thinking") {
+    return block.content.trim()
+      ? [
+          {
+            id: block.id,
+            type: "thinking",
+            content: block.content,
+            status: normalizeProcessStatus(block.status),
+          },
+        ]
+      : [];
+  }
+  return [
+    {
+      id: block.id || block.toolCallId,
+      type: "tool",
+      toolCallId: block.toolCallId,
+      toolName: block.toolName,
+      input: block.input,
+      output: block.output,
+      preview: toolPreviewFromPayload(asRecord(block.input)),
+      status: normalizeProcessStatus(block.status, block.isError),
+      isError: block.isError,
+    },
+  ];
+}
+
+export function buildProcessRowsFromAgentEvents(
+  events: AgentEventLike[],
+): ProcessRow[] {
+  const rows: ProcessRow[] = [];
   const toolOutputs = new Map<string, ToolOutputState>();
   let seq = 0;
 
   for (const event of events) {
-    if (event.event !== "pi_event") continue;
-    const payload = asRecord(event.payload);
+    const raw = rawPiEvent(event);
+    const piType = rawPiType(event, raw);
+    if (!raw || !piType) continue;
 
-    if (event.pi_type === "message_update") {
-      const assistantEvent = asRecord(payload?.assistantMessageEvent);
-      const deltaType = String(assistantEvent?.type ?? "");
-      const delta = String(assistantEvent?.delta ?? assistantEvent?.text ?? "");
-      if (!delta) continue;
-      if (deltaType !== "thinking_delta") continue;
-
-      const last = bubbles.at(-1);
+    const assistantDelta = readAssistantMessageDelta(event, raw);
+    if (assistantDelta) {
+      if (assistantDelta.type !== "thinking_delta" || !assistantDelta.delta) {
+        continue;
+      }
+      const last = rows.at(-1);
       if (last?.type === "thinking") {
-        bubbles[bubbles.length - 1] = {
+        rows[rows.length - 1] = {
           ...last,
-          content: last.content + delta,
+          content: last.content + assistantDelta.delta,
         };
       } else {
-        bubbles.push({
+        rows.push({
           id: `thinking-${seq++}`,
           type: "thinking",
-          label: "思考中...",
-          content: delta,
-          status: "running",
-        });
-      }
-      continue;
-    }
-
-    if (event.pi_type === "tool_execution_start") {
-      const toolCallId = String(
-        payload?.toolCallId ?? payload?.tool_call_id ?? `tool-${seq++}`,
-      );
-      const toolName = String(
-        payload?.toolName ?? payload?.tool_name ?? "tool",
-      );
-      if (
-        !bubbles.some((item) => item.id === toolCallId && item.type === "tool")
-      ) {
-        bubbles.push({
-          id: toolCallId,
-          type: "tool",
-          label: toolName,
-          content: "",
-          toolName,
+          content: assistantDelta.delta,
           status: "running",
         });
       }
@@ -250,98 +311,139 @@ export function buildBubbleStreamFromEvents(
     }
 
     if (
-      event.pi_type === "tool_execution_update" ||
-      event.pi_type === "tool_execution_end"
+      piType === "tool_execution_start" ||
+      piType === "tool_execution_update" ||
+      piType === "tool_execution_end"
     ) {
       const toolCallId = String(
-        payload?.toolCallId ?? payload?.tool_call_id ?? `tool-${seq++}`,
+        raw.toolCallId ?? raw.tool_call_id ?? `tool-${seq++}`,
       );
-      let index = bubbles.findIndex(
-        (item) => item.id === toolCallId && item.type === "tool",
+      let index = rows.findIndex(
+        (item) => item.type === "tool" && item.toolCallId === toolCallId,
       );
       if (index === -1) {
-        bubbles.push({
+        rows.push({
           id: toolCallId,
           type: "tool",
-          label: String(payload?.toolName ?? payload?.tool_name ?? "tool"),
-          content: "",
-          toolName: String(payload?.toolName ?? payload?.tool_name ?? "tool"),
+          toolCallId,
+          toolName: String(raw.toolName ?? raw.tool_name ?? "tool"),
+          input: toolInputFromPayload(raw),
+          output: "",
+          preview: toolPreviewFromPayload(raw),
           status: "running",
         });
-        index = bubbles.length - 1;
+        index = rows.length - 1;
       }
-      const bubble = bubbles[index];
-      const output = extractToolOutput(payload);
+      const row = rows[index];
+      if (row.type !== "tool") continue;
+      const output = extractToolOutput(raw);
       const state = toolOutputs.get(toolCallId) ?? {
-        content: bubble.content,
+        content: row.output,
         lastChunk: "",
       };
       const merged = output
         ? mergeStreamText(state.content, output, state.lastChunk)
         : state;
       toolOutputs.set(toolCallId, merged);
-      const nextStatus =
-        event.pi_type === "tool_execution_end"
-          ? payload?.isError || payload?.is_error
-            ? "error"
-            : "done"
-          : bubble.status;
-      bubbles[index] = {
-        ...bubble,
-        content: merged.content,
-        status: nextStatus,
+      rows[index] = {
+        ...row,
+        toolName: String(raw.toolName ?? raw.tool_name ?? row.toolName),
+        input: row.input ?? toolInputFromPayload(raw),
+        output: merged.content,
+        preview: toolPreviewFromPayload(raw) || row.preview,
+        status:
+          piType === "tool_execution_end"
+            ? normalizeProcessStatus(
+                "done",
+                Boolean(raw.isError ?? raw.is_error),
+              )
+            : row.status,
+        isError: Boolean(raw.isError ?? raw.is_error) || row.isError,
       };
-      continue;
-    }
-
-    if (event.pi_type === "agent_end" || event.pi_type === "turn_end") {
-      for (let i = 0; i < bubbles.length; i++) {
-        const bubble = bubbles[i];
-        if (bubble.status === "running") {
-          bubbles[i] = { ...bubble, status: "done" };
-        }
-      }
-      bubbles.push({
-        id: `end-${seq++}`,
-        type: "status",
-        label: event.pi_type === "agent_end" ? "处理完成" : "本轮处理完成",
-        content: "",
-        status: "done",
-      });
     }
   }
 
-  return bubbles;
+  return rows;
 }
 
-export function buildStreamingTextFromEvents(events: PiStreamEvent[]): string {
+export function buildStreamingTextFromAgentEvents(
+  events: AgentEventLike[],
+): string {
   const parts: string[] = [];
 
   for (const event of events) {
-    if (event.event !== "pi_event") continue;
-    if (event.pi_type !== "message_update") continue;
-    const payload = asRecord(event.payload);
-    const assistantEvent = asRecord(payload?.assistantMessageEvent);
-    if (!assistantEvent) continue;
+    const raw = rawPiEvent(event);
+    if (!raw) continue;
 
-    const deltaType = String(assistantEvent.type ?? "");
-    if (deltaType === "thinking_delta") continue;
+    const assistantDelta = readAssistantMessageDelta(event, raw);
+    if (!assistantDelta) continue;
+
+    if (assistantDelta.type === "thinking_delta") continue;
     if (
-      deltaType !== "text_delta" &&
-      deltaType !== "content_delta" &&
-      deltaType !== "message_delta" &&
-      deltaType !== ""
+      assistantDelta.type !== "text_delta" &&
+      assistantDelta.type !== "content_delta" &&
+      assistantDelta.type !== "message_delta" &&
+      assistantDelta.type !== ""
     ) {
       continue;
     }
 
-    const delta = String(assistantEvent.delta ?? assistantEvent.text ?? "");
-    if (delta) {
-      parts.push(delta);
+    if (assistantDelta.delta) {
+      parts.push(assistantDelta.delta);
     }
   }
 
   return parts.join("");
+}
+
+export const buildStreamingTextFromEvents = buildStreamingTextFromAgentEvents;
+
+function rawPiEvent(event: AgentEventLike): Record<string, unknown> | null {
+  if ("type" in event) {
+    if (event.type !== "agent.event") return null;
+    return asRecord(event.payload.event ?? event.payload);
+  }
+  if (event.event !== "agent.event" && event.event !== "pi_event") return null;
+  return asRecord(event.payload);
+}
+
+function rawPiType(
+  event: AgentEventLike,
+  raw: Record<string, unknown> | null,
+): string {
+  if ("type" in event) {
+    return String(event.payload.pi_type ?? raw?.type ?? "");
+  }
+  return String(event.pi_type ?? raw?.type ?? "");
+}
+
+const ASSISTANT_DELTA_TYPES = new Set([
+  "thinking_delta",
+  "text_delta",
+  "content_delta",
+  "message_delta",
+]);
+
+function readAssistantMessageDelta(
+  event: AgentEventLike,
+  raw: Record<string, unknown>,
+): { type: string; delta: string } | null {
+  const piType = rawPiType(event, raw);
+  if (piType === "message_update") {
+    const assistantEvent = asRecord(raw.assistantMessageEvent);
+    if (!assistantEvent) return null;
+    return {
+      type: String(assistantEvent.type ?? ""),
+      delta: String(assistantEvent.delta ?? assistantEvent.text ?? ""),
+    };
+  }
+  if (ASSISTANT_DELTA_TYPES.has(piType)) {
+    return {
+      type: piType,
+      delta: String(raw.delta ?? raw.text ?? ""),
+    };
+  }
+  return null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -359,6 +461,73 @@ function extractToolOutput(payload: Record<string, unknown> | null) {
     .map((item) => asRecord(item)?.text)
     .filter((text): text is string => typeof text === "string")
     .join("\n");
+}
+
+function toolInputFromPayload(payload: Record<string, unknown> | null) {
+  if (!payload) return undefined;
+  return (
+    payload.input ??
+    payload.arguments ??
+    payload.args ??
+    payload.toolInput ??
+    payload.tool_input ??
+    payload.toolArguments ??
+    payload.tool_arguments
+  );
+}
+
+function toolPreviewFromPayload(payload: Record<string, unknown> | null) {
+  if (!payload) return "";
+  const input = toolInputFromPayload(payload);
+  for (const source of [input, directUsefulFields(payload)]) {
+    const found = findUsefulString(source);
+    if (found) return found;
+  }
+  return "";
+}
+
+function findUsefulString(value: unknown): string | undefined {
+  if (typeof value === "string") return value.trim() || undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const record = value as Record<string, unknown>;
+  for (const key of usefulPreviewKeys) {
+    const found = findUsefulString(record[key]);
+    if (found) return found;
+  }
+  for (const item of Object.values(record)) {
+    const found = findUsefulString(item);
+    if (found) return found;
+  }
+}
+
+const usefulPreviewKeys = [
+  "path",
+  "file",
+  "filePath",
+  "file_path",
+  "filename",
+  "command",
+  "cmd",
+  "url",
+  "query",
+  "pattern",
+] as const;
+
+function directUsefulFields(record: Record<string, unknown>) {
+  const picked: Record<string, unknown> = {};
+  for (const key of usefulPreviewKeys) {
+    picked[key] = record[key];
+  }
+  return picked;
+}
+
+function normalizeProcessStatus(
+  status: string | undefined,
+  isError = false,
+): ProcessRow["status"] {
+  if (isError || status === "error") return "error";
+  if (status === "running") return "running";
+  return "done";
 }
 
 export function createDraftAnswer(

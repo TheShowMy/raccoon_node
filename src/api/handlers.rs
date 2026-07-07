@@ -963,6 +963,7 @@ async fn project_chat_websocket(mut socket: WebSocket, state: AppState, project_
                 Ok(event) if event.project_id == project_id => {
                     if let Some(frame) = conversation_event_frame(
                         &event.event,
+                        &event.message,
                         event.pi_type.as_deref(),
                         event.payload,
                         serde_json::json!({"project_id": project_id}),
@@ -1017,6 +1018,7 @@ async fn requirement_conversation_websocket(
                 Ok(event) if event.requirement_id == requirement_id && event.task_id.is_none() => {
                     if let Some(frame) = conversation_event_frame(
                         &event.event,
+                        &event.message,
                         event.pi_type.as_deref(),
                         event.payload,
                         serde_json::json!({"requirement_id": requirement_id}),
@@ -1042,46 +1044,37 @@ async fn requirement_conversation_websocket(
 
 fn conversation_event_frame(
     event: &str,
+    message: &str,
     pi_type: Option<&str>,
     raw_payload: Option<serde_json::Value>,
     identity: serde_json::Value,
 ) -> Option<serde_json::Value> {
     let raw = raw_payload.unwrap_or(serde_json::Value::Null);
-    let nested = raw.get("assistantMessageEvent").unwrap_or(&raw);
-    let nested_type = nested.get("type").and_then(serde_json::Value::as_str);
-    let delta = nested
-        .get("delta")
-        .or_else(|| nested.get("text"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned);
-    let event_type = match (event, pi_type, nested_type) {
-        ("pi_event", _, Some("thinking_delta")) => "assistant.thinking.delta",
-        ("pi_event", _, Some("text_delta" | "content_delta" | "message_delta")) => {
-            "assistant.delta"
-        }
-        ("pi_event", Some("tool_execution_start"), _) => "tool.start",
-        ("pi_event", Some("tool_execution_update"), _) => "tool.update",
-        ("pi_event", Some("tool_execution_end"), _) => "tool.end",
-        ("pi_event", Some("message_end" | "agent_end"), _) => "message.end",
-        ("pi_event", Some("extension_error"), _) => "session.error",
-        ("project_chat_completed" | "project_chat_failed" | "analysis_failed", _, _) => {
-            "snapshot.changed"
-        }
-        ("clarifications_ready" | "draft_ready" | "analysis_cancelled", _, _) => "snapshot.changed",
-        ("project_chat_started" | "coordinator_started" | "coordinator_progress", _, _) => {
-            "status.update"
-        }
-        ("message_append", _, _) => "message.append",
+    let event_type = match (event, pi_type) {
+        ("pi_event", Some("extension_error")) => "session.error",
+        ("pi_event", _) => "agent.event",
+        ("coordinator_time_warning", _) => "notice.append",
+        (
+            "project_chat_started"
+            | "project_chat_completed"
+            | "project_chat_failed"
+            | "coordinator_started"
+            | "coordinator_progress"
+            | "clarifications_ready"
+            | "draft_ready"
+            | "analysis_cancelled"
+            | "analysis_failed"
+            | "message_append",
+            _,
+        ) => "snapshot.changed",
         _ => return None,
     };
     let mut payload = identity;
     if let Some(object) = payload.as_object_mut() {
         object.insert("event".to_owned(), raw);
+        object.insert("message".to_owned(), serde_json::json!(message));
         if let Some(pi_type) = pi_type {
             object.insert("pi_type".to_owned(), serde_json::json!(pi_type));
-        }
-        if let Some(delta) = delta {
-            object.insert("delta".to_owned(), serde_json::json!(delta));
         }
     }
     Some(serde_json::json!({"type": event_type, "payload": payload}))
@@ -1837,6 +1830,7 @@ mod event_filter_tests {
     fn conversation_frames_use_the_unified_protocol() {
         let delta = conversation_event_frame(
             "pi_event",
+            "正在生成内容。",
             Some("message_update"),
             Some(serde_json::json!({
                 "assistantMessageEvent": {"type": "text_delta", "delta": "你好"}
@@ -1844,26 +1838,42 @@ mod event_filter_tests {
             serde_json::json!({"project_id": "current"}),
         )
         .unwrap();
-        assert_eq!(delta["type"], "assistant.delta");
-        assert_eq!(delta["payload"]["delta"], "你好");
+        assert_eq!(delta["type"], "agent.event");
+        assert_eq!(
+            delta["payload"]["event"]["assistantMessageEvent"]["delta"],
+            "你好"
+        );
 
         let tool = conversation_event_frame(
             "pi_event",
+            "工具执行完成。",
             Some("tool_execution_end"),
             Some(serde_json::json!({"toolCallId": "tool-1"})),
             serde_json::json!({"requirement_id": "requirement-1"}),
         )
         .unwrap();
-        assert_eq!(tool["type"], "tool.end");
+        assert_eq!(tool["type"], "agent.event");
         assert_eq!(tool["payload"]["event"]["toolCallId"], "tool-1");
 
         let changed = conversation_event_frame(
             "draft_ready",
+            "需求草案已生成。",
             None,
             None,
             serde_json::json!({"requirement_id": "requirement-1"}),
         )
         .unwrap();
         assert_eq!(changed["type"], "snapshot.changed");
+
+        let notice = conversation_event_frame(
+            "coordinator_time_warning",
+            "分析耗时较长，是否继续等待？",
+            None,
+            None,
+            serde_json::json!({"requirement_id": "requirement-1"}),
+        )
+        .unwrap();
+        assert_eq!(notice["type"], "notice.append");
+        assert_eq!(notice["payload"]["message"], "分析耗时较长，是否继续等待？");
     }
 }

@@ -2,16 +2,10 @@ import { useEffect, useRef } from "react";
 import type { ConversationEvent } from "../types/api";
 
 const EVENT_TYPES = new Set<ConversationEvent["type"]>([
-  "message.append",
-  "assistant.delta",
-  "assistant.thinking.delta",
-  "tool.start",
-  "tool.update",
-  "tool.end",
-  "message.end",
-  "status.update",
+  "agent.event",
   "snapshot.changed",
   "session.error",
+  "notice.append",
 ]);
 
 function parseConversationEvent(data: string): ConversationEvent | null {
@@ -71,8 +65,7 @@ export function useConversationSocket<T>({
         const pending = buffer.splice(0);
         pending.forEach(callbacks.current.onEvent);
         resyncRequested = pending.some(
-          (event) =>
-            event.type === "snapshot.changed" || event.type === "message.end",
+          (event) => event.type === "snapshot.changed",
         );
       } catch (error) {
         callbacks.current.onError(
@@ -106,7 +99,7 @@ export function useConversationSocket<T>({
           return;
         }
         callbacks.current.onEvent(event);
-        if (event.type === "snapshot.changed" || event.type === "message.end") {
+        if (event.type === "snapshot.changed") {
           void sync();
         }
       };

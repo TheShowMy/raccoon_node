@@ -185,7 +185,9 @@ export function useRequirementFlow(
     onSnapshot: useCallback((snapshot: RequirementConversation) => {
       setRequirementConversation(snapshot);
       setRequirementError(snapshot.error);
-      setRequirementStreamEvents([]);
+      setRequirementStreamEvents((current) =>
+        snapshot.running ? current : [],
+      );
     }, []),
     onEvent: handleConversationEvent,
     onError: setRequirementError,
@@ -456,22 +458,15 @@ function conversationEventToStreamEvent(
   event: ConversationEvent,
 ): StreamEvent {
   const message =
-    typeof event.payload.message === "string"
-      ? event.payload.message
-      : typeof event.payload.delta === "string"
-        ? event.payload.delta
-        : "";
+    typeof event.payload.message === "string" ? event.payload.message : "";
   return {
     requirement_id: requirementId,
-    event:
-      event.type.startsWith("assistant.") || event.type.startsWith("tool.")
-        ? "pi_event"
-        : event.type,
+    event: event.type,
     message,
     pi_type:
       typeof event.payload.pi_type === "string"
         ? event.payload.pi_type
         : undefined,
-    payload: event.payload.event ?? event.payload.payload ?? event.payload,
+    payload: event.payload.event ?? event.payload,
   };
 }
