@@ -260,7 +260,7 @@
   }
   .node-card--requirement-chat {
     height: 760px;
-    width: 720px;
+    width: 960px;
     overflow: visible;
     padding: 0;
     border: none;
@@ -1803,56 +1803,6 @@
     display: flex;
     flex-direction: column;
     gap: calc(var(--spacing) * 2);
-  }
-  .rq-workbench {
-    position: relative;
-    display: flex;
-    min-height: 0;
-    flex: 1;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .rq-transcript {
-    min-height: 0;
-    flex: 1;
-    overflow-y: auto;
-    padding-inline: calc(var(--spacing) * 5);
-    padding-top: calc(var(--spacing) * 5);
-    padding-bottom: 80px;
-    overscroll-behavior: contain;
-    cursor: text;
-    user-select: text;
-  }
-  .rq-prompt-layer {
-    pointer-events: none;
-    position: absolute;
-    right: calc(var(--spacing) * 4);
-    bottom: 74px;
-    left: calc(var(--spacing) * 4);
-    z-index: 30;
-    min-width: 0;
-  }
-  .rq-shelf {
-    pointer-events: auto;
-    margin-inline: auto;
-    max-height: 330px;
-    width: min(100%, 620px);
-    max-width: 620px;
-    overflow-y: auto;
-  }
-  .rq-message-bubble__images {
-    display: flex;
-    flex-wrap: wrap;
-    gap: calc(var(--spacing) * 1.5);
-  }
-  .rq-message-bubble__images img {
-    max-width: 240px;
-    max-height: 160px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--card-border);
-  }
-  .rotate-icon {
-    transform: rotate(180deg);
   }
 }
 @layer utilities {
@@ -3645,21 +3595,6 @@
     display: flex;
     flex-direction: column;
   }
-  .anchored-scroll {
-    position: relative;
-    display: flex;
-    min-height: 0;
-    flex: 1;
-  }
-  .anchored-scroll > .rq-transcript {
-    width: 100%;
-  }
-  .anchored-scroll__new {
-    position: absolute;
-    right: calc(1 / 2 * 100%);
-    bottom: 86px;
-    z-index: 30;
-  }
   .rich-content {
     min-width: 0;
     font-size: 13px;
@@ -3994,9 +3929,6 @@
     }
     .chat-workspace {
       width: min(696px, calc(100vw - 24px));
-    }
-    .rq-transcript {
-      padding-inline: calc(var(--spacing) * 3);
     }
     .task-detail-dialog__panel {
       border-radius: 0;

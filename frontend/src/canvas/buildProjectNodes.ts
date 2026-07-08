@@ -60,7 +60,7 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       "project-settings": { width: 290, height: 44 },
       "project-github": { width: 290, height: 44 },
       "requirement-list": { width: 290, height: 640 },
-      "requirement-chat": { width: 720, height: 760 },
+      "requirement-chat": { width: 960, height: 760 },
       "project-terminal": { width: 720, height: 44 },
       "project-git": { width: 290, height: 44 },
       "requirement-dag": DAG_NODE_SIZE,

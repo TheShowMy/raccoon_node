@@ -9,6 +9,7 @@ import { Avatar } from "@astryxdesign/core/Avatar";
 import { Markdown } from "@astryxdesign/core/Markdown";
 import { Timestamp } from "@astryxdesign/core/Timestamp";
 import { HStack, VStack } from "@astryxdesign/core";
+import { Thumbnail } from "@astryxdesign/core/Thumbnail";
 import { AlertTriangle } from "lucide-react";
 import type { FileReference, ImageAttachment } from "../../types/api";
 import DocumentPreview from "./DocumentPreview";
@@ -80,18 +81,22 @@ export default function ChatMessageBubble({
           </HStack>
         ) : null}
         {images.length > 0 ? (
-          <HStack className="rq-message-bubble__images" wrap="wrap" gap={1.5}>
+          <HStack wrap="wrap" gap={1.5}>
             {images.map((image) => {
               const basename = attachmentBasename(image.path);
               const src = projectId
                 ? `/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(basename)}`
                 : image.path;
-              return projectId ? (
-                <a key={image.path} href={src} target="_blank" rel="noreferrer">
-                  <img src={src} alt={image.name} />
-                </a>
-              ) : (
-                <span key={image.path}>{image.name}</span>
+              return (
+                <Thumbnail
+                  key={image.path}
+                  src={src}
+                  alt={image.name}
+                  label={image.name}
+                  onClick={() =>
+                    window.open(src, "_blank", "noopener,noreferrer")
+                  }
+                />
               );
             })}
           </HStack>
