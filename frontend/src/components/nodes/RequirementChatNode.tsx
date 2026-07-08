@@ -1,5 +1,18 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { AlertDialog, Button, Card, Tab, TabList } from "@astryxdesign/core";
+import {
+  AlertDialog,
+  Banner,
+  Button,
+  Card,
+  EmptyState,
+  HStack,
+  List,
+  ListItem,
+  Tab,
+  TabList,
+  Text,
+  VStack,
+} from "@astryxdesign/core";
 import { ChatMessageList } from "@astryxdesign/core/Chat";
 import { MessageSquare, X } from "lucide-react";
 import type {
@@ -50,8 +63,8 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
     data.onInputChange(formatRequirementSummary(summary));
     requestAnimationFrame(() => {
       document
-        .querySelector<HTMLTextAreaElement>(
-          '[data-chat-card="requirement"] textarea:not(:disabled)',
+        .querySelector<HTMLElement>(
+          '[data-chat-card="requirement"] [role="combobox"][contenteditable="true"]',
         )
         ?.focus();
     });
@@ -61,9 +74,12 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
     <>
       <div className="chat-workspace nodrag" aria-label="需求会话与项目问答">
         <TabList
-          className="chat-workspace__tabs"
           value={activeCard}
-          onChange={(value) => setActiveCard(value as ActiveCard)}
+          onChange={(value) => {
+            if (value === "requirement" || value === "project") {
+              setActiveCard(value);
+            }
+          }}
           layout="fill"
           hasDivider
           aria-label="对话类型"
@@ -190,7 +206,7 @@ function ProjectChatWorkbench({
         />
       </div>
 
-      <div className="rq-workbench project-chat-workbench">
+      <div className="rq-workbench">
         <AnchoredScroll
           className="rq-transcript nowheel nodrag"
           version={`${data.projectChat?.updated_at ?? "empty"}:${data.projectChatEvents.length}`}
@@ -201,12 +217,7 @@ function ProjectChatWorkbench({
           notices.length ||
           running ||
           error ? (
-            <ChatMessageList
-              className="rq-transcript__items"
-              density="compact"
-              gap={2}
-              isStreaming={running}
-            >
+            <ChatMessageList density="compact" gap={2} isStreaming={running}>
               {data.projectChat?.messages.map((message, index) => (
                 <ProjectChatMessageItem
                   key={`${message.created_at}-${index}`}
@@ -227,9 +238,10 @@ function ProjectChatWorkbench({
                 />
               ) : null}
               {notices.length > 0 ? (
-                <div className="rq-notice rq-notice--info">
-                  {String(notices.at(-1)?.payload.message ?? "")}
-                </div>
+                <Banner
+                  status="info"
+                  title={String(notices.at(-1)?.payload.message ?? "")}
+                />
               ) : null}
               {running || liveRows.length > 0 ? (
                 <>
@@ -251,18 +263,15 @@ function ProjectChatWorkbench({
                   assistantLabel="Pi Agent"
                 />
               ) : null}
-              {error ? (
-                <div className="rq-notice rq-notice--warn" role="alert">
-                  {error}
-                </div>
-              ) : null}
+              {error ? <Banner status="error" title={error} /> : null}
             </ChatMessageList>
           ) : (
-            <div className="rq-empty">
-              <MessageSquare size={24} />
-              <strong>询问当前项目</strong>
-              <span>消息会持久保存，Pi Agent 过程会在这里实时显示。</span>
-            </div>
+            <EmptyState
+              icon={<MessageSquare size={24} />}
+              title="询问当前项目"
+              description="消息会持久保存，Pi Agent 过程会在这里实时显示。"
+              isCompact
+            />
           )}
         </AnchoredScroll>
 
@@ -278,11 +287,9 @@ function ProjectChatWorkbench({
           placeholder={
             running ? "Pi Agent 正在处理..." : "询问项目代码、结构或实现..."
           }
-          sendLabel="发送项目问答"
           onChange={data.onProjectChatInputChange}
           onSubmit={data.onProjectChatSend}
           onStop={running ? () => void data.onProjectChatAbort() : undefined}
-          stopLabel="停止项目问答"
           onGenerateRequirementSummary={data.onProjectChatGenerateRequirement}
         />
       </div>
@@ -300,26 +307,38 @@ function RequirementSummaryCard({
   onContinue: () => void;
 }) {
   return (
-    <Card className="rq-shelf rq-confirm" aria-label="需求说明" padding={4}>
-      <div className="rq-shelf__topline">
-        <span>需求说明</span>
-      </div>
-      <strong>{summary.title}</strong>
-      <p>{summary.summary}</p>
-      <ul>
-        {summary.acceptance_criteria.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-      <div className="rq-shelf__actions">
-        <Button
-          label="作为需求继续"
-          className="rq-shelf__action rq-shelf__action--primary"
-          variant="primary"
-          isDisabled={disabled}
-          onClick={onContinue}
-        />
-      </div>
+    <Card className="rq-shelf" aria-label="需求说明" padding={4}>
+      <VStack gap={3} align="stretch">
+        <Text type="supporting" size="2xs">
+          需求说明
+        </Text>
+        <Text type="body" size="sm" weight="bold">
+          {summary.title}
+        </Text>
+        <Text type="body" size="2xs" color="secondary">
+          {summary.summary}
+        </Text>
+        <List listStyle="disc" density="compact">
+          {summary.acceptance_criteria.map((item, index) => (
+            <ListItem
+              key={`${item}-${index}`}
+              label={
+                <Text type="body" size="2xs" color="secondary">
+                  {item}
+                </Text>
+              }
+            />
+          ))}
+        </List>
+        <HStack wrap="wrap" gap={2}>
+          <Button
+            label="作为需求继续"
+            variant="primary"
+            isDisabled={disabled}
+            onClick={onContinue}
+          />
+        </HStack>
+      </VStack>
     </Card>
   );
 }

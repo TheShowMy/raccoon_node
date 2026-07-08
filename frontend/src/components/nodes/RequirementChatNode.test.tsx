@@ -1,9 +1,25 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { StartNodeData } from "../../types/api";
 import RequirementChatNode from "./RequirementChatNode";
+
+function setCursorAtEnd(element: HTMLElement) {
+  element.focus();
+  const selection = window.getSelection();
+  if (!selection) return;
+  const range = document.createRange();
+  const textNode = element.firstChild;
+  if (textNode?.nodeType === Node.TEXT_NODE) {
+    range.setStart(textNode, textNode.textContent?.length ?? 0);
+  } else {
+    range.selectNodeContents(element);
+    range.collapse(false);
+  }
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 
@@ -145,7 +161,7 @@ describe("RequirementChatNode", () => {
     const projectSwitch = screen.getByRole("button", {
       name: "项目问答",
     });
-    const input = screen.getByPlaceholderText("继续描述你的需求...");
+    const input = screen.getByLabelText("继续描述你的需求...");
 
     fireEvent.keyDown(stack, { key: "Tab" });
     fireEvent.keyDown(input, { key: "Tab" });
@@ -245,7 +261,7 @@ describe("RequirementChatNode", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "项目问答" }));
 
-    expect(screen.getByText("你")).toBeInTheDocument();
+    expect(screen.getAllByText("你").length).toBeGreaterThan(0);
     expect(screen.getByText("入口在哪里？")).toBeInTheDocument();
     expect(screen.getAllByText("Pi Agent").length).toBeGreaterThan(0);
     expect(screen.getByText("入口在 src/main.rs。")).toBeInTheDocument();
@@ -307,7 +323,7 @@ describe("RequirementChatNode", () => {
     expect(screen.getByText("src/main.rs")).toBeInTheDocument();
 
     expect(
-      screen.getByText("Thinking").closest(".rq-message__body"),
+      screen.getByText("Thinking").closest(".astryx-chat-message"),
     ).toBeNull();
   });
 
@@ -432,8 +448,8 @@ describe("RequirementChatNode", () => {
 
     const card = screen
       .getByText("Thinking")
-      .closest(".rq-process") as HTMLElement;
-    expect(card.closest(".rq-message__body")).toBeNull();
+      .closest('section[aria-label="过程"]') as HTMLElement;
+    expect(card.closest(".astryx-chat-message")).toBeNull();
     expect(
       card.compareDocumentPosition(screen.getByText("入口在 src/main.rs")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -472,7 +488,7 @@ describe("RequirementChatNode", () => {
     expect(screen.queryByText("正在处理...")).not.toBeInTheDocument();
   });
 
-  it("runs the slash command without sending a chat message", () => {
+  it("runs the slash command without sending a chat message", async () => {
     const onProjectChatGenerateRequirement = vi.fn();
     const onProjectChatSend = vi.fn();
     render(
@@ -485,7 +501,15 @@ describe("RequirementChatNode", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "项目问答" }));
-    fireEvent.click(screen.getByRole("option", { name: "/生成需求说明" }));
+    const input = screen.getByLabelText("询问项目代码、结构或实现...");
+    setCursorAtEnd(input);
+    fireEvent.input(input);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("option", { name: "/生成需求说明" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.keyDown(input, { key: "Enter" });
 
     expect(onProjectChatGenerateRequirement).toHaveBeenCalledTimes(1);
     expect(onProjectChatSend).not.toHaveBeenCalled();

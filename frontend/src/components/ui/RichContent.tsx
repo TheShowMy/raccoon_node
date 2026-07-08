@@ -12,6 +12,13 @@ function textFromNode(node: ReactNode): string {
   return "";
 }
 
+function sanitizeUrl(url: string): string | null {
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  if (/^(javascript|data|vbscript):/i.test(trimmed)) return null;
+  return trimmed;
+}
+
 export default function RichContent({
   content,
   compact = false,
@@ -27,11 +34,15 @@ export default function RichContent({
         remarkPlugins={[remarkGfm]}
         components={{
           a({ href, children, ...props }) {
-            const external = href?.startsWith("http");
+            const safeHref = sanitizeUrl(href ?? "");
+            if (!safeHref) {
+              return <span>{children}</span>;
+            }
+            const external = safeHref.startsWith("http");
             return (
               <a
                 {...props}
-                href={href}
+                href={safeHref}
                 target={external ? "_blank" : undefined}
                 rel={external ? "noreferrer" : undefined}
               >

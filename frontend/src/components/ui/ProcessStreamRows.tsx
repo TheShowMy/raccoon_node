@@ -1,5 +1,6 @@
 import { ChatToolCalls, type ChatToolCallItem } from "@astryxdesign/core/Chat";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
+import { Spinner } from "@astryxdesign/core/Spinner";
 import type { ProcessRow } from "../../utils/format";
 
 export default function ProcessStreamRows({
@@ -40,7 +41,7 @@ export default function ProcessStreamRows({
   });
 
   return (
-    <section className="rq-process" aria-label="过程">
+    <section aria-label="过程">
       <ChatToolCalls
         calls={calls}
         label="过程"
@@ -52,14 +53,5 @@ export default function ProcessStreamRows({
 }
 
 export function ThinkingIndicator() {
-  return (
-    <div className="rq-thinking-indicator" aria-label="正在思考">
-      <span aria-hidden="true">Thinking</span>
-      <span className="rq-thinking-indicator__dots" aria-hidden="true">
-        <span>.</span>
-        <span>.</span>
-        <span>.</span>
-      </span>
-    </div>
-  );
+  return <Spinner size="sm" label="Thinking" aria-label="正在思考" />;
 }

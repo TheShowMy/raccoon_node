@@ -4,6 +4,17 @@ Object.defineProperty(window, "scrollTo", {
   value: () => {},
   configurable: true,
 });
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+Object.defineProperty(window, "ResizeObserver", {
+  value: ResizeObserverMock,
+  configurable: true,
+  writable: true,
+});
+
 window.matchMedia ??= () =>
   ({
     matches: false,

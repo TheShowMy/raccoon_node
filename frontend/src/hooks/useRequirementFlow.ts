@@ -19,7 +19,12 @@ import {
   confirmRequirement,
   requirementConversationWebSocketUrl,
 } from "../api/client";
-import { readError, buildClarificationAnswerPayload } from "../utils/format";
+import {
+  readError,
+  buildClarificationAnswerPayload,
+  createDraftAnswer,
+  hasDraftAnswer,
+} from "../utils/format";
 import { useConversationSocket } from "./useConversationSocket";
 
 function isStreamEvent(value: unknown): value is StreamEvent {
@@ -211,19 +216,20 @@ export function useRequirementFlow(
       setRequirementBusy(true);
       setRequirementError(null);
       try {
-        const answers = requirement.clarifications.map((clarification) =>
-          buildClarificationAnswerPayload(
-            clarification,
-            clarificationAnswers[clarification.id] ?? {
-              selectedOptions: clarification.answer?.selected_options ?? [],
-              customText: clarification.answer?.custom_text ?? "",
-            },
-          ),
-        );
         const prompt =
           requirementConversation?.prompt?.type === "clarification"
             ? requirementConversation.prompt
             : undefined;
+        const clarifications = prompt?.questions ?? requirement.clarifications;
+        const answers = clarifications.map((clarification) => {
+          const draft =
+            clarificationAnswers[clarification.id] ??
+            createDraftAnswer(clarification);
+          if (!hasDraftAnswer(clarification, draft)) {
+            throw new Error("请完成全部澄清问题");
+          }
+          return buildClarificationAnswerPayload(clarification, draft);
+        });
         const data = await submitRequirementClarifications(
           requirement.id,
           answers,
@@ -239,7 +245,13 @@ export function useRequirementFlow(
           );
         }
       } catch (reason) {
-        setRequirementError(readError(reason));
+        const message = readError(reason);
+        setRequirementError(message);
+        if (message.includes("已更新") || message.includes("刷新")) {
+          void loadRequirementConversation(requirement.id).catch(
+            (reloadReason) => setRequirementError(readError(reloadReason)),
+          );
+        }
       } finally {
         setRequirementBusy(false);
       }
@@ -307,8 +319,8 @@ export function useRequirementFlow(
     setDismissedPromptRequirementId(requirement.id);
     requestAnimationFrame(() => {
       document
-        .querySelector<HTMLTextAreaElement>(
-          '[data-chat-card="requirement"] textarea:not(:disabled)',
+        .querySelector<HTMLElement>(
+          '[data-chat-card="requirement"] [role="combobox"][contenteditable="true"]',
         )
         ?.focus();
     });

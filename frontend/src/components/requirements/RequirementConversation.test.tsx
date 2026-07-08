@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import RequirementConversationWorkbench from "./RequirementConversation";
 import type {
   Requirement,
+  RequirementClarification,
   RequirementConversation,
   RequirementConversationPrompt,
 } from "../../types/api";
@@ -98,13 +99,14 @@ describe("RequirementConversationWorkbench", () => {
       />,
     );
 
-    expect(screen.getByText("你")).toBeInTheDocument();
+    expect(screen.getAllByText("你").length).toBeGreaterThan(0);
     expect(screen.getByText("我要新增登录")).toBeInTheDocument();
     expect(screen.getAllByText("Coordinator").length).toBeGreaterThan(0);
     expect(screen.getByText("我会先澄清范围")).toBeInTheDocument();
-    const processCard = screen.getByText("Thinking").closest(".rq-process");
+    const processCard = screen
+      .getByText("Thinking")
+      .closest('section[aria-label="过程"]');
     expect(processCard).not.toBeNull();
-    expect(processCard?.closest(".rq-message__body")).toBeNull();
     expect(screen.queryByText("分析登录边界")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Thinking"));
@@ -171,7 +173,7 @@ describe("RequirementConversationWorkbench", () => {
     expect(container.querySelector(".rq-prompt-layer")).not.toBeNull();
     expect(screen.getByText("澄清 · 第 1 轮")).toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText("可回答上方问题，也可以直接补充说明..."),
+      screen.getByLabelText("可回答上方问题，也可以直接补充说明..."),
     ).not.toBeDisabled();
   });
 
@@ -326,7 +328,7 @@ describe("RequirementConversationWorkbench", () => {
       />,
     );
 
-    const stopButton = screen.getByRole("button", { name: "停止分析" });
+    const stopButton = screen.getByRole("button", { name: "Stop" });
     expect(stopButton).toBeInTheDocument();
     expect(screen.getByLabelText("正在思考")).toBeInTheDocument();
     expect(
@@ -338,10 +340,31 @@ describe("RequirementConversationWorkbench", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("requests abandoning an unfinished conversation", () => {
+  it("submits clarifications after answering all questions and clicking 全部提交", () => {
     const requirement = testRequirement();
     requirement.status = "clarifying";
-    const onAbandon = vi.fn();
+    requirement.clarifications = [
+      {
+        id: "q1",
+        question: "请选择范围",
+        question_type: "single_choice",
+        options: [
+          {
+            value: "small",
+            label: "核心流程",
+            description: "先做主链路",
+            recommended: true,
+          },
+        ],
+        answer: null,
+      },
+    ];
+    const prompt: RequirementConversationPrompt = {
+      type: "clarification",
+      round: 1,
+      questions: requirement.clarifications,
+    };
+    const onSubmitClarifications = vi.fn();
     const conversation: RequirementConversation = {
       id: requirement.id,
       project_id: requirement.project_id,
@@ -349,7 +372,7 @@ describe("RequirementConversationWorkbench", () => {
       status: "clarifying",
       running: false,
       items: [],
-      prompt: null,
+      prompt,
       error: null,
       updated_at: now,
     };
@@ -360,7 +383,209 @@ describe("RequirementConversationWorkbench", () => {
         requirement={requirement}
         projectName="alpha"
         projectId="project-1"
-        prompt={null}
+        prompt={prompt}
+        input=""
+        busy={false}
+        error={null}
+        streamEvents={[]}
+        answers={{
+          q1: { selectedOptions: ["small"], customText: "" },
+        }}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onAnswerChange={vi.fn()}
+        onSubmitClarifications={onSubmitClarifications}
+        onConfirm={vi.fn()}
+        onContinueEditing={vi.fn()}
+        onCancel={vi.fn()}
+        onAbandon={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "全部提交" }));
+    expect(onSubmitClarifications).toHaveBeenCalledTimes(1);
+    expect(onSubmitClarifications).toHaveBeenCalledWith(requirement);
+  });
+
+  it("submits clarifications when clicking the primary 提交澄清 button", () => {
+    const requirement = testRequirement();
+    requirement.status = "clarifying";
+    const q1: RequirementClarification = {
+      id: "q1",
+      question: "请选择范围",
+      question_type: "single_choice",
+      options: [
+        {
+          value: "small",
+          label: "核心流程",
+          description: "先做主链路",
+          recommended: true,
+        },
+      ],
+      answer: null,
+    };
+    const prompt: RequirementConversationPrompt = {
+      type: "clarification",
+      round: 1,
+      questions: [q1],
+    };
+    const onSubmitClarifications = vi.fn();
+    const onAnswerChange = vi.fn();
+    const conversation: RequirementConversation = {
+      id: requirement.id,
+      project_id: requirement.project_id,
+      title: requirement.title,
+      status: "clarifying",
+      running: false,
+      items: [],
+      prompt,
+      error: null,
+      updated_at: now,
+    };
+
+    render(
+      <RequirementConversationWorkbench
+        conversation={conversation}
+        requirement={requirement}
+        projectName="alpha"
+        projectId="project-1"
+        prompt={prompt}
+        input=""
+        busy={false}
+        error={null}
+        streamEvents={[]}
+        answers={{ q1: { selectedOptions: ["small"], customText: "" } }}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onAnswerChange={onAnswerChange}
+        onSubmitClarifications={onSubmitClarifications}
+        onConfirm={vi.fn()}
+        onContinueEditing={vi.fn()}
+        onCancel={vi.fn()}
+        onAbandon={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "提交澄清" }));
+    expect(onSubmitClarifications).toHaveBeenCalledTimes(1);
+    expect(onSubmitClarifications).toHaveBeenCalledWith(requirement);
+  });
+
+  it("submits clarifications after advancing to the last question", () => {
+    const requirement = testRequirement();
+    requirement.status = "clarifying";
+    const q1: RequirementClarification = {
+      id: "q1",
+      question: "问题一",
+      question_type: "single_choice",
+      options: [
+        { value: "a", label: "A", description: "", recommended: false },
+      ],
+      answer: null,
+    };
+    const q2: RequirementClarification = {
+      id: "q2",
+      question: "问题二",
+      question_type: "single_choice",
+      options: [
+        { value: "b", label: "B", description: "", recommended: false },
+      ],
+      answer: null,
+    };
+    const prompt: RequirementConversationPrompt = {
+      type: "clarification",
+      round: 1,
+      questions: [q1, q2],
+    };
+    const onAnswerChange = vi.fn();
+    const conversation: RequirementConversation = {
+      id: requirement.id,
+      project_id: requirement.project_id,
+      title: requirement.title,
+      status: "clarifying",
+      running: false,
+      items: [],
+      prompt,
+      error: null,
+      updated_at: now,
+    };
+
+    render(
+      <RequirementConversationWorkbench
+        conversation={conversation}
+        requirement={requirement}
+        projectName="alpha"
+        projectId="project-1"
+        prompt={prompt}
+        input=""
+        busy={false}
+        error={null}
+        streamEvents={[]}
+        answers={{}}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onAnswerChange={onAnswerChange}
+        onSubmitClarifications={vi.fn()}
+        onConfirm={vi.fn()}
+        onContinueEditing={vi.fn()}
+        onCancel={vi.fn()}
+        onAbandon={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "A" }));
+    expect(onAnswerChange).toHaveBeenCalledWith(q1, {
+      selectedOptions: ["a"],
+      customText: "",
+    });
+    expect(screen.getByText("问题二")).toBeInTheDocument();
+  });
+
+  it("resets active clarification question when prompt changes", () => {
+    const requirement = testRequirement();
+    requirement.status = "clarifying";
+    const q1: RequirementClarification = {
+      id: "q1",
+      question: "问题一",
+      question_type: "single_choice",
+      options: [
+        { value: "a", label: "A", description: "", recommended: false },
+      ],
+      answer: null,
+    };
+    const q2: RequirementClarification = {
+      id: "q2",
+      question: "问题二",
+      question_type: "single_choice",
+      options: [
+        { value: "b", label: "B", description: "", recommended: false },
+      ],
+      answer: null,
+    };
+    const prompt: RequirementConversationPrompt = {
+      type: "clarification",
+      round: 1,
+      questions: [q1, q2],
+    };
+    const conversation: RequirementConversation = {
+      id: requirement.id,
+      project_id: requirement.project_id,
+      title: requirement.title,
+      status: "clarifying",
+      running: false,
+      items: [],
+      prompt,
+      error: null,
+      updated_at: now,
+    };
+
+    const { rerender } = render(
+      <RequirementConversationWorkbench
+        conversation={conversation}
+        requirement={requirement}
+        projectName="alpha"
+        projectId="project-1"
+        prompt={prompt}
         input=""
         busy={false}
         error={null}
@@ -373,16 +598,42 @@ describe("RequirementConversationWorkbench", () => {
         onConfirm={vi.fn()}
         onContinueEditing={vi.fn()}
         onCancel={vi.fn()}
-        onAbandon={onAbandon}
+        onAbandon={vi.fn()}
       />,
     );
 
-    const abandonButton = screen.getByRole("button", {
-      name: "放弃当前需求",
-    });
-    expect(abandonButton).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "A" }));
+    expect(screen.getByText("问题二")).toBeInTheDocument();
 
-    fireEvent.click(abandonButton);
-    expect(onAbandon).toHaveBeenCalledTimes(1);
+    const nextPrompt: RequirementConversationPrompt = {
+      type: "clarification",
+      round: 2,
+      questions: [q2],
+    };
+    rerender(
+      <RequirementConversationWorkbench
+        conversation={{ ...conversation, prompt: nextPrompt }}
+        requirement={requirement}
+        projectName="alpha"
+        projectId="project-1"
+        prompt={nextPrompt}
+        input=""
+        busy={false}
+        error={null}
+        streamEvents={[]}
+        answers={{}}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onAnswerChange={vi.fn()}
+        onSubmitClarifications={vi.fn()}
+        onConfirm={vi.fn()}
+        onContinueEditing={vi.fn()}
+        onCancel={vi.fn()}
+        onAbandon={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("问题二")).toBeInTheDocument();
+    expect(screen.queryByText("问题一")).not.toBeInTheDocument();
   });
 });

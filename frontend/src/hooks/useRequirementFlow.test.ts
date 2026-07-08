@@ -2,11 +2,18 @@
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { confirmRequirement, getRequirementConversation } from "../api/client";
+import {
+  confirmRequirement,
+  getRequirementConversation,
+  submitRequirementClarifications,
+} from "../api/client";
 import type {
+  DraftClarificationAnswer,
   ProjectCanvasData,
   Requirement,
+  RequirementClarification,
   RequirementConversation,
+  RequirementConversationPrompt,
   StreamEvent,
 } from "../types/api";
 import { useRequirementFlow } from "./useRequirementFlow";
@@ -153,10 +160,12 @@ describe("useRequirementFlow", () => {
       callback(0);
       return 1;
     });
-    const textarea = document.createElement("textarea");
+    const input = document.createElement("div");
+    input.setAttribute("role", "combobox");
+    input.setAttribute("contenteditable", "true");
     const card = document.createElement("div");
     card.dataset.chatCard = "requirement";
-    card.append(textarea);
+    card.append(input);
     document.body.append(card);
 
     const { result, rerender } = renderHook(
@@ -177,7 +186,7 @@ describe("useRequirementFlow", () => {
     });
 
     expect(result.current.dismissedPromptRequirementId).toBe(requirement.id);
-    expect(textarea).toHaveFocus();
+    expect(input).toHaveFocus();
 
     rerender({ activeRequirementId: "requirement-2" });
     await waitFor(() => {
@@ -294,5 +303,79 @@ describe("useRequirementFlow", () => {
       );
       expect(getRequirementConversation).not.toHaveBeenCalled();
     });
+  });
+
+  it("submits clarifications from the active prompt, not stale requirement.clarifications", async () => {
+    const q1: RequirementClarification = {
+      id: "q1",
+      question: "范围",
+      question_type: "single_choice",
+      options: [
+        { value: "small", label: "核心", description: "", recommended: true },
+      ],
+      answer: null,
+    };
+    const prompt: RequirementConversationPrompt = {
+      type: "clarification",
+      round: 1,
+      questions: [q1],
+    };
+    const clarifyingConversation: RequirementConversation = {
+      ...conversation,
+      status: "clarifying",
+      running: false,
+      prompt,
+    };
+    vi.mocked(getRequirementConversation).mockResolvedValue(
+      clarifyingConversation,
+    );
+    vi.mocked(submitRequirementClarifications).mockResolvedValue(canvas);
+
+    const { result } = renderHook(() =>
+      useRequirementFlow(
+        "project-1",
+        requirement.id,
+        null,
+        vi.fn(),
+        vi.fn(),
+        vi.fn(),
+      ),
+    );
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket.open());
+    await waitFor(() =>
+      expect(result.current.requirementConversation).toEqual(
+        clarifyingConversation,
+      ),
+    );
+
+    const answer: DraftClarificationAnswer = {
+      selectedOptions: ["small"],
+      customText: "",
+    };
+    act(() => {
+      result.current.updateClarificationAnswer(q1, answer);
+    });
+
+    await act(async () => {
+      await result.current.submitClarifications({
+        ...requirement,
+        status: "clarifying",
+        clarifications: [],
+      });
+    });
+
+    expect(submitRequirementClarifications).toHaveBeenCalledTimes(1);
+    expect(submitRequirementClarifications).toHaveBeenCalledWith(
+      requirement.id,
+      [
+        {
+          clarification_id: "q1",
+          selected_options: ["small"],
+          custom_text: null,
+        },
+      ],
+      prompt,
+    );
   });
 });

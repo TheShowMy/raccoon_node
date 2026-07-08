@@ -31,15 +31,10 @@ describe("ChatMessageBubble", () => {
       </ChatMessageBubble>,
     );
 
-    const body = screen
-      .getByText("answer text")
-      .closest(".rq-message__body") as HTMLElement;
-    const children = screen.getByTestId("process-card")
-      .parentElement as HTMLElement;
-    expect(body).toContainElement(children);
+    const text = screen.getByText("answer text");
+    const children = screen.getByTestId("process-card");
     expect(
-      children.compareDocumentPosition(screen.getByText("answer text")) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+      children.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 });

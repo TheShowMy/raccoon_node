@@ -397,9 +397,11 @@ export async function resetProjectChat(
 export async function getProjectFiles(
   projectId: string,
   search: string,
+  signal?: AbortSignal,
 ): Promise<FileReference[]> {
   const response = await fetch(
     `/api/projects/${encodeURIComponent(projectId)}/files?search=${encodeURIComponent(search)}`,
+    { signal },
   );
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {

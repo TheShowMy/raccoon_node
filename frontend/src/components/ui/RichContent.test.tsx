@@ -25,6 +25,27 @@ describe("RichContent", () => {
     expect(container.querySelector("script")).toBeNull();
   });
 
+  it("blocks dangerous URL schemes in links", () => {
+    render(
+      <RichContent
+        content={
+          "[safe](https://example.com) [js](javascript:alert(1)) [data](data:text/html,<script>alert(1)</script>)"
+        }
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "safe" })).toHaveAttribute(
+      "href",
+      "https://example.com",
+    );
+    expect(screen.queryByRole("link", { name: "js" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "data" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("js")).toBeInTheDocument();
+    expect(screen.getByText("data")).toBeInTheDocument();
+  });
+
   it("copies fenced code", async () => {
     render(<RichContent content={"```rust\nfn main() {}\n```"} />);
     fireEvent.click(screen.getByRole("button", { name: "Copy code" }));

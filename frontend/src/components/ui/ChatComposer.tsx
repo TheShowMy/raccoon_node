@@ -1,21 +1,43 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Button } from "@astryxdesign/core";
-import { ChatComposer as AstryxChatComposer } from "@astryxdesign/core/Chat";
-import { TextArea } from "@astryxdesign/core/TextArea";
-import { Token } from "@astryxdesign/core/Token";
-import { FileText, Image, Send, Square, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChatComposer as AstryxChatComposer,
+  ChatComposerDrawer,
+  ChatComposerInput,
+  ChatSendButton,
+} from "@astryxdesign/core/Chat";
+import type { ChatComposerTrigger } from "@astryxdesign/core/Chat";
+import { createStaticSource } from "@astryxdesign/core/Typeahead";
+import type { SearchSource } from "@astryxdesign/core/Typeahead";
+import { Stack, Text, Token } from "@astryxdesign/core";
+import { FileText, Image } from "lucide-react";
 import { getProjectFiles, uploadProjectAttachment } from "../../api/client";
 import type { FileReference, ImageAttachment } from "../../types/api";
 
-const MAX_TEXTAREA_HEIGHT = 156;
+const ALLOWED_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
+
+function isImageFile(file: File): boolean {
+  if (file.type.startsWith("image/")) return true;
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  return extension ? ALLOWED_IMAGE_EXTENSIONS.includes(extension) : false;
+}
+
+function isComposingEnter(event: React.KeyboardEvent<HTMLElement>): boolean {
+  return (
+    event.key === "Enter" &&
+    !event.shiftKey &&
+    event.nativeEvent.isComposing === true
+  );
+}
+
+function fileSignature(file: File): string {
+  return `${file.name}|${file.size}|${file.lastModified}`;
+}
 
 export default function ChatComposer({
   value,
   disabled,
   canSend,
   placeholder,
-  sendLabel = "发送",
-  stopLabel = "停止",
   onChange,
   references = [],
   images = [],
@@ -30,8 +52,6 @@ export default function ChatComposer({
   disabled: boolean;
   canSend: boolean;
   placeholder: string;
-  sendLabel?: string;
-  stopLabel?: string;
   onChange: (value: string) => void;
   references?: FileReference[];
   images?: ImageAttachment[];
@@ -42,98 +62,35 @@ export default function ChatComposer({
   onStop?: () => void;
   onGenerateRequirementSummary?: () => void | Promise<void>;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [fileOptions, setFileOptions] = useState<FileReference[]>([]);
-  const [mention, setMention] = useState<{
-    start: number;
-    query: string;
-  } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const running = Boolean(onStop);
   const [slashDismissed, setSlashDismissed] = useState(false);
-  const slashQuery = value.trim();
+  const recentUploadsRef = useRef<Map<string, number>>(new Map());
+  const running = Boolean(onStop);
+  const trimmedValue = value.trim();
+  const commandMatches =
+    trimmedValue.startsWith("/") && "/生成需求说明".startsWith(trimmedValue);
   const showRequirementCommand =
-    Boolean(onGenerateRequirementSummary) &&
-    !slashDismissed &&
-    slashQuery.startsWith("/") &&
-    "/生成需求说明".startsWith(slashQuery);
-
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = "auto";
-    const height = Math.min(
-      Math.max(textarea.scrollHeight, 42),
-      MAX_TEXTAREA_HEIGHT,
-    );
-    textarea.style.height = `${height}px`;
-    textarea.style.overflowY =
-      textarea.scrollHeight > MAX_TEXTAREA_HEIGHT ? "auto" : "hidden";
-  }, [value]);
-
-  function submit() {
-    if (showRequirementCommand) {
-      onChange("");
-      setSlashDismissed(true);
-      void onGenerateRequirementSummary?.();
-      return;
-    }
-    if (canSend) void onSubmit();
-  }
+    Boolean(onGenerateRequirementSummary) && commandMatches && !slashDismissed;
 
   useEffect(() => {
-    if (!projectId || !mention) {
-      setFileOptions([]);
-      return;
-    }
-    let cancelled = false;
-    void getProjectFiles(projectId, mention.query)
-      .then((files) => {
-        if (!cancelled) setFileOptions(files);
-      })
-      .catch(() => {
-        if (!cancelled) setFileOptions([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [mention, projectId]);
-
-  function updateValue(next: string, cursor?: number) {
-    onChange(next);
-    if (cursor === undefined) return;
-    requestAnimationFrame(() => {
-      textareaRef.current?.setSelectionRange(cursor, cursor);
-    });
-  }
-
-  function detectMention(next: string, cursor: number) {
-    const before = next.slice(0, cursor);
-    const match = /(?:^|\s)@([^\s@]*)$/.exec(before);
-    setMention(
-      match ? { start: cursor - match[1].length - 1, query: match[1] } : null,
-    );
-  }
-
-  function selectReference(reference: FileReference) {
-    if (!mention) return;
-    const before = value.slice(0, mention.start);
-    const after = value.slice(
-      textareaRef.current?.selectionStart ?? value.length,
-    );
-    const insert = `@${reference.path} `;
-    updateValue(`${before}${insert}${after}`, before.length + insert.length);
-    if (!references.some((item) => item.path === reference.path)) {
-      onReferencesChange?.([...references, reference]);
-    }
-    setMention(null);
-  }
+    setSlashDismissed(false);
+  }, [value]);
 
   async function uploadImages(files: FileList | File[]) {
     if (!projectId || !onImagesChange) return;
-    const imageFiles = Array.from(files).filter((file) =>
-      file.type.startsWith("image/"),
-    );
+    const now = Date.now();
+    const duplicates = recentUploadsRef.current;
+    const imageFiles = Array.from(files).filter((file) => {
+      if (!isImageFile(file)) return false;
+      const signature = fileSignature(file);
+      const last = duplicates.get(signature);
+      if (last && now - last < 500) return false;
+      duplicates.set(signature, now);
+      return true;
+    });
+    for (const [signature, timestamp] of duplicates) {
+      if (now - timestamp > 5000) duplicates.delete(signature);
+    }
     if (imageFiles.length === 0) return;
     setUploadError(null);
     try {
@@ -146,140 +103,184 @@ export default function ChatComposer({
     }
   }
 
-  const attachments =
-    references.length || images.length || uploadError ? (
-      <div className="rq-composer__chips">
-        {references.map((reference) => (
-          <Token
-            key={reference.path}
-            size="sm"
-            icon={<FileText size={13} />}
-            label={reference.path}
-            onRemove={() =>
-              onReferencesChange?.(
-                references.filter((item) => item.path !== reference.path),
-              )
+  function handleGenerateRequirementSummary() {
+    setUploadError(null);
+    void Promise.resolve(onGenerateRequirementSummary?.()).catch((error) => {
+      setUploadError(
+        error instanceof Error ? error.message : "生成需求说明失败",
+      );
+    });
+  }
+
+  function handleSubmit() {
+    if (showRequirementCommand) {
+      handleGenerateRequirementSummary();
+      return;
+    }
+    if (!canSend) return;
+    void Promise.resolve(onSubmit()).catch((error) => {
+      setUploadError(error instanceof Error ? error.message : "发送失败");
+    });
+  }
+
+  const fileSearchSource = useMemo<SearchSource>(() => {
+    let controller: AbortController | null = null;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    return {
+      cancel() {
+        controller?.abort();
+        controller = null;
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+        }
+      },
+      search(query) {
+        if (!projectId) return Promise.resolve([]);
+        controller?.abort();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        return new Promise((resolve) => {
+          debounceTimer = setTimeout(async () => {
+            debounceTimer = null;
+            controller = new AbortController();
+            try {
+              const files = await getProjectFiles(
+                projectId,
+                query,
+                controller.signal,
+              );
+              resolve(
+                files.map((file) => ({ id: file.path, label: file.path })),
+              );
+            } catch (error) {
+              resolve([]);
+            } finally {
+              controller = null;
             }
-          />
-        ))}
-        {images.map((image) => (
-          <Token
-            key={image.path}
-            size="sm"
-            icon={<Image size={13} />}
-            label={image.name}
-            onRemove={() =>
-              onImagesChange?.(
-                images.filter((item) => item.path !== image.path),
-              )
-            }
-          />
-        ))}
-        {uploadError ? <span role="alert">{uploadError}</span> : null}
-      </div>
-    ) : undefined;
+          }, 150);
+        });
+      },
+      bootstrap() {
+        return [];
+      },
+    };
+  }, [projectId]);
+
+  const triggers = useMemo<ChatComposerTrigger[]>(() => {
+    const fileTrigger: ChatComposerTrigger = {
+      character: "@",
+      searchSource: fileSearchSource,
+      onSelect(item) {
+        const path = item.id;
+        if (!references.some((reference) => reference.path === path)) {
+          onReferencesChange?.([...references, { path }]);
+        }
+        return `@${path} `;
+      },
+      menuLabel: "引用文件",
+    };
+
+    const slashTrigger: ChatComposerTrigger | null =
+      onGenerateRequirementSummary
+        ? {
+            character: "/",
+            searchSource: createStaticSource([
+              { id: "generate", label: "/生成需求说明" },
+            ]),
+            onSelect() {
+              handleGenerateRequirementSummary();
+              return "";
+            },
+            menuLabel: "命令",
+          }
+        : null;
+
+    return slashTrigger ? [fileTrigger, slashTrigger] : [fileTrigger];
+  }, [
+    fileSearchSource,
+    references,
+    onReferencesChange,
+    onGenerateRequirementSummary,
+    handleGenerateRequirementSummary,
+  ]);
+
+  const drawer = useMemo(() => {
+    const count = references.length + images.length + (uploadError ? 1 : 0);
+    if (count === 0) return undefined;
+    return (
+      <ChatComposerDrawer count={count}>
+        <Stack direction="horizontal" wrap="wrap" gap={1.5}>
+          {references.map((reference) => (
+            <Token
+              key={reference.path}
+              size="sm"
+              icon={<FileText size={13} />}
+              label={reference.path}
+              onRemove={() =>
+                onReferencesChange?.(
+                  references.filter((item) => item.path !== reference.path),
+                )
+              }
+            />
+          ))}
+          {images.map((image) => (
+            <Token
+              key={image.path}
+              size="sm"
+              icon={<Image size={13} />}
+              label={image.name}
+              onRemove={() =>
+                onImagesChange?.(
+                  images.filter((item) => item.path !== image.path),
+                )
+              }
+            />
+          ))}
+          {uploadError ? (
+            <Text type="supporting" style={{ color: "var(--color-error)" }}>
+              {uploadError}
+            </Text>
+          ) : null}
+        </Stack>
+      </ChatComposerDrawer>
+    );
+  }, [references, images, uploadError, onReferencesChange, onImagesChange]);
 
   return (
     <AstryxChatComposer
-      className="rq-composer nowheel nodrag"
+      className="nowheel nodrag"
       value={value}
       onChange={onChange}
-      onSubmit={submit}
+      onSubmit={handleSubmit}
       onStop={onStop}
       isStopShown={running}
       isDisabled={disabled}
       placeholder={placeholder}
       density="compact"
-      drawer={attachments}
+      drawer={drawer}
+      onKeyDownCapture={(event) => {
+        if (isComposingEnter(event)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        if (event.key === "Escape" && showRequirementCommand) {
+          setSlashDismissed(true);
+        }
+      }}
       input={
-        <div className="rq-composer__input">
-          <TextArea
-            ref={textareaRef}
-            label={placeholder}
-            isLabelHidden
-            value={value}
-            isDisabled={disabled}
-            size="sm"
-            className="rq-composer__textarea"
-            onChange={(nextValue, event) => {
-              onChange(nextValue);
-              setSlashDismissed(false);
-              detectMention(nextValue, event.target.selectionStart);
-            }}
-            onPaste={(event) => {
-              void uploadImages(event.clipboardData.files);
-            }}
-            onKeyDown={(event) => {
-              const composing =
-                event.nativeEvent.isComposing || event.keyCode === 229;
-              if (
-                showRequirementCommand &&
-                ["ArrowDown", "ArrowUp"].includes(event.key)
-              ) {
-                event.preventDefault();
-                return;
-              }
-              if (showRequirementCommand && event.key === "Escape") {
-                event.preventDefault();
-                setSlashDismissed(true);
-                return;
-              }
-              if (event.key !== "Enter" || event.shiftKey || composing) return;
-              event.preventDefault();
-              submit();
-            }}
-            placeholder={placeholder}
-            rows={1}
-          />
-          {showRequirementCommand ? (
-            <div className="rq-composer__suggestions" role="listbox">
-              <Button
-                label="/生成需求说明"
-                className="rq-composer__suggestion rq-composer__suggestion--command"
-                type="button"
-                role="option"
-                aria-selected="true"
-                onClick={submit}
-              >
-                <span>/生成需求说明</span>
-              </Button>
-            </div>
-          ) : null}
-          {fileOptions.length > 0 && mention ? (
-            <div className="rq-composer__suggestions">
-              {fileOptions.slice(0, 8).map((file) => (
-                <Button
-                  label={file.path}
-                  className="rq-composer__suggestion"
-                  type="button"
-                  key={file.path}
-                  onClick={() => selectReference(file)}
-                >
-                  <FileText size={13} />
-                  <span>{file.path}</span>
-                </Button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      }
-      sendButton={
-        <Button
-          label={running ? stopLabel : sendLabel}
-          isIconOnly
-          className="rq-composer__send"
-          variant={running ? "secondary" : "primary"}
-          isDisabled={!running && !canSend}
-          onClick={running ? onStop : submit}
-          icon={
-            running ? (
-              <Square size={15} fill="currentColor" />
-            ) : (
-              <Send size={15} />
-            )
-          }
+        <ChatComposerInput
+          value={value}
+          onChange={onChange}
+          isDisabled={disabled}
+          placeholder={placeholder}
+          label={placeholder}
+          maxRows={6}
+          triggers={triggers}
+          onFiles={(files) => void uploadImages(files)}
+          pasteAsToken={false}
         />
       }
+      sendButton={<ChatSendButton isDisabled={!running && !canSend} />}
       onDrop={(event) => {
         if (!projectId) return;
         event.preventDefault();

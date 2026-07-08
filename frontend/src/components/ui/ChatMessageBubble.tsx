@@ -5,13 +5,19 @@ import {
   ChatMessageMetadata,
   ChatSystemMessage,
 } from "@astryxdesign/core/Chat";
-import { AlertTriangle, Bot, FileText, User } from "lucide-react";
+import { Avatar } from "@astryxdesign/core/Avatar";
+import { Markdown } from "@astryxdesign/core/Markdown";
+import { Timestamp } from "@astryxdesign/core/Timestamp";
+import { HStack, VStack } from "@astryxdesign/core";
+import { AlertTriangle } from "lucide-react";
 import type { FileReference, ImageAttachment } from "../../types/api";
-import { formatDate } from "../../utils/format";
 import DocumentPreview from "./DocumentPreview";
-import RichContent from "./RichContent";
 
 export type ChatMessageRole = "user" | "assistant" | "system";
+
+function attachmentBasename(path: string): string {
+  return path.replace(/\\/g, "/").split("/").pop() ?? "";
+}
 
 export default function ChatMessageBubble({
   role,
@@ -21,8 +27,8 @@ export default function ChatMessageBubble({
   references = [],
   images = [],
   projectId,
-  continued = false,
   children,
+  continued,
 }: {
   role: ChatMessageRole;
   content: string;
@@ -31,84 +37,90 @@ export default function ChatMessageBubble({
   references?: FileReference[];
   images?: ImageAttachment[];
   projectId?: string;
-  continued?: boolean;
   children?: ReactNode;
+  continued?: boolean;
 }) {
   const label =
     role === "user" ? "你" : role === "assistant" ? assistantLabel : "系统";
-  const metadata = (
+
+  const metadata = continued ? undefined : (
     <ChatMessageMetadata
-      timestamp={<time dateTime={createdAt}>{formatDate(createdAt)}</time>}
+      timestamp={
+        <Timestamp
+          value={createdAt}
+          format="auto"
+          size="sm"
+          color="secondary"
+        />
+      }
     />
   );
-  const body = (
-    <div className="rq-message__body">
-      {children ? (
-        <div className="rq-message__attachments">{children}</div>
-      ) : null}
-      {references.length || images.length ? (
-        <div className="rq-message__refs">
-          {references.map((reference) =>
-            projectId ? (
-              <DocumentPreview
-                key={reference.path}
-                projectId={projectId}
-                path={reference.path}
-              />
-            ) : (
-              <span key={reference.path}>
-                <FileText size={13} />
-                {reference.path}
-              </span>
-            ),
-          )}
-          {images.map((image) =>
-            projectId ? (
-              <a
-                key={image.path}
-                href={`/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(image.path.split("/").pop() ?? "")}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <img
-                  src={`/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(image.path.split("/").pop() ?? "")}`}
-                  alt={image.name}
+
+  const avatar = continued ? undefined : (
+    <Avatar name={label} size="small" alt={label} />
+  );
+
+  const attachments =
+    references.length > 0 || images.length > 0 || children ? (
+      <VStack gap={2} align="stretch">
+        {children}
+        {references.length > 0 ? (
+          <HStack wrap="wrap" gap={1.5}>
+            {references.map((reference) =>
+              projectId ? (
+                <DocumentPreview
+                  key={reference.path}
+                  projectId={projectId}
+                  path={reference.path}
                 />
-              </a>
-            ) : (
-              <span key={image.path}>{image.name}</span>
-            ),
-          )}
-        </div>
-      ) : null}
-      <RichContent content={content} />
-    </div>
+              ) : (
+                <span key={reference.path}>{reference.path}</span>
+              ),
+            )}
+          </HStack>
+        ) : null}
+        {images.length > 0 ? (
+          <HStack className="rq-message-bubble__images" wrap="wrap" gap={1.5}>
+            {images.map((image) => {
+              const basename = attachmentBasename(image.path);
+              const src = projectId
+                ? `/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(basename)}`
+                : image.path;
+              return projectId ? (
+                <a key={image.path} href={src} target="_blank" rel="noreferrer">
+                  <img src={src} alt={image.name} />
+                </a>
+              ) : (
+                <span key={image.path}>{image.name}</span>
+              );
+            })}
+          </HStack>
+        ) : null}
+      </VStack>
+    ) : null;
+
+  const body = (
+    <>
+      {attachments}
+      <Markdown density="compact" headingLevelStart={3}>
+        {content}
+      </Markdown>
+    </>
   );
 
   if (role === "system") {
     return (
-      <ChatSystemMessage
-        className={`rq-message rq-message--system ${continued ? "rq-message--continued" : ""}`}
-        icon={<AlertTriangle size={14} />}
-      >
+      <ChatSystemMessage icon={<AlertTriangle size={14} />}>
         {body}
       </ChatSystemMessage>
     );
   }
 
   return (
-    <ChatMessage
-      sender={role}
-      className={`rq-message rq-message--${role} ${continued ? "rq-message--continued" : ""}`}
-      avatar={
-        <span className="rq-message__avatar">
-          {role === "user" ? <User size={14} /> : <Bot size={14} />}
-        </span>
-      }
-    >
+    <ChatMessage sender={role} avatar={avatar}>
       <AstryxChatMessageBubble
-        className="rq-message__bubble"
-        name={label}
+        variant={role === "user" ? "filled" : "ghost"}
+        name={continued ? undefined : label}
         metadata={metadata}
       >
         {body}
