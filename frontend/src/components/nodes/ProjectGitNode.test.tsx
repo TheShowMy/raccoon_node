@@ -71,7 +71,10 @@ describe("ProjectGitNode", () => {
       target: { value: "feat: git node" },
     });
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("1 个文件");
+    expect(screen.getByText("确认提交")).toBeInTheDocument();
+    expect(
+      screen.getByText("向 main 提交 1 个文件：feat: git node"),
+    ).toBeInTheDocument();
     expect(onAction).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "确认" }));
     await waitFor(() =>

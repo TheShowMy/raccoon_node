@@ -2,7 +2,10 @@ import { useMemo, useRef, useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
+import { Dialog } from "@astryxdesign/core/Dialog";
 import { IconButton } from "@astryxdesign/core/IconButton";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import {
@@ -560,34 +563,39 @@ export default function ProjectGitNode({ data }: { data: GitData }) {
         </>
       ) : null}
 
-      {confirming ? (
-        <div
-          className="git-node__confirm nodrag"
-          role="dialog"
-          aria-modal="true"
-        >
-          <div>
-            <strong>{confirming === "commit" ? "确认提交" : "确认推送"}</strong>
-            <p>
+      <Dialog
+        isOpen={confirming !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirming(null);
+        }}
+        width={420}
+        purpose="required"
+      >
+        <Stack className="git-node__confirm nodrag" gap={4}>
+          <Stack gap={1}>
+            <Text type="large" weight="semibold">
+              {confirming === "commit" ? "确认提交" : "确认推送"}
+            </Text>
+            <Text type="supporting" wordBreak="break-word">
               {confirming === "commit"
                 ? `向 ${status?.branch ?? "当前分支"} 提交 ${staged.length} 个文件：${commitMessage}`
                 : `将 ${status?.branch ?? "当前分支"} 推送到 ${status?.upstream ?? "origin"}（领先 ${status?.ahead ?? 0}）`}
-            </p>
-            <span>
-              <Button
-                label="取消"
-                variant="secondary"
-                onClick={() => setConfirming(null)}
-              />
-              <Button
-                label="确认"
-                variant="primary"
-                onClick={() => void confirmAction()}
-              />
-            </span>
-          </div>
-        </div>
-      ) : null}
+            </Text>
+          </Stack>
+          <Stack direction="horizontal" gap={2} justify="end">
+            <Button
+              label="取消"
+              variant="secondary"
+              onClick={() => setConfirming(null)}
+            />
+            <Button
+              label="确认"
+              variant="primary"
+              onClick={() => void confirmAction()}
+            />
+          </Stack>
+        </Stack>
+      </Dialog>
     </section>
   );
 }

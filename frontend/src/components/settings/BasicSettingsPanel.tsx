@@ -1,14 +1,16 @@
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
-import { Card } from "@astryxdesign/core/Card";
 import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
 import {
   SegmentedControl,
   SegmentedControlItem,
 } from "@astryxdesign/core/SegmentedControl";
+import { Section } from "@astryxdesign/core/Section";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Stack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
+import { Toolbar } from "@astryxdesign/core/Toolbar";
 import { Moon, Sun } from "lucide-react";
 import { THEME_PACK_OPTIONS } from "../../theme/astryxThemes";
 import type {
@@ -44,7 +46,9 @@ export default function BasicSettingsPanel({
 }) {
   if (!settings) {
     return (
-      <p className="settings-node__notice">{error ?? "正在读取基础设置…"}</p>
+      <Section variant="muted">
+        <Text type="supporting">{error ?? "正在读取基础设置…"}</Text>
+      </Section>
     );
   }
 
@@ -61,12 +65,16 @@ export default function BasicSettingsPanel({
 
       <Stack className="settings-form__content" direction="horizontal" gap={4}>
         <Stack className="settings-form__column" gap={4}>
-          <Card className="settings-section" padding={4}>
+          <Section className="settings-section" padding={4}>
             <Stack gap={3}>
-              <div className="settings-section__header">
-                <h3>外观</h3>
-                <p>点击后立即切换并保存。</p>
-              </div>
+              <Stack gap={0.5}>
+                <Text type="label" weight="semibold">
+                  外观
+                </Text>
+                <Text type="supporting" size="2xs">
+                  点击后立即切换并保存。
+                </Text>
+              </Stack>
               <Stack gap={3}>
                 <Selector
                   label="主题包"
@@ -101,9 +109,9 @@ export default function BasicSettingsPanel({
                 </SegmentedControl>
               </Stack>
             </Stack>
-          </Card>
+          </Section>
 
-          <Card className="settings-section" padding={4}>
+          <Section className="settings-section" padding={4}>
             <RadioList
               label="提交模式"
               description="保存后用于后续任务。"
@@ -121,18 +129,22 @@ export default function BasicSettingsPanel({
                 />
               ))}
             </RadioList>
-          </Card>
+          </Section>
         </Stack>
 
-        <Card
+        <Section
           className="settings-section settings-section--service"
           padding={4}
         >
           <Stack gap={4}>
-            <div className="settings-section__header">
-              <h3>服务监听</h3>
-              <p>地址或端口修改后需要重启服务。</p>
-            </div>
+            <Stack gap={0.5}>
+              <Text type="label" weight="semibold">
+                服务监听
+              </Text>
+              <Text type="supporting" size="2xs">
+                地址或端口修改后需要重启服务。
+              </Text>
+            </Stack>
             <Stack direction="horizontal" gap={3} wrap="wrap">
               <Selector
                 label="监听地址"
@@ -162,34 +174,49 @@ export default function BasicSettingsPanel({
                 }}
               />
             </Stack>
-            <div className="settings-effective">
-              <span className="settings-effective__label">
-                当前生效
-                <code>
-                  {settings.effective_host}:{settings.effective_port}
-                </code>
-              </span>
-              {settings.host_overridden || settings.port_overridden ? (
-                <p className="settings-effective__hint">
-                  当前值由 CLI 覆盖；保存值不会在重启后生效，除非移除对应的
-                  {settings.host_overridden ? " --host" : ""}
-                  {settings.port_overridden ? " --port" : ""} 参数。
-                </p>
-              ) : null}
-            </div>
+            <Section className="settings-effective" variant="muted" padding={3}>
+              <Stack gap={2}>
+                <Stack
+                  direction="horizontal"
+                  gap={2}
+                  align="center"
+                  wrap="wrap"
+                >
+                  <Text type="label" size="sm">
+                    当前生效
+                  </Text>
+                  <Text type="code" size="sm">
+                    {settings.effective_host}:{settings.effective_port}
+                  </Text>
+                </Stack>
+                {settings.host_overridden || settings.port_overridden ? (
+                  <Text type="supporting" size="2xs">
+                    当前值由 CLI 覆盖；保存值不会在重启后生效，除非移除对应的
+                    {settings.host_overridden ? " --host" : ""}
+                    {settings.port_overridden ? " --port" : ""} 参数。
+                  </Text>
+                ) : null}
+              </Stack>
+            </Section>
           </Stack>
-        </Card>
+        </Section>
       </Stack>
 
-      <div className="settings-node__footer">
-        <Button
-          label="保存并按需重启"
-          variant="primary"
-          isLoading={saving}
-          isDisabled={!validPort}
-          onClick={onSave}
-        />
-      </div>
+      <Toolbar
+        label="保存基础设置"
+        className="settings-node__footer"
+        size="sm"
+        variant="transparent"
+        endContent={
+          <Button
+            label="保存并按需重启"
+            variant="primary"
+            isLoading={saving}
+            isDisabled={!validPort}
+            onClick={onSave}
+          />
+        }
+      />
     </Stack>
   );
 }

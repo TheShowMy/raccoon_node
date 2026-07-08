@@ -8,6 +8,17 @@ import {
   RotateCw,
   Terminal,
 } from "lucide-react";
+import { Button } from "@astryxdesign/core/Button";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
+import { Section } from "@astryxdesign/core/Section";
+import { Selector } from "@astryxdesign/core/Selector";
+import { Stack } from "@astryxdesign/core/Stack";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { Text } from "@astryxdesign/core/Text";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { Token } from "@astryxdesign/core/Token";
+import { Toolbar } from "@astryxdesign/core/Toolbar";
 import type {
   ModelSettings,
   ModelTierKey,
@@ -22,12 +33,17 @@ import {
   tierLabels,
 } from "../../utils/format";
 import TerminalSessionView from "../terminal/TerminalSessionView";
-import { Button } from "@astryxdesign/core/Button";
-import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
-import { Selector } from "@astryxdesign/core/Selector";
-import { TextInput } from "@astryxdesign/core/TextInput";
 
 const TIERS: ModelTierKey[] = ["low", "medium", "high"];
+
+function rpcStatusVariant(
+  status: "idle" | "loading" | "ready" | "reconnecting" | "error",
+): "success" | "warning" | "error" | "accent" | "neutral" {
+  if (status === "ready") return "success";
+  if (status === "error") return "error";
+  if (status === "loading" || status === "reconnecting") return "accent";
+  return "neutral";
+}
 
 export default function ModelSettingsPanel({
   settings,
@@ -116,13 +132,20 @@ export default function ModelSettingsPanel({
   }
 
   return (
-    <div
+    <Stack
       className={`model-settings ${
         needsOnboarding ? "model-settings--guided" : ""
       }`}
+      gap={3}
     >
       {needsOnboarding ? (
-        <ol className="model-onboarding" aria-label="首次模型配置引导">
+        <Stack
+          as="ol"
+          className="model-onboarding"
+          direction="horizontal"
+          gap={2}
+          aria-label="首次模型配置引导"
+        >
           {steps.map((step, index) => {
             const isCurrent = index === currentStep;
             const isDone = step.done;
@@ -137,39 +160,58 @@ export default function ModelSettingsPanel({
                 key={step.label}
                 aria-current={isCurrent ? "step" : undefined}
               >
-                <span>
-                  {isDone ? <Check size={12} strokeWidth={3} /> : index + 1}
-                </span>
-                <small>{step.label}</small>
+                <Token
+                  label={step.label}
+                  size="sm"
+                  color={isDone ? "green" : isCurrent ? "blue" : "gray"}
+                  icon={
+                    isDone ? <Check size={12} strokeWidth={3} /> : undefined
+                  }
+                />
               </li>
             );
           })}
-        </ol>
+        </Stack>
       ) : null}
 
       <div className="model-settings__workspace">
-        <section className="model-settings__config">
-          <div className="model-status">
-            <div>
-              <span
-                className={`model-status__dot model-status__dot--${rpcStatus}`}
+        <Stack className="model-settings__config" gap={3}>
+          <Toolbar
+            label="模型 RPC 状态"
+            className="model-status"
+            size="sm"
+            variant="section"
+            startContent={
+              <Stack direction="horizontal" gap={2} align="center">
+                <StatusDot
+                  label={modelStatusText(rpcStatus)}
+                  variant={rpcStatusVariant(rpcStatus)}
+                  isPulsing={
+                    rpcStatus === "loading" || rpcStatus === "reconnecting"
+                  }
+                />
+                <Text type="label">{modelStatusText(rpcStatus)}</Text>
+                <Text type="supporting" size="2xs">
+                  {models.length} 个模型
+                </Text>
+              </Stack>
+            }
+            endContent={
+              <Button
+                label={rpcStatus === "reconnecting" ? "重载中…" : "重载模型"}
+                variant="ghost"
+                icon={<RefreshCw size={13} />}
+                isDisabled={rpcStatus === "reconnecting"}
+                onClick={onReload}
               />
-              <strong>{modelStatusText(rpcStatus)}</strong>
-              <small>{models.length} 个模型</small>
-            </div>
-            <Button
-              label={rpcStatus === "reconnecting" ? "重载中…" : "重载模型"}
-              size="sm"
-              variant="ghost"
-              icon={<RefreshCw size={13} />}
-              isDisabled={rpcStatus === "reconnecting"}
-              onClick={onReload}
-            />
-          </div>
+            }
+          />
           {error ? (
-            <p className="settings-node__banner settings-node__banner--error">
-              {error}
-            </p>
+            <Section variant="muted" padding={3}>
+              <Text type="supporting" color="accent">
+                {error}
+              </Text>
+            </Section>
           ) : null}
 
           <div className="model-tier-selector model-tier-selector--compact">
@@ -194,12 +236,17 @@ export default function ModelSettingsPanel({
                     label={`${tierLabels[tier]}档`}
                     description={modelName}
                     endContent={
-                      <span className="model-tier-card__thinking">
-                        {thinkingLevels.find(
-                          (level) =>
-                            level.value === settings[tier].thinking_level,
-                        )?.label ?? settings[tier].thinking_level}
-                      </span>
+                      <Token
+                        className="model-tier-card__thinking"
+                        label={
+                          thinkingLevels.find(
+                            (level) =>
+                              level.value === settings[tier].thinking_level,
+                          )?.label ?? settings[tier].thinking_level
+                        }
+                        size="sm"
+                        color="gray"
+                      />
                     }
                   />
                 );
@@ -207,65 +254,87 @@ export default function ModelSettingsPanel({
             </RadioList>
           </div>
 
-          <div className="model-tier-detail">
-            <div className="settings-section__header">
-              <h3>{tierLabels[selectedTier]}档模型</h3>
-              <p>用于对应复杂度的 Agent 任务。</p>
-            </div>
-            <div className="model-tier-detail__fields">
-              <Selector
-                label="模型"
-                value={setting.model_id ?? ""}
-                options={modelOptions}
-                isDisabled={disabled}
-                placeholder="选择模型"
-                onChange={(value) =>
-                  onChange(selectedTier, {
-                    ...setting,
-                    model_id: value || null,
-                  })
+          <Section className="model-tier-detail" padding={4}>
+            <Stack gap={3}>
+              <Stack gap={0.5}>
+                <Text type="label" weight="semibold">
+                  {tierLabels[selectedTier]}档模型
+                </Text>
+                <Text type="supporting" size="2xs">
+                  用于对应复杂度的 Agent 任务。
+                </Text>
+              </Stack>
+              <div className="model-tier-detail__fields">
+                <Selector
+                  label="模型"
+                  value={setting.model_id ?? ""}
+                  options={modelOptions}
+                  isDisabled={disabled}
+                  placeholder="选择模型"
+                  onChange={(value) =>
+                    onChange(selectedTier, {
+                      ...setting,
+                      model_id: value || null,
+                    })
+                  }
+                />
+                <Selector
+                  label="推理强度"
+                  value={setting.thinking_level}
+                  options={thinkingOptions}
+                  isDisabled={disabled}
+                  onChange={(value) => {
+                    const level = thinkingLevels.find(
+                      (level) => level.value === value,
+                    )?.value;
+                    onChange(selectedTier, {
+                      ...setting,
+                      thinking_level: level ?? setting.thinking_level,
+                    });
+                  }}
+                />
+              </div>
+              <Toolbar
+                label="保存模型设置"
+                className="model-tier-detail__actions"
+                size="sm"
+                variant="transparent"
+                endContent={
+                  <Button
+                    label={saving ? "保存中…" : "保存模型设置"}
+                    variant="primary"
+                    isLoading={saving}
+                    isDisabled={disabled}
+                    onClick={onSave}
+                  />
                 }
               />
-              <Selector
-                label="推理强度"
-                value={setting.thinking_level}
-                options={thinkingOptions}
-                isDisabled={disabled}
-                onChange={(value) => {
-                  const level = thinkingLevels.find(
-                    (level) => level.value === value,
-                  )?.value;
-                  onChange(selectedTier, {
-                    ...setting,
-                    thinking_level: level ?? setting.thinking_level,
-                  });
-                }}
-              />
-            </div>
-            <div className="model-tier-detail__actions">
-              <Button
-                label={saving ? "保存中…" : "保存模型设置"}
-                variant="primary"
-                isLoading={saving}
-                isDisabled={disabled}
-                onClick={onSave}
-              />
-            </div>
-          </div>
-        </section>
+            </Stack>
+          </Section>
+        </Stack>
 
-        <section className="pi-login-terminal" aria-label="Pi 登录终端">
-          <header>
-            <span>
-              <Terminal size={14} />
-              <strong>Pi 登录终端</strong>
-            </span>
-            <div>
-              {piLoginSession ? (
+        <Section
+          className="pi-login-terminal"
+          aria-label="Pi 登录终端"
+          role="region"
+          padding={0}
+        >
+          <Toolbar
+            label="Pi 登录终端"
+            className="pi-login-terminal__toolbar"
+            size="sm"
+            variant="transparent"
+            startContent={
+              <Stack direction="horizontal" gap={2} align="center">
+                <Terminal size={14} />
+                <Text type="label">Pi 登录终端</Text>
+              </Stack>
+            }
+            endContent={
+              piLoginSession ? (
                 <>
                   <Button
                     label="重新启动"
-                    size="sm"
                     variant="ghost"
                     icon={<RotateCw size={13} />}
                     isDisabled={piLoginBusy}
@@ -273,7 +342,6 @@ export default function ModelSettingsPanel({
                   />
                   <Button
                     label="关闭"
-                    size="sm"
                     variant="ghost"
                     icon={<Power size={13} />}
                     isDisabled={piLoginBusy}
@@ -283,16 +351,15 @@ export default function ModelSettingsPanel({
               ) : (
                 <Button
                   label={piLoginBusy ? "启动中…" : "启动终端"}
-                  size="sm"
                   variant="secondary"
                   icon={<Terminal size={13} />}
                   isLoading={piLoginBusy}
                   isDisabled={terminalDisabled}
                   onClick={() => void onStartPiLogin()}
                 />
-              )}
-            </div>
-          </header>
+              )
+            }
+          />
           {needsTerminalAccess ? (
             <form
               className="terminal-node__access nodrag"
@@ -325,23 +392,27 @@ export default function ModelSettingsPanel({
               fixedDark
             />
           ) : (
-            <div className="pi-login-terminal__empty">
-              <Terminal size={28} />
-              <strong>连接 Pi 账号</strong>
-              <p>
-                启动终端后手动输入 <code>/login</code>
-                ，完成登录再点击“重载模型”。
-              </p>
-              {terminalDisabled ? (
-                <small>Web 终端仅允许通过本机监听地址使用。</small>
-              ) : null}
-            </div>
+            <EmptyState
+              title="连接 Pi 账号"
+              description="启动终端后手动输入 /login，完成登录再点击“重载模型”。"
+              icon={<Terminal size={28} />}
+              isCompact
+            />
           )}
+          {terminalDisabled && !piLoginSession ? (
+            <Text
+              className="pi-login-terminal__hint"
+              type="supporting"
+              size="2xs"
+            >
+              Web 终端仅允许通过本机监听地址使用。
+            </Text>
+          ) : null}
           {piLoginError ? (
             <p className="pi-login-terminal__error">{piLoginError}</p>
           ) : null}
-        </section>
+        </Section>
       </div>
-    </div>
+    </Stack>
   );
 }

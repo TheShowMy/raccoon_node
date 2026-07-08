@@ -10,11 +10,19 @@ import {
   Loader2,
   RotateCcw,
   ShieldCheck,
-  X,
 } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
-import { Dialog } from "@astryxdesign/core/Dialog";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { IconButton } from "@astryxdesign/core/IconButton";
+import {
+  MetadataList,
+  MetadataListItem,
+} from "@astryxdesign/core/MetadataList";
+import { Section } from "@astryxdesign/core/Section";
+import { Stack } from "@astryxdesign/core/Stack";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { Text } from "@astryxdesign/core/Text";
+import { Token } from "@astryxdesign/core/Token";
 import type {
   RequirementExecutionTask,
   RequirementRecoveryStage,
@@ -47,6 +55,22 @@ const taskKindText: Record<RequirementExecutionTask["kind"], string> = {
   branch_merge: "分支合并",
   merge_review: "合并审核",
 };
+
+function taskStatusVariant(status: RequirementExecutionTask["status"]) {
+  if (status === "completed" || status === "approved") return "success";
+  if (status === "failed" || status === "rejected") return "error";
+  if (status === "running" || status === "fixing") return "accent";
+  if (status === "awaiting_review") return "warning";
+  return "neutral";
+}
+
+function taskStatusTokenColor(status: RequirementExecutionTask["status"]) {
+  if (status === "completed" || status === "approved") return "green";
+  if (status === "failed" || status === "rejected") return "red";
+  if (status === "running" || status === "fixing") return "blue";
+  if (status === "awaiting_review") return "yellow";
+  return "gray";
+}
 
 export default function RequirementTaskNode({
   data,
@@ -284,60 +308,92 @@ function TaskDetailDialog({
       padding={0}
       purpose="info"
     >
-      <div className="node-card node-card--requirement-task task-detail-dialog__panel">
-        <div className="task-detail-dialog__head">
-          <span className="node-icon task-detail-dialog__icon">
-            <CircleDot size={22} />
-          </span>
-          <div>
-            <strong>{displayedTask.title}</strong>
-            <span>{taskKindText[displayedTask.kind]}详情</span>
-          </div>
-          <span
-            className={`task-node__status task-node__status--${displayedTask.status} task-detail-dialog__status`}
+      <Stack className="task-detail-dialog__panel">
+        <DialogHeader
+          title={displayedTask.title}
+          subtitle={`${taskKindText[displayedTask.kind]}详情`}
+          startContent={
+            <span className="node-icon task-detail-dialog__icon">
+              <CircleDot size={20} />
+            </span>
+          }
+          endContent={
+            <Stack direction="horizontal" gap={1.5} align="center">
+              <StatusDot
+                variant={taskStatusVariant(displayedTask.status)}
+                label={taskStatusText[displayedTask.status]}
+                isPulsing={displayedTask.status === "running"}
+              />
+              <Token
+                label={taskStatusText[displayedTask.status]}
+                color={taskStatusTokenColor(displayedTask.status)}
+                size="sm"
+              />
+            </Stack>
+          }
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) onClose();
+          }}
+          hasDivider
+        />
+        <Stack className="task-detail-dialog__body" gap={3} padding={4}>
+          <Section
+            className="task-detail-dialog__section task-detail-dialog__section--wide"
+            padding={3}
           >
-            {taskStatusText[displayedTask.status]}
-          </span>
-          <IconButton
-            label="关闭详情"
-            tooltip="关闭详情"
-            icon={<X size={16} />}
-            variant="ghost"
-            onClick={onClose}
-          />
-        </div>
-        <div className="task-detail-dialog__body">
-          <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-            <h3>任务描述</h3>
-            <p className="task-detail-dialog__text">
-              {displayedTask.description}
-            </p>
-          </section>
+            <Stack gap={1.5}>
+              <Text as="h3" type="label" weight="semibold">
+                任务描述
+              </Text>
+              <Text as="p" wordBreak="break-word">
+                {displayedTask.description}
+              </Text>
+            </Stack>
+          </Section>
           {historicalTrace?.usage ? (
             <TaskUsage usage={historicalTrace.usage} />
           ) : null}
           {detailError ? (
-            <p className="task-detail-dialog__empty">{detailError}</p>
+            <Section variant="muted" padding={3}>
+              <Token label={detailError} color="red" size="sm" />
+            </Section>
           ) : null}
           <TaskDetailFlow
             task={displayedTask}
             reviews={displayedReviews}
             dependencies={displayedDependencies}
           />
-          <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-            <h3>会话记录</h3>
-            <SessionTranscript
-              scopeKey={`${requirementId}:${task.id}`}
-              loadPage={(before) =>
-                getTaskSession(requirementId, task.id, before)
+          <Section
+            className="task-detail-dialog__section task-detail-dialog__section--wide"
+            padding={3}
+          >
+            <Stack gap={2}>
+              <Text as="h3" type="label" weight="semibold">
+                会话记录
+              </Text>
+              <SessionTranscript
+                scopeKey={`${requirementId}:${task.id}`}
+                loadPage={(before) =>
+                  getTaskSession(requirementId, task.id, before)
+                }
+                title="实现与审核 JSONL 时间线"
+                initiallyOpen
+              />
+            </Stack>
+          </Section>
+          <Section
+            className="task-detail-dialog__section task-detail-dialog__section--wide"
+            padding={3}
+          >
+            <MetadataList
+              title={
+                <Text as="h3" type="label" weight="semibold">
+                  恢复信息
+                </Text>
               }
-              title="实现与审核 JSONL 时间线"
-              initiallyOpen
-            />
-          </section>
-          <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-            <h3>恢复信息</h3>
-            <dl className="task-detail-dialog__info-list task-detail-dialog__info-list--embedded">
+              className="task-detail-dialog__info-list task-detail-dialog__info-list--embedded"
+              columns="multi"
+            >
               <DetailItem label="失败原因" value={displayedTask.error} danger />
               <DetailItem
                 label="失败摘要"
@@ -360,11 +416,14 @@ function TaskDetailDialog({
                 label="当前有效档位"
                 value={effectiveTierText(displayedTask)}
               />
-            </dl>
-          </section>
+            </MetadataList>
+          </Section>
           <details className="task-detail-dialog__details">
             <summary>基础信息</summary>
-            <dl className="task-detail-dialog__info-list">
+            <MetadataList
+              className="task-detail-dialog__info-list"
+              columns="multi"
+            >
               <DetailItem label="结果" value={displayedTask.result_summary} />
               <DetailItem
                 label="执行提示"
@@ -392,10 +451,10 @@ function TaskDetailDialog({
                 value={displayedTask.cleanup_summary}
               />
               <DetailItem label="审核意见" value={reviewFeedback} danger />
-            </dl>
+            </MetadataList>
           </details>
-        </div>
-      </div>
+        </Stack>
+      </Stack>
     </Dialog>,
     document.body,
   );
@@ -427,75 +486,86 @@ function ImplementationReviewFlow({
   reviews: RequirementExecutionTask[];
 }) {
   return (
-    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-      <h3>实现与审核</h3>
-      {task.review_history.length > 0 ? (
-        <div className="task-detail-dialog__rounds">
-          {task.review_history.map((round) => (
-            <article
-              className="task-detail-dialog__round"
-              key={`${round.round}-${round.implementation_attempt}`}
-            >
-              <header>
-                <strong>第 {round.round} 轮</strong>
-                <span className={`is-${round.status}`}>
-                  {reviewRoundStatusText[round.status]}
-                </span>
-              </header>
-              <div className="task-detail-dialog__lanes">
-                <div className="task-detail-dialog__lane">
-                  <b>实现 Agent</b>
-                  <FlowStep
-                    title={
-                      round.implementation_attempt > 1
-                        ? `第 ${round.implementation_attempt} 次修复`
-                        : "完成实现"
-                    }
-                    detail={round.implementation_summary ?? "等待实现结果"}
-                    status={
-                      round.implementation_summary ? "approved" : "pending"
-                    }
-                  />
-                </div>
-                <ReviewExchange rejected={round.status === "rejected"} />
-                <div className="task-detail-dialog__lane">
-                  <b>审核 Agent 组</b>
-                  {round.reviews.length > 0 ? (
-                    round.reviews.map((review) => (
-                      <FlowStep
-                        key={review.task_id}
-                        title={review.angle || "综合审核"}
-                        detail={
-                          review.failure_reason ?? review.summary ?? "等待审核"
-                        }
-                        status={review.status}
-                      />
-                    ))
-                  ) : (
+    <Section
+      className="task-detail-dialog__section task-detail-dialog__section--wide"
+      padding={3}
+    >
+      <Stack gap={2}>
+        <Text as="h3" type="label" weight="semibold">
+          实现与审核
+        </Text>
+        {task.review_history.length > 0 ? (
+          <div className="task-detail-dialog__rounds">
+            {task.review_history.map((round) => (
+              <article
+                className="task-detail-dialog__round"
+                key={`${round.round}-${round.implementation_attempt}`}
+              >
+                <header>
+                  <strong>第 {round.round} 轮</strong>
+                  <span className={`is-${round.status}`}>
+                    {reviewRoundStatusText[round.status]}
+                  </span>
+                </header>
+                <div className="task-detail-dialog__lanes">
+                  <div className="task-detail-dialog__lane">
+                    <b>实现 Agent</b>
                     <FlowStep
-                      title="等待审核"
-                      detail="审核 Agent 尚未返回结果"
-                      status="pending"
-                    />
-                  )}
-                  {round.summary || round.failure_reason ? (
-                    <FlowStep
-                      title="审核汇总"
-                      detail={
-                        round.failure_reason ?? round.summary ?? "等待审核汇总"
+                      title={
+                        round.implementation_attempt > 1
+                          ? `第 ${round.implementation_attempt} 次修复`
+                          : "完成实现"
                       }
-                      status={round.summary_conclusion ?? "pending"}
+                      detail={round.implementation_summary ?? "等待实现结果"}
+                      status={
+                        round.implementation_summary ? "approved" : "pending"
+                      }
                     />
-                  ) : null}
+                  </div>
+                  <ReviewExchange rejected={round.status === "rejected"} />
+                  <div className="task-detail-dialog__lane">
+                    <b>审核 Agent 组</b>
+                    {round.reviews.length > 0 ? (
+                      round.reviews.map((review) => (
+                        <FlowStep
+                          key={review.task_id}
+                          title={review.angle || "综合审核"}
+                          detail={
+                            review.failure_reason ??
+                            review.summary ??
+                            "等待审核"
+                          }
+                          status={review.status}
+                        />
+                      ))
+                    ) : (
+                      <FlowStep
+                        title="等待审核"
+                        detail="审核 Agent 尚未返回结果"
+                        status="pending"
+                      />
+                    )}
+                    {round.summary || round.failure_reason ? (
+                      <FlowStep
+                        title="审核汇总"
+                        detail={
+                          round.failure_reason ??
+                          round.summary ??
+                          "等待审核汇总"
+                        }
+                        status={round.summary_conclusion ?? "pending"}
+                      />
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <CurrentReviewFlow task={task} reviews={reviews} />
-      )}
-    </section>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <CurrentReviewFlow task={task} reviews={reviews} />
+        )}
+      </Stack>
+    </Section>
   );
 }
 
@@ -560,29 +630,38 @@ function BranchMergeFlow({
       ? "approved"
       : "pending";
   return (
-    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-      <h3>分支合并</h3>
-      <div className="task-detail-dialog__pipeline">
-        <FlowStage title="依赖分支" status={dependencyStatus}>
-          {dependencies.length > 0
-            ? dependencies.map((dependency) => (
-                <span key={dependency.id}>
-                  {dependency.title}
-                  {dependency.branch_name ? ` · ${dependency.branch_name}` : ""}
-                </span>
-              ))
-            : "等待依赖任务"}
-        </FlowStage>
-        <span aria-hidden="true">→</span>
-        <FlowStage title="合并" status={toReviewStatus(task.status)}>
-          {task.title}
-        </FlowStage>
-        <span aria-hidden="true">→</span>
-        <FlowStage title="合并结果" status={toReviewStatus(task.status)}>
-          {task.error ?? task.result_summary ?? "等待合并"}
-        </FlowStage>
-      </div>
-    </section>
+    <Section
+      className="task-detail-dialog__section task-detail-dialog__section--wide"
+      padding={3}
+    >
+      <Stack gap={2}>
+        <Text as="h3" type="label" weight="semibold">
+          分支合并
+        </Text>
+        <div className="task-detail-dialog__pipeline">
+          <FlowStage title="依赖分支" status={dependencyStatus}>
+            {dependencies.length > 0
+              ? dependencies.map((dependency) => (
+                  <span key={dependency.id}>
+                    {dependency.title}
+                    {dependency.branch_name
+                      ? ` · ${dependency.branch_name}`
+                      : ""}
+                  </span>
+                ))
+              : "等待依赖任务"}
+          </FlowStage>
+          <span aria-hidden="true">→</span>
+          <FlowStage title="合并" status={toReviewStatus(task.status)}>
+            {task.title}
+          </FlowStage>
+          <span aria-hidden="true">→</span>
+          <FlowStage title="合并结果" status={toReviewStatus(task.status)}>
+            {task.error ?? task.result_summary ?? "等待合并"}
+          </FlowStage>
+        </div>
+      </Stack>
+    </Section>
   );
 }
 
@@ -647,19 +726,26 @@ function MergeReviewFlow({
     },
   ];
   return (
-    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-      <h3>审核发布</h3>
-      <div className="task-detail-dialog__pipeline task-detail-dialog__pipeline--publish">
-        {stages.map((stage, index) => (
-          <React.Fragment key={stage.title}>
-            {index > 0 ? <span aria-hidden="true">→</span> : null}
-            <FlowStage title={stage.title} status={stage.status}>
-              {stage.detail}
-            </FlowStage>
-          </React.Fragment>
-        ))}
-      </div>
-    </section>
+    <Section
+      className="task-detail-dialog__section task-detail-dialog__section--wide"
+      padding={3}
+    >
+      <Stack gap={2}>
+        <Text as="h3" type="label" weight="semibold">
+          审核发布
+        </Text>
+        <div className="task-detail-dialog__pipeline task-detail-dialog__pipeline--publish">
+          {stages.map((stage, index) => (
+            <React.Fragment key={stage.title}>
+              {index > 0 ? <span aria-hidden="true">→</span> : null}
+              <FlowStage title={stage.title} status={stage.status}>
+                {stage.detail}
+              </FlowStage>
+            </React.Fragment>
+          ))}
+        </div>
+      </Stack>
+    </Section>
   );
 }
 
@@ -732,51 +818,48 @@ function TaskUsage({ usage }: { usage: TraceUsage }) {
       : "0.0%";
 
   return (
-    <section className="task-detail-dialog__section task-detail-dialog__section--wide">
-      <h3>会话统计</h3>
-      <dl className="task-detail-dialog__usage">
-        <div>
-          <dt>会话是否复用</dt>
-          <dd>{usage.sessionReused ? "是" : "否"}</dd>
-        </div>
-        <div>
-          <dt>累计调用数</dt>
-          <dd>{number.format(usage.callCount)} 次</dd>
-        </div>
-        <div>
-          <dt>输入 tokens</dt>
-          <dd>{number.format(usage.input)}</dd>
-        </div>
-        <div>
-          <dt>输出 tokens</dt>
-          <dd>{number.format(usage.output)}</dd>
-        </div>
-        <div>
-          <dt>缓存读取</dt>
-          <dd>{number.format(usage.cacheRead)}</dd>
-        </div>
-        <div>
-          <dt>缓存写入</dt>
-          <dd>{number.format(usage.cacheWrite)}</dd>
-        </div>
-        <div>
-          <dt>缓存命中率</dt>
-          <dd>{cacheHitRate}</dd>
-        </div>
-        <div>
-          <dt>上下文 tokens</dt>
-          <dd>{number.format(usage.context.tokens)}</dd>
-        </div>
-        <div>
-          <dt>上下文窗口</dt>
-          <dd>{number.format(usage.context.window)}</dd>
-        </div>
-        <div>
-          <dt>上下文占比</dt>
-          <dd>{usage.context.percent.toFixed(1)}%</dd>
-        </div>
-      </dl>
-    </section>
+    <Section
+      className="task-detail-dialog__section task-detail-dialog__section--wide"
+      padding={3}
+    >
+      <MetadataList
+        title={
+          <Text as="h3" type="label" weight="semibold">
+            会话统计
+          </Text>
+        }
+        columns="multi"
+      >
+        <MetadataListItem label="会话是否复用">
+          {usage.sessionReused ? "是" : "否"}
+        </MetadataListItem>
+        <MetadataListItem label="累计调用数">
+          {number.format(usage.callCount)} 次
+        </MetadataListItem>
+        <MetadataListItem label="输入 tokens">
+          {number.format(usage.input)}
+        </MetadataListItem>
+        <MetadataListItem label="输出 tokens">
+          {number.format(usage.output)}
+        </MetadataListItem>
+        <MetadataListItem label="缓存读取">
+          {number.format(usage.cacheRead)}
+        </MetadataListItem>
+        <MetadataListItem label="缓存写入">
+          {number.format(usage.cacheWrite)}
+        </MetadataListItem>
+        <MetadataListItem label="缓存命中率">{cacheHitRate}</MetadataListItem>
+        <MetadataListItem label="上下文 tokens">
+          {number.format(usage.context.tokens)}
+        </MetadataListItem>
+        <MetadataListItem label="上下文窗口">
+          {number.format(usage.context.window)}
+        </MetadataListItem>
+        <MetadataListItem label="上下文占比">
+          {usage.context.percent.toFixed(1)}%
+        </MetadataListItem>
+      </MetadataList>
+    </Section>
   );
 }
 
@@ -815,24 +898,21 @@ function DetailItem({
 }) {
   if (!value) return null;
   return (
-    <>
-      <dt>{label}</dt>
+    <MetadataListItem label={label}>
       {href ? (
-        <dd>
-          <a href={href} target="_blank" rel="noreferrer">
-            {value}
-          </a>
-        </dd>
+        <a href={href} target="_blank" rel="noreferrer">
+          {value}
+        </a>
       ) : (
-        <dd
-          className={`${mono ? "is-mono" : ""} ${danger ? "is-danger" : ""} ${
-            warning ? "is-warning" : ""
-          }`}
+        <Text
+          type={mono ? "code" : "body"}
+          color={danger || warning ? "accent" : "primary"}
+          wordBreak="break-word"
         >
           {value}
-        </dd>
+        </Text>
       )}
-    </>
+    </MetadataListItem>
   );
 }
 

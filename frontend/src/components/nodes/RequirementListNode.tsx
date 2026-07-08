@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
-import { ClickableCard } from "@astryxdesign/core/ClickableCard";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { Item } from "@astryxdesign/core/Item";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Tab, TabList } from "@astryxdesign/core";
 import { Text } from "@astryxdesign/core/Text";
@@ -55,12 +56,14 @@ export default function RequirementListNode({
     activeTab === "pending"
       ? data.pendingRequirements
       : data.completedRequirements;
+  const emptyTitle =
+    activeTab === "pending" ? "暂无待执行需求" : "暂无已完成需求";
   const emptyText =
-    activeTab === "pending" ? "确认需求后会进入这里" : "暂无已完成需求";
+    activeTab === "pending" ? "确认需求后会进入这里" : "完成的需求会显示在这里";
 
   return (
     <>
-      <div className="node-header requirement-list__tabs">
+      <Stack className="node-header requirement-list__tabs">
         <TabList
           value={activeTab}
           onChange={(value) => {
@@ -81,13 +84,11 @@ export default function RequirementListNode({
             label={`已完成 ${data.completedRequirements.length}`}
           />
         </TabList>
-      </div>
+      </Stack>
       {requirements.length === 0 ? (
-        <Stack className="empty-state">
-          <Text type="supporting">{emptyText}</Text>
-        </Stack>
+        <EmptyState title={emptyTitle} description={emptyText} isCompact />
       ) : (
-        <div className="requirement-list nowheel nodrag">
+        <Stack className="requirement-list nowheel nodrag" gap={1}>
           {requirements.map((requirement) => {
             const taskProgress = requirementTaskProgress(requirement);
             const isSelected = data.selectedRequirementId === requirement.id;
@@ -98,46 +99,34 @@ export default function RequirementListNode({
               !requirement.execution_plan;
             const canView = Boolean(requirement.execution_plan);
             return (
-              <ClickableCard
-                label={requirement.title}
+              <Item
                 className={`requirement-list__item ${
                   isSelected ? "requirement-list__item--selected" : ""
                 }`}
                 key={requirement.id}
-                padding={0}
-                variant="transparent"
-                onClick={() => data.onSelectRequirement(requirement)}
-              >
-                <Stack
-                  className="requirement-list__item-head"
-                  direction="horizontal"
-                  gap={2}
-                  align="start"
-                >
+                label={
                   <Text type="label" maxLines={2} wordBreak="break-word">
                     {requirement.title}
                   </Text>
-                  <Token
-                    label={requirementStatusText(requirement.status)}
-                    color={requirementStatusColor(requirement.status)}
-                    size="sm"
-                  />
-                </Stack>
-                {taskProgress ? (
-                  <Token label={taskProgress} color="purple" size="sm" />
-                ) : null}
-                <Text type="supporting" size="3xs">
-                  更新于 {formatDate(requirement.updated_at)}
-                </Text>
-                {canPlan || canView ? (
-                  <Stack
-                    className="requirement-list__actions"
-                    direction="horizontal"
-                    gap={2}
-                  >
+                }
+                description={`更新于 ${formatDate(requirement.updated_at)}`}
+                align="start"
+                density="compact"
+                isSelected={isSelected}
+                onClick={() => data.onSelectRequirement(requirement)}
+                endContent={
+                  <Stack gap={1} align="end">
+                    <Token
+                      label={requirementStatusText(requirement.status)}
+                      color={requirementStatusColor(requirement.status)}
+                      size="sm"
+                    />
+                    {taskProgress ? (
+                      <Token label={taskProgress} color="purple" size="sm" />
+                    ) : null}
                     {canPlan ? (
                       <Button
-                        label={isBusy ? "生成中" : "重新生成 DAG"}
+                        label={isBusy ? "生成中…" : "重新生成 DAG"}
                         size="sm"
                         variant="ghost"
                         icon={
@@ -153,20 +142,20 @@ export default function RequirementListNode({
                           void data.onPlanRequirement(requirement);
                         }}
                       />
-                    ) : (
+                    ) : canView ? (
                       <Token
                         label="查看 DAG"
                         icon={<Eye size={13} />}
                         color="gray"
                         size="sm"
                       />
-                    )}
+                    ) : null}
                   </Stack>
-                ) : null}
-              </ClickableCard>
+                }
+              />
             );
           })}
-        </div>
+        </Stack>
       )}
     </>
   );

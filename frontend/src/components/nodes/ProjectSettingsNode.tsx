@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Banner } from "@astryxdesign/core/Banner";
+import { Stack } from "@astryxdesign/core/Stack";
 import { Tab, TabList } from "@astryxdesign/core/TabList";
 import { Settings, SlidersHorizontal } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
