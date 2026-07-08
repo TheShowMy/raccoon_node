@@ -126,7 +126,10 @@ describe("ProjectTerminalNode", () => {
 
   it("disables controls when terminal is disabled", () => {
     renderNode({ terminalDisabled: true });
-    expect(screen.getByRole("button", { name: "新建" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "新建" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(screen.getByText("终端当前不可用")).toBeInTheDocument();
   });
 

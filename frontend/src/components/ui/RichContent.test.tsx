@@ -27,7 +27,7 @@ describe("RichContent", () => {
 
   it("copies fenced code", async () => {
     render(<RichContent content={"```rust\nfn main() {}\n```"} />);
-    fireEvent.click(screen.getByRole("button", { name: "复制代码" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
 
     await waitFor(() =>
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith(

@@ -516,7 +516,7 @@ describe("RequirementTaskNode", () => {
         ]),
       ]),
     );
-    renderNode();
+    const { container } = renderNode();
 
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
 
@@ -526,7 +526,9 @@ describe("RequirementTaskNode", () => {
     expect(screen.getByText("assistant reply")).toBeInTheDocument();
     expect(screen.getByText("思考过程")).toBeInTheDocument();
     expect(screen.getByText("bash")).toBeInTheDocument();
-    expect(screen.getByText(/"command": "ls"/)).toBeInTheDocument();
+    expect(container.ownerDocument.body.textContent).toContain(
+      '"command": "ls"',
+    );
 
     fireEvent.click(screen.getByRole("checkbox", { name: "system" }));
     expect(await screen.findByText("system prompt")).toBeInTheDocument();

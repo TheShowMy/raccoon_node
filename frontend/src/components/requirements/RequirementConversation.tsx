@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Banner, Button, Card, TextArea } from "@astryxdesign/core";
+import { Banner, Button, Card, IconButton, TextArea } from "@astryxdesign/core";
 import { ChatMessageList } from "@astryxdesign/core/Chat";
 import {
   AlertTriangle,
@@ -127,16 +127,16 @@ export default function RequirementConversationWorkbench({
           </span>
         </div>
         {requirement && requirement.status !== "completed" ? (
-          <button
-            type="button"
+          <IconButton
             className="node-header__action rq-abandon-btn"
-            disabled={busy}
-            aria-label="放弃当前需求"
-            title="放弃当前需求"
+            label="放弃当前需求"
+            tooltip="放弃当前需求"
+            icon={<X size={15} />}
+            size="sm"
+            variant="ghost"
+            isDisabled={busy}
             onClick={onAbandon}
-          >
-            <X size={15} />
-          </button>
+          />
         ) : null}
       </div>
 
@@ -149,7 +149,7 @@ export default function RequirementConversationWorkbench({
           onCancel={onCancel}
         />
 
-        {requirement?.status === "failed" && !requirement.draft ? (
+        {requirement?.status === "failed" && !requirement.draft && !prompt ? (
           <Button
             label="重新分析"
             variant="secondary"
@@ -429,7 +429,7 @@ function RequirementAskCard({
             label={`${index + 1}`}
             size="sm"
             variant={index === activeIndex ? "primary" : "ghost"}
-            className={index === activeIndex ? "is-active" : ""}
+            className={`rq-ask__crumb ${index === activeIndex ? "is-active" : ""}`}
             onClick={() => setActiveIndex(index)}
             endContent={
               hasDraftAnswer(
@@ -446,6 +446,7 @@ function RequirementAskCard({
       {question.question_type === "free_text" ? (
         <TextArea
           label="补充说明"
+          className="rq-ask__textarea"
           isLabelHidden
           value={answer.customText}
           onChange={(value) =>
@@ -464,9 +465,13 @@ function RequirementAskCard({
             return (
               <Button
                 key={option.value}
-                label={option.label}
+                label={
+                  option.description
+                    ? `${option.label} ${option.description}`
+                    : option.label
+                }
                 variant={selected ? "primary" : "secondary"}
-                className={selected ? "is-selected" : ""}
+                className={`rq-ask__option ${selected ? "is-selected" : ""}`}
                 onClick={() => {
                   const next = toggleClarificationOption(
                     question,
@@ -481,12 +486,12 @@ function RequirementAskCard({
                     setActiveIndex(activeIndex + 1);
                   }
                 }}
-                endContent={
-                  option.description ? (
-                    <small>{option.description}</small>
-                  ) : null
-                }
-              />
+              >
+                <span>{option.label}</span>
+                {option.description ? (
+                  <small>{option.description}</small>
+                ) : null}
+              </Button>
             );
           })}
         </div>
@@ -496,12 +501,14 @@ function RequirementAskCard({
           label={
             activeIndex < prompt.questions.length - 1 ? "继续" : "提交澄清"
           }
+          className="rq-shelf__action rq-shelf__action--primary"
           variant="primary"
           isDisabled={busy || !hasDraftAnswer(question, answer)}
           onClick={advance}
         />
         <Button
           label="全部提交"
+          className="rq-shelf__action"
           variant="secondary"
           isDisabled={busy || !allAnswered}
           onClick={onSubmit}
@@ -540,12 +547,14 @@ function RequirementConfirmCard({
       <div className="rq-shelf__actions">
         <Button
           label="确认并执行"
+          className="rq-shelf__action rq-shelf__action--primary"
           variant="primary"
           isDisabled={busy}
           onClick={onConfirm}
         />
         <Button
           label="继续补充"
+          className="rq-shelf__action"
           variant="secondary"
           isDisabled={busy}
           onClick={onContinueEditing}

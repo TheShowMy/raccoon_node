@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@astryxdesign/core";
 import { ChatComposer as AstryxChatComposer } from "@astryxdesign/core/Chat";
+import { TextArea } from "@astryxdesign/core/TextArea";
 import { Token } from "@astryxdesign/core/Token";
 import { FileText, Image, Send, Square, X } from "lucide-react";
 import { getProjectFiles, uploadProjectAttachment } from "../../api/client";
@@ -192,14 +193,18 @@ export default function ChatComposer({
       drawer={attachments}
       input={
         <div className="rq-composer__input">
-          <textarea
+          <TextArea
             ref={textareaRef}
+            label={placeholder}
+            isLabelHidden
             value={value}
-            disabled={disabled}
-            onChange={(event) => {
-              onChange(event.target.value);
+            isDisabled={disabled}
+            size="sm"
+            className="rq-composer__textarea"
+            onChange={(nextValue, event) => {
+              onChange(nextValue);
               setSlashDismissed(false);
-              detectMention(event.target.value, event.target.selectionStart);
+              detectMention(nextValue, event.target.selectionStart);
             }}
             onPaste={(event) => {
               void uploadImages(event.clipboardData.files);
@@ -228,27 +233,31 @@ export default function ChatComposer({
           />
           {showRequirementCommand ? (
             <div className="rq-composer__suggestions" role="listbox">
-              <button
+              <Button
+                label="/生成需求说明"
+                className="rq-composer__suggestion rq-composer__suggestion--command"
                 type="button"
                 role="option"
                 aria-selected="true"
                 onClick={submit}
               >
                 <span>/生成需求说明</span>
-              </button>
+              </Button>
             </div>
           ) : null}
           {fileOptions.length > 0 && mention ? (
             <div className="rq-composer__suggestions">
               {fileOptions.slice(0, 8).map((file) => (
-                <button
+                <Button
+                  label={file.path}
+                  className="rq-composer__suggestion"
                   type="button"
                   key={file.path}
                   onClick={() => selectReference(file)}
                 >
                   <FileText size={13} />
                   <span>{file.path}</span>
-                </button>
+                </Button>
               ))}
             </div>
           ) : null}
@@ -258,6 +267,7 @@ export default function ChatComposer({
         <Button
           label={running ? stopLabel : sendLabel}
           isIconOnly
+          className="rq-composer__send"
           variant={running ? "secondary" : "primary"}
           isDisabled={!running && !canSend}
           onClick={running ? onStop : submit}

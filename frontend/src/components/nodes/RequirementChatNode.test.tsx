@@ -48,22 +48,32 @@ function data(projectId: string, overrides: Partial<ChatData> = {}): ChatData {
   return { ...base, ...overrides };
 }
 
+function expectSelectedTab(tab: HTMLElement) {
+  expect(tab).toHaveAttribute("aria-current", "page");
+  expect(tab).toHaveAttribute("data-selected", "selected");
+}
+
+function expectUnselectedTab(tab: HTMLElement) {
+  expect(tab).not.toHaveAttribute("aria-current", "page");
+  expect(tab).not.toHaveAttribute("data-selected", "selected");
+}
+
 describe("RequirementChatNode", () => {
   it("switches tabs and resets to requirement chat for a new project", () => {
     const view = render(<RequirementChatNode data={data("project-1")} />);
-    const projectSwitch = screen.getByRole("tab", {
+    const projectSwitch = screen.getByRole("button", {
       name: "项目问答",
     });
-    const requirementSwitch = screen.getByRole("tab", {
+    const requirementSwitch = screen.getByRole("button", {
       name: "需求会话",
     });
 
-    expect(requirementSwitch).toHaveAttribute("aria-selected", "true");
+    expectSelectedTab(requirementSwitch);
     fireEvent.click(projectSwitch);
-    expect(projectSwitch).toHaveAttribute("aria-selected", "true");
+    expectSelectedTab(projectSwitch);
 
     view.rerender(<RequirementChatNode data={data("project-2")} />);
-    expect(requirementSwitch).toHaveAttribute("aria-selected", "true");
+    expectSelectedTab(requirementSwitch);
   });
 
   it("hides a dismissed confirmation prompt", () => {
@@ -132,16 +142,16 @@ describe("RequirementChatNode", () => {
   it("uses explicit accessible tabs without hijacking keyboard Tab", () => {
     render(<RequirementChatNode data={data("project-1")} />);
     const stack = screen.getByLabelText("需求会话与项目问答");
-    const projectSwitch = screen.getByRole("tab", {
+    const projectSwitch = screen.getByRole("button", {
       name: "项目问答",
     });
     const input = screen.getByPlaceholderText("继续描述你的需求...");
 
     fireEvent.keyDown(stack, { key: "Tab" });
     fireEvent.keyDown(input, { key: "Tab" });
-    expect(projectSwitch).toHaveAttribute("aria-selected", "false");
+    expectUnselectedTab(projectSwitch);
     fireEvent.click(projectSwitch);
-    expect(projectSwitch).toHaveAttribute("aria-selected", "true");
+    expectSelectedTab(projectSwitch);
   });
 
   it("uses the styled confirmation dialog for abandoning requirements", () => {
@@ -184,7 +194,7 @@ describe("RequirementChatNode", () => {
     render(
       <RequirementChatNode data={data("project-1", { onProjectChatReset })} />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "项目问答" }));
     fireEvent.click(screen.getByRole("button", { name: "关闭项目问答会话" }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent("关闭项目问答？");
     fireEvent.click(screen.getByRole("button", { name: "确认关闭" }));
@@ -233,7 +243,7 @@ describe("RequirementChatNode", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "项目问答" }));
 
     expect(screen.getByText("你")).toBeInTheDocument();
     expect(screen.getByText("入口在哪里？")).toBeInTheDocument();
@@ -284,7 +294,7 @@ describe("RequirementChatNode", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "项目问答" }));
 
     expect(screen.getByText("Thinking")).toBeInTheDocument();
     expect(screen.getAllByText("rg").length).toBeGreaterThan(0);
@@ -338,7 +348,7 @@ describe("RequirementChatNode", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "项目问答" }));
 
     expect(screen.getByText("前端建议？")).toBeInTheDocument();
     expect(screen.getByText("建议统一设计系统。")).toBeInTheDocument();
@@ -412,7 +422,7 @@ describe("RequirementChatNode", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "项目问答" }));
 
     expect(screen.getByText("Thinking")).toBeInTheDocument();
     expect(screen.queryByText("等待 Pi Agent 事件...")).not.toBeInTheDocument();
@@ -452,7 +462,7 @@ describe("RequirementChatNode", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "项目问答" }));
 
     expect(screen.getByLabelText("正在思考")).toBeInTheDocument();
     expect(
@@ -474,7 +484,7 @@ describe("RequirementChatNode", () => {
         })}
       />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "项目问答" }));
     fireEvent.click(screen.getByRole("option", { name: "/生成需求说明" }));
 
     expect(onProjectChatGenerateRequirement).toHaveBeenCalledTimes(1);
@@ -506,13 +516,10 @@ describe("RequirementChatNode", () => {
         })}
       />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "项目问答" }));
     fireEvent.click(screen.getByRole("button", { name: "作为需求继续" }));
 
-    expect(screen.getByRole("tab", { name: "需求会话" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expectSelectedTab(screen.getByRole("button", { name: "需求会话" }));
     expect(onInputChange).toHaveBeenCalledWith(
       "# 统一对话\n\n重构项目问答。\n\n## 验收标准\n\n- 保留澄清流程",
     );
@@ -562,7 +569,7 @@ describe("RequirementChatNode", () => {
         })}
       />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "项目问答" }));
+    fireEvent.click(screen.getByRole("button", { name: "项目问答" }));
 
     expect(screen.getAllByText("read")).toHaveLength(1);
     expect(screen.getByText("src/main.rs")).toBeInTheDocument();

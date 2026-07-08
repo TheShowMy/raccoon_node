@@ -1,32 +1,7 @@
-import { Children, isValidElement, useState, type ReactNode } from "react";
-import { Check, Copy } from "lucide-react";
+import { CodeBlock } from "@astryxdesign/core/CodeBlock";
+import { Children, isValidElement, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-
-  return (
-    <button
-      type="button"
-      className="rich-content__copy"
-      aria-label="复制代码"
-      onClick={() => {
-        if (!navigator.clipboard) return;
-        void navigator.clipboard
-          .writeText(text)
-          .then(() => {
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1200);
-          })
-          .catch(() => setCopied(false));
-      }}
-    >
-      {copied ? <Check size={13} /> : <Copy size={13} />}
-      {copied ? "已复制" : "复制"}
-    </button>
-  );
-}
 
 function textFromNode(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -73,13 +48,15 @@ export default function RichContent({
                 : "";
             const text = textFromNode(children).replace(/\n$/, "");
             return (
-              <div className="rich-content__code">
-                <div>
-                  <span>{language || "text"}</span>
-                  <CopyButton text={text} />
-                </div>
-                <pre>{children}</pre>
-              </div>
+              <CodeBlock
+                code={text}
+                language={language || "plaintext"}
+                hasLanguageLabel={language !== ""}
+                hasLineNumbers={text.split("\n").length > 4}
+                isWrapped
+                size="sm"
+                width="100%"
+              />
             );
           },
         }}

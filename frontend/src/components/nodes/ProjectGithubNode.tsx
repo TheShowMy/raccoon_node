@@ -1,3 +1,7 @@
+import { List, ListItem } from "@astryxdesign/core/List";
+import { Stack } from "@astryxdesign/core/Stack";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { Text } from "@astryxdesign/core/Text";
 import { CheckCircle2, Github, TriangleAlert } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import { githubUrlFromGitUrl, shortenGitUrl } from "../../utils/format";
@@ -22,6 +26,11 @@ export default function ProjectGithubNode({ data }: { data: GithubData }) {
     : readiness.ready
       ? "前置检查通过"
       : `${readiness.issues.length} 项待处理`;
+  const statusVariant = local
+    ? "neutral"
+    : readiness.ready
+      ? "success"
+      : "warning";
 
   if (!data.expanded) {
     return (
@@ -48,39 +57,55 @@ export default function ProjectGithubNode({ data }: { data: GithubData }) {
         onToggle={data.onToggleExpanded}
       />
 
-      <div className="github-node__body nodrag nowheel">
-        <div className="github-node__meta">
-          <span>仓库</span>
-          <span title={data.project.git_url}>
+      <Stack className="github-node__body nodrag nowheel" gap={3} padding={4}>
+        <Stack direction="horizontal" gap={1.5} align="center">
+          <StatusDot
+            variant={statusVariant}
+            label={readiness.summary}
+            isPulsing={!local && !readiness.ready}
+          />
+          <Text type="label" maxLines={1} wordBreak="break-all">
+            {readiness.summary}
+          </Text>
+        </Stack>
+
+        <Stack className="github-node__meta" gap={0.5}>
+          <Text type="supporting">仓库</Text>
+          <Text type="label" maxLines={1} wordBreak="break-all">
             {data.project.git_url
               ? shortenGitUrl(data.project.git_url)
               : "当前仓库未配置 origin"}
-          </span>
-        </div>
+          </Text>
+        </Stack>
 
         {readiness.issues.length > 0 ? (
-          <>
-            <h3>需要处理</h3>
-            <ul className="github-node__issues">
-              {readiness.issues.map((issue) => (
-                <li key={issue}>{issue}</li>
-              ))}
-            </ul>
-            <p className="github-node__restart">
-              处理完成后请重启应用，启动时会重新检查。
-            </p>
-          </>
+          <List
+            density="compact"
+            listStyle="disc"
+            header={<Text type="label">需要处理</Text>}
+          >
+            {readiness.issues.map((issue) => (
+              <ListItem key={issue} label={issue} />
+            ))}
+          </List>
+        ) : null}
+
+        {readiness.issues.length > 0 ? (
+          <Text type="supporting" color="accent">
+            处理完成后请重启应用，启动时会重新检查。
+          </Text>
         ) : null}
 
         {readiness.notes.length > 0 ? (
-          <>
-            <h3>说明</h3>
-            <ul className="github-node__notes">
-              {readiness.notes.map((note) => (
-                <li key={note}>{note}</li>
-              ))}
-            </ul>
-          </>
+          <List
+            density="compact"
+            listStyle="disc"
+            header={<Text type="label">说明</Text>}
+          >
+            {readiness.notes.map((note) => (
+              <ListItem key={note} label={note} />
+            ))}
+          </List>
         ) : null}
 
         {githubUrl ? (
@@ -93,7 +118,7 @@ export default function ProjectGithubNode({ data }: { data: GithubData }) {
             打开 GitHub 仓库
           </a>
         ) : null}
-      </div>
+      </Stack>
     </section>
   );
 }

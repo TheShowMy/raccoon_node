@@ -1,4 +1,7 @@
-import React, { useEffect, useRef } from "react";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
+import { useEffect, useRef } from "react";
 import { Handle, Position } from "@xyflow/react";
 import { GitBranch, LoaderCircle, X } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
@@ -28,36 +31,51 @@ export default function RequirementDagNode({
         <span className="node-icon">
           <GitBranch size={20} />
         </span>
-        <div>
-          <strong>需求 DAG</strong>
-          <span>{requirementStatusText(requirement.status)}</span>
-        </div>
-        <button
-          className="dag-node__close nowheel nodrag"
-          type="button"
-          onClick={data.onClose}
-          aria-label="关闭 DAG"
-        >
-          <X size={14} />
-        </button>
+        <Stack gap={0.5}>
+          <Text type="label">需求 DAG</Text>
+          <Text type="supporting" size="3xs">
+            {requirementStatusText(requirement.status)}
+          </Text>
+        </Stack>
+        <span className="dag-node__close nowheel nodrag">
+          <IconButton
+            label="关闭 DAG"
+            tooltip="关闭 DAG"
+            icon={<X size={14} />}
+            size="sm"
+            variant="ghost"
+            onClick={data.onClose}
+          />
+        </span>
       </div>
 
-      <div className="dag-node__body">
-        <strong>{requirement.title}</strong>
+      <Stack className="dag-node__body" gap={2}>
+        <Text type="label" maxLines={2} wordBreak="break-word">
+          {requirement.title}
+        </Text>
         {!plan && requirement.status === "failed" ? (
-          <p>执行 DAG 生成失败，可在右侧需求列表中重新生成。</p>
+          <Text type="supporting" maxLines={3}>
+            执行 DAG 生成失败，可在右侧需求列表中重新生成。
+          </Text>
         ) : null}
         {!plan &&
         requirement.status !== "planning" &&
         requirement.status !== "failed" ? (
-          <p>确认需求后会自动生成并执行 DAG。</p>
+          <Text type="supporting" maxLines={3}>
+            确认需求后会自动生成并执行 DAG。
+          </Text>
         ) : null}
         {data.actionError || requirement.error ? (
-          <small className="dag-node__error">
+          <Text
+            className="dag-node__error"
+            type="supporting"
+            color="accent"
+            maxLines={2}
+          >
             {data.actionError ?? requirement.error}
-          </small>
+          </Text>
         ) : null}
-      </div>
+      </Stack>
 
       {requirement.status === "planning" ? (
         <div className="dag-node__thinking">

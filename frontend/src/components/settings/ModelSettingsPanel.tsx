@@ -22,7 +22,10 @@ import {
   tierLabels,
 } from "../../utils/format";
 import TerminalSessionView from "../terminal/TerminalSessionView";
-import SimpleSelect from "../ui/SimpleSelect";
+import { Button } from "@astryxdesign/core/Button";
+import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
+import { Selector } from "@astryxdesign/core/Selector";
+import { TextInput } from "@astryxdesign/core/TextInput";
 
 const TIERS: ModelTierKey[] = ["low", "medium", "high"];
 
@@ -154,14 +157,14 @@ export default function ModelSettingsPanel({
               <strong>{modelStatusText(rpcStatus)}</strong>
               <small>{models.length} 个模型</small>
             </div>
-            <button
-              type="button"
-              disabled={rpcStatus === "reconnecting"}
+            <Button
+              label={rpcStatus === "reconnecting" ? "重载中…" : "重载模型"}
+              size="sm"
+              variant="ghost"
+              icon={<RefreshCw size={13} />}
+              isDisabled={rpcStatus === "reconnecting"}
               onClick={onReload}
-            >
-              <RefreshCw size={13} />
-              {rpcStatus === "reconnecting" ? "重载中…" : "重载模型"}
-            </button>
+            />
           </div>
           {error ? (
             <p className="settings-node__banner settings-node__banner--error">
@@ -169,39 +172,39 @@ export default function ModelSettingsPanel({
             </p>
           ) : null}
 
-          <div
-            className="model-tier-selector model-tier-selector--compact"
-            role="radiogroup"
-            aria-label="模型档位"
-          >
-            {TIERS.map((tier) => {
-              const active = selectedTier === tier;
-              const modelName = settings[tier].model_id
-                ? (models.find((model) => model.id === settings[tier].model_id)
-                    ?.name ?? settings[tier].model_id)
-                : "未选择";
-              return (
-                <button
-                  key={tier}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  className={active ? "active" : ""}
-                  onClick={() => setSelectedTier(tier)}
-                >
-                  <span className="model-tier-card__row">
-                    <strong>{tierLabels[tier]}档</strong>
-                    <span className="model-tier-card__thinking">
-                      {thinkingLevels.find(
-                        (level) =>
-                          level.value === settings[tier].thinking_level,
-                      )?.label ?? settings[tier].thinking_level}
-                    </span>
-                  </span>
-                  <span className="model-tier-card__model">{modelName}</span>
-                </button>
-              );
-            })}
+          <div className="model-tier-selector model-tier-selector--compact">
+            <RadioList
+              label="模型档位"
+              isLabelHidden
+              value={selectedTier}
+              onChange={(value) => setSelectedTier(value as ModelTierKey)}
+              orientation="horizontal"
+              size="sm"
+            >
+              {TIERS.map((tier) => {
+                const modelName = settings[tier].model_id
+                  ? (models.find(
+                      (model) => model.id === settings[tier].model_id,
+                    )?.name ?? settings[tier].model_id)
+                  : "未选择";
+                return (
+                  <RadioListItem
+                    key={tier}
+                    value={tier}
+                    label={`${tierLabels[tier]}档`}
+                    description={modelName}
+                    endContent={
+                      <span className="model-tier-card__thinking">
+                        {thinkingLevels.find(
+                          (level) =>
+                            level.value === settings[tier].thinking_level,
+                        )?.label ?? settings[tier].thinking_level}
+                      </span>
+                    }
+                  />
+                );
+              })}
+            </RadioList>
           </div>
 
           <div className="model-tier-detail">
@@ -210,48 +213,43 @@ export default function ModelSettingsPanel({
               <p>用于对应复杂度的 Agent 任务。</p>
             </div>
             <div className="model-tier-detail__fields">
-              <label className="settings-field">
-                <span>模型</span>
-                <SimpleSelect
-                  value={setting.model_id ?? ""}
-                  options={modelOptions}
-                  disabled={disabled}
-                  placeholder="选择模型"
-                  onChange={(value) =>
-                    onChange(selectedTier, {
-                      ...setting,
-                      model_id: value || null,
-                    })
-                  }
-                />
-              </label>
-              <label className="settings-field">
-                <span>推理强度</span>
-                <SimpleSelect
-                  value={setting.thinking_level}
-                  options={thinkingOptions}
-                  disabled={disabled}
-                  onChange={(value) => {
-                    const level = thinkingLevels.find(
-                      (level) => level.value === value,
-                    )?.value;
-                    onChange(selectedTier, {
-                      ...setting,
-                      thinking_level: level ?? setting.thinking_level,
-                    });
-                  }}
-                />
-              </label>
+              <Selector
+                label="模型"
+                value={setting.model_id ?? ""}
+                options={modelOptions}
+                isDisabled={disabled}
+                placeholder="选择模型"
+                onChange={(value) =>
+                  onChange(selectedTier, {
+                    ...setting,
+                    model_id: value || null,
+                  })
+                }
+              />
+              <Selector
+                label="推理强度"
+                value={setting.thinking_level}
+                options={thinkingOptions}
+                isDisabled={disabled}
+                onChange={(value) => {
+                  const level = thinkingLevels.find(
+                    (level) => level.value === value,
+                  )?.value;
+                  onChange(selectedTier, {
+                    ...setting,
+                    thinking_level: level ?? setting.thinking_level,
+                  });
+                }}
+              />
             </div>
             <div className="model-tier-detail__actions">
-              <button
-                className="settings-primary"
-                type="button"
-                disabled={saving || disabled}
+              <Button
+                label={saving ? "保存中…" : "保存模型设置"}
+                variant="primary"
+                isLoading={saving}
+                isDisabled={disabled}
                 onClick={onSave}
-              >
-                {saving ? "保存中…" : "保存模型设置"}
-              </button>
+              />
             </div>
           </div>
         </section>
@@ -265,30 +263,33 @@ export default function ModelSettingsPanel({
             <div>
               {piLoginSession ? (
                 <>
-                  <button
-                    type="button"
-                    disabled={piLoginBusy}
+                  <Button
+                    label="重新启动"
+                    size="sm"
+                    variant="ghost"
+                    icon={<RotateCw size={13} />}
+                    isDisabled={piLoginBusy}
                     onClick={() => void onStartPiLogin()}
-                  >
-                    <RotateCw size={13} /> 重新启动
-                  </button>
-                  <button
-                    type="button"
-                    disabled={piLoginBusy}
+                  />
+                  <Button
+                    label="关闭"
+                    size="sm"
+                    variant="ghost"
+                    icon={<Power size={13} />}
+                    isDisabled={piLoginBusy}
                     onClick={() => void onClosePiLogin()}
-                  >
-                    <Power size={13} /> 关闭
-                  </button>
+                  />
                 </>
               ) : (
-                <button
-                  type="button"
-                  disabled={piLoginBusy || terminalDisabled}
+                <Button
+                  label={piLoginBusy ? "启动中…" : "启动终端"}
+                  size="sm"
+                  variant="secondary"
+                  icon={<Terminal size={13} />}
+                  isLoading={piLoginBusy}
+                  isDisabled={terminalDisabled}
                   onClick={() => void onStartPiLogin()}
-                >
-                  <Terminal size={13} />
-                  {piLoginBusy ? "启动中…" : "启动终端"}
-                </button>
+                />
               )}
             </div>
           </header>
@@ -298,22 +299,20 @@ export default function ModelSettingsPanel({
               onSubmit={(event) => void authorizeTerminal(event)}
             >
               <KeyRound size={16} />
-              <label>
-                <span>终端密钥</span>
-                <input
-                  value={accessKey}
-                  type="password"
-                  autoComplete="off"
-                  placeholder="TUI 中显示的本次启动密钥"
-                  onChange={(event) => setAccessKey(event.target.value)}
-                />
-              </label>
-              <button
+              <TextInput
+                label="终端密钥"
+                value={accessKey}
+                type="password"
+                placeholder="TUI 中显示的本次启动密钥"
+                onChange={setAccessKey}
+              />
+              <Button
+                label="启用终端"
                 type="submit"
-                disabled={terminalAccessBusy || !accessKey.trim()}
-              >
-                启用终端
-              </button>
+                variant="primary"
+                isLoading={terminalAccessBusy}
+                isDisabled={!accessKey.trim()}
+              />
               <small>
                 {terminalAccessError ?? "验证通过后可启动 Pi 登录终端"}
               </small>

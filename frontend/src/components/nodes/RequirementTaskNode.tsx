@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ChevronDown,
@@ -12,6 +12,9 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
+import { Button } from "@astryxdesign/core/Button";
+import { Dialog } from "@astryxdesign/core/Dialog";
+import { IconButton } from "@astryxdesign/core/IconButton";
 import type {
   RequirementExecutionTask,
   RequirementRecoveryStage,
@@ -92,37 +95,38 @@ export default function RequirementTaskNode({
               </div>
             </div>
             {groupFailed ? (
-              <button
-                type="button"
+              <Button
+                label="恢复"
+                size="sm"
+                variant="secondary"
+                icon={<RotateCcw size={13} />}
                 className="task-node__recover nowheel nodrag"
-                disabled={data.busy}
+                isDisabled={data.busy}
                 onClick={() =>
                   void data.onRecoverTaskGroup(data.requirementId, task.id)
                 }
-              >
-                <RotateCcw size={13} />
-                恢复
-              </button>
+              />
             ) : null}
-            <button
-              type="button"
+            <Button
+              label="详情"
+              size="sm"
+              variant="ghost"
+              icon={<Eye size={13} />}
               className="task-node__detail nowheel nodrag"
               onClick={() => setDetailOpen(true)}
-            >
-              <Eye size={13} />
-              详情
-            </button>
-            <button
-              type="button"
+            />
+            <IconButton
+              label={data.collapsed ? "展开任务组" : "折叠任务组"}
+              tooltip={data.collapsed ? "展开任务组" : "折叠任务组"}
+              icon={<CollapseIcon size={15} />}
+              size="sm"
+              variant="ghost"
               className="task-node__collapse nowheel nodrag"
               onClick={() =>
                 data.onToggleCollapsed?.(data.requirementId, task.id)
               }
-              aria-label={data.collapsed ? "展开任务组" : "折叠任务组"}
               aria-expanded={!data.collapsed}
-            >
-              <CollapseIcon size={15} />
-            </button>
+            />
           </div>
         </div>
         <TaskDetailDialog
@@ -167,17 +171,17 @@ export default function RequirementTaskNode({
               {taskStatusText[task.status]}
             </span>
             {nodeRole === "external" && task.status === "failed" ? (
-              <button
-                type="button"
+              <Button
+                label="恢复"
+                size="sm"
+                variant="secondary"
+                icon={<RotateCcw size={13} />}
                 className="task-node__recover nowheel nodrag"
-                disabled={data.busy}
+                isDisabled={data.busy}
                 onClick={() =>
                   void data.onRecoverTaskGroup(data.requirementId, task.id)
                 }
-              >
-                <RotateCcw size={13} />
-                恢复
-              </button>
+              />
             ) : null}
           </div>
         </div>
@@ -192,10 +196,13 @@ export default function RequirementTaskNode({
           ) : null}
           {nodeRole === "external" ? (
             <div className="task-node__actions nowheel nodrag">
-              <button type="button" onClick={() => setDetailOpen(true)}>
-                <Eye size={13} />
-                详情
-              </button>
+              <Button
+                label="详情"
+                size="sm"
+                variant="ghost"
+                icon={<Eye size={13} />}
+                onClick={() => setDetailOpen(true)}
+              />
             </div>
           ) : null}
         </div>
@@ -229,7 +236,6 @@ function TaskDetailDialog({
   dependencies: RequirementExecutionTask[];
   onClose: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<RequirementTaskDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const displayedTask = detail?.task ?? task;
@@ -264,37 +270,21 @@ function TaskDetailDialog({
     };
   }, [open, requirementId, task.id]);
 
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (open && !dialog.open) {
-      if (typeof dialog.showModal === "function") {
-        dialog.showModal();
-      } else {
-        dialog.setAttribute("open", "");
-      }
-    } else if (!open && dialog.open) {
-      if (typeof dialog.close === "function") {
-        dialog.close();
-      } else {
-        dialog.removeAttribute("open");
-      }
-    }
-  }, [open]);
-
   if (!open) return null;
 
   return createPortal(
-    <dialog
-      ref={dialogRef}
+    <Dialog
+      isOpen={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
       className="task-detail-dialog"
-      onClose={onClose}
-      onClick={onClose}
+      width="min(840px, calc(100vw - 48px))"
+      maxHeight="calc(100vh - 48px)"
+      padding={0}
+      purpose="info"
     >
-      <div
-        className="node-card node-card--requirement-task task-detail-dialog__panel"
-        onClick={(event) => event.stopPropagation()}
-      >
+      <div className="node-card node-card--requirement-task task-detail-dialog__panel">
         <div className="task-detail-dialog__head">
           <span className="node-icon task-detail-dialog__icon">
             <CircleDot size={22} />
@@ -308,9 +298,13 @@ function TaskDetailDialog({
           >
             {taskStatusText[displayedTask.status]}
           </span>
-          <button type="button" onClick={onClose} aria-label="关闭详情">
-            <X size={16} />
-          </button>
+          <IconButton
+            label="关闭详情"
+            tooltip="关闭详情"
+            icon={<X size={16} />}
+            variant="ghost"
+            onClick={onClose}
+          />
         </div>
         <div className="task-detail-dialog__body">
           <section className="task-detail-dialog__section task-detail-dialog__section--wide">
@@ -402,7 +396,7 @@ function TaskDetailDialog({
           </details>
         </div>
       </div>
-    </dialog>,
+    </Dialog>,
     document.body,
   );
 }

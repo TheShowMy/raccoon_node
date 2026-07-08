@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Button } from "@astryxdesign/core/Button";
 import { ArrowDown } from "lucide-react";
 
 export default function AnchoredScroll({
@@ -47,14 +48,16 @@ export default function AnchoredScroll({
         {children}
       </div>
       {unread ? (
-        <button
-          type="button"
+        <Button
+          label={"\u6709\u65b0\u6d88\u606f"}
+          size="sm"
+          variant="secondary"
+          icon={<ArrowDown size={13} />}
           className="anchored-scroll__new"
           onClick={scrollToBottom}
         >
-          <ArrowDown size={13} />
           有新消息
-        </button>
+        </Button>
       ) : null}
     </div>
   );

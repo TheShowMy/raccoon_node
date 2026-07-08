@@ -1,3 +1,7 @@
+import { Card } from "@astryxdesign/core/Card";
+import { Grid } from "@astryxdesign/core/Grid";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
 import { Gauge } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import { formatCompactNumber } from "../../utils/format";
@@ -7,12 +11,22 @@ type Data = Extract<StartNodeData, { kind: "token-usage" }>;
 
 function TokenItem({ label, value }: { label: string; value: number }) {
   return (
-    <div className="token-usage-node__item">
-      <span className="token-usage-node__value">
-        {formatCompactNumber(value)}
-      </span>
-      <span className="token-usage-node__label">{label}</span>
-    </div>
+    <Card className="token-usage-node__item" variant="muted" padding={2}>
+      <Stack gap={1} align="center">
+        <Text
+          type="label"
+          weight="bold"
+          display="block"
+          justify="center"
+          hasTabularNumbers
+        >
+          {formatCompactNumber(value)}
+        </Text>
+        <Text type="supporting" size="3xs" display="block" justify="center">
+          {label}
+        </Text>
+      </Stack>
+    </Card>
   );
 }
 
@@ -34,18 +48,24 @@ export default function TokenUsageNode({ data }: { data: Data }) {
       />
 
       {data.expanded ? (
-        <div className="token-usage-node__detail nodrag nowheel">
+        <Stack
+          className="token-usage-node__detail nodrag nowheel"
+          padding={3}
+          height="100%"
+        >
           {usage ? (
-            <div className="token-usage-node__grid">
+            <Grid columns={2} gap={2} width="100%">
               <TokenItem label="输入" value={usage.input} />
               <TokenItem label="输出" value={usage.output} />
               <TokenItem label="缓存读" value={usage.cache_read} />
               <TokenItem label="缓存写" value={usage.cache_write} />
-            </div>
+            </Grid>
           ) : (
-            <div className="token-usage-node__empty">暂无统计</div>
+            <Stack height="100%" align="center" justify="center">
+              <Text type="supporting">暂无统计</Text>
+            </Stack>
           )}
-        </div>
+        </Stack>
       ) : null}
     </section>
   );

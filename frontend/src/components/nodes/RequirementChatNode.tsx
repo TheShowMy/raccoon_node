@@ -68,18 +68,8 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
           hasDivider
           aria-label="对话类型"
         >
-          <Tab
-            value="requirement"
-            label="需求会话"
-            role="tab"
-            aria-selected={activeCard === "requirement"}
-          />
-          <Tab
-            value="project"
-            label="项目问答"
-            role="tab"
-            aria-selected={activeCard === "project"}
-          />
+          <Tab value="requirement" label="需求会话" />
+          <Tab value="project" label="项目问答" />
         </TabList>
         <section
           className="chat-workspace__panel"
@@ -324,6 +314,7 @@ function RequirementSummaryCard({
       <div className="rq-shelf__actions">
         <Button
           label="作为需求继续"
+          className="rq-shelf__action rq-shelf__action--primary"
           variant="primary"
           isDisabled={disabled}
           onClick={onContinue}

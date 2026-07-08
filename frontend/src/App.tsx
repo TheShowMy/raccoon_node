@@ -15,6 +15,7 @@ import {
   useStore,
   useViewport,
 } from "@xyflow/react";
+import { Button } from "@astryxdesign/core/Button";
 import { Theme } from "@astryxdesign/core/theme";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from "lucide-react";
 import "@xyflow/react/dist/style.css";
@@ -136,8 +137,12 @@ function RequirementsReturnButton({ nodes }: { nodes: Node<StartNodeData>[] }) {
       className={`requirements-return-panel requirements-return-panel--${direction}`}
       position={positions[direction]}
     >
-      <button
-        type="button"
+      <Button
+        label="返回需求会话"
+        className="requirements-return-panel__button"
+        variant="secondary"
+        size="sm"
+        icon={<Icon size={16} />}
         aria-label={`返回需求会话区域（${direction}）`}
         onClick={() =>
           void fitView({
@@ -147,10 +152,7 @@ function RequirementsReturnButton({ nodes }: { nodes: Node<StartNodeData>[] }) {
             duration: 260,
           })
         }
-      >
-        <Icon size={16} />
-        <span>返回需求会话</span>
-      </button>
+      />
     </Panel>
   );
 }
@@ -289,9 +291,13 @@ function ModelSetupGuide({
             ? "从设置工作台开始配置 Pi 模型。"
             : "进入后按页面提示登录 Pi 并配置低、中、高三档模型。"}
         </p>
-        <button type="button" onClick={onSkip}>
-          跳过引导
-        </button>
+        <Button
+          label="跳过引导"
+          className="model-setup-guide__action"
+          variant="secondary"
+          size="sm"
+          onClick={onSkip}
+        />
       </div>
     </Panel>
   );

@@ -175,6 +175,68 @@ describe("RequirementConversationWorkbench", () => {
     ).not.toBeDisabled();
   });
 
+  it("hides the retry action while a failed requirement still has a prompt", () => {
+    const requirement = testRequirement();
+    requirement.status = "failed";
+    const prompt: RequirementConversationPrompt = {
+      type: "clarification",
+      round: 1,
+      questions: [
+        {
+          id: "q1",
+          question: "scope",
+          question_type: "single_choice",
+          options: [
+            {
+              value: "core",
+              label: "core",
+              description: "main path",
+              recommended: true,
+            },
+          ],
+          answer: null,
+        },
+      ],
+    };
+    const conversation: RequirementConversation = {
+      id: requirement.id,
+      project_id: requirement.project_id,
+      title: requirement.title,
+      status: "failed",
+      running: false,
+      items: [],
+      prompt,
+      error: null,
+      updated_at: now,
+    };
+
+    const { container } = render(
+      <RequirementConversationWorkbench
+        conversation={conversation}
+        requirement={requirement}
+        projectName="alpha"
+        projectId="project-1"
+        prompt={prompt}
+        input=""
+        busy={false}
+        error={null}
+        streamEvents={[]}
+        answers={{}}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onAnswerChange={vi.fn()}
+        onSubmitClarifications={vi.fn()}
+        onConfirm={vi.fn()}
+        onContinueEditing={vi.fn()}
+        onCancel={vi.fn()}
+        onAbandon={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector(".rq-prompt-layer")).not.toBeNull();
+    expect(container.querySelector(".requirement-draft__confirm")).toBeNull();
+  });
+
   it("uses the combined confirmation and execution label", () => {
     const requirement = testRequirement();
     const prompt: RequirementConversationPrompt = {

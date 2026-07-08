@@ -1,4 +1,5 @@
 import { ChatToolCalls, type ChatToolCallItem } from "@astryxdesign/core/Chat";
+import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import type { ProcessRow } from "../../utils/format";
 
 export default function ProcessStreamRows({
@@ -22,7 +23,17 @@ export default function ProcessStreamRows({
             ? "error"
             : "complete",
       resultDetail: content.trim() ? (
-        <pre className="rq-process-row__content">{content}</pre>
+        <CodeBlock
+          code={content}
+          language="plaintext"
+          hasLanguageLabel={false}
+          hasLineNumbers={content.split("\n").length > 4}
+          isWrapped
+          maxHeight="calc(var(--spacing) * 55)"
+          size="sm"
+          width="100%"
+          container="section"
+        />
       ) : undefined,
       data: row,
     };

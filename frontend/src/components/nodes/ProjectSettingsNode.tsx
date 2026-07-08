@@ -1,5 +1,4 @@
 import { useCallback, useState } from "react";
-import type React from "react";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Tab, TabList } from "@astryxdesign/core/TabList";
@@ -69,11 +68,9 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
         } · 基础与模型`}
         expanded={false}
         onToggle={data.onToggleExpanded}
-        buttonProps={
-          {
-            "data-model-setup-target": "settings",
-          } as React.ButtonHTMLAttributes<HTMLButtonElement>
-        }
+        buttonProps={{
+          "data-model-setup-target": "settings",
+        }}
       />
     );
   }
@@ -100,19 +97,11 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
         }}
         hasDivider
       >
-        <Tab
-          value="basic"
-          label="基础设置"
-          icon={<Settings size={14} />}
-          role="tab"
-          aria-selected={data.page === "basic"}
-        />
+        <Tab value="basic" label="基础设置" icon={<Settings size={14} />} />
         <Tab
           value="models"
           label="模型设置"
           icon={<SlidersHorizontal size={14} />}
-          role="tab"
-          aria-selected={data.page === "models"}
           data-model-setup-target="models"
         />
       </TabList>

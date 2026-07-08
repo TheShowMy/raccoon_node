@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { ChevronDown, Copy, FileText, Loader2 } from "lucide-react";
+import { CodeBlock } from "@astryxdesign/core/CodeBlock";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
+import { Copy, FileText, Loader2 } from "lucide-react";
 import { getProjectFileContent } from "../../api/client";
 import RichContent from "./RichContent";
 
@@ -15,9 +20,10 @@ export default function DocumentPreview({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const markdown = /\.(md|markdown|mdx)$/i.test(path);
+  const canCopy =
+    typeof navigator !== "undefined" && Boolean(navigator.clipboard);
 
-  async function toggle() {
-    const next = !open;
+  async function handleOpenChange(next: boolean) {
     setOpen(next);
     if (!next || content !== null || loading) return;
     setLoading(true);
@@ -31,45 +37,73 @@ export default function DocumentPreview({
     }
   }
 
+  function copyContent() {
+    if (canCopy && content !== null) {
+      void navigator.clipboard.writeText(content).catch(() => {});
+    }
+  }
+
   return (
-    <div className={`document-preview ${open ? "is-open" : ""}`}>
-      <button type="button" onClick={() => void toggle()} aria-expanded={open}>
-        <FileText size={13} />
-        <span>{path}</span>
-        <ChevronDown size={13} />
-      </button>
+    <Collapsible
+      isOpen={open}
+      onOpenChange={(next) => void handleOpenChange(next)}
+      trigger={
+        <Stack direction="horizontal" gap={1.5} align="center" width="100%">
+          <FileText size={13} aria-hidden />
+          <Text type="label" maxLines={1} wordBreak="break-all">
+            {path}
+          </Text>
+        </Stack>
+      }
+    >
       {open ? (
-        <div className="document-preview__body">
+        <Stack
+          gap={2}
+          padding={3}
+          isScrollable
+          style={{ maxHeight: "calc(var(--spacing) * 90)" }}
+        >
           {loading ? (
-            <span className="document-preview__state">
+            <Stack direction="horizontal" gap={2} align="center">
               <Loader2 size={14} className="spin-icon" />
-              加载中…
-            </span>
+              <Text type="supporting">加载中...</Text>
+            </Stack>
           ) : error ? (
-            <span className="document-preview__state is-error">{error}</span>
+            <Text type="supporting" color="accent">
+              {error}
+            </Text>
           ) : content !== null ? (
             <>
-              <button
-                type="button"
-                className="document-preview__copy"
-                onClick={() => {
-                  if (navigator.clipboard) {
-                    void navigator.clipboard.writeText(content).catch(() => {});
-                  }
-                }}
-              >
-                <Copy size={13} />
-                复制
-              </button>
+              <Stack direction="horizontal" justify="end">
+                <IconButton
+                  label="复制文件内容"
+                  tooltip="复制文件内容"
+                  icon={<Copy size={13} />}
+                  size="sm"
+                  variant="ghost"
+                  isDisabled={!canCopy}
+                  onClick={copyContent}
+                />
+              </Stack>
               {markdown ? (
                 <RichContent content={content} />
               ) : (
-                <pre>{content}</pre>
+                <CodeBlock
+                  code={content}
+                  language="plaintext"
+                  title={path}
+                  hasLanguageLabel={false}
+                  hasLineNumbers={content.split("\n").length > 4}
+                  isWrapped
+                  maxHeight="calc(var(--spacing) * 80)"
+                  size="sm"
+                  width="100%"
+                />
               )}
             </>
           ) : null}
-        </div>
+        </Stack>
       ) : null}
-    </div>
+    </Collapsible>
   );
 }

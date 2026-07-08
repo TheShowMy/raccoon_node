@@ -82,7 +82,7 @@ it("switches pages and keeps external-listening confirmation inside the node", (
   const props = data();
   render(<ProjectSettingsNode data={props} />);
 
-  const modelsTab = screen.getByRole("tab", { name: "模型设置" });
+  const modelsTab = screen.getByRole("button", { name: "模型设置" });
   expect(modelsTab).toHaveAttribute("data-model-setup-target", "models");
   fireEvent.click(modelsTab);
   expect(props.onOpenModels).toHaveBeenCalledOnce();

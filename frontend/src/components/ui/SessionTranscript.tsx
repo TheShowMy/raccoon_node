@@ -8,6 +8,9 @@ import {
   Loader2,
   Wrench,
 } from "lucide-react";
+import { Button } from "@astryxdesign/core/Button";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import type {
   SessionContentBlock,
   SessionEntry,
@@ -17,6 +20,26 @@ import { formatDate } from "../../utils/format";
 import RichContent from "./RichContent";
 
 type Loader = (before?: number | null) => Promise<SessionTranscriptPage>;
+
+function TranscriptCodeBlock({
+  code,
+  language = "plaintext",
+}: {
+  code: string;
+  language?: string;
+}) {
+  return (
+    <CodeBlock
+      code={code}
+      language={language}
+      hasLanguageLabel={language !== "plaintext"}
+      hasLineNumbers={code.split("\n").length > 4}
+      isWrapped
+      size="sm"
+      width="100%"
+    />
+  );
+}
 
 export default function SessionTranscript({
   scopeKey,
@@ -109,8 +132,9 @@ export default function SessionTranscript({
 
   return (
     <section className={`session-transcript ${open ? "is-open" : ""}`}>
-      <button
-        type="button"
+      <Button
+        label={title}
+        variant="ghost"
         className="session-transcript__toggle"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
@@ -119,14 +143,21 @@ export default function SessionTranscript({
         <span>{title}</span>
         {entries.length ? <em>{entries.length} 条</em> : null}
         <ChevronDown size={14} />
-      </button>
+      </Button>
       {open ? (
         <div className="session-transcript__panel">
           <div className="session-transcript__filters">
             {(["all", "messages", "tools"] as const).map((value) => (
-              <button
-                type="button"
-                className={filter === value ? "is-active" : ""}
+              <Button
+                label={
+                  value === "all"
+                    ? "\u5168\u90e8"
+                    : value === "messages"
+                      ? "\u6d88\u606f"
+                      : "\u5de5\u5177"
+                }
+                size="sm"
+                variant={filter === value ? "primary" : "ghost"}
                 onClick={() => setFilter(value)}
                 key={value}
               >
@@ -135,16 +166,14 @@ export default function SessionTranscript({
                   : value === "messages"
                     ? "消息"
                     : "工具"}
-              </button>
+              </Button>
             ))}
-            <label>
-              <input
-                type="checkbox"
-                checked={showSystem}
-                onChange={(event) => setShowSystem(event.target.checked)}
-              />
-              system
-            </label>
+            <CheckboxInput
+              label="system"
+              size="sm"
+              value={showSystem}
+              onChange={setShowSystem}
+            />
           </div>
           {invalidLines > 0 ? (
             <p className="session-transcript__warning">
@@ -154,14 +183,16 @@ export default function SessionTranscript({
           ) : null}
           <div ref={viewportRef} className="session-transcript__entries">
             {nextBefore !== null ? (
-              <button
-                type="button"
+              <Button
+                label={"\u52a0\u8f7d\u66f4\u65e9\u8bb0\u5f55"}
+                size="sm"
+                variant="secondary"
                 className="session-transcript__earlier"
-                disabled={loading}
+                isDisabled={loading}
                 onClick={() => void load(nextBefore)}
               >
                 加载更早记录
-              </button>
+              </Button>
             ) : null}
             {visible.map((entry) => (
               <SessionEntryCard entry={entry} key={entry.cursor} />
@@ -175,9 +206,14 @@ export default function SessionTranscript({
             {error ? (
               <div className="session-transcript__empty is-error">
                 <span>{error}</span>
-                <button type="button" onClick={() => setError(null)}>
+                <Button
+                  label={"\u91cd\u8bd5"}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setError(null)}
+                >
                   重试
-                </button>
+                </Button>
               </div>
             ) : null}
             {!loading && !error && visible.length === 0 ? (
@@ -242,14 +278,17 @@ function SessionBlock({ block }: { block: SessionContentBlock }) {
     return (
       <details className="session-thinking">
         <summary>思考过程</summary>
-        <pre>{block.text}</pre>
+        <TranscriptCodeBlock code={block.text} />
       </details>
     );
   }
   if (block.type === "tool_call") {
     return (
       <ToolCard title={block.name} subtitle="调用参数">
-        <pre>{JSON.stringify(block.arguments, null, 2)}</pre>
+        <TranscriptCodeBlock
+          code={JSON.stringify(block.arguments, null, 2)}
+          language="json"
+        />
       </ToolCard>
     );
   }
@@ -261,14 +300,17 @@ function SessionBlock({ block }: { block: SessionContentBlock }) {
         error={block.is_error}
       >
         {block.diff ? <SessionDiff diff={block.diff} /> : null}
-        {block.output ? <pre>{block.output}</pre> : null}
+        {block.output ? <TranscriptCodeBlock code={block.output} /> : null}
       </ToolCard>
     );
   }
   return (
     <details className="session-unknown">
       <summary>未识别内容：{block.block_type}</summary>
-      <pre>{JSON.stringify(block.raw, null, 2)}</pre>
+      <TranscriptCodeBlock
+        code={JSON.stringify(block.raw, null, 2)}
+        language="json"
+      />
     </details>
   );
 }
@@ -305,17 +347,19 @@ function SessionDiff({ diff }: { diff: string }) {
     <div className="session-diff">
       <div>
         <span>{lines.length} 行</span>
-        <button
-          type="button"
+        <Button
+          label={"\u590d\u5236 diff"}
+          size="sm"
+          variant="ghost"
+          icon={<Copy size={12} />}
           onClick={() => {
             if (navigator.clipboard) {
               void navigator.clipboard.writeText(diff).catch(() => {});
             }
           }}
         >
-          <Copy size={12} />
           复制 diff
-        </button>
+        </Button>
       </div>
       <pre>
         {visible.map((line, index) => (
@@ -336,9 +380,14 @@ function SessionDiff({ diff }: { diff: string }) {
         ))}
       </pre>
       {lines.length > 180 && !expanded ? (
-        <button type="button" onClick={() => setExpanded(true)}>
+        <Button
+          label={`\u5c55\u5f00\u5168\u90e8 ${lines.length} \u884c`}
+          size="sm"
+          variant="ghost"
+          onClick={() => setExpanded(true)}
+        >
           展开全部 {lines.length} 行
-        </button>
+        </Button>
       ) : null}
     </div>
   );
@@ -351,7 +400,10 @@ function RawJson({ value }: { value: unknown }) {
         <Braces size={12} />
         原始 JSON
       </summary>
-      <pre>{JSON.stringify(value, null, 2)}</pre>
+      <TranscriptCodeBlock
+        code={JSON.stringify(value, null, 2)}
+        language="json"
+      />
     </details>
   );
 }

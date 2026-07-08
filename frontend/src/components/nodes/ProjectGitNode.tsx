@@ -1,4 +1,10 @@
 import { useMemo, useRef, useState } from "react";
+import { Button } from "@astryxdesign/core/Button";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { CodeBlock } from "@astryxdesign/core/CodeBlock";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { TextArea } from "@astryxdesign/core/TextArea";
+import { TextInput } from "@astryxdesign/core/TextInput";
 import {
   ChevronDown,
   ChevronRight,
@@ -77,10 +83,12 @@ function FileGroup({
           {title} <em>{files.length}</em>
         </span>
         {files.length > 0 && (
-          <button
-            type="button"
+          <Button
+            label={actionLabel}
+            size="sm"
+            variant="ghost"
             className="git-node__file-group-action"
-            disabled={disabled}
+            isDisabled={disabled}
             onClick={() =>
               void data.onAction(
                 area === "unstaged"
@@ -89,9 +97,7 @@ function FileGroup({
                 actionResult,
               )
             }
-          >
-            {actionLabel}
-          </button>
+          />
         )}
       </div>
       {files.length === 0 ? (
@@ -109,23 +115,28 @@ function FileGroup({
                   : ""
               }`}
             >
-              <input
-                type="checkbox"
-                aria-label={`选择 ${file.path}`}
-                checked={data.selectedPaths.has(file.path)}
-                disabled={data.busy || data.status?.write_blocked}
+              <CheckboxInput
+                label={`选择 ${file.path}`}
+                isLabelHidden
+                size="sm"
+                value={data.selectedPaths.has(file.path)}
+                isDisabled={data.busy || data.status?.write_blocked}
                 onChange={() => data.onTogglePath(file.path)}
               />
-              <button
+              <Button
+                label={file.path}
+                className="git-node__file-path"
+                variant="ghost"
+                size="sm"
                 type="button"
-                title={file.path}
+                tooltip={file.path}
                 onClick={() => void data.onSelectDiff(file.path, area)}
               >
                 <span className={`git-node__change git-node__change--${kind}`}>
                   {kind ? CHANGE_LABEL[kind] : ""}
                 </span>
                 <span>{file.path}</span>
-              </button>
+              </Button>
             </div>
           );
         })
@@ -188,34 +199,40 @@ function BranchSidebar({
   return (
     <div className="git-node__branch-sidebar" ref={sidebarRef}>
       <div className="git-node__branch-ops">
-        <button
-          type="button"
-          disabled={disabled || !status?.remote_configured}
+        <IconButton
+          label="Fetch"
+          tooltip="Fetch"
+          size="sm"
+          variant="ghost"
+          icon={<RefreshCw size={12} />}
+          isDisabled={disabled || !status?.remote_configured}
           onClick={() => void onAction({ type: "fetch" }, "远端状态已更新")}
-        >
-          <RefreshCw size={12} />
-          Fetch
-        </button>
-        <button
-          type="button"
-          disabled={disabled || dirty || !status?.remote_configured}
+        />
+        <IconButton
+          label="Pull"
+          tooltip="Pull"
+          size="sm"
+          variant="ghost"
+          icon={<Download size={12} />}
+          isDisabled={disabled || dirty || !status?.remote_configured}
           onClick={() => void onAction({ type: "pull" }, "拉取完成")}
-        >
-          <Download size={12} />
-          Pull
-        </button>
-        <button
-          type="button"
-          disabled={disabled || !status?.remote_configured}
+        />
+        <IconButton
+          label="Push"
+          tooltip="Push"
+          size="sm"
+          variant="ghost"
+          icon={<Upload size={12} />}
+          isDisabled={disabled || !status?.remote_configured}
           onClick={onPushRequest}
-        >
-          <Upload size={12} />
-          Push
-        </button>
+        />
       </div>
 
       <div className="git-node__branch-section">
-        <button
+        <Button
+          label="分支"
+          variant="ghost"
+          size="sm"
           type="button"
           className="git-node__branch-section-header"
           onClick={() => setBranchesOpen((v) => !v)}
@@ -226,7 +243,7 @@ function BranchSidebar({
             <ChevronRight size={12} />
           )}
           分支
-        </button>
+        </Button>
         {branchesOpen && (
           <ul className="git-node__branch-list">
             {(status?.branches ?? []).map((branch) => (
@@ -261,7 +278,10 @@ function BranchSidebar({
 
       {status?.remote_configured && status.upstream && (
         <div className="git-node__branch-section">
-          <button
+          <Button
+            label="远程"
+            variant="ghost"
+            size="sm"
             type="button"
             className="git-node__branch-section-header"
             onClick={() => setRemotesOpen((v) => !v)}
@@ -272,7 +292,7 @@ function BranchSidebar({
               <ChevronRight size={12} />
             )}
             远端
-          </button>
+          </Button>
           {remotesOpen && (
             <ul className="git-node__branch-list">
               <li className="git-node__branch-item">
@@ -298,7 +318,10 @@ function BranchSidebar({
             style={{ top: contextMenu.y, left: contextMenu.x }}
           >
             {contextMenu.branch !== status?.branch && (
-              <button
+              <Button
+                label="切换到此分支"
+                variant="ghost"
+                size="sm"
                 type="button"
                 className="git-node__context-menu-item"
                 onClick={() => {
@@ -310,44 +333,53 @@ function BranchSidebar({
                 }}
               >
                 切换到此分支
-              </button>
+              </Button>
             )}
             {newBranchFrom === contextMenu.branch ? (
               <div className="git-node__new-branch-inline">
-                <input
-                  autoFocus
+                <TextInput
+                  hasAutoFocus
+                  label="新分支名称"
+                  isLabelHidden
+                  width="100%"
                   placeholder="新分支名称"
                   value={newBranchName}
-                  onChange={(e) => setNewBranchName(e.target.value)}
+                  onChange={setNewBranchName}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void handleCreateBranch();
                     if (e.key === "Escape") closeMenu();
                   }}
                 />
-                <button
-                  type="button"
-                  disabled={!newBranchName.trim()}
+                <Button
+                  label="创建"
+                  size="sm"
+                  variant="primary"
+                  isDisabled={!newBranchName.trim()}
                   onClick={() => void handleCreateBranch()}
-                >
-                  创建
-                </button>
+                />
               </div>
             ) : (
-              <button
+              <Button
+                label="基于此新建分支"
+                variant="ghost"
+                size="sm"
                 type="button"
                 className="git-node__context-menu-item"
                 onClick={() => setNewBranchFrom(contextMenu.branch)}
               >
                 基于此新建分支…
-              </button>
+              </Button>
             )}
-            <button
+            <Button
+              label="取消"
+              variant="ghost"
+              size="sm"
               type="button"
               className="git-node__context-menu-item git-node__context-menu-item--close"
               onClick={closeMenu}
             >
               取消
-            </button>
+            </Button>
           </div>
         </>
       )}
@@ -422,15 +454,17 @@ export default function ProjectGitNode({ data }: { data: GitData }) {
         expanded={true}
         onToggle={data.onToggleExpanded}
         actions={
-          <button
-            type="button"
-            className="node-bar__btn"
-            aria-label="刷新 Git 状态"
-            disabled={data.busy}
+          <IconButton
+            label="刷新 Git 状态"
+            tooltip="刷新 Git 状态"
+            icon={
+              <RefreshCw size={14} className={data.busy ? "spin-icon" : ""} />
+            }
+            size="sm"
+            variant="ghost"
+            isDisabled={data.busy}
             onClick={() => void data.onRefresh()}
-          >
-            <RefreshCw size={14} className={data.busy ? "spin-icon" : ""} />
-          </button>
+          />
         }
       />
 
@@ -472,9 +506,14 @@ export default function ProjectGitNode({ data }: { data: GitData }) {
                         {data.diff.binary ? (
                           <p>二进制文件不提供差异预览</p>
                         ) : (
-                          <pre>
-                            {data.diff.content || "没有可显示的文本差异"}
-                          </pre>
+                          <CodeBlock
+                            code={data.diff.content || "没有可显示的文本差异"}
+                            language="diff"
+                            hasLineNumbers
+                            maxHeight={360}
+                            size="sm"
+                            width="100%"
+                          />
                         )}
                         {data.diff.truncated ? (
                           <small>差异内容已截断</small>
@@ -487,23 +526,25 @@ export default function ProjectGitNode({ data }: { data: GitData }) {
                 </div>
               </div>
               <div className="git-node__commit">
-                <textarea
-                  aria-label="提交信息"
+                <TextArea
+                  className="git-node__commit-message"
+                  label="提交信息"
+                  isLabelHidden
                   placeholder="输入提交信息…"
                   value={commitMessage}
-                  disabled={disabled}
-                  onChange={(event) => setCommitMessage(event.target.value)}
+                  isDisabled={disabled}
+                  onChange={setCommitMessage}
+                  rows={3}
                 />
-                <button
-                  type="button"
-                  disabled={
+                <Button
+                  label="提交"
+                  icon={<GitCommit size={14} />}
+                  variant="primary"
+                  isDisabled={
                     disabled || staged.length === 0 || !commitMessage.trim()
                   }
                   onClick={() => setConfirming("commit")}
-                >
-                  <GitCommit size={14} />
-                  提交
-                </button>
+                />
               </div>
             </div>
           </div>
@@ -533,12 +574,16 @@ export default function ProjectGitNode({ data }: { data: GitData }) {
                 : `将 ${status?.branch ?? "当前分支"} 推送到 ${status?.upstream ?? "origin"}（领先 ${status?.ahead ?? 0}）`}
             </p>
             <span>
-              <button type="button" onClick={() => setConfirming(null)}>
-                取消
-              </button>
-              <button type="button" onClick={() => void confirmAction()}>
-                确认
-              </button>
+              <Button
+                label="取消"
+                variant="secondary"
+                onClick={() => setConfirming(null)}
+              />
+              <Button
+                label="确认"
+                variant="primary"
+                onClick={() => void confirmAction()}
+              />
             </span>
           </div>
         </div>

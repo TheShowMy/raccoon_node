@@ -1,5 +1,5 @@
 import type { DefinedTheme } from "@astryxdesign/core/theme";
-import { neutralTheme } from "@astryxdesign/theme-neutral";
+import { neutralTheme } from "@astryxdesign/theme-neutral/built";
 import type { ThemePack } from "../types/api";
 
 export const THEME_PACK_OPTIONS: { value: ThemePack; label: string }[] = [
@@ -20,24 +20,25 @@ export async function loadAstryxTheme(
   switch (themePack) {
     case "neutral":
       await import("@astryxdesign/theme-neutral/theme.css");
-      return (await import("@astryxdesign/theme-neutral")).neutralTheme;
+      return neutralTheme;
     case "stone":
       await import("@astryxdesign/theme-stone/theme.css");
-      return (await import("@astryxdesign/theme-stone")).stoneTheme;
+      return (await import("@astryxdesign/theme-stone/built")).stoneTheme;
     case "matcha":
       await import("@astryxdesign/theme-matcha/theme.css");
-      return (await import("@astryxdesign/theme-matcha")).matchaTheme;
+      return (await import("@astryxdesign/theme-matcha/built")).matchaTheme;
     case "y2k":
       await import("@astryxdesign/theme-y2k/theme.css");
-      return (await import("@astryxdesign/theme-y2k")).y2kTheme;
+      return (await import("@astryxdesign/theme-y2k/built")).y2kTheme;
     case "chocolate":
       await import("@astryxdesign/theme-chocolate/theme.css");
-      return (await import("@astryxdesign/theme-chocolate")).chocolateTheme;
+      return (await import("@astryxdesign/theme-chocolate/built"))
+        .chocolateTheme;
     case "gothic":
       await import("@astryxdesign/theme-gothic/theme.css");
-      return (await import("@astryxdesign/theme-gothic")).gothicTheme;
+      return (await import("@astryxdesign/theme-gothic/built")).gothicTheme;
     case "butter":
       await import("@astryxdesign/theme-butter/theme.css");
-      return (await import("@astryxdesign/theme-butter")).butterTheme;
+      return (await import("@astryxdesign/theme-butter/built")).butterTheme;
   }
 }

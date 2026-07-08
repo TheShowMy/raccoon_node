@@ -47,7 +47,7 @@ describe("SessionTranscript", () => {
         next_before: null,
         invalid_lines: 1,
       });
-    render(
+    const { container } = render(
       <SessionTranscript scopeKey="test" loadPage={loadPage} initiallyOpen />,
     );
 
@@ -60,7 +60,7 @@ describe("SessionTranscript", () => {
     expect(loadPage).toHaveBeenLastCalledWith(1);
 
     fireEvent.click(screen.getAllByText("原始 JSON")[0]!);
-    expect(screen.getByText(/"content": "前"/)).toBeInTheDocument();
+    expect(container.textContent).toContain('"content": "前"');
 
     fireEvent.click(screen.getByRole("checkbox", { name: "system" }));
     expect(await screen.findByText("system prompt")).toBeInTheDocument();

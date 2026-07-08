@@ -7,6 +7,9 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { Button } from "@astryxdesign/core/Button";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { TextInput } from "@astryxdesign/core/TextInput";
 import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 import type {
@@ -116,15 +119,15 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
                 {data.error ? (
                   <span className="terminal-node__error">{data.error}</span>
                 ) : null}
-                <button
-                  type="button"
-                  className="node-bar__btn"
-                  aria-label="新建"
-                  disabled={data.busy || data.terminalDisabled}
+                <IconButton
+                  label="新建"
+                  tooltip="新建终端"
+                  icon={<Plus size={14} />}
+                  size="sm"
+                  variant="ghost"
+                  isDisabled={data.busy || data.terminalDisabled}
                   onClick={() => void data.onCreateTerminal()}
-                >
-                  <Plus size={14} />
-                </button>
+                />
               </>
             }
           />
@@ -141,22 +144,20 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
               onSubmit={(event) => void authorizeTerminal(event)}
             >
               <KeyRound size={16} />
-              <label>
-                <span>终端密钥</span>
-                <input
-                  value={accessKey}
-                  type="password"
-                  autoComplete="off"
-                  placeholder="TUI 中显示的本次启动密钥"
-                  onChange={(event) => setAccessKey(event.target.value)}
-                />
-              </label>
-              <button
+              <TextInput
+                label="终端密钥"
+                value={accessKey}
+                type="password"
+                placeholder="TUI 中显示的本次启动密钥"
+                onChange={setAccessKey}
+              />
+              <Button
+                label="启用终端"
                 type="submit"
-                disabled={data.terminalAccessBusy || !accessKey.trim()}
-              >
-                启用终端
-              </button>
+                variant="primary"
+                isLoading={data.terminalAccessBusy}
+                isDisabled={!accessKey.trim()}
+              />
               <small>
                 {data.terminalAccessError ?? "验证通过后 12 小时内无需再次输入"}
               </small>
@@ -174,18 +175,18 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
           <div className="terminal-node__toolbar nodrag">
             <div className="terminal-node__command-list">
               {data.commandProfiles.map((profile) => (
-                <button
+                <Button
                   key={profile.id}
-                  type="button"
-                  disabled={data.busy || data.terminalDisabled}
+                  label={profile.name}
+                  size="sm"
+                  variant="secondary"
+                  icon={<Terminal size={10} />}
+                  isDisabled={data.busy || data.terminalDisabled}
                   className="terminal-node__command-tag"
                   onClick={() =>
                     void data.onCreateTerminal(profile.command, profile.name)
                   }
-                >
-                  <Terminal size={10} />
-                  {profile.name}
-                </button>
+                />
               ))}
               {data.commandProfiles.length === 0 ? (
                 <span className="terminal-node__command-hint">
@@ -193,91 +194,97 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
                 </span>
               ) : null}
             </div>
-            <button
-              type="button"
+            <Button
+              label="管理命令"
+              size="sm"
+              variant="ghost"
+              icon={<Settings2 size={13} />}
               className="terminal-node__manage"
               onClick={openProfileEditor}
-            >
-              <Settings2 size={13} />
-              管理命令
-            </button>
+            />
           </div>
 
           {editingProfiles ? (
             <div className="terminal-node__profiles nodrag">
               <div className="terminal-node__profiles-head">
                 <strong>自定义启动命令</strong>
-                <button
-                  type="button"
-                  aria-label="关闭"
+                <IconButton
+                  label="关闭"
+                  tooltip="关闭"
+                  icon={<X size={14} />}
+                  size="sm"
+                  variant="ghost"
                   onClick={() => setEditingProfiles(false)}
-                >
-                  <X size={14} />
-                </button>
+                />
               </div>
               {draftProfiles.map((profile, index) => (
                 <div
                   key={profile.id ?? index}
                   className="terminal-node__profile-row"
                 >
-                  <input
+                  <TextInput
+                    label="名称"
+                    isLabelHidden
+                    width={140}
                     value={profile.name}
                     placeholder="名称"
-                    onChange={(event) =>
+                    onChange={(value) =>
                       setDraftProfiles((current) =>
                         current.map((item, itemIndex) =>
-                          itemIndex === index
-                            ? { ...item, name: event.target.value }
-                            : item,
+                          itemIndex === index ? { ...item, name: value } : item,
                         ),
                       )
                     }
                   />
-                  <input
+                  <TextInput
+                    label="命令"
+                    isLabelHidden
+                    width="100%"
                     value={profile.command}
                     placeholder="命令，例如 npm run dev"
-                    onChange={(event) =>
+                    onChange={(value) =>
                       setDraftProfiles((current) =>
                         current.map((item, itemIndex) =>
                           itemIndex === index
-                            ? { ...item, command: event.target.value }
+                            ? { ...item, command: value }
                             : item,
                         ),
                       )
                     }
                   />
-                  <button
-                    type="button"
-                    aria-label="删除命令"
+                  <IconButton
+                    label="删除命令"
+                    tooltip="删除命令"
+                    icon={<Trash2 size={13} />}
+                    size="sm"
+                    variant="ghost"
                     onClick={() =>
                       setDraftProfiles((current) =>
                         current.filter((_, itemIndex) => itemIndex !== index),
                       )
                     }
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                  />
                 </div>
               ))}
               <div className="terminal-node__profiles-actions">
-                <button
-                  type="button"
+                <Button
+                  label="添加命令"
+                  size="sm"
+                  variant="secondary"
                   onClick={() =>
                     setDraftProfiles((current) => [
                       ...current,
                       { name: "", command: "" },
                     ])
                   }
-                >
-                  添加命令
-                </button>
-                <button
-                  type="button"
-                  disabled={data.busy}
+                />
+                <Button
+                  label="保存"
+                  size="sm"
+                  variant="primary"
+                  isDisabled={data.busy}
                   onClick={() => void saveProfiles()}
-                >
-                  保存
-                </button>
+                />
               </div>
             </div>
           ) : null}
@@ -294,7 +301,8 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
                       : ""
                 }`}
               >
-                <button
+                <Button
+                  label={session.title}
                   type="button"
                   className="terminal-node__tab-main"
                   onClick={() => data.onSelectTerminal(session.id)}
@@ -303,15 +311,16 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
                     className={`terminal-node__tab-dot ${session.status === "exited" ? "is-exited" : "is-running"}`}
                   />
                   <span>{session.title}</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label="关闭终端"
+                </Button>
+                <IconButton
+                  label="关闭终端"
+                  tooltip="关闭终端"
+                  icon={<X size={12} />}
+                  size="sm"
+                  variant="ghost"
                   className="terminal-node__tab-close"
                   onClick={() => void data.onCloseTerminal(session.id)}
-                >
-                  <X size={12} />
-                </button>
+                />
               </div>
             ))}
           </div>
