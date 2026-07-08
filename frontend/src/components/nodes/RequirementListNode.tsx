@@ -1,14 +1,19 @@
+import { useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { ClickableCard } from "@astryxdesign/core/ClickableCard";
 import { Stack } from "@astryxdesign/core/Stack";
+import { Tab, TabList } from "@astryxdesign/core";
 import { Text } from "@astryxdesign/core/Text";
 import { Token } from "@astryxdesign/core/Token";
-import { CheckCircle2, Clock, Eye, GitBranch, Loader2 } from "lucide-react";
+import { Eye, GitBranch, Loader2 } from "lucide-react";
 import type { StartNodeData } from "../../types/api";
 import { formatDate, requirementStatusText } from "../../utils/format";
 
 type RequirementListData = Extract<StartNodeData, { kind: "requirement-list" }>;
-type RequirementListItem = RequirementListData["requirements"][number];
+type RequirementListItem =
+  | RequirementListData["pendingRequirements"][number]
+  | RequirementListData["completedRequirements"][number];
+type RequirementTab = "pending" | "completed";
 
 function requirementTaskProgress(requirement: RequirementListItem) {
   const tasks = requirement.execution_plan?.tasks ?? [];
@@ -45,34 +50,50 @@ export default function RequirementListNode({
 }: {
   data: RequirementListData;
 }) {
-  const Icon = data.tone === "done" ? CheckCircle2 : Clock;
+  const [activeTab, setActiveTab] = useState<RequirementTab>("pending");
+  const requirements =
+    activeTab === "pending"
+      ? data.pendingRequirements
+      : data.completedRequirements;
+  const emptyText =
+    activeTab === "pending" ? "确认需求后会进入这里" : "暂无已完成需求";
+
   return (
     <>
-      <div
-        className={`node-header ${
-          data.tone === "done" ? "node-header--projects" : "node-header--create"
-        }`}
-      >
-        <span className="node-icon">
-          <Icon size={20} />
-        </span>
-        <div>
-          <strong>{data.title}</strong>
-          <span>{data.description}</span>
-        </div>
+      <div className="node-header requirement-list__tabs">
+        <TabList
+          value={activeTab}
+          onChange={(value) => {
+            if (value === "pending" || value === "completed") {
+              setActiveTab(value);
+            }
+          }}
+          layout="fill"
+          hasDivider
+          aria-label="需求列表"
+        >
+          <Tab
+            value="pending"
+            label={`待执行 ${data.pendingRequirements.length}`}
+          />
+          <Tab
+            value="completed"
+            label={`已完成 ${data.completedRequirements.length}`}
+          />
+        </TabList>
       </div>
-      {data.requirements.length === 0 ? (
+      {requirements.length === 0 ? (
         <Stack className="empty-state">
-          <Text type="supporting">{data.emptyText}</Text>
+          <Text type="supporting">{emptyText}</Text>
         </Stack>
       ) : (
         <div className="requirement-list nowheel nodrag">
-          {data.requirements.map((requirement) => {
+          {requirements.map((requirement) => {
             const taskProgress = requirementTaskProgress(requirement);
             const isSelected = data.selectedRequirementId === requirement.id;
             const isBusy = data.busyRequirementId === requirement.id;
             const canPlan =
-              data.tone === "pending" &&
+              activeTab === "pending" &&
               requirement.status === "failed" &&
               !requirement.execution_plan;
             const canView = Boolean(requirement.execution_plan);

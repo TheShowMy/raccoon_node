@@ -62,7 +62,34 @@ function requirement(tasks: RequirementExecutionTask[]): Requirement {
   };
 }
 
+function requirementWithStatus(
+  status: Requirement["status"],
+  tasks: RequirementExecutionTask[] = [task("impl", "implementation")],
+): Requirement {
+  return {
+    ...requirement(tasks),
+    status,
+  };
+}
+
 describe("canvas DAG edges", () => {
+  it("always connects the merged requirements node to the DAG", () => {
+    for (const status of ["queued", "completed"] as const) {
+      const edges = buildRequirementDagEdges(
+        requirementWithStatus(status),
+        new Set(),
+      );
+
+      expect(edges[0]).toMatchObject({
+        id: "requirements-to-requirement-dag",
+        source: "requirements",
+        sourceHandle: "requirement-list-right",
+        target: "requirement-dag",
+        targetHandle: "requirement-dag-left",
+      });
+    }
+  });
+
   it("builds display-only edges through the summary for all review nodes", () => {
     const edges = buildRequirementDagEdges(
       requirement([

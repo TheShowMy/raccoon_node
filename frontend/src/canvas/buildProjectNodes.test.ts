@@ -189,15 +189,20 @@ describe("buildProjectNodes", () => {
 
     const nodes = buildProjectNodes(params(canvas, null));
     const github = nodes.find((node) => node.id === "project-github")!;
-    const completed = nodes.find(
-      (node) => node.id === "completed-requirements",
-    )!;
+    const requirements = nodes.find((node) => node.id === "requirements")!;
 
     expect(github.position).toEqual({ x: -350, y: 800 });
     expect(github.width).toBe(290);
     expect(github.height).toBe(44);
-    expect(completed.position).toEqual({ x: -350, y: 84 });
-    expect(completed.height).toBe(696);
+    expect(requirements.position).toEqual({ x: 984, y: 20 });
+    expect(requirements.width).toBe(360);
+    expect(requirements.height).toBe(760);
+    expect(nodes).not.toContainEqual(
+      expect.objectContaining({ id: "completed-requirements" }),
+    );
+    expect(nodes).not.toContainEqual(
+      expect.objectContaining({ id: "queued-requirements" }),
+    );
   });
 
   it("builds the Git node below the pending list with phased dimensions", () => {
@@ -230,9 +235,9 @@ describe("buildProjectNodes", () => {
     })!;
     const expanded = buildProjectGitNode({ ...base, phase: "expanded" })!;
 
-    expect(collapsed.position).toEqual({ x: 780, y: 800 });
-    expect(collapsed.style).toMatchObject({ width: 290, height: 44 });
-    expect(expanded.position).toEqual({ x: 780, y: 800 });
+    expect(collapsed.position).toEqual({ x: 984, y: 800 });
+    expect(collapsed.style).toMatchObject({ width: 360, height: 44 });
+    expect(expanded.position).toEqual({ x: 984, y: 800 });
     expect(expanded.style).toMatchObject({ width: 1320, height: 780 });
     expect(expanded.className).toContain("git-flow-node");
   });
@@ -313,17 +318,17 @@ describe("buildProjectNodes", () => {
     };
 
     const nodes = buildProjectNodes(params(canvas, selectedRequirement));
-    const queuedList = nodes.find((node) => node.id === "queued-requirements");
+    const requirements = nodes.find((node) => node.id === "requirements");
     const dag = nodes.find((node) => node.id === "requirement-dag");
 
-    expect(queuedList).toBeDefined();
+    expect(requirements).toBeDefined();
     expect(dag).toBeDefined();
     expect(dag!.position.x).toBeGreaterThan(
-      queuedList!.position.x + (queuedList!.width ?? 0),
+      requirements!.position.x + (requirements!.width ?? 0),
     );
   });
 
-  it("adds token usage above queued requirements", () => {
+  it("adds token usage above the merged requirements node", () => {
     const canvas: ProjectCanvasData = {
       project: project(),
       active_requirement: null,
@@ -342,11 +347,12 @@ describe("buildProjectNodes", () => {
 
     const nodes = buildProjectNodes(params(canvas, null));
     const token = nodes.find((node) => node.id === "token-usage")!;
-    const queued = nodes.find((node) => node.id === "queued-requirements")!;
+    const requirements = nodes.find((node) => node.id === "requirements")!;
 
-    expect(token.position).toEqual({ x: 780, y: 20 });
-    expect(queued.position).toEqual({ x: 780, y: 84 });
-    expect(queued.height).toBe(696);
+    expect(token.position).toEqual({ x: 984, y: -44 });
+    expect(token.width).toBe(360);
+    expect(requirements.position).toEqual({ x: 984, y: 20 });
+    expect(requirements.height).toBe(760);
     expect(token.data).toMatchObject({
       kind: "token-usage",
       usage: canvas.token_usage,

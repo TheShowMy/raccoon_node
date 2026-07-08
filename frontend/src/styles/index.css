@@ -246,8 +246,8 @@
   }
   .node-card--requirement-list {
     display: flex;
-    height: 680px;
-    width: 290px;
+    height: 760px;
+    width: 360px;
     flex-direction: column;
     overflow: hidden;
     padding: 0;
@@ -255,7 +255,7 @@
   .node-card--token-usage {
     height: 96px;
     min-height: 0;
-    width: 290px;
+    width: 360px;
     padding: calc(var(--spacing) * 2);
   }
   .node-card--requirement-chat {
@@ -3567,6 +3567,7 @@
     outline-offset: 2px;
   }
   .chat-workspace {
+    position: relative;
     display: flex;
     height: 100%;
     width: 100%;
@@ -3594,6 +3595,22 @@
   .chat-workspace__panel:not([hidden]) {
     display: flex;
     flex-direction: column;
+  }
+  .chat-workspace__floating-card {
+    position: absolute;
+    inset-inline: calc(var(--spacing) * 4);
+    bottom: calc(var(--spacing) * 4);
+    z-index: 4;
+    display: flex;
+    height: min(calc(var(--spacing) * 95), 48%);
+    min-height: calc(var(--spacing) * 44);
+    max-height: calc(100% - calc(var(--spacing) * 24));
+    overflow: hidden;
+    border-radius: var(--radius-node);
+    box-shadow: var(--shadow-popover);
+  }
+  .chat-workspace__floating-card > * {
+    width: 100%;
   }
   .rich-content {
     min-width: 0;

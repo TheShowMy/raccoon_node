@@ -47,11 +47,7 @@ import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsC
 
 const nodeTypes = { startNode: StartNode };
 const EMPTY_STREAM_EVENTS: StreamEvent[] = [];
-const REQUIREMENT_HOME_NODE_IDS = new Set([
-  "completed-requirements",
-  "requirement-chat",
-  "queued-requirements",
-]);
+const REQUIREMENT_HOME_NODE_IDS = new Set(["requirement-chat", "requirements"]);
 
 export type RequirementsReturnDirection = "left" | "right" | "up" | "down";
 
@@ -620,9 +616,7 @@ function minimapNodeColor(node: Node<StartNodeData>): string {
     case "project-settings":
       return "var(--accent-model)";
     case "requirement-list":
-      return node.data.tone === "done"
-        ? "var(--success)"
-        : "var(--accent-warning)";
+      return "var(--accent-warning)";
     case "requirement-dag":
       return "var(--color-info)";
     case "requirement-task":
@@ -1010,20 +1004,10 @@ export default function App() {
       ? []
       : [
           {
-            id: "completed-requirements-to-requirement-chat",
-            source: "completed-requirements",
-            sourceHandle: "requirement-list-right",
-            target: "requirement-chat",
-            targetHandle: "requirement-chat-left",
-            type: "smoothstep",
-            animated: true,
-            style: { stroke: "var(--edge-secondary)", strokeWidth: 2 },
-          },
-          {
-            id: "requirement-chat-to-queued-requirements",
+            id: "requirement-chat-to-requirements",
             source: "requirement-chat",
             sourceHandle: "requirement-chat-right",
-            target: "queued-requirements",
+            target: "requirements",
             targetHandle: "requirement-list-left",
             type: "smoothstep",
             animated: true,

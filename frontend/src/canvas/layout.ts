@@ -3,7 +3,7 @@ import type { RequirementExecutionTask } from "../types/api";
 export type TaskPosition = { x: number; y: number };
 export type TaskSize = { width: number; height: number };
 
-export const DAG_NODE_POSITION = { x: 1140, y: 80 };
+export const DAG_NODE_POSITION = { x: 1380, y: 80 };
 export const DAG_NODE_SIZE = { width: 360, height: 260 };
 export const TASK_COLUMN_GAP = 130;
 

@@ -662,11 +662,8 @@ export type StartNodeData =
     }
   | {
       kind: "requirement-list";
-      title: string;
-      description: string;
-      requirements: Requirement[];
-      emptyText: string;
-      tone: "done" | "pending";
+      pendingRequirements: Requirement[];
+      completedRequirements: Requirement[];
       selectedRequirementId: string | null;
       busyRequirementId: string | null;
       onSelectRequirement: (requirement: Requirement) => void;

@@ -7,13 +7,9 @@ export function buildRequirementDagEdges(
   collapsedTaskGroups: Set<string>,
 ): Edge[] {
   const flowEdges: Edge[] = [];
-  const sourceList =
-    requirement.status === "completed"
-      ? "completed-requirements"
-      : "queued-requirements";
   flowEdges.push({
-    id: `${sourceList}-to-requirement-dag`,
-    source: sourceList,
+    id: "requirements-to-requirement-dag",
+    source: "requirements",
     sourceHandle: "requirement-list-right",
     target: "requirement-dag",
     targetHandle: "requirement-dag-left",

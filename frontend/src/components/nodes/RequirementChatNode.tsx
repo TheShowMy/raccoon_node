@@ -9,8 +9,7 @@ import {
   TabList,
 } from "@astryxdesign/core";
 import { ChatLayout } from "@astryxdesign/core/Chat";
-import { Layout, LayoutContent, LayoutPanel } from "@astryxdesign/core/Layout";
-import { ResizeHandle, useResizable } from "@astryxdesign/core/Resizable";
+import { Layout, LayoutContent } from "@astryxdesign/core/Layout";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { MessageSquare, Sparkles, X } from "lucide-react";
 import type {
@@ -41,12 +40,6 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
   );
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const contentRef = useRef<HTMLDivElement>(null);
-  const panel = useResizable({
-    defaultSize: 360,
-    minSizePx: 280,
-    maxSizePx: 560,
-    autoSaveId: "raccoon-requirement-card-panel",
-  });
 
   const conversation =
     data.conversation?.id === data.requirement?.id ? data.conversation : null;
@@ -309,48 +302,26 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
 
   return (
     <>
-      <div className="chat-workspace nodrag" aria-label="需求会话与项目问答">
-        {isMobile && cardVisible ? (
-          <Layout header={header} height="fill" padding={0}>
-            <LayoutContent ref={contentRef} padding={0}>
-              {chatLayout}
-            </LayoutContent>
-          </Layout>
-        ) : (
-          <Layout
-            header={header}
-            height="fill"
-            padding={0}
-            content={
-              <LayoutContent ref={contentRef} padding={0}>
-                {chatLayout}
-              </LayoutContent>
-            }
-            end={
-              cardVisible ? (
-                <>
-                  <ResizeHandle
-                    direction="horizontal"
-                    resizable={panel.props}
-                    hasDivider
-                    isAlwaysVisible={false}
-                    label="调整卡片面板宽度"
-                  />
-                  <LayoutPanel
-                    resizable={panel.props}
-                    hasDivider={false}
-                    padding={0}
-                    isScrollable
-                    role="complementary"
-                    label="需求卡片"
-                  >
-                    {cardPanel}
-                  </LayoutPanel>
-                </>
-              ) : null
-            }
-          />
-        )}
+      <div
+        className={`chat-workspace nodrag ${
+          cardVisible && !isMobile ? "chat-workspace--floating-card" : ""
+        }`}
+        aria-label="需求会话与项目问答"
+      >
+        <Layout header={header} height="fill" padding={0}>
+          <LayoutContent ref={contentRef} padding={0}>
+            {chatLayout}
+          </LayoutContent>
+        </Layout>
+        {cardVisible && !isMobile ? (
+          <div
+            className="chat-workspace__floating-card nowheel nodrag"
+            role="complementary"
+            aria-label="需求卡片"
+          >
+            {cardPanel}
+          </div>
+        ) : null}
       </div>
 
       {isMobile && cardVisible ? (

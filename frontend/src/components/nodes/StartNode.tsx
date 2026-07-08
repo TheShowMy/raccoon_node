@@ -6,8 +6,7 @@ import { renderNodeContent } from "../../nodes/renderNodeContent";
 function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const hasRequirementChatLeftHandle = data.kind === "requirement-chat";
   const hasRequirementChatRightHandle = data.kind === "requirement-chat";
-  const hasRequirementListLeftHandle =
-    data.kind === "requirement-list" && data.tone === "pending";
+  const hasRequirementListLeftHandle = data.kind === "requirement-list";
   const hasRequirementListRightHandle = data.kind === "requirement-list";
   const hasRequirementDagLeftHandle = data.kind === "requirement-dag";
   const hasRequirementDagRightHandle = false;
