@@ -1,1282 +1,363 @@
-@import "@astryxdesign/core/reset.css";
-@import "@astryxdesign/core/astryx.css";
-@import "@astryxdesign/theme-neutral/theme.css";
-
-:root {
-  color: var(--text-strong);
-  background: var(--canvas-bg);
-  font-family: var(--font-sans);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  --font-sans: var(--font-family-body);
-  --font-mono: var(--font-family-code);
-  --text-xs: var(--font-size-xs);
-  --text-sm: var(--font-size-sm);
-  --text-base: var(--font-size-base);
-  --text-lg: var(--font-size-lg);
-  --text-xs--line-height: 1.4;
-  --text-sm--line-height: 1.5;
-  --text-base--line-height: 1.5;
-  --text-lg--line-height: 1.4;
-  --leading-tight: 1.25;
-  --leading-snug: 1.375;
-  --leading-normal: 1.5;
-  --leading-relaxed: 1.65;
-  --font-weight-medium: 500;
-  --font-weight-semibold: 600;
-  --font-weight-bold: 700;
-  --tracking-tight: 0;
-  --tracking-normal: 0;
-  --tracking-wide: 0;
-  --radius-md: var(--radius-element);
-  --radius-lg: var(--radius-container);
-  --radius-xl: var(--radius-container);
-  --radius-node: var(--radius-container);
-  --spacing: var(--spacing-1);
-  --blur-xl: var(--spacing-6);
-  --default-transition-duration: var(--duration-fast);
-  --default-transition-timing-function: var(--ease-standard);
-  --color-white: var(--color-on-dark);
-  --color-canvas: var(--color-background-body);
-  --color-canvas-dot: color-mix(in srgb, var(--color-border) 60%, transparent);
-  --color-surface-panel: var(--color-background-surface);
-  --color-surface-card: var(--color-background-card);
-  --color-surface-card-hover: var(--color-overlay-hover);
-  --color-surface-raised: var(--color-background-popover);
-  --color-surface-subtle: var(--color-background-muted);
-  --color-surface-code: var(--color-background-muted);
-  --color-border-default: var(--color-border);
-  --color-border-strong: var(--color-border-emphasized);
-  --color-text-tertiary: var(--color-text-disabled);
-  --color-text-inverse: var(--color-on-accent);
-  --color-accent-secondary: var(--color-icon-teal);
-  --color-accent-tertiary: var(--color-icon-green);
-  --color-accent-model: var(--color-icon-orange);
-  --color-danger: var(--color-error);
-  --color-info: var(--color-icon-purple);
-  --shadow-card: var(--shadow-low);
-  --shadow-hover: var(--shadow-med);
-  --shadow-popover: var(--shadow-high);
-  --glow-accent: var(--color-accent-muted);
-  --glow-secondary: var(--color-background-teal);
-  --glow-tertiary: var(--color-background-green);
-  --glow-model: var(--color-background-orange);
-  --glow-danger: var(--color-error-muted);
-  --edge-model: color-mix(in srgb, var(--color-accent-model) 55%, transparent);
-  --edge-secondary: color-mix(
-    in srgb,
-    var(--color-accent-secondary) 55%,
-    transparent
-  );
-  --edge-info: color-mix(in srgb, var(--color-info) 52%, transparent);
-  --diff-add: var(--color-success);
-  --diff-add-bg: var(--color-success-muted);
-  --diff-remove: var(--color-error);
-  --diff-remove-bg: var(--color-error-muted);
-  --text-strong: var(--color-text-primary);
-  --text-soft: var(--color-text-secondary);
-  --text-muted: var(--color-text-tertiary);
-  --panel-bg: var(--color-surface-panel);
-  --card-bg: var(--color-surface-card);
-  --card-bg-hover: var(--color-surface-card-hover);
-  --card-border: var(--color-border-default);
-  --card-border-strong: var(--color-border-strong);
-  --canvas-bg: var(--color-canvas);
-  --canvas-dot: var(--color-canvas-dot);
-  --accent-create: var(--color-accent);
-  --accent-projects: var(--color-accent-secondary);
-  --accent-style: var(--color-accent-tertiary);
-  --accent-model: var(--color-accent-model);
-  --accent-danger: var(--color-danger);
-  --accent-warning: var(--color-warning);
-  --accent-primary: var(--color-accent-model);
-  --text-primary: var(--color-text-primary);
-  --text-secondary: var(--color-text-secondary);
-  --surface-subtle: var(--color-surface-subtle);
-  --card-shadow: var(--shadow-card);
-  --success: var(--color-success);
-  --surface-code: var(--color-surface-code);
-  --surface-raised: var(--color-surface-raised);
-  --focus-ring: var(--color-accent);
-}
-
-@layer base {
-  html,
-  body,
-  #root,
-  #root > .astryx-app-shell,
-  #root > .astryx-app-shell > main {
-    margin: 0;
-    height: 100%;
-    width: 100%;
-  }
-
-  button,
-  input,
-  textarea {
-    font: inherit;
-  }
-
-  ::selection {
-    background: var(--color-accent-muted);
-    color: var(--color-text-primary);
-  }
-
-  :focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
-  }
-
-  * {
-    box-sizing: border-box;
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-text-tertiary) transparent;
-  }
-
-  *::-webkit-scrollbar {
-    width: var(--spacing-1-5);
-    height: var(--spacing-1-5);
-  }
-
-  *::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  *::-webkit-scrollbar-thumb {
-    border-radius: var(--radius-full);
-    background: color-mix(in srgb, var(--color-text-tertiary) 38%, transparent);
-  }
-
-  *::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--color-text-tertiary) 55%, transparent);
-  }
-}
-
-@layer components {
-  .canvas-shell {
-    position: relative;
-    min-height: 0;
-    height: 100%;
-    width: 100%;
-    overflow: hidden;
-    background:
-      radial-gradient(
-        circle at 32px 32px,
-        var(--canvas-dot) 1.5px,
-        transparent 1.5px
-      ),
-      var(--canvas-bg);
-    background-size: 32px 32px;
-  }
-  .node-card {
-    position: relative;
-    overflow: hidden;
-    border-radius: var(--radius-node);
-  }
-  .node-bar__toggle {
-    display: flex !important;
-    width: 100% !important;
-  }
-  .node-bar__toggle > span:first-child > span:first-child {
-    display: flex;
-    width: 100%;
-    min-width: 0;
-    align-items: center;
-  }
-  .node-card--requirement-list {
-    display: flex;
-    height: 760px;
-    width: 360px;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .node-card--token-usage {
-    height: 96px;
-    min-height: 0;
-    width: 360px;
-  }
-  .node-card--requirement-chat {
-    height: 760px;
-    width: 960px;
-    overflow: visible;
-    background: var(--card-bg);
-    border: 1px solid var(--card-border);
-    box-shadow: var(--shadow-card);
-  }
-  .node-card--requirement-chat:hover,
-  .node-card--requirement-chat:focus,
-  .node-card--requirement-chat:focus-visible {
-    border: 1px solid var(--card-border);
-    box-shadow: var(--shadow-card);
-    transform: none;
-    transition: none;
-  }
-  .react-flow__node:has(.node-card--requirement-chat) {
-    transition: none !important;
-  }
-  .node-card--requirement-chat .astryx-card,
-  .node-card--requirement-chat .astryx-card:hover,
-  .node-card--requirement-chat .astryx-card:focus {
-    border: none;
-    box-shadow: none;
-  }
-  .node-card--requirement-chat
-    .astryx-chat-layout
-    > div:last-child
-    > div:nth-child(2) {
-    display: none;
-  }
-  .node-card--project-terminal {
-    height: 100%;
-    min-height: 0;
-    width: 100%;
-    overflow: hidden;
-    border-radius: var(--radius-node);
-    display: flex;
-    flex-direction: column;
-  }
-  .node-card--project-terminal:hover {
-    transform: translateY(-1px);
-  }
-  .terminal-session-view,
-  .terminal-session-view__overlay,
-  .terminal-session-view__host {
-    height: 100%;
-    min-height: 0;
-    width: 100%;
-  }
-  .terminal-session-view,
-  .terminal-session-view__overlay {
-    position: relative;
-    overflow: hidden;
-    background: var(--canvas-bg);
-  }
-  .terminal-session-view__overlay {
-    position: absolute;
-    z-index: 30;
-  }
-  .terminal-session-view__host {
-    overflow: hidden;
-    padding: calc(var(--spacing) * 2);
-    max-height: 100%;
-  }
-  .terminal-session-view__host .xterm {
-    height: 100%;
-    max-height: 100%;
-  }
-  .terminal-session-view__host .xterm-viewport {
-    scrollbar-width: thin;
-    scrollbar-color: var(--card-border-strong) var(--canvas-bg);
-  }
-  .terminal-session-view__host .xterm-viewport {
-    background-color: var(--canvas-bg) !important;
-    overflow-y: auto !important;
-  }
-  .terminal-session-view--fixed-dark,
-  .terminal-session-view--fixed-dark .terminal-session-view__host,
-  .terminal-session-view--fixed-dark .xterm-viewport {
-    --terminal-fixed-bg: var(
-      --terminal-bg,
-      color-mix(in srgb, var(--color-on-light) 92%, var(--color-accent) 8%)
-    );
-    --terminal-fixed-fg: var(
-      --terminal-fg,
-      color-mix(in srgb, var(--color-on-dark) 92%, var(--color-accent) 8%)
-    );
-    --terminal-fixed-border: var(
-      --terminal-border,
-      color-mix(in srgb, var(--terminal-fixed-fg) 20%, var(--terminal-fixed-bg))
-    );
-    --terminal-fixed-status-bg: color-mix(
-      in srgb,
-      var(--terminal-fixed-bg) 92%,
-      var(--terminal-fixed-fg) 8%
-    );
-    background-color: var(--terminal-fixed-bg) !important;
-  }
-  .terminal-session-view__status {
-    position: absolute;
-    right: calc(var(--spacing) * 3);
-    bottom: calc(var(--spacing) * 3);
-    border-radius: var(--radius-full);
-    border-style: solid;
-    border-width: 1px;
-    padding-inline: calc(var(--spacing) * 3);
-    padding-block: var(--spacing);
-    font-size: var(--text-xs);
-    border-color: var(--card-border-strong);
-    color: var(--text-soft);
-    background: var(--card-bg);
-  }
-  .terminal-session-view--fixed-dark .terminal-session-view__status {
-    border-color: var(--terminal-fixed-border);
-    color: var(--terminal-fixed-fg);
-    background: var(--terminal-fixed-status-bg);
-  }
-  .node-card--requirement-dag {
-    display: flex;
-    height: 260px;
-    width: 360px;
-    flex-direction: column;
-    overflow: hidden;
-    box-shadow: var(--shadow-hover);
-  }
-  .node-card--requirement-task {
-    display: flex;
-    height: 100%;
-    min-height: 0;
-    width: 100%;
-    min-width: 0;
-    flex-direction: column;
-    overflow: hidden;
-    box-shadow: var(--shadow-card);
-    transition:
-      background-color 180ms ease,
-      border-color 180ms ease,
-      box-shadow 180ms ease,
-      opacity 180ms ease;
-  }
-  .node-card--requirement-task:has(.task-node--status-pending) {
-    border-color: var(--text-soft);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--text-soft) 26%, transparent);
-    }
-    box-shadow:
-      var(--shadow-card),
-      0 0 18px var(--text-soft);
-    @supports (color: color-mix(in lab, red, red)) {
-      box-shadow:
-        var(--shadow-card),
-        0 0 18px color-mix(in srgb, var(--text-soft) 10%, transparent);
-    }
-  }
-  .node-card--requirement-task:has(.task-node--status-running) {
-    border-color: var(--accent-warning);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--accent-warning) 70%, transparent);
-    }
-    box-shadow:
-      var(--shadow-hover),
-      0 0 30px var(--accent-warning);
-    @supports (color: color-mix(in lab, red, red)) {
-      box-shadow:
-        var(--shadow-hover),
-        0 0 30px color-mix(in srgb, var(--accent-warning) 30%, transparent);
-    }
-    animation: task-running-pulse 1.5s ease-in-out infinite;
-  }
-  .node-card--requirement-task:has(.task-node--status-fixing) {
-    border-color: var(--accent-warning);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--accent-warning) 54%, transparent);
-    }
-    box-shadow:
-      var(--shadow-hover),
-      0 0 30px var(--accent-warning);
-    @supports (color: color-mix(in lab, red, red)) {
-      box-shadow:
-        var(--shadow-hover),
-        0 0 30px color-mix(in srgb, var(--accent-warning) 24%, transparent);
-    }
-  }
-  .node-card--requirement-task:has(.task-node--status-awaiting_review) {
-    border-color: var(--accent-model);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--accent-model) 52%, transparent);
-    }
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px var(--accent-model);
-    @supports (color: color-mix(in lab, red, red)) {
-      box-shadow:
-        var(--shadow-card),
-        0 0 28px color-mix(in srgb, var(--accent-model) 22%, transparent);
-    }
-  }
-  .node-card--requirement-task:has(.task-node--status-completed),
-  .node-card--requirement-task:has(.task-node--status-approved) {
-    border-color: var(--success);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--success) 54%, transparent);
-    }
-    box-shadow:
-      var(--shadow-card),
-      0 0 28px var(--success);
-    @supports (color: color-mix(in lab, red, red)) {
-      box-shadow:
-        var(--shadow-card),
-        0 0 28px color-mix(in srgb, var(--success) 20%, transparent);
-    }
-  }
-  .node-card--requirement-task:has(.task-node--status-failed),
-  .node-card--requirement-task:has(.task-node--status-rejected) {
-    border-color: var(--accent-danger);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--accent-danger) 58%, transparent);
-    }
-    box-shadow:
-      var(--shadow-hover),
-      0 0 30px var(--accent-danger);
-    @supports (color: color-mix(in lab, red, red)) {
-      box-shadow:
-        var(--shadow-hover),
-        0 0 30px color-mix(in srgb, var(--accent-danger) 24%, transparent);
-    }
-  }
-  .node-card--requirement-task:has(.task-node--code),
-  .node-card--requirement-task:has(.task-node--review_summary) {
-    border-radius: 14px;
-    padding: calc(var(--spacing) * 3);
-  }
-  .node-card--requirement-task:has(.task-node--review_sub_agent) {
-    border-radius: 12px;
-    padding: calc(var(--spacing) * 1.5);
-  }
-  .node-card--pending-delete {
-    border-color: var(--accent-danger);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--accent-danger) 55%, transparent);
-    }
-    background: var(--accent-danger);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(in srgb, var(--accent-danger) 18%, var(--card-bg));
-    }
-    box-shadow:
-      var(--shadow-hover),
-      0 0 36px var(--glow-danger);
-  }
-  .task-node--group .task-node-group-head {
-    border-radius: 10px;
-    border-style: solid;
-    border-width: 1px;
-    border-color: var(--accent-create);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--accent-create) 28%, transparent);
-    }
-    background: var(--panel-bg);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(in srgb, var(--panel-bg) 68%, transparent);
-    }
-  }
-  .task-node--status-pending.task-node--group .task-node-group-head {
-    border-color: var(--text-soft);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--text-soft) 28%, transparent);
-    }
-  }
-  .task-node--status-running.task-node--group .task-node-group-head {
-    border-color: var(--accent-warning);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--accent-warning) 70%, transparent);
-    }
-    background: var(--accent-warning);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(
-        in srgb,
-        var(--accent-warning) 12%,
-        var(--panel-bg)
-      );
-    }
-    animation: task-running-pulse 1.5s ease-in-out infinite;
-  }
-  .task-node--status-fixing.task-node--group .task-node-group-head {
-    border-color: var(--accent-warning);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--accent-warning) 56%, transparent);
-    }
-    background: var(--accent-warning);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(
-        in srgb,
-        var(--accent-warning) 10%,
-        var(--panel-bg)
-      );
-    }
-  }
-  .task-node--status-awaiting_review.task-node--group .task-node-group-head {
-    border-color: var(--accent-model);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--accent-model) 52%, transparent);
-    }
-    background: var(--accent-model);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(in srgb, var(--accent-model) 10%, var(--panel-bg));
-    }
-  }
-  .task-node--status-completed.task-node--group .task-node-group-head,
-  .task-node--status-approved.task-node--group .task-node-group-head {
-    border-color: var(--success);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--success) 54%, transparent);
-    }
-    background: var(--success);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(in srgb, var(--success) 10%, var(--panel-bg));
-    }
-  }
-  .task-node--status-failed.task-node--group .task-node-group-head,
-  .task-node--status-rejected.task-node--group .task-node-group-head {
-    border-color: var(--accent-danger);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--accent-danger) 58%, transparent);
-    }
-    background: var(--accent-danger);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(in srgb, var(--accent-danger) 12%, var(--panel-bg));
-    }
-  }
-  .task-detail-dialog__rounds,
-  .task-detail-dialog__round,
-  .task-detail-dialog__lane {
-    display: grid;
-    gap: calc(var(--spacing) * 3);
-  }
-  .task-detail-dialog__round {
-    border-radius: 10px;
-    border-style: solid;
-    border-width: 1px;
-    padding: calc(var(--spacing) * 3);
-    border-color: var(--card-border);
-    background: var(--card-bg);
-  }
-  .task-detail-dialog__round > header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: calc(var(--spacing) * 3);
-  }
-  .task-detail-dialog__round > header > span {
-    border-radius: var(--radius-full);
-    padding-inline: calc(var(--spacing) * 2);
-    padding-block: var(--spacing);
-    font-size: 10px;
-    font-weight: var(--font-weight-bold);
-    color: var(--text-soft);
-    background: var(--surface-subtle);
-  }
-  .task-detail-dialog__round > header > .is-approved {
-    color: var(--success);
-  }
-  .task-detail-dialog__round > header > .is-rejected {
-    color: var(--accent-danger);
-  }
-  .task-detail-dialog__lanes {
-    display: grid;
-    align-items: flex-start;
-    gap: calc(var(--spacing) * 3);
-    grid-template-columns: minmax(0, 1fr) 88px minmax(0, 1fr);
-  }
-  .task-detail-dialog__lane > b {
-    text-align: center;
-    font-size: var(--text-xs);
-    color: var(--text-soft);
-  }
-  .task-detail-dialog__exchange {
-    display: grid;
-    gap: calc(var(--spacing) * 2);
-    align-self: center;
-    text-align: center;
-    font-size: 10px;
-    font-weight: var(--font-weight-bold);
-    white-space: nowrap;
-    color: var(--accent-model);
-  }
-  .task-detail-dialog__step,
-  .task-detail-dialog__stage {
-    min-width: 0;
-    border-radius: 9px;
-    border-style: solid;
-    border-width: 1px;
-    padding: calc(var(--spacing) * 3);
-    border-color: var(--card-border);
-    background: var(--surface-subtle);
-  }
-  .task-detail-dialog__step.is-approved,
-  .task-detail-dialog__stage.is-approved {
-    border-color: var(--success);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--success) 46%, transparent);
-    }
-  }
-  .task-detail-dialog__step.is-rejected,
-  .task-detail-dialog__stage.is-rejected {
-    border-color: var(--accent-danger);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in srgb, var(--accent-danger) 52%, transparent);
-    }
-  }
-  .task-detail-dialog__step strong,
-  .task-detail-dialog__stage strong {
-    font-size: var(--text-xs);
-    font-weight: var(--font-weight-bold);
-    color: var(--text-strong);
-  }
-  .task-detail-dialog__step p,
-  .task-detail-dialog__stage div {
-    margin-top: var(--spacing);
-    font-size: var(--text-xs);
-    line-height: var(--leading-relaxed);
-    overflow-wrap: break-word;
-    color: var(--text-soft);
-  }
-  .task-detail-dialog__stage div {
-    display: grid;
-    gap: var(--spacing);
-  }
-  .task-detail-dialog__pipeline {
-    display: grid;
-    align-items: center;
-    gap: calc(var(--spacing) * 2);
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(
-        0,
-        1fr
-      );
-  }
-  .task-detail-dialog__pipeline--publish {
-    grid-template-columns:
-      minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr)
-      auto minmax(0, 1fr) auto minmax(0, 1fr);
-  }
-  .task-detail-dialog__pipeline > span {
-    color: var(--accent-model);
-  }
-  .task-detail-dialog__details {
-    min-width: 0;
-  }
-  .task-detail-dialog__details summary {
-    cursor: pointer;
-    padding-block: calc(var(--spacing) * 2);
-    font-weight: var(--font-weight-bold);
-    color: var(--text-strong);
-  }
-  .task-detail-dialog__info-list a {
-    color: var(--accent-model);
-  }
-  .task-session-tools {
-    margin-top: calc(var(--spacing) * 2);
-    display: flex;
-    flex-direction: column;
-    gap: calc(var(--spacing) * 2);
-  }
-}
-@layer utilities {
-  .react-flow__node:has(.node-card--requirement-task) {
-    transition:
-      transform 220ms ease,
-      opacity 180ms ease;
-  }
-  .react-flow__node-startNode {
-    visibility: visible !important;
-  }
-  .node-link-handle {
-    width: 10px;
-    height: 10px;
-    border: 2px solid color-mix(in srgb, var(--text-strong) 95%, transparent);
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--card-bg) 18%, transparent),
-      0 0 12px currentColor;
-    @supports (color: color-mix(in lab, red, red)) {
-      box-shadow:
-        0 0 0 1px color-mix(in srgb, var(--card-bg) 18%, transparent),
-        0 0 12px color-mix(in srgb, currentColor 55%, transparent);
-    }
-    opacity: 1;
-    pointer-events: none;
-  }
-  .node-link-handle--flow {
-    background: var(--accent-projects);
-    color: var(--accent-projects);
-  }
-  .node-link-handle--danger {
-    background: var(--accent-danger);
-    color: var(--accent-danger);
-  }
-  .node-link-handle--model {
-    background: var(--accent-model);
-    color: var(--accent-model);
-  }
-  .node-link-handle--requirement {
-    background: var(--accent-model);
-    color: var(--accent-model);
-  }
-  .react-flow__minimap {
-    overflow: hidden;
-    border: 1px solid var(--card-border-strong);
-    border-radius: 12px;
-    background: var(--card-bg);
-    box-shadow: var(--shadow-card);
-  }
-  .react-flow__minimap-mask {
-    fill: var(--accent-model);
-    @supports (color: color-mix(in lab, red, red)) {
-      fill: color-mix(in srgb, var(--accent-model) 14%, transparent);
-    }
-    stroke: var(--accent-model);
-    @supports (color: color-mix(in lab, red, red)) {
-      stroke: color-mix(in srgb, var(--accent-model) 58%, transparent);
-    }
-    stroke-width: 3;
-  }
-  .react-flow__minimap-node {
-    fill: var(--accent-create);
-    @supports (color: color-mix(in lab, red, red)) {
-      fill: color-mix(in srgb, var(--accent-create) 42%, var(--card-bg));
-    }
-    stroke: var(--accent-create);
-    @supports (color: color-mix(in lab, red, red)) {
-      stroke: color-mix(in srgb, var(--accent-create) 62%, transparent);
-    }
-  }
-  [data-theme="dark"] .react-flow__minimap {
-    border-color: color-mix(in srgb, var(--color-on-dark) 24%, transparent);
-    background: color-mix(
-      in srgb,
-      var(--color-on-light) 98%,
-      var(--color-accent) 2%
-    );
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--color-on-dark) 8%, transparent),
-      0 12px 34px color-mix(in srgb, var(--color-on-light) 42%, transparent);
-  }
-  .react-flow__attribution {
-    display: none;
-  }
-  @media (max-width: 760px) {
-    .canvas-shell {
-      width: calc(100% - calc(var(--spacing) * 4));
-      margin-inline: calc(var(--spacing) * 2);
-      margin-bottom: calc(var(--spacing) * 2);
-      min-height: 660px;
-      border-radius: 14px;
-    }
-    .react-flow__minimap {
-      width: 160px;
-      height: 112px;
-    }
-    .node-card {
-      width: 280px;
-    }
-    .task-detail-dialog__lanes,
-    .task-detail-dialog__pipeline,
-    .task-detail-dialog__pipeline--publish {
-      grid-template-columns: 1fr;
-    }
-    .task-detail-dialog__exchange {
-      padding-block: var(--spacing);
-    }
-    .task-detail-dialog__pipeline > span {
-      justify-self: center;
-      transform: rotate(90deg);
-    }
-  }
-}
-@keyframes task-running-pulse {
-  0%,
-  100% {
-    box-shadow:
-      var(--shadow-hover),
-      0 0 20px color-mix(in srgb, var(--accent-warning) 18%, transparent);
-  }
-  50% {
-    box-shadow:
-      var(--shadow-hover),
-      0 0 40px color-mix(in srgb, var(--accent-warning) 36%, transparent);
-  }
-}
-.canvas-shell--dragging .node-card--requirement-task,
-.canvas-shell--dragging .task-node--group .task-node-group-head,
-.canvas-shell--dragging .spin-icon,
-.canvas-shell--dragging .react-flow__edge.animated path {
-  animation-play-state: paused !important;
-}
-.node-card--token-usage {
-  height: 100%;
-  min-height: 0;
+html,
+body,
+#root {
   width: 100%;
+  height: 100%;
+  margin: 0;
   overflow: hidden;
-  padding: 0;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-card);
-  transition:
-    width 260ms ease,
-    height 260ms ease,
-    background-color 260ms ease,
-    color 260ms ease;
+  background: var(--color-background-body);
+  color: var(--color-text-primary);
+  color-scheme: dark;
 }
-.token-usage-flow-node {
-  transition:
-    width 260ms ease,
-    height 260ms ease;
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
 }
-.node-card--project-settings:hover {
-  transform: none;
-}
-.node-header {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: calc(var(--spacing) * 3);
-}
-.react-flow__controls {
+
+.app-root {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
   overflow: hidden;
-  border: 1px solid var(--card-border-strong);
-  border-radius: 12px;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-card);
+  background:
+    linear-gradient(90deg, var(--color-border) 1px, transparent 1px),
+    linear-gradient(0deg, var(--color-border) 1px, transparent 1px),
+    var(--color-background-body);
+  background-size: 88px 88px;
 }
-.react-flow__controls-button {
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border: 0;
-  border-bottom: 1px solid var(--card-border);
-  background: transparent;
-  color: var(--text-strong);
-}
-.react-flow__controls-button svg {
-  width: 18px;
-  height: 18px;
-}
-.react-flow__controls-button:hover {
-  background: var(--card-bg-hover);
-  color: var(--text-strong);
-}
-.react-flow__controls-button:disabled {
-  color: var(--text-muted);
-  opacity: 0.55;
-}
-.react-flow__controls-button svg,
-.react-flow__controls-button path {
-  fill: currentColor;
-  stroke: currentColor;
-}
-[data-theme="dark"] .react-flow__controls {
-  border-color: color-mix(in srgb, var(--color-on-dark) 30%, transparent);
+
+.canvas-hud {
+  position: absolute;
+  z-index: 20;
+  left: var(--spacing-4);
+  top: var(--spacing-4);
+  max-width: min(520px, calc(100vw - var(--spacing-8)));
+  padding: var(--spacing-2) var(--spacing-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-element);
   background: color-mix(
     in srgb,
-    var(--color-on-light) 95%,
-    var(--color-accent) 5%
-  );
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--color-on-dark) 10%, transparent),
-    0 12px 34px color-mix(in srgb, var(--color-on-light) 50%, transparent);
-}
-[data-theme="dark"] .react-flow__controls-button {
-  border-bottom-color: color-mix(
-    in srgb,
-    var(--color-on-dark) 18%,
+    var(--color-background-popover) 86%,
     transparent
   );
-  color: var(--color-on-dark);
+  box-shadow: var(--shadow-low);
+  pointer-events: none;
 }
-[data-theme="dark"] .react-flow__controls-button:hover {
-  background: color-mix(in srgb, var(--color-on-dark) 14%, transparent);
-  color: var(--color-on-dark);
+
+.react-flow,
+.react-flow__renderer,
+.react-flow__pane {
+  cursor: default;
 }
-[data-theme="dark"] .react-flow__controls-button:disabled {
-  color: color-mix(in srgb, var(--color-on-dark) 58%, transparent);
-  opacity: 0.7;
+
+.react-flow__node {
+  cursor: default;
+  pointer-events: auto !important;
 }
-.node-card--project-git {
+
+.react-flow__node-chat,
+.react-flow__node-orbit,
+.react-flow__node-panel {
+  pointer-events: auto !important;
+}
+
+.chat-node,
+.panel-node,
+.orbit-node {
+  border: var(--border-width) solid var(--color-border);
+  background: color-mix(
+    in srgb,
+    var(--color-background-surface) 94%,
+    transparent
+  );
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-high);
+  pointer-events: auto;
+}
+
+.chat-node {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-container);
+  overflow: hidden;
+}
+
+.chat-node-header,
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-4);
+  min-height: 64px;
+  padding: var(--spacing-3) var(--spacing-4);
+  border-bottom: var(--border-width) solid var(--color-border);
+  background: var(--color-background-popover);
+}
+
+.node-actions,
+.inline-actions,
+.section-heading-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.chat-node .astryx-chat-layout {
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-node .astryx-chat-message-list {
+  padding-bottom: 148px;
+}
+
+.orbit-node {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 12px;
+  align-items: center;
+  gap: var(--spacing-3);
+  padding: var(--spacing-3);
+  border-radius: var(--radius-container);
+  text-align: left;
+  transition:
+    transform var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard);
+}
+
+.orbit-node:hover,
+.orbit-node.is-active {
+  transform: translateY(-2px);
+  border-color: var(--color-border-emphasized);
+  background: var(--color-background-popover);
+}
+
+.orbit-node.is-accent {
+  box-shadow: var(--shadow-med), var(--shadow-inset-selected);
+}
+
+.orbit-node.is-warning {
+  box-shadow: var(--shadow-med), var(--shadow-inset-warning);
+}
+
+.orbit-node.is-error {
+  box-shadow: var(--shadow-med), var(--shadow-inset-error);
+}
+
+.orbit-node.is-success {
+  box-shadow: var(--shadow-med), var(--shadow-inset-success);
+}
+
+.orbit-node-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: var(--radius-element);
+  background: var(--color-background-muted);
+  color: var(--color-icon-accent);
+}
+
+.orbit-node-copy,
+.row-main {
+  min-width: 0;
+}
+
+.panel-node {
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
-  min-height: 0;
+  border-radius: var(--radius-container);
   overflow: hidden;
-  padding: 0;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-card);
-  transition:
-    width 260ms ease,
-    height 260ms ease,
-    background-color 260ms ease,
-    color 260ms ease;
 }
-.node-card--project-git:hover {
-  transform: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .node-card--project-git {
-    transition: none;
-  }
-}
-.node-card--project-settings {
-  height: 100%;
+
+.panel-body {
+  flex: 1;
   min-height: 0;
-  width: 100%;
-  overflow: hidden;
-  padding: 0;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-card);
-  transition:
-    width 260ms ease,
-    height 260ms ease,
-    background-color 260ms ease,
-    color 260ms ease;
+  overflow: auto;
+  padding: var(--spacing-4);
 }
-.node-card--project-settings:hover {
-  transform: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .node-card--project-settings {
-    transition: none;
-  }
-}
-.requirements-return-panel .astryx-button {
-  pointer-events: auto;
+
+.panel-stack,
+.panel-grid,
+.panel-section,
+.terminal-unlock {
   display: flex;
-  cursor: pointer;
-  align-items: center;
-  gap: calc(var(--spacing) * 2);
-  border-radius: var(--radius-xl);
-  border-style: solid;
-  border-width: 1px;
-  padding-inline: calc(var(--spacing) * 3);
-  padding-block: calc(var(--spacing) * 2);
-  font-size: var(--text-xs);
-  font-weight: var(--font-weight-semibold);
-  border-color: var(--accent-projects);
-  @supports (color: color-mix(in lab, red, red)) {
-    border-color: color-mix(in srgb, var(--accent-projects) 48%, transparent);
-  }
-  color: var(--text-strong);
-  background: var(--card-bg);
-  @supports (color: color-mix(in lab, red, red)) {
-    background: color-mix(in srgb, var(--card-bg) 94%, transparent);
-  }
-  box-shadow: var(--shadow-card);
-  backdrop-filter: blur(12px);
+  flex-direction: column;
+  gap: var(--spacing-3);
 }
-.requirements-return-panel .astryx-button:hover {
-  border-color: var(--accent-projects);
-  color: var(--accent-projects);
-  box-shadow: var(--shadow-hover);
-}
-.model-setup-guide.react-flow__panel {
-  pointer-events: none;
-  margin: 0;
-  height: 100%;
-  width: 100%;
-  inset: 0;
-  z-index: 100;
-}
-.model-setup-guide__blocker {
-  pointer-events: auto;
-  position: absolute;
-  background: var(--canvas-bg);
-  @supports (color: color-mix(in lab, red, red)) {
-    background: color-mix(in srgb, var(--canvas-bg) 72%, transparent);
-  }
-}
-.model-setup-guide__spotlight {
-  pointer-events: none;
-  position: absolute;
-  border-radius: var(--radius-xl);
-  border-style: solid;
-  border-width: 2px;
-  border-color: var(--accent-model);
-  box-shadow:
-    0 0 0 2px var(--accent-model),
-    0 0 28px var(--accent-model);
-  @supports (color: color-mix(in lab, red, red)) {
-    box-shadow:
-      0 0 0 2px color-mix(in srgb, var(--accent-model) 20%, transparent),
-      0 0 28px color-mix(in srgb, var(--accent-model) 58%, transparent);
-  }
-  animation: model-setup-guide-pulse 1.6s ease-in-out infinite;
-}
-.model-setup-guide__card {
-  pointer-events: auto;
-  position: absolute;
-  bottom: calc(var(--spacing) * 6);
-  left: calc(1 / 2 * 100%);
+
+.panel-grid.two {
   display: grid;
-  width: min(420px, calc(100% - 32px));
-  gap: var(--spacing);
-  border-radius: var(--radius-xl);
-  border-style: solid;
-  border-width: 1px;
-  padding: calc(var(--spacing) * 4);
-  border-color: var(--accent-model);
-  @supports (color: color-mix(in lab, red, red)) {
-    border-color: color-mix(in srgb, var(--accent-model) 48%, transparent);
-  }
-  color: var(--text-strong);
-  background: var(--card-bg);
-  @supports (color: color-mix(in lab, red, red)) {
-    background: color-mix(in srgb, var(--card-bg) 96%, transparent);
-  }
-  box-shadow: var(--shadow-hover);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--spacing-4);
+  align-items: start;
 }
-.model-setup-guide__card > span {
-  font-size: 10px;
-  font-weight: var(--font-weight-bold);
-  letter-spacing: var(--tracking-wide);
-  color: var(--accent-model);
+
+.panel-section {
+  padding: var(--spacing-4);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-element);
+  background: var(--color-background-muted);
 }
-.model-setup-guide__card strong {
-  font-size: var(--text-sm);
+
+.list-section {
+  max-height: 100%;
+  overflow: auto;
 }
-.model-setup-guide__card p {
-  margin: 0;
-  font-size: var(--text-xs);
-  line-height: calc(var(--spacing) * 5);
-  color: var(--text-soft);
+
+.field-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
 }
-.model-setup-guide__action.astryx-button {
-  margin-top: calc(var(--spacing) * 2);
-  cursor: pointer;
-  justify-self: flex-end;
-  border-radius: var(--radius-lg);
-  border-style: solid;
-  border-width: 1px;
-  padding-inline: calc(var(--spacing) * 3);
-  padding-block: calc(var(--spacing) * 1.5);
-  font-size: var(--text-xs);
-  font-weight: var(--font-weight-semibold);
-  border-color: var(--card-border-strong);
-  color: var(--text-soft);
+
+.field-row select {
+  height: var(--size-element-md);
+  padding: 0 var(--spacing-3);
+  border: var(--border-width) solid var(--color-border-emphasized);
+  border-radius: var(--radius-element);
+  background: var(--color-background-surface);
+  color: var(--color-text-primary);
+}
+
+.metric-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--spacing-3);
+}
+
+.metric-strip.grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric {
+  min-width: 0;
+  padding: var(--spacing-3);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-element);
+  background: var(--color-background-surface);
+}
+
+.data-row,
+.row-button {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  width: 100%;
+  min-height: 40px;
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 0;
+  border-bottom: var(--border-width) solid var(--color-border);
   background: transparent;
+  color: var(--color-text-primary);
+  text-align: left;
 }
-.model-setup-guide__action.astryx-button:hover {
-  border-color: var(--accent-model);
-  color: var(--accent-model);
+
+.data-row.tall {
+  align-items: flex-start;
+  min-height: 64px;
 }
-@keyframes model-setup-guide-pulse {
-  50% {
-    box-shadow:
-      0 0 0 4px color-mix(in srgb, var(--accent-model) 24%, transparent),
-      0 0 38px color-mix(in srgb, var(--accent-model) 70%, transparent);
-  }
+
+.row-button:hover,
+.row-button.is-active {
+  background: var(--color-overlay-hover);
 }
-@media (prefers-reduced-motion: reduce) {
-  .model-setup-guide__spotlight {
-    animation: none;
-  }
+
+.terminal-panel,
+.files-panel {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: var(--spacing-3);
 }
-@layer components {
-  summary:focus-visible,
-  a:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .rich-content {
-    min-width: 0;
-    font-size: 13px;
-    line-height: 1.65;
-    color: var(--color-text-secondary);
-    overflow-wrap: anywhere;
-  }
-  .rich-content h1,
-  .rich-content h2,
-  .rich-content h3,
-  .rich-content h4 {
-    margin-top: calc(var(--spacing) * 4);
-    margin-bottom: calc(var(--spacing) * 2);
-    font-weight: var(--font-weight-bold);
-    color: var(--text-strong);
-  }
-  .rich-content h1 {
-    font-size: var(--text-lg);
-  }
-  .rich-content h2 {
-    font-size: var(--text-base);
-  }
-  .rich-content h3,
-  .rich-content h4 {
-    font-size: var(--text-sm);
-  }
-  .rich-content ul,
-  .rich-content ol {
-    margin-block: calc(var(--spacing) * 2);
-    padding-left: calc(var(--spacing) * 5);
-  }
-  .rich-content li {
-    margin-block: var(--spacing);
-  }
-  .rich-content blockquote {
-    margin-block: calc(var(--spacing) * 3);
-    border-left-style: solid;
-    border-left-width: 2px;
-    padding-left: calc(var(--spacing) * 3);
-    border-color: var(--accent-model);
-    color: var(--color-text-tertiary);
-  }
-  .rich-content a {
-    color: var(--accent-create);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-  .rich-content :not(pre) > code {
-    border-radius: 0.25rem;
-    padding-inline: var(--spacing);
-    padding-block: calc(var(--spacing) * 0.5);
-    font-family: var(--font-mono);
-    font-size: 0.92em;
-    color: var(--color-text-primary);
-    background: var(--surface-code);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(in srgb, var(--surface-code) 82%, transparent);
-    }
-  }
-  .rich-content table {
-    margin-block: calc(var(--spacing) * 3);
-    width: 100%;
-    border-collapse: collapse;
-    font-size: var(--text-xs);
-  }
-  .rich-content thead {
-    background: var(--canvas-bg);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(in srgb, var(--canvas-bg) 50%, transparent);
-    }
-  }
-  .rich-content th,
-  .rich-content td {
-    border-style: solid;
-    border-width: 1px;
-    padding-inline: calc(var(--spacing) * 2);
-    padding-block: calc(var(--spacing) * 1.5);
-    text-align: left;
-    border-color: var(--card-border-strong);
-  }
-  .rich-content th {
-    font-weight: var(--font-weight-semibold);
-    color: var(--color-text-primary);
-  }
-  .rich-content tbody tr:nth-child(even) {
-    background: var(--canvas-bg);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(in srgb, var(--canvas-bg) 22%, transparent);
-    }
-  }
-  .session-diff {
-    border-top-style: solid;
-    border-top-width: 1px;
-    border-color: var(--card-border);
-  }
-  .session-diff > div {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-inline: calc(var(--spacing) * 3);
-    padding-block: calc(var(--spacing) * 1.5);
-    font-size: 10px;
-    color: var(--color-text-tertiary);
-  }
-  .session-diff pre {
-    white-space: pre;
-    background: var(--canvas-bg);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(in srgb, var(--canvas-bg) 60%, transparent);
-    }
-  }
-  .session-diff pre span {
-    display: block;
-    min-width: max-content;
-    padding-inline: calc(var(--spacing) * 3);
-  }
-  .session-diff .is-added {
-    color: var(--diff-add);
-    background: var(--diff-add-bg);
-  }
-  .session-diff .is-removed {
-    color: var(--diff-remove);
-    background: var(--diff-remove-bg);
-  }
-  .session-diff .is-hunk {
-    color: var(--accent-create);
-  }
-  @media (max-width: 760px) {
-    .canvas-shell {
-      width: calc(100% - calc(var(--spacing) * 4));
-      margin-inline: calc(var(--spacing) * 2);
-      margin-bottom: calc(var(--spacing) * 2);
-      border-radius: 14px;
-    }
-  }
+
+.terminal-sidebar,
+.file-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  overflow: auto;
+  border-right: var(--border-width) solid var(--color-border);
+  padding-right: var(--spacing-3);
 }
-@media (prefers-reduced-motion: reduce) {
-  .node-card {
-    transition: none !important;
-  }
-  .node-card:hover {
-    transform: none;
-  }
+
+.terminal-viewport,
+.terminal-empty,
+.file-preview {
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--radius-element);
+  background: #111112;
+  color: #dfe2e5;
+  overflow: hidden;
 }
-@layer components {
-  .react-flow__controls {
-    border-radius: 10px;
-    overflow: hidden;
-    border: 1px solid var(--card-border);
-    background: var(--surface-raised);
-    box-shadow: var(--shadow-card);
-    gap: 0;
+
+.terminal-empty {
+  display: grid;
+  place-items: center;
+  border: var(--border-width) solid var(--color-border);
+}
+
+.terminal-viewport .xterm {
+  height: 100%;
+  padding: var(--spacing-2);
+}
+
+.search-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.file-preview {
+  margin: 0;
+  padding: var(--spacing-3);
+  white-space: pre-wrap;
+  font-family: var(--font-family-code);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  overflow: auto;
+}
+
+.node-icon.status-failed {
+  color: var(--color-error);
+}
+
+.node-icon.status-completed {
+  color: var(--color-success);
+}
+
+.node-icon.status-executing,
+.node-icon.status-planning,
+.node-icon.status-analyzing {
+  color: var(--color-accent);
+}
+
+@media (max-width: 900px) {
+  .panel-grid.two,
+  .terminal-panel,
+  .files-panel {
+    grid-template-columns: 1fr;
   }
-  .react-flow__controls-button {
-    width: 32px;
-    height: 32px;
-    border: none;
-    border-bottom: 1px solid var(--card-border);
-    background: transparent;
-    color: var(--text-secondary);
-    fill: var(--text-secondary);
-    transition:
-      background 150ms ease,
-      color 150ms ease;
+
+  .terminal-sidebar,
+  .file-list {
+    max-height: 160px;
+    border-right: 0;
+    border-bottom: var(--border-width) solid var(--color-border);
+    padding-right: 0;
+    padding-bottom: var(--spacing-3);
   }
-  .react-flow__controls-button:last-child {
-    border-bottom: none;
-  }
-  .react-flow__controls-button:hover {
-    background: var(--text-strong);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(in srgb, var(--text-strong) 6%, transparent);
-    }
-    color: var(--text-strong);
-    fill: var(--text-strong);
-  }
-  .react-flow__controls-button svg {
-    max-width: 14px;
-    max-height: 14px;
-  }
-  .react-flow__minimap {
-    border-radius: 10px;
-    overflow: hidden;
-    border: 1px solid var(--card-border);
-    background: var(--surface-raised) !important;
-    box-shadow: var(--shadow-card);
-  }
-  .react-flow__minimap-mask {
-    fill: var(--canvas-bg);
-    @supports (color: color-mix(in lab, red, red)) {
-      fill: color-mix(in srgb, var(--canvas-bg) 55%, transparent);
-    }
-  }
-  .react-flow__attribution {
-    background: transparent;
-    font-size: 10px;
-    color: var(--text-muted);
-    opacity: 0.5;
-  }
-  .react-flow__attribution a {
-    color: var(--text-muted);
-  }
-  .react-flow__handle {
-    width: 8px;
-    height: 8px;
-    border: 2px solid var(--card-border-strong);
-    background: var(--surface-raised);
-  }
-  .react-flow__selection {
-    background: var(--color-accent);
-    @supports (color: color-mix(in lab, red, red)) {
-      background: color-mix(in srgb, var(--color-accent) 6%, transparent);
-    }
-    border: 1px solid var(--color-accent);
-    @supports (color: color-mix(in lab, red, red)) {
-      border: 1px solid color-mix(in srgb, var(--color-accent) 36%, transparent);
-    }
+
+  .metric-strip,
+  .metric-strip.grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
