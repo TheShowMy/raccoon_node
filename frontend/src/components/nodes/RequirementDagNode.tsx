@@ -1,6 +1,8 @@
+import { HStack } from "@astryxdesign/core/HStack";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
+import { Toolbar } from "@astryxdesign/core/Toolbar";
 import { useEffect, useRef } from "react";
 import { Handle, Position } from "@xyflow/react";
 import { GitBranch, LoaderCircle, X } from "lucide-react";
@@ -25,31 +27,43 @@ export default function RequirementDagNode({
     }
   }, [thinking]);
 
+  const header = (
+    <Toolbar
+      label="需求 DAG"
+      className="nodrag"
+      size="sm"
+      variant="muted"
+      startContent={
+        <HStack align="center" gap={3}>
+          <Stack style={{ color: "var(--accent-model)" }} aria-hidden>
+            <GitBranch size={20} />
+          </Stack>
+          <Stack gap={0.5}>
+            <Text type="label">需求 DAG</Text>
+            <Text type="supporting" size="3xs">
+              {requirementStatusText(requirement.status)}
+            </Text>
+          </Stack>
+        </HStack>
+      }
+      endContent={
+        <IconButton
+          label="关闭 DAG"
+          tooltip="关闭 DAG"
+          icon={<X size={14} />}
+          size="sm"
+          variant="ghost"
+          onClick={data.onClose}
+        />
+      }
+    />
+  );
+
   return (
     <>
-      <div className="node-header node-header--model">
-        <span className="node-icon">
-          <GitBranch size={20} />
-        </span>
-        <Stack gap={0.5}>
-          <Text type="label">需求 DAG</Text>
-          <Text type="supporting" size="3xs">
-            {requirementStatusText(requirement.status)}
-          </Text>
-        </Stack>
-        <span className="dag-node__close nowheel nodrag">
-          <IconButton
-            label="关闭 DAG"
-            tooltip="关闭 DAG"
-            icon={<X size={14} />}
-            size="sm"
-            variant="ghost"
-            onClick={data.onClose}
-          />
-        </span>
-      </div>
+      {header}
 
-      <Stack className="dag-node__body" gap={2}>
+      <Stack padding={3} gap={2}>
         <Text type="label" maxLines={2} wordBreak="break-word">
           {requirement.title}
         </Text>
@@ -66,29 +80,35 @@ export default function RequirementDagNode({
           </Text>
         ) : null}
         {data.actionError || requirement.error ? (
-          <Text
-            className="dag-node__error"
-            type="supporting"
-            color="accent"
-            maxLines={2}
-          >
+          <Text type="supporting" color="accent" maxLines={2}>
             {data.actionError ?? requirement.error}
           </Text>
         ) : null}
       </Stack>
 
       {requirement.status === "planning" ? (
-        <div className="dag-node__thinking">
-          <span className="dag-node__thinking-label">
+        <HStack
+          align="center"
+          gap={2}
+          padding={2}
+          paddingInline={3}
+          style={{ minHeight: 0, borderTop: "1px solid var(--card-border)" }}
+        >
+          <HStack align="center" gap={1} style={{ flexShrink: 0 }}>
             <LoaderCircle size={12} aria-hidden="true" />
-            思考
-          </span>
-          <div ref={thinkingScrollRef} className="dag-node__thinking-scroll">
-            <span className="dag-node__thinking-text">
+            <Text type="supporting" size="3xs">
+              思考
+            </Text>
+          </HStack>
+          <div
+            ref={thinkingScrollRef}
+            style={{ overflowX: "auto", minWidth: 0 }}
+          >
+            <Text type="supporting" size="3xs" maxLines={1}>
               {thinking || "思考中…"}
-            </span>
+            </Text>
           </div>
-        </div>
+        </HStack>
       ) : null}
 
       <Handle

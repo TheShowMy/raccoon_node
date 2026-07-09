@@ -150,18 +150,26 @@ function SummaryCard({
           gap={3}
           align="stretch"
           padding={4}
-          style={{ overflowY: "auto" }}
+          style={{ overflowY: "auto", flex: "1 1 auto" }}
         >
           <DraftBody draft={summary} />
-          <HStack wrap="wrap" gap={2}>
-            <Button
-              label="作为需求继续"
-              variant="primary"
-              isDisabled={busy}
-              onClick={onContinue}
-            />
-          </HStack>
         </VStack>
+        <HStack
+          wrap="wrap"
+          gap={2}
+          padding={4}
+          style={{
+            flexShrink: 0,
+            borderTop: "1px solid var(--card-border)",
+          }}
+        >
+          <Button
+            label="作为需求继续"
+            variant="primary"
+            isDisabled={busy}
+            onClick={onContinue}
+          />
+        </HStack>
       </VStack>
     </Card>
   );
@@ -191,24 +199,32 @@ function ConfirmCard({
           gap={3}
           align="stretch"
           padding={4}
-          style={{ overflowY: "auto" }}
+          style={{ overflowY: "auto", flex: "1 1 auto" }}
         >
           <DraftBody draft={prompt.draft} />
-          <HStack wrap="wrap" gap={2}>
-            <Button
-              label="确认并执行"
-              variant="primary"
-              isDisabled={busy}
-              onClick={onConfirm}
-            />
-            <Button
-              label="继续补充"
-              variant="secondary"
-              isDisabled={busy}
-              onClick={onContinueEditing}
-            />
-          </HStack>
         </VStack>
+        <HStack
+          wrap="wrap"
+          gap={2}
+          padding={4}
+          style={{
+            flexShrink: 0,
+            borderTop: "1px solid var(--card-border)",
+          }}
+        >
+          <Button
+            label="确认并执行"
+            variant="primary"
+            isDisabled={busy}
+            onClick={onConfirm}
+          />
+          <Button
+            label="继续补充"
+            variant="secondary"
+            isDisabled={busy}
+            onClick={onContinueEditing}
+          />
+        </HStack>
       </VStack>
     </Card>
   );
@@ -283,7 +299,7 @@ function AskCard({
           gap={3}
           align="stretch"
           padding={4}
-          style={{ overflowY: "auto" }}
+          style={{ overflowY: "auto", flex: "1 1 auto" }}
         >
           <HStack wrap="wrap" gap={1.5}>
             {prompt.questions.map((item, index) => (
@@ -359,23 +375,31 @@ function AskCard({
               })}
             </VStack>
           )}
-          <HStack wrap="wrap" gap={2}>
-            <Button
-              label={
-                safeIndex < prompt.questions.length - 1 ? "继续" : "提交澄清"
-              }
-              variant="primary"
-              isDisabled={busy || !hasDraftAnswer(question, answer)}
-              onClick={advance}
-            />
-            <Button
-              label="全部提交"
-              variant="secondary"
-              isDisabled={busy || !allAnswered}
-              onClick={onSubmit}
-            />
-          </HStack>
         </VStack>
+        <HStack
+          wrap="wrap"
+          gap={2}
+          padding={4}
+          style={{
+            flexShrink: 0,
+            borderTop: "1px solid var(--card-border)",
+          }}
+        >
+          <Button
+            label={
+              safeIndex < prompt.questions.length - 1 ? "继续" : "提交澄清"
+            }
+            variant="primary"
+            isDisabled={busy || !hasDraftAnswer(question, answer)}
+            onClick={advance}
+          />
+          <Button
+            label="全部提交"
+            variant="secondary"
+            isDisabled={busy || !allAnswered}
+            onClick={onSubmit}
+          />
+        </HStack>
       </VStack>
     </Card>
   );

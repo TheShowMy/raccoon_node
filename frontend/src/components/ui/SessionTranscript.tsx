@@ -5,12 +5,18 @@ import {
   ChevronDown,
   Copy,
   Database,
-  Loader2,
   Wrench,
 } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
 import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { HStack } from "@astryxdesign/core/HStack";
+import { Spinner } from "@astryxdesign/core/Spinner";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
+import { Token } from "@astryxdesign/core/Token";
 import type {
   SessionContentBlock,
   SessionEntry,
@@ -131,81 +137,116 @@ export default function SessionTranscript({
   });
 
   return (
-    <section className={`session-transcript ${open ? "is-open" : ""}`}>
+    <Card padding={0} width="100%">
       <Button
         label={title}
         variant="ghost"
-        className="session-transcript__toggle"
+        style={{
+          width: "100%",
+          justifyContent: "flex-start",
+          textAlign: "left",
+        }}
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
       >
         <Database size={15} />
         <span>{title}</span>
-        {entries.length ? <em>{entries.length} 条</em> : null}
-        <ChevronDown size={14} />
+        {entries.length ? (
+          <Text as="span" type="supporting" size="2xs">
+            {entries.length} 条
+          </Text>
+        ) : null}
+        <ChevronDown
+          size={14}
+          style={{
+            transform: open ? "rotate(180deg)" : undefined,
+            transition: "transform 200ms ease",
+          }}
+        />
       </Button>
       {open ? (
-        <div className="session-transcript__panel">
-          <div className="session-transcript__filters">
-            {(["all", "messages", "tools"] as const).map((value) => (
-              <Button
-                label={
-                  value === "all"
-                    ? "\u5168\u90e8"
+        <Stack>
+          <HStack
+            gap={1}
+            justify="between"
+            align="center"
+            padding={2}
+            style={{ borderBottom: "1px solid var(--card-border)" }}
+          >
+            <HStack gap={1}>
+              {(["all", "messages", "tools"] as const).map((value) => (
+                <Button
+                  label={
+                    value === "all"
+                      ? "\u5168\u90e8"
+                      : value === "messages"
+                        ? "\u6d88\u606f"
+                        : "\u5de5\u5177"
+                  }
+                  size="sm"
+                  variant={filter === value ? "primary" : "ghost"}
+                  onClick={() => setFilter(value)}
+                  key={value}
+                >
+                  {value === "all"
+                    ? "全部"
                     : value === "messages"
-                      ? "\u6d88\u606f"
-                      : "\u5de5\u5177"
-                }
-                size="sm"
-                variant={filter === value ? "primary" : "ghost"}
-                onClick={() => setFilter(value)}
-                key={value}
-              >
-                {value === "all"
-                  ? "全部"
-                  : value === "messages"
-                    ? "消息"
-                    : "工具"}
-              </Button>
-            ))}
+                      ? "消息"
+                      : "工具"}
+                </Button>
+              ))}
+            </HStack>
             <CheckboxInput
               label="system"
               size="sm"
               value={showSystem}
               onChange={setShowSystem}
             />
-          </div>
+          </HStack>
           {invalidLines > 0 ? (
-            <p className="session-transcript__warning">
+            <StatusRow isError>
               <AlertTriangle size={13} />
-              已跳过 {invalidLines} 条无效 JSONL
-            </p>
+              <Text type="supporting" size="xsm">
+                已跳过 {invalidLines} 条无效 JSONL
+              </Text>
+            </StatusRow>
           ) : null}
-          <div ref={viewportRef} className="session-transcript__entries">
+          <Stack
+            ref={viewportRef}
+            gap={2}
+            padding={2}
+            isScrollable
+            style={{ maxHeight: 520 }}
+          >
             {nextBefore !== null ? (
-              <Button
-                label={"\u52a0\u8f7d\u66f4\u65e9\u8bb0\u5f55"}
-                size="sm"
-                variant="secondary"
-                className="session-transcript__earlier"
-                isDisabled={loading}
-                onClick={() => void load(nextBefore)}
-              >
-                加载更早记录
-              </Button>
+              <HStack justify="center">
+                <Button
+                  label={"\u52a0\u8f7d\u66f4\u65e9\u8bb0\u5f55"}
+                  size="sm"
+                  variant="secondary"
+                  isDisabled={loading}
+                  onClick={() => void load(nextBefore)}
+                >
+                  加载更早记录
+                </Button>
+              </HStack>
             ) : null}
             {visible.map((entry) => (
               <SessionEntryCard entry={entry} key={entry.cursor} />
             ))}
             {loading ? (
-              <p className="session-transcript__empty">
-                <Loader2 size={14} className="spin-icon" />
-                加载中…
-              </p>
+              <StatusRow>
+                <Spinner size="sm" label="加载中" />
+                <Text type="supporting" size="xsm">
+                  加载中…
+                </Text>
+              </StatusRow>
             ) : null}
             {error ? (
-              <div className="session-transcript__empty is-error">
-                <span>{error}</span>
+              <StatusRow isError>
+                <Text type="supporting" size="xsm">
+                  {error}
+                </Text>
                 <Button
                   label={"\u91cd\u8bd5"}
                   size="sm"
@@ -214,15 +255,45 @@ export default function SessionTranscript({
                 >
                   重试
                 </Button>
-              </div>
+              </StatusRow>
             ) : null}
             {!loading && !error && visible.length === 0 ? (
-              <p className="session-transcript__empty">暂无匹配记录</p>
+              <StatusRow>
+                <Text type="supporting" size="xsm">
+                  暂无匹配记录
+                </Text>
+              </StatusRow>
             ) : null}
-          </div>
-        </div>
+          </Stack>
+        </Stack>
       ) : null}
-    </section>
+    </Card>
+  );
+}
+
+function StatusRow({
+  children,
+  isError = false,
+}: {
+  children: React.ReactNode;
+  isError?: boolean;
+}) {
+  return (
+    <HStack
+      gap={1.5}
+      justify="center"
+      align="center"
+      padding={2}
+      style={{
+        margin: "calc(var(--spacing) * 2)",
+        border: "1px solid",
+        borderColor: isError ? "var(--accent-danger)" : "var(--card-border)",
+        borderRadius: "var(--radius-md)",
+        color: isError ? "var(--accent-danger)" : "var(--text-muted)",
+      }}
+    >
+      {children}
+    </HStack>
   );
 }
 
@@ -234,39 +305,52 @@ function SessionEntryCard({ entry }: { entry: SessionEntry }) {
     toolResult: "工具结果",
   };
 
-  if (entry.kind !== "message") {
-    return (
-      <article className="session-entry session-entry--meta">
-        <span>{entry.kind}</span>
-        <b>{entry.source}</b>
-        {entry.timestamp ? <time>{formatDate(entry.timestamp)}</time> : null}
-        <RawJson value={entry.raw} />
-      </article>
-    );
-  }
+  const roleColors: Record<string, string> = {
+    user: "var(--accent-create)",
+    assistant: "var(--accent-model)",
+    system: "var(--text-muted)",
+    toolResult: "var(--success)",
+  };
+
+  const borderColor =
+    entry.kind === "message"
+      ? (roleColors[entry.role ?? "unknown"] ?? "var(--text-muted)")
+      : "var(--text-muted)";
 
   return (
-    <article
-      className={`session-entry session-entry--${entry.role ?? "unknown"}`}
-    >
-      <header>
-        <span>
-          <b>{entry.source}</b>
-          {entry.role ? (roleLabels[entry.role] ?? entry.role) : "未知角色"}
-        </span>
+    <Card padding={3} style={{ borderLeft: `3px solid ${borderColor}` }}>
+      <HStack justify="between" align="center" gap={2}>
+        <HStack gap={2} align="center" style={{ minWidth: 0 }}>
+          <Token label={entry.source} size="sm" color="default" />
+          {entry.kind === "message" ? (
+            <Text type="supporting" size="xsm">
+              {entry.role ? (roleLabels[entry.role] ?? entry.role) : "未知角色"}
+            </Text>
+          ) : (
+            <Text type="supporting" size="xsm">
+              {entry.kind}
+            </Text>
+          )}
+        </HStack>
         {entry.timestamp ? (
-          <time dateTime={entry.timestamp}>{formatDate(entry.timestamp)}</time>
+          <Text as="span" type="supporting" size="xsm">
+            {formatDate(entry.timestamp)}
+          </Text>
         ) : (
-          <time>第 {entry.line} 行</time>
+          <Text as="span" type="supporting" size="xsm">
+            第 {entry.line} 行
+          </Text>
         )}
-      </header>
-      <div className="session-entry__blocks">
-        {entry.blocks.map((block, index) => (
-          <SessionBlock block={block} key={`${block.type}-${index}`} />
-        ))}
-      </div>
+      </HStack>
+      {entry.kind === "message" ? (
+        <Stack gap={2} paddingBlock={2}>
+          {entry.blocks.map((block, index) => (
+            <SessionBlock block={block} key={`${block.type}-${index}`} />
+          ))}
+        </Stack>
+      ) : null}
       <RawJson value={entry.raw} />
-    </article>
+    </Card>
   );
 }
 
@@ -276,10 +360,13 @@ function SessionBlock({ block }: { block: SessionContentBlock }) {
   }
   if (block.type === "thinking") {
     return (
-      <details className="session-thinking">
-        <summary>思考过程</summary>
-        <TranscriptCodeBlock code={block.text} />
-      </details>
+      <Card variant="muted" padding={0}>
+        <Collapsible trigger="思考过程" defaultIsOpen={false}>
+          <Stack padding={2}>
+            <TranscriptCodeBlock code={block.text} />
+          </Stack>
+        </Collapsible>
+      </Card>
     );
   }
   if (block.type === "tool_call") {
@@ -305,13 +392,19 @@ function SessionBlock({ block }: { block: SessionContentBlock }) {
     );
   }
   return (
-    <details className="session-unknown">
-      <summary>未识别内容：{block.block_type}</summary>
-      <TranscriptCodeBlock
-        code={JSON.stringify(block.raw, null, 2)}
-        language="json"
-      />
-    </details>
+    <Card variant="muted" padding={0}>
+      <Collapsible
+        trigger={`未识别内容：${block.block_type}`}
+        defaultIsOpen={false}
+      >
+        <Stack padding={2}>
+          <TranscriptCodeBlock
+            code={JSON.stringify(block.raw, null, 2)}
+            language="json"
+          />
+        </Stack>
+      </Collapsible>
+    </Card>
   );
 }
 
@@ -327,14 +420,28 @@ function ToolCard({
   children: React.ReactNode;
 }) {
   return (
-    <details className={`session-tool ${error ? "is-error" : ""}`}>
-      <summary>
-        <Wrench size={13} />
-        <strong>{title}</strong>
-        <span>{subtitle}</span>
-      </summary>
-      <div>{children}</div>
-    </details>
+    <Card
+      variant="muted"
+      padding={0}
+      style={error ? { borderColor: "var(--accent-danger)" } : undefined}
+    >
+      <Collapsible
+        trigger={
+          <HStack gap={1.5} align="center">
+            <Wrench size={13} />
+            <Text type="supporting" size="xsm" weight="semibold">
+              {title}
+            </Text>
+            <Text type="supporting" size="2xs">
+              {subtitle}
+            </Text>
+          </HStack>
+        }
+        defaultIsOpen={false}
+      >
+        <Stack padding={2}>{children}</Stack>
+      </Collapsible>
+    </Card>
   );
 }
 
@@ -395,15 +502,25 @@ function SessionDiff({ diff }: { diff: string }) {
 
 function RawJson({ value }: { value: unknown }) {
   return (
-    <details className="session-raw">
-      <summary>
-        <Braces size={12} />
-        原始 JSON
-      </summary>
-      <TranscriptCodeBlock
-        code={JSON.stringify(value, null, 2)}
-        language="json"
-      />
-    </details>
+    <Card variant="muted" padding={0}>
+      <Collapsible
+        trigger={
+          <HStack gap={1.5} align="center">
+            <Braces size={12} />
+            <Text type="supporting" size="xsm">
+              原始 JSON
+            </Text>
+          </HStack>
+        }
+        defaultIsOpen={false}
+      >
+        <Stack padding={2}>
+          <TranscriptCodeBlock
+            code={JSON.stringify(value, null, 2)}
+            language="json"
+          />
+        </Stack>
+      </Collapsible>
+    </Card>
   );
 }

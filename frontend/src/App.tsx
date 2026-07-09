@@ -15,6 +15,9 @@ import {
   useStore,
   useViewport,
 } from "@xyflow/react";
+import { AppShell } from "@astryxdesign/core/AppShell";
+import { Badge } from "@astryxdesign/core/Badge";
+import { TopNav, TopNavHeading } from "@astryxdesign/core/TopNav";
 import { Button } from "@astryxdesign/core/Button";
 import { Theme } from "@astryxdesign/core/theme";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from "lucide-react";
@@ -130,12 +133,15 @@ function RequirementsReturnButton({ nodes }: { nodes: Node<StartNodeData>[] }) {
 
   return (
     <Panel
-      className={`requirements-return-panel requirements-return-panel--${direction}`}
+      className="requirements-return-panel"
+      style={{
+        pointerEvents: "none",
+        margin: "var(--spacing-4)",
+      }}
       position={positions[direction]}
     >
       <Button
         label="返回需求会话"
-        className="requirements-return-panel__button"
         variant="secondary"
         size="sm"
         icon={<Icon size={16} />}
@@ -348,7 +354,7 @@ function ProjectCanvasViewportController({
     const action = getProjectViewportAction(last, previous.current);
     if (!action) return;
     if (action === "fit") {
-      void fitView({ padding: 0.08, duration: 0 });
+      void fitView({ padding: 0.12, duration: 0 });
       return;
     }
 
@@ -523,47 +529,6 @@ function GitViewportController({ phase }: { phase: GitExpansionPhase }) {
   return null;
 }
 
-function GithubViewportController({ expanded }: { expanded: boolean }) {
-  const { fitView, getNode, getViewport, setViewport } = useReactFlow();
-  const previous = React.useRef(false);
-  const savedViewport = React.useRef<CanvasViewport | undefined>(undefined);
-
-  React.useLayoutEffect(() => {
-    const last = previous.current;
-    previous.current = expanded;
-    if (!last && expanded) {
-      savedViewport.current = getViewport();
-    }
-    if (!expanded) {
-      const saved = savedViewport.current;
-      savedViewport.current = undefined;
-      if (saved) void setViewport(saved, { duration: 260 });
-      return;
-    }
-    if (last) return;
-
-    let secondFrame = 0;
-    const firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(() => {
-        const node = getNode("project-github");
-        if (!node) return;
-        void fitView({
-          nodes: [node],
-          padding: 0.08,
-          maxZoom: savedViewport.current?.zoom ?? getViewport().zoom,
-          duration: 260,
-        });
-      });
-    });
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      window.cancelAnimationFrame(secondFrame);
-    };
-  }, [expanded, fitView, getNode, getViewport, setViewport]);
-
-  return null;
-}
-
 function TokenUsageViewportController({ expanded }: { expanded: boolean }) {
   const { fitView, getNode, getViewport, setViewport } = useReactFlow();
   const previous = React.useRef(false);
@@ -669,7 +634,6 @@ export default function App() {
   );
   const git = useProjectGit(selectedProjectId);
   const [nodeDragging, setNodeDragging] = useState(false);
-  const [githubExpanded, setGithubExpanded] = useState(false);
   const [tokenUsageExpanded, setTokenUsageExpanded] = useState(false);
   const modelSetupGuideStep: ModelSetupGuideStep | null =
     models.modelSetupGuideActive
@@ -686,28 +650,23 @@ export default function App() {
       buildProjectNodes({
         projectCanvas: project.projectCanvas,
         project: current.project,
-        publicationReadiness: current.publicationReadiness,
         selectedDagRequirement: project.selectedDagRequirement,
         selectedDagRequirementId: project.selectedDagRequirementId,
         collapsedTaskGroups: project.collapsedTaskGroups,
         requirementActionBusyId: project.requirementActionBusyId,
         recoveringTaskGroupIds: project.recoveringTaskGroupIds,
         requirementActionError: project.requirementActionError,
-        githubExpanded,
         tokenUsageExpanded,
         closeDag: project.closeDag,
         selectDagRequirement: project.selectDagRequirement,
         planRequirement: project.planRequirement,
         recoverTaskGroup: project.recoverTaskGroup,
         toggleTaskGroupCollapsed: project.toggleTaskGroupCollapsed,
-        onToggleGithubExpanded: () => setGithubExpanded((current) => !current),
         onToggleTokenUsageExpanded: () =>
           setTokenUsageExpanded((current) => !current),
       }),
     [
       current.project,
-      current.publicationReadiness,
-      githubExpanded,
       project.closeDag,
       project.collapsedTaskGroups,
       project.planRequirement,
@@ -1029,35 +988,45 @@ export default function App() {
     REQUIREMENT_HOME_NODE_IDS.has(node.id),
   );
 
+  const statusBadge = current.error
+    ? { label: current.error, variant: "error" as const }
+    : current.loading
+      ? { label: "加载中", variant: "warning" as const }
+      : { label: "已连接", variant: "success" as const };
+
   return (
     <Theme theme={current.theme} mode={current.themeMode}>
-      <main className="app-shell">
-        <section className="toolbar">
-          <div className="toolbar__brand">
-            <img
-              className="app-logo"
-              src="/raccoon-icon-180.png"
-              alt=""
-              width="36"
-              height="36"
-            />
-            <div>
-              <h1>Raccoon Node</h1>
-              <p>
-                {current.project
-                  ? `${current.project.name} / 项目画布`
-                  : "项目画布"}
-              </p>
-            </div>
-          </div>
-          <div className="status-pill">
-            {current.error
-              ? current.error
-              : current.loading
-                ? "加载中"
-                : "已连接"}
-          </div>
-        </section>
+      <AppShell
+        height="fill"
+        contentPadding={0}
+        variant="section"
+        topNav={
+          <TopNav
+            label="Raccoon Node"
+            heading={
+              <TopNavHeading
+                logo={
+                  <img
+                    src="/raccoon-icon-180.png"
+                    alt=""
+                    width={28}
+                    height={28}
+                  />
+                }
+                heading="Raccoon Node"
+                subheading={
+                  current.project
+                    ? `${current.project.name} / 项目画布`
+                    : "项目画布"
+                }
+              />
+            }
+            endContent={
+              <Badge label={statusBadge.label} variant={statusBadge.variant} />
+            }
+          />
+        }
+      >
         <section
           className={`canvas-shell${nodeDragging ? " canvas-shell--dragging" : ""}`}
         >
@@ -1075,7 +1044,7 @@ export default function App() {
                 edges={edges}
                 nodeTypes={nodeTypes}
                 fitView
-                fitViewOptions={{ padding: 0.08, duration: 0 }}
+                fitViewOptions={{ padding: 0.12, duration: 0 }}
                 minZoom={0.05}
                 maxZoom={2}
                 nodesDraggable
@@ -1125,13 +1094,12 @@ export default function App() {
                 />
                 <TerminalViewportController collapsed={terminals.collapsed} />
                 <GitViewportController phase={git.phase} />
-                <GithubViewportController expanded={githubExpanded} />
                 <TokenUsageViewportController expanded={tokenUsageExpanded} />
               </ReactFlow>
             </ReactFlowProvider>
           </RequirementTaskEventsProvider>
         </section>
-      </main>
+      </AppShell>
     </Theme>
   );
 }

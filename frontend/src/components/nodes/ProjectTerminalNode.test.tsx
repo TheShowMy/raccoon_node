@@ -100,8 +100,9 @@ function renderNode(overrides: Record<string, unknown> = {}) {
 describe("ProjectTerminalNode", () => {
   it("shows collapsed summary when collapsed", () => {
     renderNode({ collapsed: true });
-    expect(screen.getByText("项目终端")).toBeInTheDocument();
-    expect(screen.getByText("默认在项目根目录启动")).toBeInTheDocument();
+    expect(
+      screen.getByText("项目终端 · 默认在项目根目录启动"),
+    ).toBeInTheDocument();
   });
 
   it("toggles collapsed state when header is clicked", () => {
@@ -141,7 +142,7 @@ describe("ProjectTerminalNode", () => {
       terminalAccessAuthorized: false,
     });
     expect(screen.getByText("终端密钥")).toBeInTheDocument();
-    fireEvent.change(screen.getByPlaceholderText("TUI 中显示的本次启动密钥"), {
+    fireEvent.change(screen.getByPlaceholderText("输入启动密钥"), {
       target: { value: "ABCD-EFGH-JKLM" },
     });
     fireEvent.click(screen.getByRole("button", { name: "启用终端" }));

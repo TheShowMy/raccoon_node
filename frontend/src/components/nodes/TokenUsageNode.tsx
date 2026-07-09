@@ -11,7 +11,7 @@ type Data = Extract<StartNodeData, { kind: "token-usage" }>;
 
 function TokenItem({ label, value }: { label: string; value: number }) {
   return (
-    <Card className="token-usage-node__item" variant="muted" padding={2}>
+    <Card variant="muted" padding={2}>
       <Stack gap={1} align="center">
         <Text
           type="label"
@@ -37,7 +37,7 @@ export default function TokenUsageNode({ data }: { data: Data }) {
     : 0;
 
   return (
-    <section className="token-usage-node">
+    <Stack width="100%" height="100%">
       <NodeBar
         icon={<Gauge size={16} />}
         accent="var(--color-success)"
@@ -49,9 +49,10 @@ export default function TokenUsageNode({ data }: { data: Data }) {
 
       {data.expanded ? (
         <Stack
-          className="token-usage-node__detail nodrag nowheel"
+          className="nodrag nowheel"
           padding={3}
           height="100%"
+          style={{ overflow: "auto" }}
         >
           {usage ? (
             <Grid columns={2} gap={2} width="100%">
@@ -67,6 +68,6 @@ export default function TokenUsageNode({ data }: { data: Data }) {
           )}
         </Stack>
       ) : null}
-    </section>
+    </Stack>
   );
 }

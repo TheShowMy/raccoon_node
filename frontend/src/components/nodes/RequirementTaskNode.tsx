@@ -13,13 +13,14 @@ import {
 } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { HStack } from "@astryxdesign/core/HStack";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import {
   MetadataList,
   MetadataListItem,
 } from "@astryxdesign/core/MetadataList";
 import { Section } from "@astryxdesign/core/Section";
-import { Stack } from "@astryxdesign/core/Stack";
+import { Stack, StackItem } from "@astryxdesign/core/Stack";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
 import { Token } from "@astryxdesign/core/Token";
@@ -90,69 +91,101 @@ export default function RequirementTaskNode({
     const CollapseIcon = data.collapsed ? ChevronRight : ChevronDown;
     return (
       <>
-        <div
-          className={`task-node task-node--group ${statusClass} ${
+        <Stack
+          className={`task-node--group ${statusClass} ${
             data.collapsed ? "task-node--collapsed" : ""
           }`}
+          height="100%"
+          minHeight={0}
+          padding={0}
         >
-          <div className="task-node__head">
-            <span className="node-icon">
-              {task.status === "running" ? (
-                <Loader2 size={18} className="spin-icon" />
-              ) : (
-                <CircleDot size={18} />
-              )}
-            </span>
-            <div>
-              <strong>{task.title}</strong>
-              <div className="task-node__status-list">
-                <span
-                  className={`task-node__status task-node__status--${displayedStatus}`}
-                >
-                  {taskStatusText[displayedStatus]}
-                </span>
-                {task.recovery_stage !== "none" ? (
-                  <span className="task-node__recovery-status">
-                    {recoveryStageText(task)}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-            {groupFailed ? (
+          <HStack
+            className="task-node-group-head"
+            gap={3}
+            padding={3}
+            align={data.collapsed ? "center" : "start"}
+            height={data.collapsed ? "100%" : undefined}
+          >
+            <HStack gap={3} align="start" style={{ minWidth: 0 }}>
+              <Stack
+                justify="center"
+                align="center"
+                style={{
+                  flexShrink: 0,
+                  width: 28,
+                  height: 28,
+                  color: "var(--accent-create)",
+                  borderRadius: 8,
+                  border:
+                    "1px solid color-mix(in srgb, currentColor 20%, transparent)",
+                  background:
+                    "color-mix(in srgb, currentColor 8%, transparent)",
+                }}
+                aria-hidden
+              >
+                {task.status === "running" ? (
+                  <Loader2 size={18} className="spin-icon" />
+                ) : (
+                  <CircleDot size={18} />
+                )}
+              </Stack>
+              <Stack gap={1} style={{ minWidth: 0 }}>
+                <Text type="label" weight="bold" as="span">
+                  {task.title}
+                </Text>
+                <HStack gap={1} wrap="wrap" align="center">
+                  <Token
+                    label={taskStatusText[displayedStatus]}
+                    color={taskStatusTokenColor(displayedStatus)}
+                    size="sm"
+                  />
+                  {task.recovery_stage !== "none" ? (
+                    <Token
+                      label={recoveryStageText(task)}
+                      color="yellow"
+                      size="sm"
+                    />
+                  ) : null}
+                </HStack>
+              </Stack>
+            </HStack>
+            <HStack gap={1} align="center">
+              {groupFailed ? (
+                <Button
+                  label="恢复"
+                  size="sm"
+                  variant="secondary"
+                  icon={<RotateCcw size={13} />}
+                  className="nowheel nodrag"
+                  isDisabled={data.busy}
+                  onClick={() =>
+                    void data.onRecoverTaskGroup(data.requirementId, task.id)
+                  }
+                />
+              ) : null}
               <Button
-                label="恢复"
+                label="详情"
                 size="sm"
-                variant="secondary"
-                icon={<RotateCcw size={13} />}
-                className="task-node__recover nowheel nodrag"
-                isDisabled={data.busy}
-                onClick={() =>
-                  void data.onRecoverTaskGroup(data.requirementId, task.id)
-                }
+                variant="ghost"
+                icon={<Eye size={13} />}
+                className="nowheel nodrag"
+                onClick={() => setDetailOpen(true)}
               />
-            ) : null}
-            <Button
-              label="详情"
-              size="sm"
-              variant="ghost"
-              icon={<Eye size={13} />}
-              className="task-node__detail nowheel nodrag"
-              onClick={() => setDetailOpen(true)}
-            />
-            <IconButton
-              label={data.collapsed ? "展开任务组" : "折叠任务组"}
-              tooltip={data.collapsed ? "展开任务组" : "折叠任务组"}
-              icon={<CollapseIcon size={15} />}
-              size="sm"
-              variant="ghost"
-              className="task-node__collapse nowheel nodrag"
-              onClick={() =>
-                data.onToggleCollapsed?.(data.requirementId, task.id)
-              }
-              aria-expanded={!data.collapsed}
-            />
-          </div>
-        </div>
+              <IconButton
+                label={data.collapsed ? "展开任务组" : "折叠任务组"}
+                tooltip={data.collapsed ? "展开任务组" : "折叠任务组"}
+                icon={<CollapseIcon size={15} />}
+                size="sm"
+                variant="ghost"
+                className="nowheel nodrag"
+                onClick={() =>
+                  data.onToggleCollapsed?.(data.requirementId, task.id)
+                }
+                aria-expanded={!data.collapsed}
+              />
+            </HStack>
+          </HStack>
+        </Stack>
         <TaskDetailDialog
           open={detailOpen}
           requirementId={data.requirementId}
@@ -172,65 +205,111 @@ export default function RequirementTaskNode({
         : task.kind === "branch_merge"
           ? GitMerge
           : CircleDot;
+  const isMiniRole = nodeRole === "review_sub_agent";
+  const iconColor =
+    nodeRole === "code"
+      ? "var(--accent-create)"
+      : nodeRole === "review_summary" || nodeRole === "review_sub_agent"
+        ? "var(--accent-model)"
+        : "var(--accent-warning)";
   return (
     <>
-      <div className={`task-node task-node--${nodeRole} ${statusClass}`}>
-        <div className="task-node__head">
-          <span className="node-icon">
+      <Stack
+        className={`task-node--${nodeRole} ${statusClass}`}
+        height="100%"
+        minHeight={0}
+        padding={0}
+      >
+        <HStack
+          gap={isMiniRole ? 1.5 : 3}
+          align={isMiniRole ? "center" : "start"}
+        >
+          <Stack
+            justify="center"
+            align="center"
+            style={{
+              flexShrink: 0,
+              width: isMiniRole ? 22 : 28,
+              height: isMiniRole ? 22 : 28,
+              color: iconColor,
+              borderRadius: isMiniRole ? 7 : 8,
+              border:
+                "1px solid color-mix(in srgb, currentColor 20%, transparent)",
+              background: "color-mix(in srgb, currentColor 8%, transparent)",
+            }}
+            aria-hidden
+          >
             {task.status === "running" ? (
-              <Loader2 size={18} className="spin-icon" />
+              <Loader2 size={isMiniRole ? 13 : 18} className="spin-icon" />
             ) : (
-              <Icon size={18} />
+              <Icon size={isMiniRole ? 13 : 18} />
             )}
-          </span>
-          <div>
-            <strong>
+          </Stack>
+          <Stack gap={1} style={{ minWidth: 0 }}>
+            <Text
+              type="label"
+              weight="bold"
+              as="span"
+              size={isMiniRole ? "xsm" : undefined}
+            >
               {nodeRole === "code"
                 ? "代码节点"
                 : task.review_angle || taskKindText[task.kind]}
-            </strong>
-            <span
-              className={`task-node__status task-node__status--${task.status}`}
-            >
-              {taskStatusText[task.status]}
-            </span>
-            {nodeRole === "external" && task.status === "failed" ? (
-              <Button
-                label="恢复"
-                size="sm"
-                variant="secondary"
-                icon={<RotateCcw size={13} />}
-                className="task-node__recover nowheel nodrag"
-                isDisabled={data.busy}
-                onClick={() =>
-                  void data.onRecoverTaskGroup(data.requirementId, task.id)
-                }
+            </Text>
+            <HStack gap={1} wrap="wrap" align="center">
+              <Token
+                label={taskStatusText[task.status]}
+                color={taskStatusTokenColor(task.status)}
+                size={isMiniRole ? "sm" : "sm"}
               />
-            ) : null}
-          </div>
-        </div>
-        <div className="task-node__body">
-          <p className="task-node__summary">
-            {task.result_summary ?? task.description}
-          </p>
-          {task.execution_warning ? (
-            <small className="task-node__warning">
-              {task.execution_warning}
-            </small>
-          ) : null}
-          {nodeRole === "external" ? (
-            <div className="task-node__actions nowheel nodrag">
-              <Button
-                label="详情"
-                size="sm"
-                variant="ghost"
-                icon={<Eye size={13} />}
-                onClick={() => setDetailOpen(true)}
-              />
-            </div>
-          ) : null}
-        </div>
-      </div>
+              {nodeRole === "external" && task.status === "failed" ? (
+                <Button
+                  label="恢复"
+                  size="sm"
+                  variant="secondary"
+                  icon={<RotateCcw size={13} />}
+                  className="nowheel nodrag"
+                  isDisabled={data.busy}
+                  onClick={() =>
+                    void data.onRecoverTaskGroup(data.requirementId, task.id)
+                  }
+                />
+              ) : null}
+            </HStack>
+          </Stack>
+        </HStack>
+        {!isMiniRole ? (
+          <StackItem size="fill" isScrollable>
+            <Stack gap={2}>
+              <Text type="supporting" maxLines={4} wordBreak="break-word">
+                {task.result_summary ?? task.description}
+              </Text>
+              {task.execution_warning ? (
+                <Text
+                  type="supporting"
+                  maxLines={2}
+                  color="accent"
+                  wordBreak="break-word"
+                >
+                  {task.execution_warning}
+                </Text>
+              ) : null}
+              {nodeRole === "external" ? (
+                <HStack gap={1} justify="end">
+                  <Button
+                    label="详情"
+                    size="sm"
+                    variant="ghost"
+                    icon={<Eye size={13} />}
+                    className="nowheel nodrag"
+                    onClick={() => setDetailOpen(true)}
+                  />
+                </HStack>
+              ) : null}
+            </Stack>
+          </StackItem>
+        ) : null}
+      </Stack>
       {nodeRole === "external" ? (
         <TaskDetailDialog
           open={detailOpen}
@@ -302,23 +381,36 @@ function TaskDetailDialog({
       onOpenChange={(nextOpen) => {
         if (!nextOpen) onClose();
       }}
-      className="task-detail-dialog"
       width="min(840px, calc(100vw - 48px))"
       maxHeight="calc(100vh - 48px)"
       padding={0}
       purpose="info"
     >
-      <Stack className="task-detail-dialog__panel">
+      <Stack height="100%" minHeight={0}>
         <DialogHeader
           title={displayedTask.title}
           subtitle={`${taskKindText[displayedTask.kind]}详情`}
           startContent={
-            <span className="node-icon task-detail-dialog__icon">
-              <CircleDot size={20} />
-            </span>
+            <Stack
+              justify="center"
+              align="center"
+              style={{
+                flexShrink: 0,
+                width: 28,
+                height: 28,
+                color: "var(--accent-model)",
+                borderRadius: 8,
+                border:
+                  "1px solid color-mix(in srgb, currentColor 20%, transparent)",
+                background: "color-mix(in srgb, currentColor 8%, transparent)",
+              }}
+              aria-hidden
+            >
+              <CircleDot size={18} />
+            </Stack>
           }
           endContent={
-            <Stack direction="horizontal" gap={1.5} align="center">
+            <HStack gap={1.5} align="center">
               <StatusDot
                 variant={taskStatusVariant(displayedTask.status)}
                 label={taskStatusText[displayedTask.status]}
@@ -329,18 +421,15 @@ function TaskDetailDialog({
                 color={taskStatusTokenColor(displayedTask.status)}
                 size="sm"
               />
-            </Stack>
+            </HStack>
           }
           onOpenChange={(nextOpen) => {
             if (!nextOpen) onClose();
           }}
           hasDivider
         />
-        <Stack className="task-detail-dialog__body" gap={3} padding={4}>
-          <Section
-            className="task-detail-dialog__section task-detail-dialog__section--wide"
-            padding={3}
-          >
+        <Stack gap={3} padding={4} isScrollable>
+          <Section padding={3}>
             <Stack gap={1.5}>
               <Text as="h3" type="label" weight="semibold">
                 任务描述
@@ -363,10 +452,7 @@ function TaskDetailDialog({
             reviews={displayedReviews}
             dependencies={displayedDependencies}
           />
-          <Section
-            className="task-detail-dialog__section task-detail-dialog__section--wide"
-            padding={3}
-          >
+          <Section padding={3}>
             <Stack gap={2}>
               <Text as="h3" type="label" weight="semibold">
                 会话记录
@@ -381,17 +467,13 @@ function TaskDetailDialog({
               />
             </Stack>
           </Section>
-          <Section
-            className="task-detail-dialog__section task-detail-dialog__section--wide"
-            padding={3}
-          >
+          <Section padding={3}>
             <MetadataList
               title={
                 <Text as="h3" type="label" weight="semibold">
                   恢复信息
                 </Text>
               }
-              className="task-detail-dialog__info-list task-detail-dialog__info-list--embedded"
               columns="multi"
             >
               <DetailItem label="失败原因" value={displayedTask.error} danger />
@@ -420,10 +502,7 @@ function TaskDetailDialog({
           </Section>
           <details className="task-detail-dialog__details">
             <summary>基础信息</summary>
-            <MetadataList
-              className="task-detail-dialog__info-list"
-              columns="multi"
-            >
+            <MetadataList columns="multi">
               <DetailItem label="结果" value={displayedTask.result_summary} />
               <DetailItem
                 label="执行提示"
@@ -486,10 +565,7 @@ function ImplementationReviewFlow({
   reviews: RequirementExecutionTask[];
 }) {
   return (
-    <Section
-      className="task-detail-dialog__section task-detail-dialog__section--wide"
-      padding={3}
-    >
+    <Section padding={3}>
       <Stack gap={2}>
         <Text as="h3" type="label" weight="semibold">
           实现与审核
@@ -630,10 +706,7 @@ function BranchMergeFlow({
       ? "approved"
       : "pending";
   return (
-    <Section
-      className="task-detail-dialog__section task-detail-dialog__section--wide"
-      padding={3}
-    >
+    <Section padding={3}>
       <Stack gap={2}>
         <Text as="h3" type="label" weight="semibold">
           分支合并
@@ -726,10 +799,7 @@ function MergeReviewFlow({
     },
   ];
   return (
-    <Section
-      className="task-detail-dialog__section task-detail-dialog__section--wide"
-      padding={3}
-    >
+    <Section padding={3}>
       <Stack gap={2}>
         <Text as="h3" type="label" weight="semibold">
           审核发布
@@ -818,10 +888,7 @@ function TaskUsage({ usage }: { usage: TraceUsage }) {
       : "0.0%";
 
   return (
-    <Section
-      className="task-detail-dialog__section task-detail-dialog__section--wide"
-      padding={3}
-    >
+    <Section padding={3}>
       <MetadataList
         title={
           <Text as="h3" type="label" weight="semibold">

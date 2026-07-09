@@ -63,7 +63,7 @@ export default function RequirementListNode({
 
   return (
     <>
-      <Stack className="node-header requirement-list__tabs">
+      <Stack padding={3} className="nodrag">
         <TabList
           value={activeTab}
           onChange={(value) => {
@@ -88,7 +88,7 @@ export default function RequirementListNode({
       {requirements.length === 0 ? (
         <EmptyState title={emptyTitle} description={emptyText} isCompact />
       ) : (
-        <Stack className="requirement-list nowheel nodrag" gap={1}>
+        <Stack className="nodrag nowheel" padding={3} gap={1}>
           {requirements.map((requirement) => {
             const taskProgress = requirementTaskProgress(requirement);
             const isSelected = data.selectedRequirementId === requirement.id;
@@ -100,9 +100,6 @@ export default function RequirementListNode({
             const canView = Boolean(requirement.execution_plan);
             return (
               <Item
-                className={`requirement-list__item ${
-                  isSelected ? "requirement-list__item--selected" : ""
-                }`}
                 key={requirement.id}
                 label={
                   <Text type="label" maxLines={2} wordBreak="break-word">

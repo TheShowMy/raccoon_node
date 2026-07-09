@@ -1,4 +1,5 @@
 import { Button } from "@astryxdesign/core/Button";
+import { HStack } from "@astryxdesign/core/HStack";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
@@ -35,11 +36,24 @@ export default function NodeBar({
   expandedSubtitle,
   buttonProps,
 }: NodeBarProps) {
-  const iconStyle = accent ? { color: accent } : undefined;
   const currentTitle = expanded ? (expandedTitle ?? title) : title;
   const currentSubtitle = expanded ? (expandedSubtitle ?? subtitle) : subtitle;
-  const copy = (
-    <Stack className="node-bar__copy" gap={0.5}>
+  const collapsedLabel =
+    currentSubtitle != null
+      ? `${currentTitle} · ${currentSubtitle}`
+      : currentTitle;
+  const collapsedCopy = (
+    <Text
+      type="label"
+      color="primary"
+      maxLines={1}
+      style={{ minWidth: 0, lineHeight: 1.25 }}
+    >
+      {collapsedLabel}
+    </Text>
+  );
+  const expandedCopy = (
+    <Stack gap={0.5} style={{ minWidth: 0 }}>
       <Text type="label" color="primary" maxLines={1}>
         {currentTitle}
       </Text>
@@ -51,26 +65,39 @@ export default function NodeBar({
     </Stack>
   );
 
+  const buttonLabel = collapsedLabel;
+
   if (!expanded) {
     return (
       <Button
-        label={title}
+        label={buttonLabel}
         variant="ghost"
         size="sm"
         type="button"
-        className="node-bar node-bar--collapsed nodrag"
+        className="nodrag node-bar__toggle"
+        style={{
+          width: "100%",
+          height: "100%",
+          lineHeight: 1.25,
+          paddingBlock: 6,
+          alignItems: "center",
+        }}
         aria-expanded={false}
         onClick={onToggle}
         {...buttonProps}
       >
-        <Stack direction="horizontal" gap={3} align="center" width="100%">
-          <span className="node-bar__icon" style={iconStyle} aria-hidden>
-            {icon}
-          </span>
-          {copy}
-        </Stack>
-        {extras}
-        <ChevronRight size={15} className="node-bar__chevron" aria-hidden />
+        <HStack align="center" justify="between" width="100%">
+          <HStack align="center" gap={3}>
+            <Stack style={{ color: accent }} aria-hidden>
+              {icon}
+            </Stack>
+            {collapsedCopy}
+          </HStack>
+          <HStack align="center" gap={2}>
+            {extras}
+            <ChevronRight size={15} aria-hidden />
+          </HStack>
+        </HStack>
       </Button>
     );
   }
@@ -78,16 +105,16 @@ export default function NodeBar({
   return (
     <Toolbar
       label={currentTitle}
-      className="node-bar node-bar--titlebar nodrag"
+      className="nodrag"
       size="sm"
       variant="muted"
       startContent={
-        <Stack direction="horizontal" gap={3} align="center" width="100%">
-          <span className="node-bar__icon" style={iconStyle} aria-hidden>
+        <HStack align="center" gap={3}>
+          <Stack style={{ color: accent }} aria-hidden>
             {expandedIcon ?? icon}
-          </span>
-          {copy}
-        </Stack>
+          </Stack>
+          {expandedCopy}
+        </HStack>
       }
       endContent={
         <>

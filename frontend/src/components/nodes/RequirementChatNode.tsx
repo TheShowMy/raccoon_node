@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertDialog,
   Button,
+  Card,
   EmptyState,
   HStack,
   LayoutHeader,
@@ -302,10 +303,12 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
 
   return (
     <>
-      <div
-        className={`chat-workspace nodrag ${
-          cardVisible && !isMobile ? "chat-workspace--floating-card" : ""
-        }`}
+      <Card
+        width="100%"
+        height="100%"
+        padding={4}
+        className="nodrag"
+        style={{ position: "relative", overflow: "hidden" }}
         aria-label="需求会话与项目问答"
       >
         <Layout header={header} height="fill" padding={0}>
@@ -314,15 +317,28 @@ export default function RequirementChatNode({ data }: { data: ChatData }) {
           </LayoutContent>
         </Layout>
         {cardVisible && !isMobile ? (
-          <div
-            className="chat-workspace__floating-card nowheel nodrag"
+          <Card
+            width="auto"
+            height="auto"
+            padding={0}
+            className="nowheel nodrag"
             role="complementary"
             aria-label="需求卡片"
+            style={{
+              position: "absolute",
+              insetInline: "var(--spacing-4)",
+              bottom: "var(--spacing-4)",
+              zIndex: 4,
+              height: "min(calc(var(--spacing-1) * 95), 48%)",
+              minHeight: "calc(var(--spacing-1) * 44)",
+              maxHeight: "calc(100% - calc(var(--spacing-1) * 24))",
+              overflow: "hidden",
+            }}
           >
             {cardPanel}
-          </div>
+          </Card>
         ) : null}
-      </div>
+      </Card>
 
       {isMobile && cardVisible ? (
         <Dialog

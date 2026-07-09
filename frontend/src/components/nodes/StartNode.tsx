@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from "react";
+import React from "react";
+import { Card } from "@astryxdesign/core/Card";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import type { StartNodeData } from "../../types/api";
 import { renderNodeContent } from "../../nodes/renderNodeContent";
@@ -14,10 +15,11 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
   const hasRequirementTaskRightHandle = data.kind === "requirement-task";
 
   return (
-    <div
-      className={`node-card node-card--${data.kind} ${
-        data.kind === "project-github" ? "compact" : ""
-      }`}
+    <Card
+      width="100%"
+      height="100%"
+      padding={0}
+      className={`node-card node-card--${data.kind}`}
     >
       {hasRequirementChatLeftHandle ? (
         <Handle
@@ -84,7 +86,7 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
           className="node-link-handle node-link-handle--requirement"
         />
       ) : null}
-    </div>
+    </Card>
   );
 }
 

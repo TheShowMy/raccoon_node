@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Banner } from "@astryxdesign/core/Banner";
+import { Layout, LayoutContent } from "@astryxdesign/core/Layout";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Tab, TabList } from "@astryxdesign/core/TabList";
 import { Settings, SlidersHorizontal } from "lucide-react";
@@ -77,19 +78,24 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
   }
 
   return (
-    <section className="settings-node">
-      <NodeBar
-        icon={<SlidersHorizontal size={16} />}
-        expandedIcon={<Settings size={16} />}
-        accent="var(--accent-model)"
-        title="设置"
-        expandedTitle="设置工作台"
-        expandedSubtitle="基础设置与 Pi 模型"
-        expanded={true}
-        onToggle={data.onToggleExpanded}
-      />
+    <Layout
+      height="fill"
+      padding={0}
+      header={
+        <NodeBar
+          icon={<SlidersHorizontal size={16} />}
+          expandedIcon={<Settings size={16} />}
+          accent="var(--accent-model)"
+          title="设置"
+          expandedTitle="设置工作台"
+          expandedSubtitle="基础设置与 Pi 模型"
+          expanded={true}
+          onToggle={data.onToggleExpanded}
+        />
+      }
+    >
       <TabList
-        className="settings-node__tabs nodrag"
+        className="nodrag"
         aria-label="设置页面"
         value={data.page}
         onChange={(page) => {
@@ -106,55 +112,67 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
           data-model-setup-target="models"
         />
       </TabList>
-      <div
-        className="settings-node__body nodrag nowheel"
+      <LayoutContent
+        className="nodrag nowheel"
+        padding={0}
+        isScrollable={false}
         role="tabpanel"
         id="settings-panel"
         aria-label={data.page === "basic" ? "基础设置" : "模型设置"}
       >
-        {restartError ? (
-          <Banner status="error" title="重启失败" description={restartError} />
-        ) : null}
-        {restarting ? (
-          <Banner status="info" title="服务正在重启" description="等待恢复…" />
-        ) : null}
-        {data.page === "basic" ? (
-          <BasicSettingsPanel
-            settings={data.basicSettings}
-            error={data.basicError}
-            saving={data.savingBasic || restarting}
-            savingTheme={data.savingTheme}
-            onChange={data.onBasicChange}
-            onThemeChange={(update) => void data.onThemeChange(update)}
-            onSave={() => void saveBasic()}
-          />
-        ) : (
-          <ModelSettingsPanel
-            settings={data.modelSettings}
-            models={data.models}
-            rpcStatus={data.modelRpcStatus}
-            error={data.modelError}
-            saving={data.savingModels}
-            terminalDisabled={data.terminalDisabled}
-            terminalAccessRequired={data.terminalAccessRequired}
-            terminalAccessAuthorized={data.terminalAccessAuthorized}
-            terminalAccessBusy={data.terminalAccessBusy}
-            terminalAccessError={data.terminalAccessError}
-            piLoginSession={data.piLoginSession}
-            piLoginBusy={data.piLoginBusy}
-            piLoginError={data.piLoginError}
-            needsOnboarding={data.needsModelOnboarding}
-            draftComplete={data.modelDraftComplete}
-            savedComplete={data.modelSavedComplete}
-            onChange={data.onModelChange}
-            onSave={() => void data.onSaveModels()}
-            onAuthorizeTerminalAccess={data.onAuthorizeTerminalAccess}
-            onStartPiLogin={data.onStartPiLogin}
-            onClosePiLogin={data.onClosePiLogin}
-            onReload={() => void data.onReloadModels()}
-          />
-        )}
-      </div>
+        <Stack padding={4} gap={3} height="fill">
+          {restartError ? (
+            <Banner
+              status="error"
+              title="重启失败"
+              description={restartError}
+            />
+          ) : null}
+          {restarting ? (
+            <Banner
+              status="info"
+              title="服务正在重启"
+              description="等待恢复…"
+            />
+          ) : null}
+          {data.page === "basic" ? (
+            <BasicSettingsPanel
+              settings={data.basicSettings}
+              error={data.basicError}
+              saving={data.savingBasic || restarting}
+              savingTheme={data.savingTheme}
+              onChange={data.onBasicChange}
+              onThemeChange={(update) => void data.onThemeChange(update)}
+              onSave={() => void saveBasic()}
+            />
+          ) : (
+            <ModelSettingsPanel
+              settings={data.modelSettings}
+              models={data.models}
+              rpcStatus={data.modelRpcStatus}
+              error={data.modelError}
+              saving={data.savingModels}
+              terminalDisabled={data.terminalDisabled}
+              terminalAccessRequired={data.terminalAccessRequired}
+              terminalAccessAuthorized={data.terminalAccessAuthorized}
+              terminalAccessBusy={data.terminalAccessBusy}
+              terminalAccessError={data.terminalAccessError}
+              piLoginSession={data.piLoginSession}
+              piLoginBusy={data.piLoginBusy}
+              piLoginError={data.piLoginError}
+              needsOnboarding={data.needsModelOnboarding}
+              draftComplete={data.modelDraftComplete}
+              savedComplete={data.modelSavedComplete}
+              onChange={data.onModelChange}
+              onSave={() => void data.onSaveModels()}
+              onAuthorizeTerminalAccess={data.onAuthorizeTerminalAccess}
+              onStartPiLogin={data.onStartPiLogin}
+              onClosePiLogin={data.onClosePiLogin}
+              onReload={() => void data.onReloadModels()}
+            />
+          )}
+        </Stack>
+      </LayoutContent>
 
       <AlertDialog
         isOpen={confirmExternal}
@@ -166,6 +184,6 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
         actionVariant="destructive"
         onAction={() => void saveBasic(true)}
       />
-    </section>
+    </Layout>
   );
 }

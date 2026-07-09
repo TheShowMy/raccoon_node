@@ -100,27 +100,18 @@ function params(
   return {
     projectCanvas,
     project: projectCanvas.project,
-    publicationReadiness: {
-      mode: "local",
-      ready: true,
-      summary: "本地合并",
-      issues: [],
-      notes: [],
-    },
     selectedDagRequirement,
     selectedDagRequirementId: selectedDagRequirement?.id ?? null,
     collapsedTaskGroups: new Set(),
     requirementActionBusyId: null,
     recoveringTaskGroupIds: new Set(),
     requirementActionError: null,
-    githubExpanded: false,
     tokenUsageExpanded: false,
     closeDag: () => {},
     selectDagRequirement: () => {},
     planRequirement: async () => {},
     recoverTaskGroup: async () => {},
     toggleTaskGroupCollapsed: () => {},
-    onToggleGithubExpanded: () => {},
     onToggleTokenUsageExpanded: () => {},
   };
 }
@@ -176,32 +167,6 @@ describe("buildProjectNodes", () => {
     }
     expect(second.find((node) => node.id === "requirement-chat")).not.toBe(
       first.find((node) => node.id === "requirement-chat"),
-    );
-  });
-
-  it("places GitHub beside the terminal node as a horizontal bar", () => {
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [],
-      completed_requirements: [],
-    };
-
-    const nodes = buildProjectNodes(params(canvas, null));
-    const github = nodes.find((node) => node.id === "project-github")!;
-    const requirements = nodes.find((node) => node.id === "requirements")!;
-
-    expect(github.position).toEqual({ x: -350, y: 800 });
-    expect(github.width).toBe(290);
-    expect(github.height).toBe(44);
-    expect(requirements.position).toEqual({ x: 984, y: 20 });
-    expect(requirements.width).toBe(360);
-    expect(requirements.height).toBe(760);
-    expect(nodes).not.toContainEqual(
-      expect.objectContaining({ id: "completed-requirements" }),
-    );
-    expect(nodes).not.toContainEqual(
-      expect.objectContaining({ id: "queued-requirements" }),
     );
   });
 
@@ -296,12 +261,10 @@ describe("buildProjectNodes", () => {
     })!;
     const expanded = buildProjectSettingsNode({ ...base, expanded: true })!;
 
-    expect(collapsed.position).toEqual({ x: -350, y: 20 });
-    expect(collapsed.style).toMatchObject({ width: 290, height: 44 });
-    expect(expanded.position).toEqual({ x: -1380, y: -716 });
+    expect(collapsed.position).toEqual({ x: 0, y: -44 });
+    expect(collapsed.style).toMatchObject({ width: 960, height: 44 });
+    expect(expanded.position).toEqual({ x: -180, y: -800 });
     expect(expanded.style).toMatchObject({ width: 1320, height: 780 });
-    expect(expanded.position.x + 1320).toBe(collapsed.position.x + 290);
-    expect(expanded.position.y + 780).toBe(collapsed.position.y + 44);
     expect(expanded.data.kind).toBe("project-settings");
     expect(buildProjectNodes(params(canvas, null))).not.toContainEqual(
       expect.objectContaining({ id: "settings" }),

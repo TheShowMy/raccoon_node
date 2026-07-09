@@ -6,7 +6,6 @@ import type {
   FileReference,
   ImageAttachment,
   Project,
-  PublicationReadiness,
   ProjectCanvasData,
   Requirement,
   RequirementConversation,
@@ -57,11 +56,10 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       StartNodeData["kind"],
       { width: number; height: number }
     > = {
-      "project-settings": { width: 290, height: 44 },
-      "project-github": { width: 290, height: 44 },
+      "project-settings": { width: 960, height: 44 },
       "requirement-list": { width: 360, height: 760 },
       "requirement-chat": { width: 960, height: 760 },
-      "project-terminal": { width: 720, height: 44 },
+      "project-terminal": { width: 960, height: 44 },
       "project-git": { width: 360, height: 44 },
       "requirement-dag": DAG_NODE_SIZE,
       "requirement-task": { width: 252, height: 134 },
@@ -80,21 +78,18 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
 export interface BuildProjectNodesParams {
   projectCanvas: ProjectCanvasData | null;
   project: Project | null;
-  publicationReadiness: PublicationReadiness | null;
   selectedDagRequirement: Requirement | null;
   selectedDagRequirementId: string | null;
   collapsedTaskGroups: Set<string>;
   requirementActionBusyId: string | null;
   recoveringTaskGroupIds: Set<string>;
   requirementActionError: string | null;
-  githubExpanded: boolean;
   tokenUsageExpanded: boolean;
   closeDag: () => void;
   selectDagRequirement: (requirement: Requirement) => void;
   planRequirement: (requirement: Requirement) => Promise<void>;
   recoverTaskGroup: (requirementId: string, taskId: string) => Promise<void>;
   toggleTaskGroupCollapsed: (requirementId: string, taskId: string) => void;
-  onToggleGithubExpanded: () => void;
   onToggleTokenUsageExpanded: () => void;
 }
 
@@ -231,21 +226,18 @@ export interface BuildProjectChatNodeParams {
 export function buildProjectNodes({
   projectCanvas,
   project: currentProject,
-  publicationReadiness,
   selectedDagRequirement,
   selectedDagRequirementId,
   collapsedTaskGroups,
   requirementActionBusyId,
   recoveringTaskGroupIds,
   requirementActionError,
-  githubExpanded,
   tokenUsageExpanded,
   closeDag,
   selectDagRequirement,
   planRequirement,
   recoverTaskGroup,
   toggleTaskGroupCollapsed,
-  onToggleGithubExpanded,
   onToggleTokenUsageExpanded,
 }: BuildProjectNodesParams): Node<StartNodeData>[] {
   const project = projectCanvas?.project ?? currentProject;
@@ -289,30 +281,6 @@ export function buildProjectNodes({
 
   return withDimensions([
     {
-      id: "project-github",
-      type: "startNode",
-      className: "github-flow-node",
-      position: githubExpanded ? { x: -780, y: 800 } : { x: -350, y: 800 },
-      style: {
-        width: githubExpanded ? 720 : 290,
-        height: githubExpanded ? 540 : 44,
-        zIndex: githubExpanded ? 20 : 1,
-      },
-      data: {
-        kind: "project-github",
-        expanded: githubExpanded,
-        project,
-        publicationReadiness: publicationReadiness ?? {
-          mode: project.git_url ? "pull_request" : "local",
-          ready: !project.git_url,
-          summary: "正在读取发布前置检查结果。",
-          issues: [],
-          notes: [],
-        },
-        onToggleExpanded: onToggleGithubExpanded,
-      },
-    },
-    {
       id: "requirements",
       type: "startNode",
       position: { x: 984, y: 20 },
@@ -331,10 +299,10 @@ export function buildProjectNodes({
       id: "token-usage",
       type: "startNode",
       className: "token-usage-flow-node",
-      position: tokenUsageExpanded ? { x: 984, y: -164 } : { x: 984, y: -44 },
+      position: tokenUsageExpanded ? { x: 984, y: -240 } : { x: 984, y: -44 },
       style: {
         width: 360,
-        height: tokenUsageExpanded ? 164 : 44,
+        height: tokenUsageExpanded ? 240 : 44,
         zIndex: tokenUsageExpanded ? 20 : 1,
       },
       data: {
@@ -636,10 +604,9 @@ export function buildProjectSettingsNode({
     {
       id: "project-settings",
       type: "startNode",
-      className: "settings-flow-node",
-      position: expanded ? { x: -1380, y: -716 } : { x: -350, y: 20 },
+      position: expanded ? { x: -180, y: -800 } : { x: 0, y: -44 },
       style: {
-        width: expanded ? 1320 : 290,
+        width: expanded ? 1320 : 960,
         height: expanded ? 780 : 44,
         zIndex: expanded ? 20 : 1,
       },
@@ -716,7 +683,7 @@ export function buildProjectTerminalNode({
       type: "startNode",
       position: { x: 0, y: 800 },
       style: {
-        width: 720,
+        width: 960,
         height: collapsed ? 44 : 460,
       },
       data: {

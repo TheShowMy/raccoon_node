@@ -1,5 +1,6 @@
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
+import { Grid } from "@astryxdesign/core/Grid";
 import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
 import {
   SegmentedControl,
@@ -58,14 +59,14 @@ export default function BasicSettingsPanel({
     settings.port <= 65535;
 
   return (
-    <Stack className="settings-form settings-form--astryx" gap={4}>
+    <Stack gap={4} height="fill">
       {error ? (
         <Banner status="error" title="设置保存失败" description={error} />
       ) : null}
 
-      <Stack className="settings-form__content" direction="horizontal" gap={4}>
-        <Stack className="settings-form__column" gap={4}>
-          <Section className="settings-section" padding={4}>
+      <Grid columns={2} gap={4} align="stretch">
+        <Stack gap={4}>
+          <Section padding={4}>
             <Stack gap={3}>
               <Stack gap={0.5}>
                 <Text type="label" weight="semibold">
@@ -111,7 +112,7 @@ export default function BasicSettingsPanel({
             </Stack>
           </Section>
 
-          <Section className="settings-section" padding={4}>
+          <Section padding={4}>
             <RadioList
               label="提交模式"
               description="保存后用于后续任务。"
@@ -132,10 +133,7 @@ export default function BasicSettingsPanel({
           </Section>
         </Stack>
 
-        <Section
-          className="settings-section settings-section--service"
-          padding={4}
-        >
+        <Section padding={4}>
           <Stack gap={4}>
             <Stack gap={0.5}>
               <Text type="label" weight="semibold">
@@ -174,7 +172,7 @@ export default function BasicSettingsPanel({
                 }}
               />
             </Stack>
-            <Section className="settings-effective" variant="muted" padding={3}>
+            <Section variant="muted" padding={3}>
               <Stack gap={2}>
                 <Stack
                   direction="horizontal"
@@ -200,11 +198,10 @@ export default function BasicSettingsPanel({
             </Section>
           </Stack>
         </Section>
-      </Stack>
+      </Grid>
 
       <Toolbar
         label="保存基础设置"
-        className="settings-node__footer"
         size="sm"
         variant="transparent"
         endContent={

@@ -654,13 +654,6 @@ export type StartNodeData =
       onClosePiLogin: () => Promise<void>;
     }
   | {
-      kind: "project-github";
-      expanded: boolean;
-      project: Project;
-      publicationReadiness: PublicationReadiness;
-      onToggleExpanded: () => void;
-    }
-  | {
       kind: "requirement-list";
       pendingRequirements: Requirement[];
       completedRequirements: Requirement[];

@@ -29,8 +29,7 @@ describe("TokenUsageNode", () => {
   it("shows total tokens in collapsed bar", () => {
     render(<TokenUsageNode data={data()} />);
 
-    expect(screen.getByText("Token 使用")).toBeInTheDocument();
-    expect(screen.getByText("100 total")).toBeInTheDocument();
+    expect(screen.getByText("Token 使用 · 100 total")).toBeInTheDocument();
   });
 
   it("calls onToggleExpanded when clicked", () => {

@@ -139,9 +139,9 @@ describe("RequirementChatNode", () => {
     expect(
       screen.getByRole("button", { name: "继续补充" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "需求卡片" })).toHaveClass(
-      "chat-workspace__floating-card",
-    );
+    expect(
+      screen.getByRole("complementary", { name: "需求卡片" }),
+    ).toBeInTheDocument();
 
     view.rerender(
       <RequirementChatNode

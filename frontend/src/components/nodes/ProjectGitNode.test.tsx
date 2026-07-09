@@ -59,8 +59,7 @@ function renderNode(phase: "collapsed" | "expanded" = "expanded") {
 describe("ProjectGitNode", () => {
   it("shows branch and change summary while collapsed", () => {
     const { onToggleExpanded } = renderNode("collapsed");
-    expect(screen.getByText("main")).toBeInTheDocument();
-    expect(screen.getByText(/2 个变更/)).toBeInTheDocument();
+    expect(screen.getByText(/main · 2 个变更/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /main/ }));
     expect(onToggleExpanded).toHaveBeenCalled();
   });

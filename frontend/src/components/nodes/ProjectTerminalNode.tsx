@@ -10,7 +10,10 @@ import {
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { Grid } from "@astryxdesign/core/Grid";
+import { HStack } from "@astryxdesign/core/HStack";
 import { IconButton } from "@astryxdesign/core/IconButton";
+import { Layout, LayoutContent } from "@astryxdesign/core/Layout";
 import { Section } from "@astryxdesign/core/Section";
 import { Stack } from "@astryxdesign/core/Stack";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
@@ -84,7 +87,7 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
     setEditingProfiles(false);
   }
 
-  async function authorizeTerminal(event: FormEvent<HTMLFormElement>) {
+  async function authorizeTerminal(event: FormEvent<HTMLElement>) {
     event.preventDefault();
     const unlocked = await data.onAuthorizeTerminalAccess(accessKey);
     if (unlocked) {
@@ -92,64 +95,73 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
     }
   }
 
+  if (data.collapsed) {
+    return (
+      <NodeBar
+        icon={<Terminal size={16} />}
+        accent="var(--accent-projects)"
+        title="项目终端"
+        subtitle={
+          hasSessions
+            ? `${data.sessions.length} 个终端 · ${activeSession?.title ?? "未选择"}`
+            : "默认在项目根目录启动"
+        }
+        expanded={false}
+        onToggle={data.onToggleCollapsed}
+        extras={
+          data.error ? <Token label={data.error} color="red" size="sm" /> : null
+        }
+      />
+    );
+  }
+
   return (
-    <section
-      className={`terminal-node ${data.collapsed ? "terminal-node--collapsed" : ""}`}
-    >
-      {data.collapsed ? (
+    <Layout
+      height="fill"
+      padding={0}
+      header={
         <NodeBar
           icon={<Terminal size={16} />}
           accent="var(--accent-projects)"
           title="项目终端"
-          subtitle={
-            hasSessions
-              ? `${data.sessions.length} 个终端 · ${activeSession?.title ?? "未选择"}`
-              : "默认在项目根目录启动"
-          }
-          expanded={false}
+          expanded={true}
           onToggle={data.onToggleCollapsed}
-          extras={
-            data.error ? (
-              <Token label={data.error} color="red" size="sm" />
-            ) : null
+          actions={
+            <>
+              {data.error ? (
+                <Token label={data.error} color="red" size="sm" />
+              ) : null}
+              <IconButton
+                label="新建"
+                tooltip="新建终端"
+                icon={<Plus size={14} />}
+                variant="ghost"
+                isDisabled={data.busy || data.terminalDisabled}
+                onClick={() => void data.onCreateTerminal()}
+              />
+            </>
           }
         />
-      ) : (
-        <Stack className="terminal-node__body" gap={0}>
-          <NodeBar
-            icon={<Terminal size={16} />}
-            accent="var(--accent-projects)"
-            title="项目终端"
-            expanded={true}
-            onToggle={data.onToggleCollapsed}
-            actions={
-              <>
-                {data.error ? (
-                  <Token label={data.error} color="red" size="sm" />
-                ) : null}
-                <IconButton
-                  label="新建"
-                  tooltip="新建终端"
-                  icon={<Plus size={14} />}
-                  variant="ghost"
-                  isDisabled={data.busy || data.terminalDisabled}
-                  onClick={() => void data.onCreateTerminal()}
-                />
-              </>
-            }
-          />
-
+      }
+    >
+      <LayoutContent padding={0} isScrollable={false}>
+        <Stack gap={0}>
           {disabledReason ? (
             <Banner
-              className="terminal-node__notice nodrag"
+              className="nodrag"
               status="warning"
               title={disabledReason}
               icon={<AlertTriangle size={14} />}
             />
           ) : null}
+
           {needsTerminalAccess ? (
-            <form
-              className="terminal-node__access nodrag"
+            <HStack
+              as="form"
+              className="nodrag"
+              gap={2}
+              padding={3}
+              align="center"
               onSubmit={(event) => void authorizeTerminal(event)}
             >
               <KeyRound size={16} />
@@ -157,7 +169,7 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
                 label="终端密钥"
                 value={accessKey}
                 type="password"
-                placeholder="TUI 中显示的本次启动密钥"
+                placeholder="输入启动密钥"
                 onChange={setAccessKey}
               />
               <Button
@@ -167,37 +179,27 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
                 isLoading={data.terminalAccessBusy}
                 isDisabled={!accessKey.trim()}
               />
-              <small>
+              <Text type="supporting" size="2xs">
                 {data.terminalAccessError ?? "验证通过后 12 小时内无需再次输入"}
-              </small>
-            </form>
+              </Text>
+            </HStack>
           ) : data.terminalAccessRequired && data.terminalAccessExpiresAt ? (
-            <Stack
-              className="terminal-node__access-status nodrag"
-              direction="horizontal"
-              gap={2}
-              align="center"
-            >
+            <HStack className="nodrag" gap={2} padding={3} align="center">
               <KeyRound size={14} />
               <Text type="supporting" size="2xs">
                 终端已授权至{" "}
                 {new Date(data.terminalAccessExpiresAt).toLocaleTimeString()}
               </Text>
-            </Stack>
+            </HStack>
           ) : null}
 
           <Toolbar
             label="终端命令"
-            className="terminal-node__toolbar nodrag"
+            className="nodrag"
             size="sm"
             variant="transparent"
             startContent={
-              <Stack
-                className="terminal-node__command-list"
-                direction="horizontal"
-                gap={1}
-                wrap="wrap"
-              >
+              <HStack gap={1} wrap="wrap">
                 {data.commandProfiles.map((profile) => (
                   <Button
                     key={profile.id}
@@ -205,39 +207,32 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
                     variant="secondary"
                     icon={<Terminal size={10} />}
                     isDisabled={data.busy || data.terminalDisabled}
-                    className="terminal-node__command-tag"
                     onClick={() =>
                       void data.onCreateTerminal(profile.command, profile.name)
                     }
                   />
                 ))}
                 {data.commandProfiles.length === 0 ? (
-                  <Text
-                    className="terminal-node__command-hint"
-                    type="supporting"
-                    size="2xs"
-                  >
+                  <Text type="supporting" size="2xs">
                     暂无自定义启动命令
                   </Text>
                 ) : null}
-              </Stack>
+              </HStack>
             }
             endContent={
               <Button
                 label="管理命令"
                 variant="ghost"
                 icon={<Settings2 size={13} />}
-                className="terminal-node__manage"
                 onClick={openProfileEditor}
               />
             }
           />
 
           {editingProfiles ? (
-            <Section className="terminal-node__profiles nodrag" padding={3}>
+            <Section className="nodrag" padding={3}>
               <Toolbar
                 label="自定义启动命令"
-                className="terminal-node__profiles-head"
                 size="sm"
                 variant="transparent"
                 startContent={<Text type="label">自定义启动命令</Text>}
@@ -253,17 +248,17 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
               />
               <Stack gap={2}>
                 {draftProfiles.map((profile, index) => (
-                  <Stack
+                  <Grid
                     key={profile.id ?? index}
-                    className="terminal-node__profile-row"
-                    direction="horizontal"
+                    columns={3}
                     gap={2}
                     align="center"
+                    style={{ gridTemplateColumns: "120px 1fr auto" }}
                   >
                     <TextInput
                       label="名称"
                       isLabelHidden
-                      width={140}
+                      width={120}
                       value={profile.name}
                       placeholder="名称"
                       onChange={(value) =>
@@ -279,7 +274,6 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
                     <TextInput
                       label="命令"
                       isLabelHidden
-                      width="100%"
                       value={profile.command}
                       placeholder="命令，例如 npm run dev"
                       onChange={(value) =>
@@ -303,11 +297,10 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
                         )
                       }
                     />
-                  </Stack>
+                  </Grid>
                 ))}
                 <Toolbar
                   label="命令编辑操作"
-                  className="terminal-node__profiles-actions"
                   size="sm"
                   variant="transparent"
                   endContent={
@@ -336,52 +329,58 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
           ) : null}
 
           <Stack
-            className="terminal-node__tabs nodrag nowheel"
+            className="nodrag nowheel"
             direction="horizontal"
-            gap={1}
+            gap={0}
+            style={{ overflowX: "auto" }}
           >
-            {data.sessions.map((session) => (
-              <Stack
-                key={session.id}
-                className={`terminal-node__tab ${
-                  session.id === data.activeSessionId
-                    ? "is-active"
-                    : session.status === "exited"
-                      ? "is-exited"
-                      : ""
-                }`}
-                direction="horizontal"
-                gap={0.5}
-                align="center"
-              >
-                <Button
-                  label={session.title}
-                  type="button"
-                  className="terminal-node__tab-main"
-                  variant="ghost"
-                  onClick={() => data.onSelectTerminal(session.id)}
+            {data.sessions.map((session) => {
+              const isActive = session.id === data.activeSessionId;
+              return (
+                <HStack
+                  key={session.id}
+                  gap={0}
+                  align="center"
+                  style={{
+                    opacity: session.status === "exited" ? 0.65 : 1,
+                  }}
                 >
-                  <StatusDot
-                    label={session.status === "exited" ? "已退出" : "运行中"}
-                    variant={
-                      session.status === "exited" ? "neutral" : "success"
+                  <Button
+                    label={session.title}
+                    type="button"
+                    variant={isActive ? "secondary" : "ghost"}
+                    aria-label={session.title}
+                    icon={
+                      <StatusDot
+                        label={
+                          session.status === "exited" ? "已退出" : "运行中"
+                        }
+                        variant={
+                          session.status === "exited" ? "neutral" : "success"
+                        }
+                      />
                     }
+                    onClick={() => data.onSelectTerminal(session.id)}
+                  >
+                    {session.title}
+                  </Button>
+                  <IconButton
+                    label="关闭终端"
+                    tooltip="关闭终端"
+                    icon={<X size={12} />}
+                    variant="ghost"
+                    onClick={() => void data.onCloseTerminal(session.id)}
                   />
-                  <span>{session.title}</span>
-                </Button>
-                <IconButton
-                  label="关闭终端"
-                  tooltip="关闭终端"
-                  icon={<X size={12} />}
-                  variant="ghost"
-                  className="terminal-node__tab-close"
-                  onClick={() => void data.onCloseTerminal(session.id)}
-                />
-              </Stack>
-            ))}
+                </HStack>
+              );
+            })}
           </Stack>
 
-          <div className="terminal-node__viewport nodrag nowheel">
+          <Stack
+            className="nodrag nowheel"
+            minHeight={0}
+            style={{ flex: 1, overflow: "hidden" }}
+          >
             {activeSession ? (
               <TerminalSessionView
                 projectId={data.project.id}
@@ -395,15 +394,15 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
                 isCompact
               />
             )}
-          </div>
+          </Stack>
 
           <Toolbar
             label="终端状态"
-            className="terminal-node__statusbar nodrag"
+            className="nodrag"
             size="sm"
             variant="muted"
             startContent={
-              <Text className="terminal-node__cwd" type="supporting" size="2xs">
+              <Text type="supporting" size="2xs" style={{ minWidth: 0 }}>
                 cwd: {data.project.local_path}
               </Text>
             }
@@ -420,7 +419,7 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
             }
           />
         </Stack>
-      )}
-    </section>
+      </LayoutContent>
+    </Layout>
   );
 }

@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { Grid } from "@astryxdesign/core/Grid";
+import { HStack } from "@astryxdesign/core/HStack";
 import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
 import { Section } from "@astryxdesign/core/Section";
 import { Selector } from "@astryxdesign/core/Selector";
@@ -123,7 +125,7 @@ export default function ModelSettingsPanel({
   ];
   const currentStep = steps.findIndex((step) => !step.done);
 
-  async function authorizeTerminal(event: FormEvent<HTMLFormElement>) {
+  async function authorizeTerminal(event: FormEvent<HTMLElement>) {
     event.preventDefault();
     const unlocked = await onAuthorizeTerminalAccess(accessKey);
     if (unlocked) {
@@ -132,31 +134,14 @@ export default function ModelSettingsPanel({
   }
 
   return (
-    <Stack
-      className={`model-settings ${
-        needsOnboarding ? "model-settings--guided" : ""
-      }`}
-      gap={3}
-    >
+    <Stack gap={3} height="fill">
       {needsOnboarding ? (
-        <Stack
-          as="ol"
-          className="model-onboarding"
-          direction="horizontal"
-          gap={2}
-          aria-label="首次模型配置引导"
-        >
+        <HStack as="ol" gap={2} aria-label="首次模型配置引导">
           {steps.map((step, index) => {
             const isCurrent = index === currentStep;
             const isDone = step.done;
             return (
               <li
-                className={[
-                  isDone ? "is-done" : "",
-                  isCurrent ? "is-current" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
                 key={step.label}
                 aria-current={isCurrent ? "step" : undefined}
               >
@@ -171,18 +156,17 @@ export default function ModelSettingsPanel({
               </li>
             );
           })}
-        </Stack>
+        </HStack>
       ) : null}
 
-      <div className="model-settings__workspace">
-        <Stack className="model-settings__config" gap={3}>
+      <Grid columns={2} gap={4} align="stretch" height="fill">
+        <Stack gap={3}>
           <Toolbar
             label="模型 RPC 状态"
-            className="model-status"
             size="sm"
             variant="section"
             startContent={
-              <Stack direction="horizontal" gap={2} align="center">
+              <HStack gap={2} align="center">
                 <StatusDot
                   label={modelStatusText(rpcStatus)}
                   variant={rpcStatusVariant(rpcStatus)}
@@ -194,7 +178,7 @@ export default function ModelSettingsPanel({
                 <Text type="supporting" size="2xs">
                   {models.length} 个模型
                 </Text>
-              </Stack>
+              </HStack>
             }
             endContent={
               <Button
@@ -214,7 +198,7 @@ export default function ModelSettingsPanel({
             </Section>
           ) : null}
 
-          <div className="model-tier-selector model-tier-selector--compact">
+          <Section padding={3}>
             <RadioList
               label="模型档位"
               isLabelHidden
@@ -237,7 +221,6 @@ export default function ModelSettingsPanel({
                     description={modelName}
                     endContent={
                       <Token
-                        className="model-tier-card__thinking"
                         label={
                           thinkingLevels.find(
                             (level) =>
@@ -252,9 +235,9 @@ export default function ModelSettingsPanel({
                 );
               })}
             </RadioList>
-          </div>
+          </Section>
 
-          <Section className="model-tier-detail" padding={4}>
+          <Section padding={4}>
             <Stack gap={3}>
               <Stack gap={0.5}>
                 <Text type="label" weight="semibold">
@@ -264,7 +247,7 @@ export default function ModelSettingsPanel({
                   用于对应复杂度的 Agent 任务。
                 </Text>
               </Stack>
-              <div className="model-tier-detail__fields">
+              <Grid columns={2} gap={3}>
                 <Selector
                   label="模型"
                   value={setting.model_id ?? ""}
@@ -293,10 +276,9 @@ export default function ModelSettingsPanel({
                     });
                   }}
                 />
-              </div>
+              </Grid>
               <Toolbar
                 label="保存模型设置"
-                className="model-tier-detail__actions"
                 size="sm"
                 variant="transparent"
                 endContent={
@@ -313,22 +295,16 @@ export default function ModelSettingsPanel({
           </Section>
         </Stack>
 
-        <Section
-          className="pi-login-terminal"
-          aria-label="Pi 登录终端"
-          role="region"
-          padding={0}
-        >
+        <Section aria-label="Pi 登录终端" role="region" padding={0}>
           <Toolbar
             label="Pi 登录终端"
-            className="pi-login-terminal__toolbar"
             size="sm"
             variant="transparent"
             startContent={
-              <Stack direction="horizontal" gap={2} align="center">
+              <HStack gap={2} align="center">
                 <Terminal size={14} />
                 <Text type="label">Pi 登录终端</Text>
-              </Stack>
+              </HStack>
             }
             endContent={
               piLoginSession ? (
@@ -361,8 +337,12 @@ export default function ModelSettingsPanel({
             }
           />
           {needsTerminalAccess ? (
-            <form
-              className="terminal-node__access nodrag"
+            <HStack
+              as="form"
+              className="nodrag"
+              gap={2}
+              padding={3}
+              align="center"
               onSubmit={(event) => void authorizeTerminal(event)}
             >
               <KeyRound size={16} />
@@ -370,7 +350,7 @@ export default function ModelSettingsPanel({
                 label="终端密钥"
                 value={accessKey}
                 type="password"
-                placeholder="TUI 中显示的本次启动密钥"
+                placeholder="输入启动密钥"
                 onChange={setAccessKey}
               />
               <Button
@@ -380,10 +360,10 @@ export default function ModelSettingsPanel({
                 isLoading={terminalAccessBusy}
                 isDisabled={!accessKey.trim()}
               />
-              <small>
+              <Text type="supporting" size="2xs">
                 {terminalAccessError ?? "验证通过后可启动 Pi 登录终端"}
-              </small>
-            </form>
+              </Text>
+            </HStack>
           ) : null}
           {piLoginSession ? (
             <TerminalSessionView
@@ -400,19 +380,21 @@ export default function ModelSettingsPanel({
             />
           )}
           {terminalDisabled && !piLoginSession ? (
-            <Text
-              className="pi-login-terminal__hint"
-              type="supporting"
-              size="2xs"
-            >
-              Web 终端仅允许通过本机监听地址使用。
-            </Text>
+            <Stack padding={3} align="center">
+              <Text type="supporting" size="2xs">
+                Web 终端仅允许通过本机监听地址使用。
+              </Text>
+            </Stack>
           ) : null}
           {piLoginError ? (
-            <p className="pi-login-terminal__error">{piLoginError}</p>
+            <Stack padding={3} align="center">
+              <Text type="supporting" color="accent" size="2xs">
+                {piLoginError}
+              </Text>
+            </Stack>
           ) : null}
         </Section>
-      </div>
+      </Grid>
     </Stack>
   );
 }

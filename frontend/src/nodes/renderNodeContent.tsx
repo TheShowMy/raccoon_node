@@ -1,6 +1,5 @@
 import React from "react";
 import type { StartNodeData } from "../types/api";
-import ProjectGithubNode from "../components/nodes/ProjectGithubNode";
 import ProjectTerminalNode from "../components/nodes/ProjectTerminalNode";
 import RequirementChatNode from "../components/nodes/RequirementChatNode";
 import RequirementDagNode from "../components/nodes/RequirementDagNode";
@@ -18,8 +17,6 @@ export function renderNodeContent(data: StartNodeData): React.JSX.Element {
   switch (data.kind) {
     case "project-settings":
       return <ProjectSettingsNode data={data} />;
-    case "project-github":
-      return <ProjectGithubNode data={data} />;
     case "requirement-chat":
       return <RequirementChatNode data={data} />;
     case "project-terminal":
