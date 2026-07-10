@@ -11,7 +11,7 @@ use crate::models::{
     TerminalCommandProfile,
 };
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 pub struct Database {
     conn: std::sync::Mutex<Connection>,
@@ -68,7 +68,8 @@ impl Database {
                 error TEXT,
                 queued_at TEXT,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                origin TEXT NOT NULL DEFAULT 'standalone'
             );
 
             CREATE TABLE IF NOT EXISTS requirement_sessions (
@@ -107,7 +108,7 @@ impl Database {
             0 => {}
             1 => {
                 let version = *unique_versions.iter().next().expect("one unique version");
-                if version != 1 && version != SCHEMA_VERSION {
+                if !(1..=SCHEMA_VERSION).contains(&version) {
                     return Err(AppError::internal(format!("不支持的数据库版本：{version}")));
                 }
             }
@@ -127,6 +128,12 @@ impl Database {
             "requirements",
             "clarification_history",
             "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        add_column_if_missing(
+            &tx,
+            "requirements",
+            "origin",
+            "TEXT NOT NULL DEFAULT 'standalone'",
         )?;
         add_column_if_missing(&tx, "project_chats", "requirement_summary", "TEXT")?;
         tx.execute("DELETE FROM schema_version", [])?;

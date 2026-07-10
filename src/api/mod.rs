@@ -30,8 +30,8 @@ use crate::api::handlers::{
     put_model_settings, put_terminal_command_profiles, recover_task_group, reload_model_settings,
     requirement_conversation_events, requirement_events, reset_project_chat, restart_system,
     retry_requirement_analysis, send_project_chat_message, spawn_startup_requirement_scheduler,
-    submit_requirement_clarifications, terminal_websocket, unlock_terminal_access,
-    upload_project_attachment,
+    submit_requirement_clarifications, sync_requirement_chat_summary, terminal_websocket,
+    unlock_terminal_access, upload_project_attachment,
 };
 use crate::pi::PiRpcModelProvider;
 use crate::store::JsonStore;
@@ -81,21 +81,13 @@ pub async fn build_app(
     config_path: PathBuf,
     runtime: RuntimeOptions,
     publication_readiness: crate::models::PublicationReadiness,
-) -> (Router, AppState) {
-    let mut store = JsonStore::open_project(project_root.clone())
-        .await
-        .expect("failed to initialize json store");
-    let startup_requirement_ids = store
-        .recover_interrupted_requirements()
-        .await
-        .expect("failed to recover interrupted requirements");
-    store
-        .recover_interrupted_project_chats()
-        .await
-        .expect("failed to recover interrupted project chats");
+) -> Result<(Router, AppState), crate::error::AppError> {
+    let mut store = JsonStore::open_project(project_root.clone()).await?;
+    let startup_requirement_ids = store.recover_interrupted_requirements().await?;
+    store.recover_interrupted_project_chats().await?;
     store.cleanup_stale_pi_sessions().await;
     let model_provider = PiRpcModelProvider::start(store.data_root.clone()).await;
-    build_app_with_startup_requirements(
+    Ok(build_app_with_startup_requirements(
         store,
         Arc::new(model_provider),
         startup_requirement_ids,
@@ -103,7 +95,7 @@ pub async fn build_app(
         config_path,
         runtime,
         publication_readiness,
-    )
+    ))
 }
 
 pub fn build_app_with_model_provider(
@@ -287,6 +279,10 @@ fn build_app_with_startup_requirements(
             post(retry_requirement_analysis),
         )
         .route("/requirements/{id}/confirm", post(confirm_requirement))
+        .route(
+            "/requirements/{id}/sync-chat-summary",
+            post(sync_requirement_chat_summary),
+        )
         .route("/requirements/{id}/plan", post(plan_requirement_execution))
         .route(
             "/requirements/{id}/tasks/{task_id}",

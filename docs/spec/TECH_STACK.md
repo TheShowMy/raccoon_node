@@ -17,7 +17,8 @@
 
 - 后端入口：`src/main.rs`
 - 后端模块：根 crate `raccoon-node` 的内部模块位于 `src/api/`、`src/store/`、`src/pi/`、`src/requirement/` 等目录，不再依赖单独发布的内部 crates。
-- 前端入口：`frontend/src/main.tsx`
+- 前端入口：`frontend/src/main.tsx`；`App.tsx` 只编排领域 hooks 与主画布，画布、聊天、
+  工作台和共享 UI 分模块实现，六个外围工作台通过动态 import 按需加载。
 - 前端样式：`frontend/src/styles/index.css`，使用 Astryx 预构建 CSS 与普通 CSS，
   保留 React Flow 画布/节点覆盖。
 - 构建脚本：`scripts/build.mjs`
@@ -60,8 +61,16 @@
   结构化工具提交；不得恢复文本 JSON 提取。
 - 业务状态只以 SQLite 为准；Pi session 只保存完整模型历史，不承担 FIFO、DAG、
   worktree 或恢复状态。
-- 项目问答与需求澄清使用独立 Pi session；同一项目的需求分析保持单飞，繁忙时
-  拒绝新操作，不增加消息队列、steer 或 follow-up。
+- 项目聊天始终持有主 Pi session。创建需求时，非空主 session 通过 Pi RPC `clone`
+  派生需求分支并立即切回主 session；空主 session 直接创建独立需求 session。
+  `ProjectChat.pi_session_file` 与 `Requirement.pi_session_file` 分别保存主/分支引用，
+  均不序列化到前端。
+- 需求确认后异步向主 Pi session 写入最终摘要；Pi 内部确认回复不展示，SQLite 中的
+  结构化系统卡片记录 `syncing | synced | failed`。失败不回滚需求，可通过专用 API
+  重试。写回与普通聊天、session 切换共享 single-flight，冲突返回 `409`。
+- 同一项目的需求分析保持单飞，繁忙时拒绝新操作，不增加消息队列、steer 或
+  follow-up。session 清理只删除 `.raccoon-node/sessions/` 中未被主聊天、需求或任务
+  业务状态引用的 JSONL 文件。
 - 对话事件协议固定为 `agent.event`、`snapshot.changed`、`session.error` 和
   `notice.append`。`agent.event` 携带原始 Pi Agent 事件，前端统一归一展示。
 - 禁止执行 `pi --list-models` 等一次性命令作为运行时数据来源。

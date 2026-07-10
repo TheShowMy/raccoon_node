@@ -475,7 +475,15 @@ pub async fn send_project_chat_message(
         bus: state.project_chat_events.clone(),
     }
     .emit("message_append", "用户消息已接受。");
-    state.model_provider.begin_project_chat(&project_id).await?;
+    if let Err(error) = state.model_provider.begin_project_chat(&project_id).await {
+        state
+            .store
+            .write()
+            .await
+            .apply_project_chat_result(&project_id, Err(AppError::conflict(error.to_string())))
+            .await?;
+        return Err(error);
+    }
     spawn_project_chat_response(state, project_id, input);
     Ok((
         StatusCode::ACCEPTED,
@@ -496,7 +504,18 @@ pub async fn generate_project_requirement_summary(
         .await
         .start_project_requirement_summary(&project_id)
         .await?;
-    state.model_provider.begin_project_chat(&project_id).await?;
+    if let Err(error) = state.model_provider.begin_project_chat(&project_id).await {
+        state
+            .store
+            .write()
+            .await
+            .apply_project_requirement_summary(
+                &project_id,
+                Err(AppError::conflict(error.to_string())),
+            )
+            .await?;
+        return Err(error);
+    }
     spawn_project_requirement_summary(state, project_id, input);
     Ok((
         StatusCode::ACCEPTED,
@@ -552,10 +571,32 @@ pub async fn create_requirement(
     }
     let analysis_guard = RequirementAnalysisGuard::acquire(&state, &project_id)?;
 
+    let branch_input = state
+        .store
+        .write()
+        .await
+        .project_chat_branch_input(&project_id)
+        .await?;
+    let branch_session = match branch_input {
+        Some(input) => {
+            state
+                .model_provider
+                .clone_project_chat_for_requirement(input)
+                .await?
+        }
+        None => None,
+    };
+
     let (requirement_id, input) = {
         let mut store = state.store.write().await;
         store
-            .create_requirement(&project_id, message, payload.references, payload.images)
+            .create_requirement_with_session(
+                &project_id,
+                message,
+                payload.references,
+                payload.images,
+                branch_session,
+            )
             .await?
     };
 
@@ -1106,15 +1147,49 @@ pub async fn confirm_requirement(
         ensure_publication_ready(&readiness)?;
     }
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
-    let project_id = {
+    let (project_id, sync_input) = {
         let mut store = state.store.write().await;
-        store
+        let project_id = store
             .confirm_requirement(&requirement_id, payload.prompt_id, payload.revision)
-            .await?
+            .await?;
+        let sync_input = store.start_requirement_summary_sync(&requirement_id).await;
+        (project_id, sync_input)
     };
+    match sync_input {
+        Ok(input) => start_requirement_summary_sync(state.clone(), input).await,
+        Err(error) => {
+            tracing::warn!(requirement_id, %error, "failed to start requirement summary sync");
+            if let Err(store_error) = state
+                .store
+                .write()
+                .await
+                .record_requirement_summary_sync_start_failure(&requirement_id, &error)
+                .await
+            {
+                tracing::warn!(requirement_id, %store_error, "failed to persist requirement summary sync start failure");
+            }
+        }
+    }
     spawn_project_scheduler(state.clone(), project_id.clone());
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
+}
+
+pub async fn sync_requirement_chat_summary(
+    State(state): State<AppState>,
+    AxumPath(requirement_id): AxumPath<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let input = state
+        .store
+        .write()
+        .await
+        .start_requirement_summary_sync(&requirement_id)
+        .await?;
+    start_requirement_summary_sync(state, input).await;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AcceptedOperation { accepted: true }),
+    ))
 }
 
 pub async fn plan_requirement_execution(
@@ -1546,6 +1621,55 @@ fn spawn_project_requirement_summary(
             emitter.emit(
                 "project_chat_failed",
                 failure.as_deref().unwrap_or("需求说明生成失败。"),
+            );
+        }
+    });
+}
+
+async fn start_requirement_summary_sync(
+    state: AppState,
+    input: crate::models::ProjectChatSummarySyncInput,
+) {
+    let project_id = input.project.id.clone();
+    let requirement_id = input.requirement_id.clone();
+    if let Err(error) = state.model_provider.begin_project_chat(&project_id).await {
+        let _ = state
+            .store
+            .write()
+            .await
+            .apply_requirement_summary_sync(&project_id, &requirement_id, Err(error))
+            .await;
+        return;
+    }
+    tokio::spawn(async move {
+        let emitter = ProjectChatEventEmitter {
+            project_id: project_id.clone(),
+            bus: state.project_chat_events.clone(),
+        };
+        emitter.emit("project_chat_started", "正在把已确认需求写回普通会话。");
+        let output = state
+            .model_provider
+            .sync_requirement_summary_to_project_chat(input, Some(emitter.clone()))
+            .await;
+        let succeeded = output.is_ok();
+        let failure = output.as_ref().err().map(ToString::to_string);
+        let saved = state
+            .store
+            .write()
+            .await
+            .apply_requirement_summary_sync(&project_id, &requirement_id, output)
+            .await;
+        if let Err(error) = saved {
+            emitter.emit(
+                "project_chat_failed",
+                &format!("保存需求摘要写回状态失败：{error}"),
+            );
+        } else if succeeded {
+            emitter.emit("project_chat_completed", "需求摘要已写回普通会话。");
+        } else {
+            emitter.emit(
+                "project_chat_failed",
+                failure.as_deref().unwrap_or("需求摘要写回失败。"),
             );
         }
     });

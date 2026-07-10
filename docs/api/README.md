@@ -164,6 +164,27 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
 `requirement_summary` 存在时包含 `title`、`summary` 和
 `acceptance_criteria`。
 
+系统消息可选携带需求摘要写回状态；旧消息没有 `requirement_context`：
+
+```json
+{
+  "role": "system",
+  "content": "## 已确认需求",
+  "requirement_context": {
+    "requirement_id": "requirement-id",
+    "draft": {
+      "title": "需求标题",
+      "summary": "最终摘要",
+      "acceptance_criteria": ["验收标准"]
+    },
+    "sync_status": "syncing",
+    "sync_error": null
+  }
+}
+```
+
+`sync_status` 为 `syncing | synced | failed`。失败不会改变已确认需求的状态。
+
 ### 发送消息
 
 `POST /api/projects/current/chat/messages`
@@ -188,14 +209,16 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
 }
 ```
 
-会话运行期间再次发送返回 `409 Conflict`。
+会话运行、切换 session、创建需求分支或写回需求摘要期间再次发送返回
+`409 Conflict`。这些操作共享项目聊天 single-flight。
 
 ### 生成需求说明与停止
 
 - `POST /api/projects/current/chat/commands/requirement-summary`
 - `POST /api/projects/current/chat/abort`
 
-生成命令使用当前问答 Pi session 的完整上下文，通过受管工具提交 `title`、
+该需求说明命令作为旧客户端兼容接口保留，新 `/需求生成` UI 不依赖它。生成命令
+使用当前问答 Pi session 的完整上下文，通过受管工具提交 `title`、
 `summary` 和 `acceptance_criteria`；重复生成覆盖上一版。没有完整问答或会话
 繁忙时请求会被拒绝，普通问答不能调用该工具。命令成功接受后同样返回
 `202 { "accepted": true, "turn_id": "..." }`。
@@ -256,6 +279,12 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
 }
 ```
 
+创建前后端会自动选择需求 session：主聊天已有 Pi session 时调用 Pi RPC `clone`，
+保存 clone 得到的分支 session，并在 clone 后立即切回主 session；主聊天为空时不
+clone，由需求分析创建新 session。主聊天正在运行或切换 session 时返回
+`409 Conflict`。`Requirement.pi_session_file` 与主聊天 session 均为后端字段，不会
+出现在 API 响应中。
+
 ### 获取对话和追加消息
 
 - `GET /api/requirements/{id}/conversation`
@@ -303,9 +332,17 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
 - `POST /api/requirements/{id}/confirm`
 - `POST /api/requirements/{id}/cancel`
 - `DELETE /api/requirements/{id}`
+- `POST /api/requirements/{id}/sync-chat-summary`
 
 确认后需求进入当前项目 FIFO 队列，后端自动生成执行 DAG 并开始执行。失败需求会
-暂停后续队列，避免后续需求越过失败项。
+暂停后续队列，避免后续需求越过失败项。同时后端异步向主 Pi session 写入最终
+需求摘要，并持久化一张项目聊天系统卡片；Pi 的内部确认回复不会作为聊天消息或
+实时流展示。写回期间项目聊天保持 `running: true`，普通消息与重置返回
+`409 Conflict`。
+
+写回失败只把系统卡片标记为 `failed`，不会回滚确认或阻止 FIFO/DAG。重试接口仅
+接受已确认需求，成功启动返回 `202 { "accepted": true }`；重复写回更新同一张卡片，
+不会新增重复系统消息。取消分析或删除/放弃未确认需求不会写回摘要。
 
 ### 重试规划和任务组恢复
 

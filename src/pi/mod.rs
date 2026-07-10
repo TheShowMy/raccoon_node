@@ -22,8 +22,9 @@ use transport::PiRpcTransportConfig;
 use crate::error::AppError;
 use crate::models::{
     GitProvider, ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings,
-    ModelTierSetting, PI_RPC_REQUEST_ID, PiModel, ProjectChatEventEmitter, ProjectChatFuture,
-    ProjectChatInput, ProjectChatOutput, ProjectRequirementSummaryFuture,
+    ModelTierSetting, PI_RPC_REQUEST_ID, PiModel, ProjectChatBranchFuture, ProjectChatEventEmitter,
+    ProjectChatFuture, ProjectChatInput, ProjectChatOutput, ProjectChatSummarySyncFuture,
+    ProjectChatSummarySyncInput, ProjectChatSummarySyncOutput, ProjectRequirementSummaryFuture,
     ProjectRequirementSummaryOutput, PromptImage, RequirementAnalysisFuture,
     RequirementAnalysisInput, RequirementAnalysisOutput, RequirementEventEmitter,
     RequirementModelTier, RequirementPlanFuture, RequirementPlanInput, RequirementReviewStatus,
@@ -439,35 +440,36 @@ impl ModelProvider for PiRpcModelProvider {
         events: Option<ProjectChatEventEmitter>,
     ) -> ProjectChatFuture<'_> {
         Box::pin(async move {
+            let project_id = input.project.id.clone();
             let operation = self
                 .project_chat_operations
                 .lock()
                 .await
-                .get(&input.project.id)
+                .get(&project_id)
                 .cloned()
                 .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-            let working_dir =
-                resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
-            let client = PiRpcClient::start(&self.session_dir, &working_dir).await?;
-            let client = Arc::new(client);
-            self.project_chat_clients
-                .lock()
-                .await
-                .insert(input.project.id.clone(), client.clone());
-            if operation.load(Ordering::Relaxed) {
-                client.cancel().await;
+            let result = async {
+                let working_dir =
+                    resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
+                let client = Arc::new(PiRpcClient::start(&self.session_dir, &working_dir).await?);
+                self.project_chat_clients
+                    .lock()
+                    .await
+                    .insert(project_id.clone(), client.clone());
+                if operation.load(Ordering::Relaxed) {
+                    client.cancel().await;
+                }
+                let output = client.ask_project_chat(input, events).await;
+                self.project_chat_clients.lock().await.remove(&project_id);
+                client.shutdown().await;
+                output
             }
-            let output = client.ask_project_chat(input.clone(), events).await;
-            self.project_chat_clients
-                .lock()
-                .await
-                .remove(&input.project.id);
-            client.shutdown().await;
+            .await;
             self.project_chat_operations
                 .lock()
                 .await
-                .remove(&input.project.id);
-            output
+                .remove(&project_id);
+            result
         })
     }
 
@@ -477,53 +479,131 @@ impl ModelProvider for PiRpcModelProvider {
         events: Option<ProjectChatEventEmitter>,
     ) -> ProjectRequirementSummaryFuture<'_> {
         Box::pin(async move {
+            let project_id = input.project.id.clone();
             let operation = self
                 .project_chat_operations
                 .lock()
                 .await
-                .get(&input.project.id)
+                .get(&project_id)
                 .cloned()
                 .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
-            let working_dir =
-                resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
-            let extension_path = self
-                .clarification_extension_path
-                .as_deref()
-                .ok_or_else(|| AppError::internal("受管需求说明插件不可用"))?;
-            let client = Arc::new(
-                PiRpcClient::start_with_extension(&self.session_dir, &working_dir, extension_path)
+            let result = async {
+                let working_dir =
+                    resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
+                let extension_path = self
+                    .clarification_extension_path
+                    .as_deref()
+                    .ok_or_else(|| AppError::internal("受管需求说明插件不可用"))?;
+                let client = Arc::new(
+                    PiRpcClient::start_with_extension(
+                        &self.session_dir,
+                        &working_dir,
+                        extension_path,
+                    )
                     .await?,
-            );
-            self.project_chat_clients
-                .lock()
-                .await
-                .insert(input.project.id.clone(), client.clone());
-            if operation.load(Ordering::Relaxed) {
-                client.cancel().await;
+                );
+                self.project_chat_clients
+                    .lock()
+                    .await
+                    .insert(project_id.clone(), client.clone());
+                if operation.load(Ordering::Relaxed) {
+                    client.cancel().await;
+                }
+                let output = client
+                    .generate_project_requirement_summary(input, events)
+                    .await;
+                self.project_chat_clients.lock().await.remove(&project_id);
+                client.shutdown().await;
+                output
             }
-            let output = client
-                .generate_project_requirement_summary(input.clone(), events)
-                .await;
-            self.project_chat_clients
+            .await;
+            self.project_chat_operations
                 .lock()
                 .await
-                .remove(&input.project.id);
-            client.shutdown().await;
+                .remove(&project_id);
+            result
+        })
+    }
+
+    fn clone_project_chat_for_requirement(
+        &self,
+        input: ProjectChatInput,
+    ) -> ProjectChatBranchFuture<'_> {
+        Box::pin(async move {
+            if input.pi_session_file.is_none() {
+                return Ok(None);
+            }
+            {
+                let mut operations = self.project_chat_operations.lock().await;
+                if operations.contains_key(&input.project.id) {
+                    return Err(AppError::conflict("普通会话正在运行，暂时无法创建需求分支"));
+                }
+                operations.insert(input.project.id.clone(), Arc::new(AtomicBool::new(false)));
+            }
+            let result = async {
+                let working_dir =
+                    resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
+                let client = PiRpcClient::start(&self.session_dir, &working_dir).await?;
+                let result = client.clone_requirement_branch(&input).await;
+                client.shutdown().await;
+                result.map(Some)
+            }
+            .await;
             self.project_chat_operations
                 .lock()
                 .await
                 .remove(&input.project.id);
-            output
+            result
+        })
+    }
+
+    fn sync_requirement_summary_to_project_chat(
+        &self,
+        input: ProjectChatSummarySyncInput,
+        _events: Option<ProjectChatEventEmitter>,
+    ) -> ProjectChatSummarySyncFuture<'_> {
+        Box::pin(async move {
+            let project_id = input.project.id.clone();
+            let operation = self
+                .project_chat_operations
+                .lock()
+                .await
+                .get(&project_id)
+                .cloned()
+                .ok_or_else(|| AppError::conflict("需求摘要写回操作未启动"))?;
+            let result = async {
+                let working_dir =
+                    resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
+                let client = Arc::new(PiRpcClient::start(&self.session_dir, &working_dir).await?);
+                self.project_chat_clients
+                    .lock()
+                    .await
+                    .insert(project_id.clone(), client.clone());
+                if operation.load(Ordering::Relaxed) {
+                    client.cancel().await;
+                }
+                let output = client.sync_requirement_summary(input).await;
+                self.project_chat_clients.lock().await.remove(&project_id);
+                client.shutdown().await;
+                output
+            }
+            .await;
+            self.project_chat_operations
+                .lock()
+                .await
+                .remove(&project_id);
+            result
         })
     }
 
     fn begin_project_chat(&self, project_id: &str) -> ModelProviderActionFuture<'_> {
         let project_id = project_id.to_owned();
         Box::pin(async move {
-            self.project_chat_operations
-                .lock()
-                .await
-                .insert(project_id, Arc::new(AtomicBool::new(false)));
+            let mut operations = self.project_chat_operations.lock().await;
+            if operations.contains_key(&project_id) {
+                return Err(AppError::conflict("普通会话正在运行"));
+            }
+            operations.insert(project_id, Arc::new(AtomicBool::new(false)));
             Ok(())
         })
     }
@@ -1176,6 +1256,80 @@ impl PiRpcClient {
             assistant_message: response.assistant_text,
             pi_session_file: self.get_session_file().await?,
             trace: response.trace,
+        })
+    }
+
+    pub async fn clone_requirement_branch(
+        &self,
+        input: &ProjectChatInput,
+    ) -> Result<String, AppError> {
+        let main_session = input
+            .pi_session_file
+            .as_deref()
+            .ok_or_else(|| AppError::bad_request("普通会话尚未创建 Pi session"))?;
+        if !self.restore_or_new_session(Some(main_session)).await? {
+            return Err(AppError::conflict("普通会话 session 不可用于创建需求分支"));
+        }
+        let main_path = self.resolve_session_path(main_session)?;
+        let clone_result = async {
+            let response = self
+                .send_command(serde_json::json!({ "type": "clone" }))
+                .await?;
+            if response
+                .pointer("/data/cancelled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                return Err(AppError::conflict("Pi 取消了需求分支创建"));
+            }
+            let branch = self
+                .get_session_file()
+                .await?
+                .ok_or_else(|| AppError::internal("Pi 未返回需求分支 session"))?;
+            self.validate_session_working_dir().await?;
+            Ok(branch)
+        }
+        .await;
+        let restore_result = self.switch_session(path_str(&main_path)?).await;
+        match (clone_result, restore_result) {
+            (Ok(branch), Ok(())) => Ok(branch),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(AppError::internal(format!(
+                "需求分支已创建，但切回普通会话失败：{error}"
+            ))),
+        }
+    }
+
+    pub async fn sync_requirement_summary(
+        &self,
+        input: ProjectChatSummarySyncInput,
+    ) -> Result<ProjectChatSummarySyncOutput, AppError> {
+        self.restore_or_new_session(input.pi_session_file.as_deref())
+            .await?;
+        self.prepare_model_tier(&input.model_settings, RequirementModelTier::Medium)
+            .await?;
+        let criteria = input
+            .draft
+            .acceptance_criteria
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt = format!(
+            "下面的需求已经在独立分支中完成澄清并确认。请把它作为后续项目问答的已知上下文。不要调用工具，只需简短确认已记录。\n\n# {}\n\n{}\n\n## 验收标准\n\n{}",
+            input.draft.title, input.draft.summary, criteria
+        );
+        self.prompt_with_images(&prompt, &[]).await?;
+        let no_requirement_events = None;
+        self.wait_for_agent_end_with_events(
+            Duration::from_secs(120),
+            Duration::from_secs(600),
+            &no_requirement_events,
+            |_| {},
+        )
+        .await?;
+        Ok(ProjectChatSummarySyncOutput {
+            pi_session_file: self.get_session_file().await?,
         })
     }
 

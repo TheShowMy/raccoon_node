@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { App } from "./App";
+import App from "./App";
+import { buildOrbitNodes, OrbitNode } from "./canvas/orbitNodes";
 
 class WebSocketMock {
   onerror: (() => void) | null = null;
@@ -40,6 +41,20 @@ describe("App", () => {
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
         const url = String(input);
+        if (url.includes("/project/current")) {
+          return Promise.resolve(
+            jsonResponse({
+              project: canvasResponse.project,
+              theme_pack: "neutral",
+              theme_mode: "dark",
+              publication_readiness: {
+                ready: true,
+                mode: "local",
+                issues: [],
+              },
+            }),
+          );
+        }
         if (url.includes("/canvas"))
           return Promise.resolve(jsonResponse(canvasResponse));
         if (url.includes("/chat")) {
@@ -130,11 +145,54 @@ describe("App", () => {
       ).toBeInTheDocument();
     });
 
-    expect(screen.getByText("设置")).toBeInTheDocument();
-    expect(screen.getByText("终端")).toBeInTheDocument();
-    expect(screen.getByText("Git")).toBeInTheDocument();
-    expect(screen.getByText("Token")).toBeInTheDocument();
-    expect(screen.getByText("需求列表")).toBeInTheDocument();
-    expect(screen.getByText("文件")).toBeInTheDocument();
+    const orbitNodes = buildOrbitNodes({
+      activePanel: null,
+      gitBranch: "main",
+      modelRpcStatus: "ready",
+      requirementCount: 0,
+      terminalCount: 0,
+      tokenContextPercent: 0,
+      onOpen: vi.fn(),
+    });
+    expect(orbitNodes.map((node) => node.id)).toEqual([
+      "orbit-settings",
+      "orbit-terminal",
+      "orbit-git",
+      "orbit-tokens",
+      "orbit-requirements",
+      "orbit-files",
+    ]);
+    expect(
+      screen.queryByLabelText("React Flow Mini Map"),
+    ).not.toBeInTheDocument();
+
+    const chatNode = screen.getByTestId("rf__node-requirement-chat");
+    const settingsNode = screen.getByTestId("rf__node-orbit-settings");
+    expect(chatNode).toHaveStyle({ pointerEvents: "all" });
+    expect(settingsNode).toHaveStyle({ pointerEvents: "all" });
+    expect(chatNode.querySelector(".node-card--requirement-chat")).toHaveClass(
+      "nowheel",
+    );
+  });
+
+  it("opens an orbit workbench from its interactive button", () => {
+    const onOpen = vi.fn();
+    const settings = buildOrbitNodes({
+      activePanel: null,
+      gitBranch: "main",
+      modelRpcStatus: "ready",
+      requirementCount: 0,
+      terminalCount: 0,
+      tokenContextPercent: 0,
+      onOpen,
+    })[0];
+
+    render(
+      <OrbitNode
+        {...({ data: settings.data } as Parameters<typeof OrbitNode>[0])}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /设置/ }));
+    expect(onOpen).toHaveBeenCalledWith("settings");
   });
 });

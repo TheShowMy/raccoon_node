@@ -430,6 +430,12 @@ export type ProjectChatMessage = {
   references?: FileReference[];
   images?: ImageAttachment[];
   metadata?: TraceMetadata | null;
+  requirement_context?: {
+    requirement_id: string;
+    draft: RequirementDraft;
+    sync_status: "syncing" | "synced" | "failed";
+    sync_error?: string | null;
+  } | null;
   created_at: string;
 };
 
@@ -693,6 +699,8 @@ export type StartNodeData =
       onProjectChatAbort: () => Promise<void>;
       onProjectChatGenerateRequirement: () => Promise<void>;
       onProjectChatReset: () => Promise<void>;
+      onRetryRequirementSummarySync?: (requirementId: string) => Promise<void>;
+      onOpenRequirement?: (requirementId: string) => void;
       onAnswerChange: (
         clarification: RequirementClarification,
         answer: DraftClarificationAnswer,

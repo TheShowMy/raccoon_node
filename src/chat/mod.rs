@@ -81,6 +81,7 @@ mod tests {
                 references: Vec::new(),
                 images: Vec::new(),
                 metadata: None,
+                requirement_context: None,
                 created_at: Utc::now(),
             }],
             reference_context: None,

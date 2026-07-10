@@ -70,7 +70,26 @@ pub struct ProjectChatMessage {
     pub images: Vec<ImageAttachment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirement_context: Option<ProjectChatRequirementContext>,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectChatRequirementContext {
+    pub requirement_id: String,
+    pub draft: RequirementDraft,
+    pub sync_status: RequirementSummarySyncStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementSummarySyncStatus {
+    Syncing,
+    Synced,
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -858,6 +877,10 @@ pub type ProjectChatFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ProjectChatOutput, AppError>> + Send + 'a>>;
 pub type ProjectRequirementSummaryFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ProjectRequirementSummaryOutput, AppError>> + Send + 'a>>;
+pub type ProjectChatBranchFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<String>, AppError>> + Send + 'a>>;
+pub type ProjectChatSummarySyncFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<ProjectChatSummarySyncOutput, AppError>> + Send + 'a>>;
 pub type ModelProviderActionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + 'a>>;
 
@@ -891,6 +914,19 @@ pub trait ModelProvider: Send + Sync {
         _events: Option<ProjectChatEventEmitter>,
     ) -> ProjectRequirementSummaryFuture<'_> {
         Box::pin(async { Err(AppError::internal("需求说明生成暂不可用")) })
+    }
+    fn clone_project_chat_for_requirement(
+        &self,
+        _input: ProjectChatInput,
+    ) -> ProjectChatBranchFuture<'_> {
+        Box::pin(async { Ok(None) })
+    }
+    fn sync_requirement_summary_to_project_chat(
+        &self,
+        _input: ProjectChatSummarySyncInput,
+        _events: Option<ProjectChatEventEmitter>,
+    ) -> ProjectChatSummarySyncFuture<'_> {
+        Box::pin(async { Err(AppError::internal("需求摘要写回暂不可用")) })
     }
     fn begin_project_chat(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })
@@ -943,6 +979,20 @@ pub struct ProjectRequirementSummaryOutput {
     pub summary: ProjectRequirementSummary,
     pub pi_session_file: Option<String>,
     pub trace: Option<Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectChatSummarySyncInput {
+    pub project: Project,
+    pub requirement_id: String,
+    pub draft: RequirementDraft,
+    pub model_settings: ModelSettings,
+    pub pi_session_file: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectChatSummarySyncOutput {
+    pub pi_session_file: Option<String>,
 }
 
 #[derive(Debug, Clone)]
