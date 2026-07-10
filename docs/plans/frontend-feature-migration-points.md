@@ -50,7 +50,7 @@ npm run dev
 
 ### 1. Scope And Astryx References
 
-- [ ] 完成实现前准备和 Astryx 模板调研。
+- [x] 完成实现前准备和 Astryx 模板调研。
 
 实现清单：
 
@@ -61,7 +61,7 @@ npm run dev
 
 ### 2. Chat Node
 
-- [ ] 完成中心普通聊天节点。
+- [x] 完成中心普通聊天节点。
 
 实现清单：
 
@@ -77,7 +77,7 @@ npm run dev
 
 ### 3. Requirement Generation
 
-- [ ] 完成 `/需求生成` 流程。
+- [x] 完成 `/需求生成` 流程。
 
 实现清单：
 
@@ -92,7 +92,7 @@ npm run dev
 
 ### 4. Requirements Panel
 
-- [ ] 完成需求列表面板和执行子画布。
+- [x] 完成需求列表面板和执行子画布。
 
 实现清单：
 
@@ -111,7 +111,7 @@ npm run dev
 
 ### 5. Settings Panel
 
-- [ ] 完成设置面板。
+- [x] 完成设置面板。
 
 实现清单：
 
@@ -128,7 +128,7 @@ npm run dev
 
 ### 6. Terminal Panel
 
-- [ ] 完成终端面板。
+- [x] 完成终端面板。
 
 实现清单：
 
@@ -141,7 +141,7 @@ npm run dev
 
 ### 7. Git Panel
 
-- [ ] 完成 Git 面板。
+- [x] 完成 Git 面板。
 
 实现清单：
 
@@ -157,7 +157,7 @@ npm run dev
 
 ### 8. Token Panel
 
-- [ ] 完成 Token 面板。
+- [x] 完成 Token 面板。
 
 实现清单：
 
@@ -168,7 +168,7 @@ npm run dev
 
 ### 9. Files Panel
 
-- [ ] 完成文件面板。
+- [x] 完成文件面板。
 
 实现清单：
 
@@ -183,7 +183,7 @@ npm run dev
 
 ### 10. Cleanup
 
-- [ ] 完成旧前端清理。
+- [x] 完成旧前端清理。
 
 实现清单：
 
@@ -195,7 +195,7 @@ npm run dev
 
 ### 11. Verification
 
-- [ ] 完成检查、启动和浏览器验收。
+- [x] 完成检查、启动和浏览器验收。
 
 实现清单：
 
