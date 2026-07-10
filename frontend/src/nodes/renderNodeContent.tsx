@@ -1,7 +1,7 @@
 import React from "react";
 import type { StartNodeData } from "../types/api";
 import ProjectTerminalNode from "../components/nodes/ProjectTerminalNode";
-import RequirementChatNode from "../components/nodes/RequirementChatNode";
+import AstryxChatSurface from "../components/astryx-chat/AstryxChatSurface";
 import RequirementDagNode from "../components/nodes/RequirementDagNode";
 import RequirementListNode from "../components/nodes/RequirementListNode";
 import RequirementTaskNode from "../components/nodes/RequirementTaskNode";
@@ -18,7 +18,7 @@ export function renderNodeContent(data: StartNodeData): React.JSX.Element {
     case "project-settings":
       return <ProjectSettingsNode data={data} />;
     case "requirement-chat":
-      return <RequirementChatNode data={data} />;
+      return <AstryxChatSurface data={data} />;
     case "project-terminal":
       return <ProjectTerminalNode data={data} />;
     case "project-git":

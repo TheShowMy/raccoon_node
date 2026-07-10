@@ -48,6 +48,13 @@ npm run dev
   `astryx build "fixed full-screen React Flow orbital canvas with pointer parallax and non-interactive camera"`，
   并查询 `astryx docs motion`、`astryx docs layout`。恢复最大 260 画布单位、0.16 插值的
   鼠标视差，遵循 reduced-motion；需求工作台内的嵌套 React Flow 保持可平移缩放。
+- 阶段 3（Chat Rewrite Follow-up）：在 `frontend/` 重新执行
+  `npx astryx build "project AI chat with streaming reasoning tool calls attachments command menu and floating requirement confirmation"`，
+  采用 `ai-chat` 页面模板，并查询 `ChatLayout`、`ChatComposer`、`ChatComposerInput`、
+  `ChatComposerDrawer`、`ChatMessage`、`ChatMessageBubble`、`ChatSystemMessage`、
+  `ChatToolCalls`、`Collapsible`、`Banner`、`AlertDialog` 和 `useStreamingText`。
+  中心聊天从模板重新实现；旧 `RequirementChatNode`、旧 chat transcript、旧 composer/bubble
+  及其测试全部删除，只保留 API、业务 hooks 和节点数据契约。
 - 阶段 4（Requirement Workbench）：执行
   `astryx build "nested requirement DAG workbench with list, dependency graph and task detail dialog"`。
   参考 `detail-page`、`table-grouped`、`DialogConfirmationDialog`，采用 `List`、`Token`、
@@ -88,6 +95,7 @@ npm run dev
 - 使用 AppShell + React Flow 实现中心节点、六个外围节点、单主面板、固定镜头、鼠标视差和程序化视口聚焦。
 - 普通聊天完整支持快照对账、streaming、thinking/tool、停止、重置、附件和文件引用。
 - `/需求生成` 切换同一节点到需求分支；无双 Tab。
+- 中心聊天 UI 基于 Astryx `ai-chat` 模板完整重写，不复用迁移前聊天组件。
 
 ### 4. Requirement Workbench
 
@@ -118,11 +126,8 @@ npm run dev
 - 运行前端类型、测试、格式、构建，随后运行项目检查与 pre-commit。
 - 在 1280x720、1440x900、1920x1080 验收聊天、分支需求、DAG、设置、终端、Git、Token 和文件工作流。
 
-当前环境阻断（因此阶段 7 不勾选）：机器未安装/不可发现 Pi Agent，指定仓库的
-`npm run dev` 按硬约束拒绝启动；应用内浏览器安全策略拒绝本地验收地址；用户级
-`pre-commit` 的 uv 工具目录在沙箱内不可读，沙箱外审批服务返回 404。根级检查除
-需要 crates.io 网络的 `cargo publish --dry-run` 外均通过，发布 dry-run 的联网重跑
-同样被审批服务阻断。
+阶段 7 仍未勾选：当前完全访问环境已可运行 `uv`、pre-commit 和本地服务，待本轮
+Astryx 聊天重写完成全部检查与三档桌面浏览器验收后再更新阶段状态。
 
 ## Completion Criteria
 

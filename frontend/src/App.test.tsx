@@ -126,6 +126,7 @@ describe("App", () => {
             }),
           );
         }
+        if (url.includes("/files")) return Promise.resolve(jsonResponse([]));
         return Promise.resolve(jsonResponse({}));
       }),
     );
@@ -141,8 +142,9 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByText("项目对话")).toBeInTheDocument();
       expect(
-        screen.getByText("D:\\work\\rust\\raccoon_agents_test"),
+        screen.getByRole("combobox", { name: "项目聊天输入" }),
       ).toBeInTheDocument();
+      expect(screen.getByText("询问当前项目")).toBeInTheDocument();
     });
 
     const orbitNodes = buildOrbitNodes({

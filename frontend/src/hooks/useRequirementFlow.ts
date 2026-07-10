@@ -100,54 +100,57 @@ export function useRequirementFlow(
     setRequirementStreamEvents([]);
   }, [observedRequirementId]);
 
-  const sendRequirementMessage = useCallback(async () => {
-    const message = requirementInput.trim();
-    if (!message || !selectedProjectId) {
-      return;
-    }
+  const sendRequirementMessage = useCallback(
+    async (messageOverride?: string) => {
+      const message = (messageOverride ?? requirementInput).trim();
+      if (!message || !selectedProjectId) {
+        return;
+      }
 
-    setRequirementBusy(true);
-    setRequirementError(null);
-    try {
-      const accepted = activeRequirementId
-        ? await appendRequirementMessage(activeRequirementId, {
-            message,
-            references: requirementReferences,
-            images: requirementImages,
-          })
-        : await createRequirement(selectedProjectId, {
-            message,
-            references: requirementReferences,
-            images: requirementImages,
-          });
-      setRequirementStreamEvents([]);
-      setClarificationAnswers({});
-      setDismissedPromptRequirementId(null);
-      const data = await loadProjectCanvas(selectedProjectId);
-      setProjectCanvas(data);
-      const nextRequirementId =
-        data.active_requirement?.id ?? accepted.requirement_id;
-      void loadRequirementConversation(nextRequirementId).catch((reason) =>
-        setRequirementError(readError(reason)),
-      );
-      setRequirementInput("");
-      setRequirementReferences([]);
-      setRequirementImages([]);
-    } catch (reason) {
-      setRequirementError(readError(reason));
-    } finally {
-      setRequirementBusy(false);
-    }
-  }, [
-    activeRequirementId,
-    loadRequirementConversation,
-    loadProjectCanvas,
-    requirementInput,
-    requirementImages,
-    requirementReferences,
-    selectedProjectId,
-    setProjectCanvas,
-  ]);
+      setRequirementBusy(true);
+      setRequirementError(null);
+      try {
+        const accepted = activeRequirementId
+          ? await appendRequirementMessage(activeRequirementId, {
+              message,
+              references: requirementReferences,
+              images: requirementImages,
+            })
+          : await createRequirement(selectedProjectId, {
+              message,
+              references: requirementReferences,
+              images: requirementImages,
+            });
+        setRequirementStreamEvents([]);
+        setClarificationAnswers({});
+        setDismissedPromptRequirementId(null);
+        const data = await loadProjectCanvas(selectedProjectId);
+        setProjectCanvas(data);
+        const nextRequirementId =
+          data.active_requirement?.id ?? accepted.requirement_id;
+        void loadRequirementConversation(nextRequirementId).catch((reason) =>
+          setRequirementError(readError(reason)),
+        );
+        setRequirementInput("");
+        setRequirementReferences([]);
+        setRequirementImages([]);
+      } catch (reason) {
+        setRequirementError(readError(reason));
+      } finally {
+        setRequirementBusy(false);
+      }
+    },
+    [
+      activeRequirementId,
+      loadRequirementConversation,
+      loadProjectCanvas,
+      requirementInput,
+      requirementImages,
+      requirementReferences,
+      selectedProjectId,
+      setProjectCanvas,
+    ],
+  );
 
   const handleConversationEvent = useCallback(
     (event: ConversationEvent) => {
