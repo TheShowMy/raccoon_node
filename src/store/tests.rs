@@ -108,12 +108,11 @@ async fn version_two_database_migrates_to_version_three_without_data_loss() {
 }
 use crate::error::AppError;
 use crate::models::{
-    Project, ProjectChat, ProjectChatMessage, ProjectChatMessageRole, ProjectChatSummarySyncOutput,
-    ProjectRequirementSummaryOutput, Requirement, RequirementDraft, RequirementExecutionPlan,
-    RequirementExecutionTask, RequirementMessage, RequirementMessageRole, RequirementModelTier,
-    RequirementRecoveryStage, RequirementReviewRoundStatus, RequirementReviewStatus,
-    RequirementStatus, RequirementSummarySyncStatus, RequirementTaskExecutionOutput,
-    RequirementTaskKind, RequirementTaskStatus,
+    Project, ProjectChat, ProjectChatMessage, ProjectChatMessageRole, Requirement,
+    RequirementDraft, RequirementExecutionPlan, RequirementExecutionTask, RequirementMessage,
+    RequirementMessageRole, RequirementModelTier, RequirementRecoveryStage,
+    RequirementReviewRoundStatus, RequirementReviewStatus, RequirementStatus,
+    RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
 };
 
 #[test]
@@ -1134,7 +1133,6 @@ async fn stale_pi_session_cleanup_keeps_requirement_and_task_references() {
         running: false,
         error: None,
         pi_session_file: Some(project_chat_session.to_string_lossy().to_string()),
-        requirement_summary: None,
         created_at: now,
         updated_at: now,
     });
@@ -1436,46 +1434,14 @@ async fn resetting_project_chat_clears_context_and_rejects_running_chat() {
         references: Vec::new(),
         images: Vec::new(),
         metadata: None,
-        requirement_context: None,
         created_at: now,
     });
     chat.error = Some("旧错误".to_owned());
     chat.pi_session_file = Some("old.jsonl".to_owned());
-    chat.requirement_summary = Some(RequirementDraft {
-        title: "旧需求".to_owned(),
-        summary: "旧摘要".to_owned(),
-        acceptance_criteria: vec!["旧标准".to_owned()],
-    });
-
-    store
-        .apply_project_requirement_summary(
-            "project",
-            Ok(ProjectRequirementSummaryOutput {
-                summary: RequirementDraft {
-                    title: "新需求".to_owned(),
-                    summary: "新摘要".to_owned(),
-                    acceptance_criteria: vec!["新标准".to_owned()],
-                },
-                pi_session_file: Some("new.jsonl".to_owned()),
-                trace: None,
-            }),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        store.data.project_chats[0]
-            .requirement_summary
-            .as_ref()
-            .unwrap()
-            .title,
-        "新需求"
-    );
-
     let response = store.reset_project_chat("project").await.unwrap();
     assert!(response.messages.is_empty());
     assert!(response.error.is_none());
     assert!(store.data.project_chats[0].pi_session_file.is_none());
-    assert!(response.requirement_summary.is_none());
 
     store.data.project_chats[0].running = true;
     assert!(store.reset_project_chat("project").await.is_err());
@@ -1499,7 +1465,7 @@ async fn requirement_branch_input_distinguishes_fresh_clone_and_running_chat() {
 
     assert!(
         store
-            .project_chat_branch_input("project")
+            .start_project_chat_requirement_branch("project")
             .await
             .unwrap()
             .is_none()
@@ -1513,16 +1479,27 @@ async fn requirement_branch_input_distinguishes_fresh_clone_and_running_chat() {
         references: Vec::new(),
         images: Vec::new(),
         metadata: None,
-        requirement_context: None,
+        created_at: now,
+    });
+    chat.messages.push(ProjectChatMessage {
+        role: ProjectChatMessageRole::Assistant,
+        content: "已完成回复".to_owned(),
+        references: Vec::new(),
+        images: Vec::new(),
+        metadata: None,
         created_at: now,
     });
     let input = store
-        .project_chat_branch_input("project")
+        .start_project_chat_requirement_branch("project")
         .await
         .unwrap()
         .unwrap();
     assert_eq!(input.pi_session_file.as_deref(), Some("main.jsonl"));
-    assert_eq!(input.messages.len(), 1);
+    assert_eq!(input.messages.len(), 2);
+    store
+        .finish_project_chat_requirement_branch("project")
+        .await
+        .unwrap();
 
     store
         .create_requirement_with_session(
@@ -1539,16 +1516,25 @@ async fn requirement_branch_input_distinguishes_fresh_clone_and_running_chat() {
         Some("branch.jsonl")
     );
     assert_eq!(
+        store.data.requirements[0].origin,
+        crate::models::RequirementOrigin::ProjectChatBranch
+    );
+    assert_eq!(
         store.data.project_chats[0].pi_session_file.as_deref(),
         Some("main.jsonl")
     );
 
     store.data.project_chats[0].running = true;
-    assert!(store.project_chat_branch_input("project").await.is_err());
+    assert!(
+        store
+            .start_project_chat_requirement_branch("project")
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
-async fn confirmed_requirement_summary_sync_is_retryable_without_rolling_back_requirement() {
+async fn complete_chat_without_parent_session_does_not_fall_back_to_standalone() {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
         .await
@@ -1562,77 +1548,59 @@ async fn confirmed_requirement_summary_sync_is_retryable_without_rolling_back_re
         created_at: now,
         updated_at: now,
     });
-    let mut confirmed = requirement("req-1");
-    confirmed.status = RequirementStatus::Queued;
-    confirmed.draft = Some(RequirementDraft {
-        title: "分支需求".to_owned(),
-        summary: "从普通会话分支完成澄清".to_owned(),
-        acceptance_criteria: vec!["摘要写回主会话".to_owned()],
-    });
-    store.data.requirements.push(confirmed);
-
-    let input = store.start_requirement_summary_sync("req-1").await.unwrap();
-    assert_eq!(input.requirement_id, "req-1");
-    store
-        .apply_requirement_summary_sync("project", "req-1", Err(AppError::internal("rpc offline")))
-        .await
-        .unwrap();
-    let context = store.data.project_chats[0].messages[0]
-        .requirement_context
-        .as_ref()
-        .unwrap();
-    assert_eq!(context.sync_status, RequirementSummarySyncStatus::Failed);
-    assert!(
-        context
-            .sync_error
-            .as_deref()
-            .unwrap()
-            .contains("rpc offline")
-    );
-    assert_eq!(store.data.requirements[0].status, RequirementStatus::Queued);
-
-    store.start_requirement_summary_sync("req-1").await.unwrap();
-    store
-        .apply_requirement_summary_sync(
-            "project",
-            "req-1",
-            Ok(ProjectChatSummarySyncOutput {
-                pi_session_file: Some("main.jsonl".to_owned()),
-            }),
-        )
-        .await
-        .unwrap();
-    let context = store.data.project_chats[0].messages[0]
-        .requirement_context
-        .as_ref()
-        .unwrap();
-    assert_eq!(context.sync_status, RequirementSummarySyncStatus::Synced);
-    assert!(context.sync_error.is_none());
-    assert_eq!(
-        store.data.project_chats[0].pi_session_file.as_deref(),
-        Some("main.jsonl")
-    );
-
-    store.data.project_chats[0].running = true;
-    let conflict = store
-        .start_requirement_summary_sync("req-1")
+    store.project_chat_response("project").await.unwrap();
+    for (role, content) in [
+        (ProjectChatMessageRole::User, "问题"),
+        (ProjectChatMessageRole::Assistant, "回答"),
+    ] {
+        store.data.project_chats[0]
+            .messages
+            .push(ProjectChatMessage {
+                role,
+                content: content.to_owned(),
+                references: Vec::new(),
+                images: Vec::new(),
+                metadata: None,
+                created_at: now,
+            });
+    }
+    let error = store
+        .start_project_chat_requirement_branch("project")
         .await
         .unwrap_err();
-    store
-        .record_requirement_summary_sync_start_failure("req-1", &conflict)
+    assert!(error.to_string().contains("session 已丢失"));
+    assert!(!store.data.project_chats[0].running);
+    assert!(store.data.requirements.is_empty());
+}
+
+#[tokio::test]
+async fn active_requirement_blocks_project_chat_send_and_reset() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
-    let chat = &store.data.project_chats[0];
-    assert!(chat.running);
-    let context = chat.messages[0].requirement_context.as_ref().unwrap();
-    assert_eq!(context.sync_status, RequirementSummarySyncStatus::Failed);
+    let now = Utc::now();
+    store.data.projects.push(Project {
+        id: "project".to_owned(),
+        name: "project".to_owned(),
+        git_url: String::new(),
+        local_path: temp_dir.path().to_string_lossy().to_string(),
+        created_at: now,
+        updated_at: now,
+    });
+    store.project_chat_response("project").await.unwrap();
+    let mut active = requirement("active");
+    active.status = RequirementStatus::Clarifying;
+    active.project_id = "project".to_owned();
+    store.data.requirements.push(active);
+
     assert!(
-        context
-            .sync_error
-            .as_deref()
-            .unwrap()
-            .contains("普通会话正在运行")
+        store
+            .start_project_chat_message("project", "继续".to_owned(), Vec::new(), Vec::new())
+            .await
+            .is_err()
     );
+    assert!(store.reset_project_chat("project").await.is_err());
 }
 
 fn requirement(id: &str) -> Requirement {
@@ -1642,6 +1610,7 @@ fn requirement(id: &str) -> Requirement {
         project_id: "project".to_owned(),
         title: id.to_owned(),
         original_message: id.to_owned(),
+        origin: crate::models::RequirementOrigin::Standalone,
         status: RequirementStatus::Running,
         messages: vec![RequirementMessage {
             role: RequirementMessageRole::User,
@@ -1664,6 +1633,48 @@ fn requirement(id: &str) -> Requirement {
         created_at: now,
         updated_at: now,
     }
+}
+
+#[tokio::test]
+async fn task_detail_preserves_diagnostics_but_hides_internal_paths() {
+    let mut requirement = requirement("req-detail");
+    let mut detail = task(
+        "task-detail",
+        RequirementTaskKind::Implementation,
+        RequirementTaskStatus::Failed,
+    );
+    detail.pi_session_file = Some("/private/session.jsonl".to_owned());
+    detail.worktree_path = Some("/private/worktree".to_owned());
+    detail.failure_summary = Some("tests failed".to_owned());
+    detail.recovery_guidance = Some("retry after fixing".to_owned());
+    detail.pull_request_url = Some("https://example.test/pr/1".to_owned());
+    detail.target_files = vec!["src/lib.rs".to_owned()];
+    detail.trace = Some(serde_json::json!({"trace": {"usage": {"input": 1}}}));
+    requirement.execution_plan = Some(RequirementExecutionPlan {
+        summary: "detail".to_owned(),
+        tasks: vec![detail],
+    });
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp.path().join(".raccoon-node"))
+        .await
+        .unwrap();
+    store.data.requirements.push(requirement);
+
+    let response = store
+        .requirement_task_detail("req-detail", "task-detail")
+        .unwrap();
+    assert!(response.task.pi_session_file.is_none());
+    assert!(response.task.worktree_path.is_none());
+    assert_eq!(
+        response.task.failure_summary.as_deref(),
+        Some("tests failed")
+    );
+    assert_eq!(
+        response.task.recovery_guidance.as_deref(),
+        Some("retry after fixing")
+    );
+    assert_eq!(response.task.target_files, vec!["src/lib.rs"]);
+    assert!(response.task.trace.is_some());
 }
 
 fn queued_requirement(id: &str, queued_at: chrono::DateTime<Utc>) -> Requirement {

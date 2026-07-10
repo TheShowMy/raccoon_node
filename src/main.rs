@@ -258,10 +258,7 @@ mod tests {
     use clap::Parser;
     use serde_json::json;
     use std::path::{Path, PathBuf};
-    use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    };
+    use std::sync::{Arc, Mutex};
     use tokio::sync::RwLock;
     use tower::ServiceExt;
 
@@ -275,17 +272,15 @@ mod tests {
         ClarificationAnswerRequest, ClarificationOption, ClarificationQuestionType, GitProvider,
         ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings, PiModel,
         Project, ProjectChatBranchFuture, ProjectChatEventEmitter, ProjectChatFuture,
-        ProjectChatInput, ProjectChatMessageRole, ProjectChatOutput, ProjectChatSummarySyncFuture,
-        ProjectChatSummarySyncInput, ProjectChatSummarySyncOutput, PublicationReadiness,
+        ProjectChatInput, ProjectChatMessageRole, ProjectChatOutput, PublicationReadiness,
         Requirement, RequirementAnalysisFuture, RequirementAnalysisInput,
         RequirementAnalysisOutput, RequirementClarification, RequirementConversationItem,
         RequirementConversationPrompt, RequirementDraft, RequirementEventEmitter,
         RequirementExecutionPlan, RequirementExecutionTask, RequirementMessage,
         RequirementMessageRole, RequirementModelTier, RequirementPlanFuture, RequirementPlanInput,
         RequirementRecoveryStage, RequirementReviewStatus, RequirementStatus,
-        RequirementSummarySyncStatus, RequirementTaskExecutionFuture,
-        RequirementTaskExecutionInput, RequirementTaskExecutionOutput, RequirementTaskKind,
-        RequirementTaskStatus, ThinkingLevel,
+        RequirementTaskExecutionFuture, RequirementTaskExecutionInput,
+        RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus, ThinkingLevel,
     };
     use raccoon_node::requirement::build_requirement_prompt;
     use raccoon_node::store::JsonStore;
@@ -298,17 +293,11 @@ mod tests {
         task: Result<RequirementTaskExecutionOutput, String>,
         project_chat: Result<ProjectChatOutput, String>,
         project_chat_branch: Result<Option<String>, String>,
-        project_chat_summary_sync: Result<ProjectChatSummarySyncOutput, String>,
         cloned_sessions: Arc<Mutex<Vec<Option<String>>>>,
-        summary_sync_calls: Arc<AtomicUsize>,
         reload: Result<(), String>,
     }
 
-    type FakeBranchProvider = (
-        Arc<dyn ModelProvider>,
-        Arc<Mutex<Vec<Option<String>>>>,
-        Arc<AtomicUsize>,
-    );
+    type FakeBranchProvider = (Arc<dyn ModelProvider>, Arc<Mutex<Vec<Option<String>>>>);
 
     impl ModelProvider for FakeModelProvider {
         fn available_models(&self) -> ModelProviderFuture<'_> {
@@ -363,19 +352,6 @@ mod tests {
                 self.project_chat_branch.clone().map_err(AppError::internal)
             })
         }
-
-        fn sync_requirement_summary_to_project_chat(
-            &self,
-            _input: ProjectChatSummarySyncInput,
-            _events: Option<ProjectChatEventEmitter>,
-        ) -> ProjectChatSummarySyncFuture<'_> {
-            Box::pin(async move {
-                self.summary_sync_calls.fetch_add(1, Ordering::Relaxed);
-                self.project_chat_summary_sync
-                    .clone()
-                    .map_err(AppError::internal)
-            })
-        }
     }
 
     fn fake_provider(models: Vec<PiModel>) -> std::sync::Arc<dyn ModelProvider> {
@@ -395,11 +371,7 @@ mod tests {
             task: Ok(test_task_output()),
             project_chat: Ok(test_project_chat_output()),
             project_chat_branch: Ok(Some("requirement-branch.jsonl".to_owned())),
-            project_chat_summary_sync: Ok(ProjectChatSummarySyncOutput {
-                pi_session_file: Some("project-chat-synced.jsonl".to_owned()),
-            }),
             cloned_sessions: Arc::new(Mutex::new(Vec::new())),
-            summary_sync_calls: Arc::new(AtomicUsize::new(0)),
             reload: Ok(()),
         })
     }
@@ -414,11 +386,7 @@ mod tests {
             task: Ok(test_task_output()),
             project_chat: Ok(test_project_chat_output()),
             project_chat_branch: Ok(Some("requirement-branch.jsonl".to_owned())),
-            project_chat_summary_sync: Ok(ProjectChatSummarySyncOutput {
-                pi_session_file: Some("project-chat-synced.jsonl".to_owned()),
-            }),
             cloned_sessions: Arc::new(Mutex::new(Vec::new())),
-            summary_sync_calls: Arc::new(AtomicUsize::new(0)),
             reload: Ok(()),
         })
     }
@@ -431,16 +399,13 @@ mod tests {
             task: Err(message.to_owned()),
             project_chat: Err(message.to_owned()),
             project_chat_branch: Err(message.to_owned()),
-            project_chat_summary_sync: Err(message.to_owned()),
             cloned_sessions: Arc::new(Mutex::new(Vec::new())),
-            summary_sync_calls: Arc::new(AtomicUsize::new(0)),
             reload: Err(message.to_owned()),
         })
     }
 
     fn fake_branch_provider() -> FakeBranchProvider {
         let cloned_sessions = Arc::new(Mutex::new(Vec::new()));
-        let summary_sync_calls = Arc::new(AtomicUsize::new(0));
         let provider = FakeModelProvider {
             result: Ok(vec![test_model("test/model", "Test Model")]),
             analysis: Ok(RequirementAnalysisOutput {
@@ -451,7 +416,7 @@ mod tests {
                 draft: Some(RequirementDraft {
                     title: "分支需求".to_owned(),
                     summary: "继承普通会话上下文。".to_owned(),
-                    acceptance_criteria: vec!["摘要写回普通会话".to_owned()],
+                    acceptance_criteria: vec!["父会话保持不变".to_owned()],
                 }),
                 pi_session_file: Some("requirement-branch.jsonl".to_owned()),
                 error: None,
@@ -461,14 +426,10 @@ mod tests {
             task: Ok(test_task_output()),
             project_chat: Ok(test_project_chat_output()),
             project_chat_branch: Ok(Some("requirement-branch.jsonl".to_owned())),
-            project_chat_summary_sync: Ok(ProjectChatSummarySyncOutput {
-                pi_session_file: Some("project-chat-synced.jsonl".to_owned()),
-            }),
             cloned_sessions: cloned_sessions.clone(),
-            summary_sync_calls: summary_sync_calls.clone(),
             reload: Ok(()),
         };
-        (Arc::new(provider), cloned_sessions, summary_sync_calls)
+        (Arc::new(provider), cloned_sessions)
     }
 
     fn test_execution_plan() -> RequirementExecutionPlan {
@@ -1447,14 +1408,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn requirement_branch_clones_main_chat_and_retries_summary_sync() {
+    async fn requirement_branch_clones_main_chat_without_mutating_parent_session() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_root = temp_dir.path().join(".raccoon-node");
         let mut store = JsonStore::open(data_root.clone()).await.unwrap();
         let project = test_project("alpha");
         store.data.projects.push(project.clone());
         store.persist().await.unwrap();
-        let (provider, cloned_sessions, summary_sync_calls) = fake_branch_provider();
+        let (provider, cloned_sessions) = fake_branch_provider();
         let app = build_app_with_model_provider(store, PathBuf::from("frontend/dist"), provider);
 
         let response = app
@@ -1477,7 +1438,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(format!("/api/projects/{}/requirements", project.id))
+                    .uri(format!(
+                        "/api/projects/{}/chat/commands/requirement-branch",
+                        project.id
+                    ))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"message":"基于上文生成需求"}"#))
                     .unwrap(),
@@ -1511,61 +1475,23 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        let mut synced = None;
-        for _ in 0..100 {
-            let store = JsonStore::open(data_root.clone()).await.unwrap();
-            let chat = store
-                .data
-                .project_chats
-                .iter()
-                .find(|chat| chat.project_id == project.id)
-                .unwrap();
-            if chat.messages.iter().any(|message| {
-                message.requirement_context.as_ref().is_some_and(|context| {
-                    context.requirement_id == requirement_id
-                        && context.sync_status == RequirementSummarySyncStatus::Synced
-                })
-            }) {
-                synced = Some(chat.clone());
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-        let synced = synced.expect("summary sync did not finish");
-        assert_eq!(summary_sync_calls.load(Ordering::Relaxed), 1);
+        let stored = JsonStore::open(data_root).await.unwrap();
+        let parent = stored
+            .data
+            .project_chats
+            .iter()
+            .find(|chat| chat.project_id == project.id)
+            .unwrap();
         assert_eq!(
-            synced.pi_session_file.as_deref(),
-            Some("project-chat-synced.jsonl")
+            parent.pi_session_file.as_deref(),
+            Some("project-chat.jsonl")
         );
-        assert_eq!(
-            synced
+        assert!(
+            parent
                 .messages
                 .iter()
-                .filter(|message| message.role == ProjectChatMessageRole::System)
-                .count(),
-            1
+                .all(|message| message.role != ProjectChatMessageRole::System)
         );
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!(
-                        "/api/requirements/{requirement_id}/sync-chat-summary"
-                    ))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-        for _ in 0..100 {
-            if summary_sync_calls.load(Ordering::Relaxed) >= 2 {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-        assert_eq!(summary_sync_calls.load(Ordering::Relaxed), 2);
     }
 
     #[test]
@@ -2236,6 +2162,7 @@ mod tests {
             project_id: project_id.to_owned(),
             title: id.to_owned(),
             original_message: id.to_owned(),
+            origin: raccoon_node::models::RequirementOrigin::Standalone,
             status,
             messages: vec![RequirementMessage {
                 role: RequirementMessageRole::User,
@@ -2346,6 +2273,7 @@ mod tests {
             project_id: "p1".to_owned(),
             title: "Title".to_owned(),
             original_message: "msg".to_owned(),
+            origin: raccoon_node::models::RequirementOrigin::Standalone,
             status: RequirementStatus::Clarifying,
             messages: Vec::new(),
             clarification_round: 0,

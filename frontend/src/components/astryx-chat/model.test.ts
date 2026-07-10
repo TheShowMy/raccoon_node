@@ -7,31 +7,18 @@ import {
 } from "./model";
 
 describe("Astryx chat model", () => {
-  it("maps project messages without changing structured requirement context", () => {
+  it("maps project system messages without merging requirement state", () => {
     const entries = projectMessageEntries([
       {
         role: "system",
         content: "需求已确认",
         created_at: "2026-07-10T00:00:00Z",
-        requirement_context: {
-          requirement_id: "requirement-1",
-          draft: {
-            title: "登录改造",
-            summary: "改造登录流程",
-            acceptance_criteria: ["测试通过"],
-          },
-          sync_status: "failed",
-          sync_error: "主会话忙碌",
-        },
       },
     ]);
 
     expect(entries[0]).toMatchObject({
       role: "system",
-      requirementContext: {
-        requirement_id: "requirement-1",
-        sync_status: "failed",
-      },
+      text: "需求已确认",
     });
   });
 

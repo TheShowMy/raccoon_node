@@ -335,13 +335,13 @@ export type Requirement = {
   project_id: string;
   title: string;
   original_message: string;
+  origin: "project_chat_branch" | "standalone";
   status: RequirementStatus;
   messages: RequirementMessage[];
   clarification_round: number;
   clarifications: RequirementClarification[];
   draft: RequirementDraft | null;
   execution_plan: RequirementExecutionPlan | null;
-  pi_session_file: string | null;
   error: string | null;
   queued_at?: string | null;
   created_at: string;
@@ -446,12 +446,6 @@ export type ProjectChatMessage = {
   references?: FileReference[];
   images?: ImageAttachment[];
   metadata?: TraceMetadata | null;
-  requirement_context?: {
-    requirement_id: string;
-    draft: RequirementDraft;
-    sync_status: "syncing" | "synced" | "failed";
-    sync_error?: string | null;
-  } | null;
   created_at: string;
 };
 
@@ -460,8 +454,13 @@ export type ProjectChatResponse = {
   messages: ProjectChatMessage[];
   running: boolean;
   error: string | null;
-  requirement_summary?: RequirementDraft | null;
   updated_at: string;
+};
+
+export type ProjectFileTreeEntry = {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
 };
 
 export type ConversationEventType =
@@ -491,6 +490,7 @@ export type ChatAccepted = {
 export type RequirementAccepted = {
   accepted: true;
   requirement_id: string;
+  origin?: "project_chat_branch" | "standalone";
   turn_id?: string;
 };
 
@@ -702,7 +702,7 @@ export type StartNodeData =
       projectChatEvents: ConversationEvent[];
       onSend: (payload: ChatSubmission) => Promise<boolean>;
       onStartRequirement: (
-        description: string | null,
+        description: string,
         attachments: {
           references: FileReference[];
           images: ImageAttachment[];
@@ -710,9 +710,7 @@ export type StartNodeData =
       ) => Promise<boolean>;
       onProjectChatSend: (payload: ChatSubmission) => Promise<boolean>;
       onProjectChatAbort: () => Promise<void>;
-      onProjectChatGenerateRequirement: () => Promise<void>;
       onProjectChatReset: () => Promise<boolean>;
-      onRetryRequirementSummarySync?: (requirementId: string) => Promise<void>;
       onOpenRequirement?: (requirementId: string) => void;
       onLoadOlderRequirementHistory: () => Promise<boolean>;
       onSubmitClarifications: (

@@ -13,6 +13,7 @@ function requirement(status: Requirement["status"] = "planning"): Requirement {
     project_id: "current",
     title: "实现需求",
     original_message: "实现需求",
+    origin: "standalone",
     status,
     messages: [],
     clarification_round: 0,
@@ -22,7 +23,6 @@ function requirement(status: Requirement["status"] = "planning"): Requirement {
       status === "planning"
         ? null
         : { summary: "不应显示的计划摘要", tasks: [] },
-    pi_session_file: null,
     error: null,
     created_at: "2026-06-30T00:00:00Z",
     updated_at: "2026-06-30T00:00:00Z",

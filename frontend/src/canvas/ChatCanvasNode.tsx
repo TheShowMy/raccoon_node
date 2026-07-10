@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Card } from "@astryxdesign/core/Card";
 import type { Node, NodeProps } from "@xyflow/react";
 import AstryxChatSurface from "../components/astryx-chat/AstryxChatSurface";
@@ -19,4 +20,3 @@ function ChatCanvasNode({ data }: NodeProps<Node<ChatData>>) {
 }
 
 export default memo(ChatCanvasNode);
-import { memo } from "react";

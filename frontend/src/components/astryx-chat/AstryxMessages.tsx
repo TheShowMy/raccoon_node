@@ -17,8 +17,6 @@ import {
   ChatToolCalls,
   type ChatToolCallItem,
 } from "@astryxdesign/core/Chat";
-import { Banner } from "@astryxdesign/core/Banner";
-import { Button } from "@astryxdesign/core/Button";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Icon } from "@astryxdesign/core/Icon";
 import { Markdown } from "@astryxdesign/core/Markdown";
@@ -185,73 +183,15 @@ function Attachments({
   );
 }
 
-function RequirementSummary({
-  entry,
-  onOpen,
-  onRetry,
-}: {
-  entry: AstryxChatEntry;
-  onOpen: (requirementId: string) => void;
-  onRetry: (requirementId: string) => void;
-}) {
-  const context = entry.requirementContext;
-  if (!context) return null;
-  const failed = context.sync_status === "failed";
-  return (
-    <Banner
-      status={
-        failed ? "error" : context.sync_status === "synced" ? "success" : "info"
-      }
-      title={context.draft.title}
-      description={context.draft.summary}
-      endContent={
-        <HStack gap={1}>
-          {failed ? (
-            <Button
-              label="重试写回"
-              size="sm"
-              variant="secondary"
-              onClick={() => onRetry(context.requirement_id)}
-            />
-          ) : null}
-          <Button
-            label="打开需求"
-            size="sm"
-            variant="ghost"
-            onClick={() => onOpen(context.requirement_id)}
-          />
-        </HStack>
-      }
-    >
-      {failed && context.sync_error ? (
-        <Text color="secondary">{context.sync_error}</Text>
-      ) : null}
-    </Banner>
-  );
-}
-
 function Entry({
   projectId,
   entry,
-  onOpenRequirement,
-  onRetryRequirement,
 }: {
   projectId: string;
   entry: AstryxChatEntry;
-  onOpenRequirement: (id: string) => void;
-  onRetryRequirement: (id: string) => void;
 }) {
-  if (entry.role === "system" && !entry.requirementContext) {
+  if (entry.role === "system") {
     return <ChatSystemMessage>{entry.text || "状态已更新"}</ChatSystemMessage>;
-  }
-  if (entry.requirementContext) {
-    return (
-      <RequirementSummary
-        entry={entry}
-        onOpen={onOpenRequirement}
-        onRetry={onRetryRequirement}
-      />
-    );
   }
   return (
     <ChatMessage
@@ -352,8 +292,6 @@ function AstryxMessages({
   isPinned,
   hasOlderHistory,
   onLoadOlderHistory,
-  onOpenRequirement,
-  onRetryRequirement,
 }: {
   projectId: string;
   timeline: AstryxTimelineItem[];
@@ -368,8 +306,6 @@ function AstryxMessages({
   isPinned: () => boolean;
   hasOlderHistory: boolean;
   onLoadOlderHistory: () => Promise<boolean>;
-  onOpenRequirement: (id: string) => void;
-  onRetryRequirement: (id: string) => void;
 }) {
   const [visibleCount, setVisibleCount] = useState(HISTORY_BATCH_SIZE);
   const loadingOlderRef = useRef(false);
@@ -496,13 +432,7 @@ function AstryxMessages({
       {timeline.map((item) =>
         item.kind === "project" ? (
           selection.projectIds.has(item.id) ? (
-            <MemoEntry
-              key={item.id}
-              projectId={projectId}
-              entry={item.entry}
-              onOpenRequirement={onOpenRequirement}
-              onRetryRequirement={onRetryRequirement}
-            />
+            <MemoEntry key={item.id} projectId={projectId} entry={item.entry} />
           ) : null
         ) : selection.requirementIds.has(item.id) ||
           item.id === `requirement-${interactiveRequirementId}` ? (
@@ -510,13 +440,7 @@ function AstryxMessages({
             <ChatSystemMessage variant="divider">需求分支</ChatSystemMessage>
             {item.entries.map((entry) =>
               selection.requirementEntryIds.has(`${item.id}:${entry.id}`) ? (
-                <MemoEntry
-                  key={entry.id}
-                  projectId={projectId}
-                  entry={entry}
-                  onOpenRequirement={onOpenRequirement}
-                  onRetryRequirement={onRetryRequirement}
-                />
+                <MemoEntry key={entry.id} projectId={projectId} entry={entry} />
               ) : null,
             )}
             {item.error && selection.requirementErrorIds.has(item.id) ? (

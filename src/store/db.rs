@@ -346,8 +346,8 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
          (id, project_id, title, original_message, status, messages,
           clarification_round, clarifications, draft, analysis_revision, active_prompt,
           clarification_history, execution_plan, pi_session_file, error, queued_at, created_at,
-          updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+          updated_at, origin)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
          ON CONFLICT(id) DO UPDATE SET
            project_id = excluded.project_id,
            title = excluded.title,
@@ -365,7 +365,8 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
            error = excluded.error,
            queued_at = excluded.queued_at,
            created_at = excluded.created_at,
-           updated_at = excluded.updated_at",
+           updated_at = excluded.updated_at,
+           origin = excluded.origin",
         params![
             persisted.id,
             persisted.project_id,
@@ -385,6 +386,7 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
             persisted.queued_at.map(|value| value.to_rfc3339()),
             persisted.created_at.to_rfc3339(),
             persisted.updated_at.to_rfc3339(),
+            serde_json::to_string(&persisted.origin)?.trim_matches('"'),
         ],
     )?;
     if let Some(session_file) = requirement.pi_session_file.as_deref() {
@@ -427,15 +429,14 @@ fn save_project_chat(tx: &Transaction<'_>, chat: &ProjectChat) -> Result<(), App
     }
     tx.execute(
         "INSERT OR REPLACE INTO project_chats
-         (project_id, messages, running, error, pi_session_file, requirement_summary, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         (project_id, messages, running, error, pi_session_file, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             chat.project_id,
             serde_json::to_string(&messages)?,
             i64::from(chat.running),
             chat.error,
             chat.pi_session_file,
-            optional_json(&chat.requirement_summary)?,
             chat.created_at.to_rfc3339(),
             chat.updated_at.to_rfc3339(),
         ],
@@ -489,7 +490,7 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
         "SELECT id, project_id, title, original_message, status, messages,
                 clarification_round, clarifications, draft, analysis_revision, active_prompt,
                 clarification_history, execution_plan, pi_session_file, error, queued_at,
-                created_at, updated_at
+                created_at, updated_at, origin
          FROM requirements ORDER BY created_at, id",
     )?;
     let rows = statement.query_map([], |row| {
@@ -512,6 +513,7 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             row.get::<_, Option<String>>(15)?,
             row.get::<_, String>(16)?,
             row.get::<_, String>(17)?,
+            row.get::<_, String>(18)?,
         ))
     })?;
     let mut requirements = Vec::new();
@@ -535,12 +537,14 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             queued_at,
             created_at,
             updated_at,
+            origin,
         ) = row?;
         requirements.push(Requirement {
             id,
             project_id,
             title,
             original_message,
+            origin: parse_json(&format!("\"{origin}\""), "requirements.origin")?,
             status: parse_json(&format!("\"{status}\""), "requirements.status")?,
             messages: parse_json(&messages, "requirements.messages")?,
             clarification_round,
@@ -567,7 +571,7 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
 
 fn load_project_chats(conn: &Connection) -> Result<Vec<ProjectChat>, AppError> {
     let mut statement = conn.prepare(
-        "SELECT project_id, messages, running, error, pi_session_file, requirement_summary, created_at, updated_at
+        "SELECT project_id, messages, running, error, pi_session_file, created_at, updated_at
          FROM project_chats",
     )?;
     let rows = statement.query_map([], |row| {
@@ -577,32 +581,19 @@ fn load_project_chats(conn: &Connection) -> Result<Vec<ProjectChat>, AppError> {
             row.get::<_, i64>(2)?,
             row.get::<_, Option<String>>(3)?,
             row.get::<_, Option<String>>(4)?,
-            row.get::<_, Option<String>>(5)?,
+            row.get::<_, String>(5)?,
             row.get::<_, String>(6)?,
-            row.get::<_, String>(7)?,
         ))
     })?;
     let mut chats = Vec::new();
     for row in rows {
-        let (
-            project_id,
-            messages,
-            running,
-            error,
-            pi_session_file,
-            requirement_summary,
-            created_at,
-            updated_at,
-        ) = row?;
+        let (project_id, messages, running, error, pi_session_file, created_at, updated_at) = row?;
         chats.push(ProjectChat {
             project_id,
             messages: parse_json(&messages, "project_chats.messages")?,
             running: running != 0,
             error,
             pi_session_file,
-            requirement_summary: requirement_summary
-                .map(|value| parse_json(&value, "project_chats.requirement_summary"))
-                .transpose()?,
             created_at: parse_date(&created_at, "project_chats.created_at")?,
             updated_at: parse_date(&updated_at, "project_chats.updated_at")?,
         });

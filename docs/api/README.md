@@ -81,6 +81,13 @@
 返回可引用的 UTF-8 文本文件列表。`.git/`、`.raccoon-node/`、`node_modules/`、
 `target/` 和 `dist/` 不会被枚举或读取。
 
+### 懒加载文件树
+
+`GET /api/projects/current/files/tree?path=src`
+
+只返回指定目录的直接子项，目录排在文件之前并按名称排序。根目录使用空 `path`；
+内部目录、路径逃逸和符号链接均不会被遍历。
+
 ### 预览仓库文件
 
 `GET /api/projects/current/files/content?path=README.md`
@@ -156,34 +163,9 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
   "messages": [],
   "running": false,
   "error": null,
-  "requirement_summary": null,
   "updated_at": "2026-06-29T10:00:00Z"
 }
 ```
-
-`requirement_summary` 存在时包含 `title`、`summary` 和
-`acceptance_criteria`。
-
-系统消息可选携带需求摘要写回状态；旧消息没有 `requirement_context`：
-
-```json
-{
-  "role": "system",
-  "content": "## 已确认需求",
-  "requirement_context": {
-    "requirement_id": "requirement-id",
-    "draft": {
-      "title": "需求标题",
-      "summary": "最终摘要",
-      "acceptance_criteria": ["验收标准"]
-    },
-    "sync_status": "syncing",
-    "sync_error": null
-  }
-}
-```
-
-`sync_status` 为 `syncing | synced | failed`。失败不会改变已确认需求的状态。
 
 ### 发送消息
 
@@ -209,21 +191,19 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
 }
 ```
 
-会话运行、切换 session、创建需求分支或写回需求摘要期间再次发送返回
-`409 Conflict`。这些操作共享项目聊天 single-flight。
+会话运行、创建需求分支或存在未确认活动需求时再次发送返回 `409 Conflict`。
 
-### 生成需求说明与停止
+### 创建需求分支与停止
 
-- `POST /api/projects/current/chat/commands/requirement-summary`
+- `POST /api/projects/current/chat/commands/requirement-branch`
 - `POST /api/projects/current/chat/abort`
 
-该需求说明命令作为旧客户端兼容接口保留，新 `/需求生成` UI 不依赖它。生成命令
-使用当前问答 Pi session 的完整上下文，通过受管工具提交 `title`、
-`summary` 和 `acceptance_criteria`；重复生成覆盖上一版。没有完整问答或会话
-繁忙时请求会被拒绝，普通问答不能调用该工具。命令成功接受后同样返回
-`202 { "accepted": true, "turn_id": "..." }`。
+分支命令请求体与创建需求相同，`message` 必须非空。完整父问答会克隆当前 Pi 活动
+分支；无完整问答时创建独立需求。完整问答存在但父 session 丢失、越界或 cwd 不
+匹配时明确报错，不会静默丢失上下文。响应包含 `requirement_id` 和
+`origin: project_chat_branch | standalone`。
 
-停止接口中断当前回答或需求说明生成，成功接受后返回
+停止接口中断当前普通聊天回答，成功接受后返回
 `202 { "accepted": true }`。
 
 ### 问答 WebSocket
@@ -279,11 +259,9 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
 }
 ```
 
-创建前后端会自动选择需求 session：主聊天已有 Pi session 时调用 Pi RPC `clone`，
-保存 clone 得到的分支 session，并在 clone 后立即切回主 session；主聊天为空时不
-clone，由需求分析创建新 session。主聊天正在运行或切换 session 时返回
-`409 Conflict`。`Requirement.pi_session_file` 与主聊天 session 均为后端字段，不会
-出现在 API 响应中。
+该接口只创建 `origin: standalone` 的独立需求。聊天树分叉必须调用上方
+`chat/commands/requirement-branch`。`Requirement.pi_session_file` 与父聊天 session
+均为后端字段，不会出现在 API 响应中。
 
 ### 获取对话和追加消息
 
@@ -332,17 +310,10 @@ clone，由需求分析创建新 session。主聊天正在运行或切换 sessio
 - `POST /api/requirements/{id}/confirm`
 - `POST /api/requirements/{id}/cancel`
 - `DELETE /api/requirements/{id}`
-- `POST /api/requirements/{id}/sync-chat-summary`
 
 确认后需求进入当前项目 FIFO 队列，后端自动生成执行 DAG 并开始执行。失败需求会
-暂停后续队列，避免后续需求越过失败项。同时后端异步向主 Pi session 写入最终
-需求摘要，并持久化一张项目聊天系统卡片；Pi 的内部确认回复不会作为聊天消息或
-实时流展示。写回期间项目聊天保持 `running: true`，普通消息与重置返回
-`409 Conflict`。
-
-写回失败只把系统卡片标记为 `failed`，不会回滚确认或阻止 FIFO/DAG。重试接口仅
-接受已确认需求，成功启动返回 `202 { "accepted": true }`；重复写回更新同一张卡片，
-不会新增重复系统消息。取消分析或删除/放弃未确认需求不会写回摘要。
+暂停后续队列，避免后续需求越过失败项。确认或放弃后父聊天恢复可用；child session
+中的消息和确认草案不会写回父 session。
 
 ### 重试规划和任务组恢复
 
@@ -351,7 +322,9 @@ clone，由需求分析创建新 session。主聊天正在运行或切换 sessio
 - `GET /api/requirements/{id}/session`：按时间合并该需求历次分析 session
 - `POST /api/requirements/{id}/plan`：重试失败的执行规划
 - `POST /api/requirements/{id}/tasks/{task_id}/recover`：恢复顶层任务组内的技术失败节点
-- `GET /api/requirements/{id}/tasks/{task_id}`：按需读取完整任务详情、关联审核和依赖
+- `GET /api/requirements/{id}/tasks/{task_id}`：按需读取完整任务详情、关联审核和依赖；
+  保留 failure/recovery/review、PR、merge、cleanup、review history、trace 和 target
+  files，仅隐藏内部 session/worktree 路径
 - `GET /api/requirements/{id}/tasks/{task_id}/session`：读取任务及其关联
   `review_summary` 的 Pi Agent session，按时间合并并标注来源
 

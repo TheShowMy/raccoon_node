@@ -17,7 +17,12 @@ import {
 } from "@astryxdesign/core";
 import type { TreeListItemData } from "@astryxdesign/core/TreeList";
 import { FileCode2, Folder } from "lucide-react";
-import { getProjectFileContent, getProjectFiles } from "../../api/client";
+import {
+  getProjectFileContent,
+  getProjectFiles,
+  getProjectFileTree,
+} from "../../api/client";
+import type { ProjectFileTreeEntry } from "../../types/api";
 
 type OpenFile = { path: string; content: string };
 
@@ -77,6 +82,7 @@ export function buildFileTree(
 export default function FilesWorkbench({ projectId }: { projectId: string }) {
   const [query, setQuery] = useState("");
   const [paths, setPaths] = useState<string[]>([]);
+  const [tree, setTree] = useState<Record<string, ProjectFileTreeEntry[]>>({});
   const [activePath, setActivePath] = useState<string | null>(null);
   const [tabs, setTabs] = useState<OpenFile[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -84,11 +90,18 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      getProjectFiles(projectId, query, controller.signal)
-        .then((files) => {
-          setPaths(files.map((file) => file.path));
-          setError(null);
-        })
+      const request = query.trim()
+        ? getProjectFiles(projectId, query, controller.signal).then((files) => {
+            setPaths(files.map((file) => file.path));
+          })
+        : getProjectFileTree(projectId, "", controller.signal).then(
+            (entries) => {
+              setTree({ "": entries });
+              setPaths([]);
+            },
+          );
+      request
+        .then(() => setError(null))
         .catch((reason) => {
           if (!controller.signal.aborted) setError(String(reason));
         });
@@ -119,10 +132,48 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
 
   const activeTab = tabs.find((tab) => tab.path === activePath) ?? null;
   const isMarkdown = activeTab?.path.toLowerCase().endsWith(".md") ?? false;
-  const treeItems = useMemo(
-    () => buildFileTree(paths, activePath, (path) => void openFile(path)),
-    [activePath, paths],
-  );
+  const loadDirectory = async (path: string) => {
+    if (tree[path]) return;
+    try {
+      const entries = await getProjectFileTree(projectId, path);
+      setTree((current) => ({ ...current, [path]: entries }));
+    } catch (reason) {
+      setError(String(reason));
+    }
+  };
+  const treeItems = useMemo(() => {
+    if (query.trim()) {
+      return buildFileTree(paths, activePath, (path) => void openFile(path));
+    }
+    const build = (directory: string): TreeListItemData[] =>
+      (tree[directory] ?? []).map((entry) =>
+        entry.kind === "directory"
+          ? {
+              id: `folder:${entry.path}`,
+              label: entry.name,
+              startContent: <Folder size={15} />,
+              onClick: () => void loadDirectory(entry.path),
+              children: tree[entry.path]
+                ? build(entry.path)
+                : [
+                    {
+                      id: `loading:${entry.path}`,
+                      label: "展开以加载",
+                      isDisabled: true,
+                    },
+                  ],
+            }
+          : {
+              id: `file:${entry.path}`,
+              label: entry.name,
+              description: directory || undefined,
+              startContent: <FileCode2 size={15} />,
+              isSelected: entry.path === activePath,
+              onClick: () => void openFile(entry.path),
+            },
+      );
+    return build("");
+  }, [activePath, paths, projectId, query, tree]);
 
   return (
     <Layout height="fill" padding={0}>

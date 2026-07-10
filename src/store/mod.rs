@@ -648,6 +648,11 @@ impl JsonStore {
         if self.data.project_chats[index].running {
             return Err(AppError::bad_request("项目问答正在回答，请稍后再发送"));
         }
+        if self.has_active_requirement(project_id) {
+            return Err(AppError::conflict(
+                "需求分支尚未确认或放弃，暂时无法继续普通会话",
+            ));
+        }
         let project_dir = self.project_dir(project_id)?;
         let reference_context =
             build_reference_context(Path::new(&project.local_path), &references, &images).await?;
@@ -661,7 +666,6 @@ impl JsonStore {
             references,
             images,
             metadata: None,
-            requirement_context: None,
             created_at: now,
         });
         chat.running = true;
@@ -703,7 +707,6 @@ impl JsonStore {
                         references: Vec::new(),
                         images: Vec::new(),
                         metadata: output.trace,
-                        requirement_context: None,
                         created_at: now,
                     });
                 }
@@ -717,95 +720,31 @@ impl JsonStore {
         Ok(response)
     }
 
-    pub async fn start_project_requirement_summary(
-        &mut self,
-        project_id: &str,
-    ) -> Result<ProjectChatInput, AppError> {
-        self.ensure_project_chat(project_id).await?;
-        let index = self.project_chat_index(project_id)?;
-        let chat = &self.data.project_chats[index];
-        if chat.running {
-            return Err(AppError::conflict("项目问答正在运行"));
-        }
-        if !chat
-            .messages
-            .iter()
-            .any(|message| message.role == ProjectChatMessageRole::User)
-            || !chat
-                .messages
-                .iter()
-                .any(|message| message.role == ProjectChatMessageRole::Assistant)
-        {
-            return Err(AppError::bad_request(
-                "至少完成一轮项目问答后才能生成需求说明",
-            ));
-        }
-        let project = self
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
-        let chat = &mut self.data.project_chats[index];
-        chat.running = true;
-        chat.error = None;
-        chat.updated_at = Utc::now();
-        let input = ProjectChatInput {
-            project,
-            messages: chat.messages.clone(),
-            reference_context: None,
-            prompt_images: Vec::new(),
-            model_settings: self.data.model_settings.clone(),
-            pi_session_file: chat.pi_session_file.clone(),
-        };
-        self.write_persist().await?;
-        Ok(input)
-    }
-
-    pub async fn apply_project_requirement_summary(
-        &mut self,
-        project_id: &str,
-        output: Result<crate::models::ProjectRequirementSummaryOutput, AppError>,
-    ) -> Result<ProjectChatResponse, AppError> {
-        let index = self.project_chat_index(project_id)?;
-        let chat = &mut self.data.project_chats[index];
-        chat.running = false;
-        chat.updated_at = Utc::now();
-        match output {
-            Ok(output) => {
-                chat.error = None;
-                chat.pi_session_file = output.pi_session_file;
-                chat.requirement_summary = Some(output.summary);
-            }
-            Err(error) => chat.error = Some(error.to_string()),
-        }
-        let response = project_chat_response_from(chat);
-        self.write_persist().await?;
-        Ok(response)
-    }
-
     pub async fn reset_project_chat(
         &mut self,
         project_id: &str,
     ) -> Result<ProjectChatResponse, AppError> {
         self.ensure_project_chat(project_id).await?;
         let index = self.project_chat_index(project_id)?;
-        let chat = &mut self.data.project_chats[index];
-        if chat.running {
+        if self.data.project_chats[index].running {
             return Err(AppError::bad_request("项目问答正在回答，暂时无法关闭会话"));
         }
+        if self.has_active_requirement(project_id) {
+            return Err(AppError::conflict(
+                "需求分支尚未确认或放弃，暂时无法新建普通会话",
+            ));
+        }
+        let chat = &mut self.data.project_chats[index];
         chat.messages.clear();
         chat.error = None;
         chat.pi_session_file = None;
-        chat.requirement_summary = None;
         chat.updated_at = Utc::now();
         let response = project_chat_response_from(chat);
         self.write_persist().await?;
         Ok(response)
     }
 
-    pub async fn project_chat_branch_input(
+    pub async fn start_project_chat_requirement_branch(
         &mut self,
         project_id: &str,
     ) -> Result<Option<ProjectChatInput>, AppError> {
@@ -815,8 +754,24 @@ impl JsonStore {
         if chat.running {
             return Err(AppError::conflict("项目问答正在运行，暂时无法创建需求分支"));
         }
-        if chat.pi_session_file.is_none() {
+        if self.has_active_requirement(project_id) {
+            return Err(AppError::conflict("已有尚未确认的需求分支"));
+        }
+        let has_user = chat
+            .messages
+            .iter()
+            .any(|message| message.role == ProjectChatMessageRole::User);
+        let has_assistant = chat
+            .messages
+            .iter()
+            .any(|message| message.role == ProjectChatMessageRole::Assistant);
+        if !has_user || !has_assistant {
             return Ok(None);
+        }
+        if chat.pi_session_file.is_none() {
+            return Err(AppError::conflict(
+                "普通会话已有完整上下文，但 Pi session 已丢失，无法创建需求分支",
+            ));
         }
         let project = self
             .data
@@ -825,14 +780,45 @@ impl JsonStore {
             .find(|project| project.id == project_id)
             .cloned()
             .ok_or_else(|| AppError::not_found("项目不存在"))?;
-        Ok(Some(ProjectChatInput {
+        let input = ProjectChatInput {
             project,
             messages: chat.messages.clone(),
             reference_context: None,
             prompt_images: Vec::new(),
             model_settings: self.data.model_settings.clone(),
             pi_session_file: chat.pi_session_file.clone(),
-        }))
+        };
+        let chat = &mut self.data.project_chats[index];
+        chat.running = true;
+        chat.error = None;
+        chat.updated_at = Utc::now();
+        self.write_persist().await?;
+        Ok(Some(input))
+    }
+
+    pub async fn finish_project_chat_requirement_branch(
+        &mut self,
+        project_id: &str,
+    ) -> Result<(), AppError> {
+        let index = self.project_chat_index(project_id)?;
+        let chat = &mut self.data.project_chats[index];
+        chat.running = false;
+        chat.updated_at = Utc::now();
+        self.write_persist().await
+    }
+
+    fn has_active_requirement(&self, project_id: &str) -> bool {
+        self.data.requirements.iter().any(|requirement| {
+            requirement.project_id == project_id
+                && matches!(
+                    requirement.status,
+                    RequirementStatus::Analyzing
+                        | RequirementStatus::Clarifying
+                        | RequirementStatus::DraftReady
+                        | RequirementStatus::Failed
+                )
+                && (requirement.status != RequirementStatus::Failed || requirement.draft.is_none())
+        })
     }
 
     async fn ensure_project_chat(&mut self, project_id: &str) -> Result<(), AppError> {
@@ -860,7 +846,6 @@ impl JsonStore {
             running: false,
             error: None,
             pi_session_file: None,
-            requirement_summary: None,
             created_at: now,
             updated_at: now,
         });
@@ -902,6 +887,11 @@ impl JsonStore {
         images: Vec<ImageAttachment>,
         pi_session_file: Option<String>,
     ) -> Result<(String, RequirementAnalysisInput), AppError> {
+        let origin = if pi_session_file.is_some() {
+            crate::models::RequirementOrigin::ProjectChatBranch
+        } else {
+            crate::models::RequirementOrigin::Standalone
+        };
         let project = self
             .data
             .projects
@@ -925,6 +915,7 @@ impl JsonStore {
             project_id: project_id.to_owned(),
             title: derive_requirement_title(&message),
             original_message: message.clone(),
+            origin,
             status: RequirementStatus::Analyzing,
             messages: vec![RequirementMessage {
                 role: RequirementMessageRole::User,
@@ -961,133 +952,6 @@ impl JsonStore {
         self.data.requirements.push(requirement);
         self.write_persist().await?;
         Ok((id, input))
-    }
-
-    pub async fn start_requirement_summary_sync(
-        &mut self,
-        requirement_id: &str,
-    ) -> Result<crate::models::ProjectChatSummarySyncInput, AppError> {
-        let requirement = self
-            .data
-            .requirements
-            .iter()
-            .find(|requirement| requirement.id == requirement_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("需求不存在"))?;
-        if matches!(
-            requirement.status,
-            RequirementStatus::Analyzing
-                | RequirementStatus::Clarifying
-                | RequirementStatus::DraftReady
-                | RequirementStatus::Failed
-        ) {
-            return Err(AppError::bad_request("只有已确认的需求才能写回普通会话"));
-        }
-        let draft = requirement
-            .draft
-            .clone()
-            .ok_or_else(|| AppError::bad_request("需求缺少确认摘要"))?;
-        self.ensure_project_chat(&requirement.project_id).await?;
-        let index = self.project_chat_index(&requirement.project_id)?;
-        let project = self
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == requirement.project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
-        let chat = &mut self.data.project_chats[index];
-        if chat.running {
-            return Err(AppError::conflict("普通会话正在运行，暂时无法写回需求摘要"));
-        }
-        let now = Utc::now();
-        upsert_requirement_summary_card(
-            chat,
-            &requirement.id,
-            &draft,
-            crate::models::RequirementSummarySyncStatus::Syncing,
-            None,
-            now,
-        );
-        chat.running = true;
-        chat.error = None;
-        chat.updated_at = now;
-        let input = crate::models::ProjectChatSummarySyncInput {
-            project,
-            requirement_id: requirement.id,
-            draft,
-            model_settings: self.data.model_settings.clone(),
-            pi_session_file: chat.pi_session_file.clone(),
-        };
-        self.write_persist().await?;
-        Ok(input)
-    }
-
-    pub async fn record_requirement_summary_sync_start_failure(
-        &mut self,
-        requirement_id: &str,
-        error: &AppError,
-    ) -> Result<(), AppError> {
-        let requirement = self
-            .data
-            .requirements
-            .iter()
-            .find(|requirement| requirement.id == requirement_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("需求不存在"))?;
-        let draft = requirement
-            .draft
-            .ok_or_else(|| AppError::bad_request("需求缺少确认摘要"))?;
-        self.ensure_project_chat(&requirement.project_id).await?;
-        let index = self.project_chat_index(&requirement.project_id)?;
-        let chat = &mut self.data.project_chats[index];
-        let now = Utc::now();
-        upsert_requirement_summary_card(
-            chat,
-            &requirement.id,
-            &draft,
-            crate::models::RequirementSummarySyncStatus::Failed,
-            Some(error.to_string()),
-            now,
-        );
-        chat.updated_at = now;
-        self.write_persist().await
-    }
-
-    pub async fn apply_requirement_summary_sync(
-        &mut self,
-        project_id: &str,
-        requirement_id: &str,
-        output: Result<crate::models::ProjectChatSummarySyncOutput, AppError>,
-    ) -> Result<ProjectChatResponse, AppError> {
-        let index = self.project_chat_index(project_id)?;
-        let chat = &mut self.data.project_chats[index];
-        chat.running = false;
-        chat.updated_at = Utc::now();
-        let context = chat
-            .messages
-            .iter_mut()
-            .find_map(|message| {
-                message
-                    .requirement_context
-                    .as_mut()
-                    .filter(|context| context.requirement_id == requirement_id)
-            })
-            .ok_or_else(|| AppError::not_found("需求摘要卡片不存在"))?;
-        match output {
-            Ok(output) => {
-                chat.pi_session_file = output.pi_session_file;
-                context.sync_status = crate::models::RequirementSummarySyncStatus::Synced;
-                context.sync_error = None;
-            }
-            Err(error) => {
-                context.sync_status = crate::models::RequirementSummarySyncStatus::Failed;
-                context.sync_error = Some(error.to_string());
-            }
-        }
-        let response = project_chat_response_from(chat);
-        self.write_persist().await?;
-        Ok(response)
     }
 
     pub async fn append_requirement_message(
@@ -2712,17 +2576,17 @@ fn strip_task_detail(
 ) {
     task.pi_session_file = None;
     task.worktree_path = None;
-    task.failure_summary = None;
-    task.recovery_guidance = None;
-    task.last_review_feedback = None;
-    task.pull_request_url = None;
-    task.merged_into = None;
-    task.cleanup_summary = None;
-    task.review_history.clear();
     if !keep_branch {
         task.branch_name = None;
     }
     if !keep_trace_and_files {
+        task.failure_summary = None;
+        task.recovery_guidance = None;
+        task.last_review_feedback = None;
+        task.pull_request_url = None;
+        task.merged_into = None;
+        task.cleanup_summary = None;
+        task.review_history.clear();
         task.trace = None;
         task.target_files.clear();
     }
@@ -2730,55 +2594,6 @@ fn strip_task_detail(
 
 fn trace_usage(trace: &Value) -> Option<&Value> {
     trace.get("trace")?.get("usage")
-}
-
-fn format_requirement_summary_card(draft: &crate::models::RequirementDraft) -> String {
-    let criteria = draft
-        .acceptance_criteria
-        .iter()
-        .map(|item| format!("- {item}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "## {}\n\n{}\n\n### 验收标准\n\n{}",
-        draft.title, draft.summary, criteria
-    )
-}
-
-fn upsert_requirement_summary_card(
-    chat: &mut ProjectChat,
-    requirement_id: &str,
-    draft: &crate::models::RequirementDraft,
-    sync_status: crate::models::RequirementSummarySyncStatus,
-    sync_error: Option<String>,
-    now: chrono::DateTime<Utc>,
-) {
-    let context = crate::models::ProjectChatRequirementContext {
-        requirement_id: requirement_id.to_owned(),
-        draft: draft.clone(),
-        sync_status,
-        sync_error,
-    };
-    if let Some(message) = chat.messages.iter_mut().find(|message| {
-        message
-            .requirement_context
-            .as_ref()
-            .is_some_and(|current| current.requirement_id == requirement_id)
-    }) {
-        message.content = format_requirement_summary_card(draft);
-        message.requirement_context = Some(context);
-        message.created_at = now;
-    } else {
-        chat.messages.push(ProjectChatMessage {
-            role: ProjectChatMessageRole::System,
-            content: format_requirement_summary_card(draft),
-            references: Vec::new(),
-            images: Vec::new(),
-            metadata: None,
-            requirement_context: Some(context),
-            created_at: now,
-        });
-    }
 }
 
 include!("helpers.rs");

@@ -40,13 +40,13 @@ function requirementFixture(id: string, createdAt: string) {
     project_id: "current",
     title: `需求 ${id}`,
     original_message: `创建 ${id}`,
+    origin: "standalone" as const,
     status: "completed" as const,
     messages: [],
     clarification_round: 0,
     clarifications: [],
     draft: null,
     execution_plan: null,
-    pi_session_file: null,
     error: null,
     created_at: createdAt,
     updated_at: createdAt,
@@ -87,9 +87,7 @@ function data(overrides: Partial<ChatData> = {}): ChatData {
     onStartRequirement: vi.fn(async () => true),
     onProjectChatSend: vi.fn(async () => true),
     onProjectChatAbort: vi.fn(async () => {}),
-    onProjectChatGenerateRequirement: vi.fn(async () => {}),
     onProjectChatReset: vi.fn(async () => true),
-    onRetryRequirementSummarySync: vi.fn(async () => {}),
     onOpenRequirement: vi.fn(),
     onLoadOlderRequirementHistory: vi.fn(async () => false),
     onSubmitClarifications: vi.fn(async () => true),
@@ -318,6 +316,7 @@ describe("AstryxChatSurface", () => {
       project_id: "current",
       title: "登录改造",
       original_message: "改造登录",
+      origin: "standalone" as const,
       status: "draft_ready" as const,
       messages: [],
       clarification_round: 0,
@@ -328,7 +327,6 @@ describe("AstryxChatSurface", () => {
         acceptance_criteria: ["登录测试通过"],
       },
       execution_plan: null,
-      pi_session_file: null,
       error: null,
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",
@@ -469,6 +467,9 @@ describe("AstryxChatSurface", () => {
       target: { textContent: "/需求生成 重写登录流程" },
     });
     fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "需求补充说明" }), {
+      key: "Enter",
+    });
 
     await waitFor(() =>
       expect(onStartRequirement).toHaveBeenCalledWith("重写登录流程", {
@@ -481,7 +482,7 @@ describe("AstryxChatSurface", () => {
     ).toBeInTheDocument();
   });
 
-  it("creates a context-only requirement when project discussion exists", async () => {
+  it("prepares a branch with inherited chat before requiring a supplement", async () => {
     const onStartRequirement = vi.fn(async () => true);
     render(
       <AstryxChatSurface
@@ -506,20 +507,16 @@ describe("AstryxChatSurface", () => {
     const input = screen.getByRole("combobox", { name: "项目聊天输入" });
     fireEvent.input(input, { target: { textContent: "/需求生成" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    fireEvent.keyDown(input, { key: "Enter" });
-
-    await waitFor(() =>
-      expect(onStartRequirement).toHaveBeenCalledWith(null, {
-        references: [],
-        images: [],
-      }),
-    );
+    expect(onStartRequirement).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText(/将继承当前聊天 1 条消息/),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "项目对话" }),
     ).toBeInTheDocument();
   });
 
-  it("keeps the command in project chat when no context is available", async () => {
+  it("prepares a standalone requirement when no context is available", async () => {
     const onStartRequirement = vi.fn(async () => true);
     render(<AstryxChatSurface data={data({ onStartRequirement })} />);
     const input = screen.getByRole("combobox", { name: "项目聊天输入" });
@@ -528,7 +525,7 @@ describe("AstryxChatSurface", () => {
 
     expect(onStartRequirement).not.toHaveBeenCalled();
     expect(
-      await screen.findByText("暂无项目对话上下文，请补充需求描述"),
+      await screen.findByText("当前无完整聊天上下文，将创建独立需求。"),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "项目对话" }),
@@ -541,13 +538,13 @@ describe("AstryxChatSurface", () => {
       project_id: "current",
       title: "登录改造",
       original_message: "改造登录",
+      origin: "project_chat_branch" as const,
       status: "analyzing" as const,
       messages: [],
       clarification_round: 0,
       clarifications: [],
       draft: null,
       execution_plan: null,
-      pi_session_file: null,
       error: null,
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",
@@ -599,13 +596,13 @@ describe("AstryxChatSurface", () => {
       project_id: "current",
       title: "登录改造",
       original_message: "改造登录",
+      origin: "project_chat_branch" as const,
       status: "analyzing" as const,
       messages: [],
       clarification_round: 0,
       clarifications: [],
       draft: null,
       execution_plan: null,
-      pi_session_file: null,
       error: null,
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",
@@ -652,8 +649,11 @@ describe("AstryxChatSurface", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(
-      screen.getByRole("combobox", { name: "项目聊天输入" }),
+      screen.getByRole("combobox", { name: "需求补充说明" }),
     ).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "需求补充说明" }), {
+      key: "Enter",
+    });
     view.rerender(
       <AstryxChatSurface data={data({ busy: true, error: null })} />,
     );

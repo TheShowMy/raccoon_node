@@ -54,8 +54,6 @@ pub struct ProjectChat {
     pub error: Option<String>,
     #[serde(skip_serializing)]
     pub pi_session_file: Option<String>,
-    #[serde(default)]
-    pub requirement_summary: Option<ProjectRequirementSummary>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -70,26 +68,7 @@ pub struct ProjectChatMessage {
     pub images: Vec<ImageAttachment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requirement_context: Option<ProjectChatRequirementContext>,
     pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ProjectChatRequirementContext {
-    pub requirement_id: String,
-    pub draft: RequirementDraft,
-    pub sync_status: RequirementSummarySyncStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sync_error: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum RequirementSummarySyncStatus {
-    Syncing,
-    Synced,
-    Failed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -106,11 +85,8 @@ pub struct ProjectChatResponse {
     pub messages: Vec<ProjectChatMessage>,
     pub running: bool,
     pub error: Option<String>,
-    pub requirement_summary: Option<ProjectRequirementSummary>,
     pub updated_at: DateTime<Utc>,
 }
-
-pub type ProjectRequirementSummary = RequirementDraft;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Project {
@@ -226,6 +202,8 @@ pub struct Requirement {
     pub project_id: String,
     pub title: String,
     pub original_message: String,
+    #[serde(default)]
+    pub origin: RequirementOrigin,
     pub status: RequirementStatus,
     pub messages: Vec<RequirementMessage>,
     #[serde(default)]
@@ -248,6 +226,14 @@ pub struct Requirement {
     pub queued_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementOrigin {
+    ProjectChatBranch,
+    #[default]
+    Standalone,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -605,6 +591,20 @@ pub struct ProjectFileContent {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectFileTreeEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: ProjectFileTreeEntryKind,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectFileTreeEntryKind {
+    Directory,
+    File,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TerminalCommandProfile {
     pub id: String,
@@ -875,12 +875,8 @@ pub type RequirementTaskExecutionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<RequirementTaskExecutionOutput, AppError>> + Send + 'a>>;
 pub type ProjectChatFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ProjectChatOutput, AppError>> + Send + 'a>>;
-pub type ProjectRequirementSummaryFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<ProjectRequirementSummaryOutput, AppError>> + Send + 'a>>;
 pub type ProjectChatBranchFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<String>, AppError>> + Send + 'a>>;
-pub type ProjectChatSummarySyncFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<ProjectChatSummarySyncOutput, AppError>> + Send + 'a>>;
 pub type ModelProviderActionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + 'a>>;
 
@@ -908,25 +904,11 @@ pub trait ModelProvider: Send + Sync {
     ) -> ProjectChatFuture<'_> {
         Box::pin(async { Err(AppError::internal("项目问答暂不可用")) })
     }
-    fn generate_project_requirement_summary(
-        &self,
-        _input: ProjectChatInput,
-        _events: Option<ProjectChatEventEmitter>,
-    ) -> ProjectRequirementSummaryFuture<'_> {
-        Box::pin(async { Err(AppError::internal("需求说明生成暂不可用")) })
-    }
     fn clone_project_chat_for_requirement(
         &self,
         _input: ProjectChatInput,
     ) -> ProjectChatBranchFuture<'_> {
         Box::pin(async { Ok(None) })
-    }
-    fn sync_requirement_summary_to_project_chat(
-        &self,
-        _input: ProjectChatSummarySyncInput,
-        _events: Option<ProjectChatEventEmitter>,
-    ) -> ProjectChatSummarySyncFuture<'_> {
-        Box::pin(async { Err(AppError::internal("需求摘要写回暂不可用")) })
     }
     fn begin_project_chat(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })
@@ -972,27 +954,6 @@ pub struct ProjectChatOutput {
     pub assistant_message: String,
     pub pi_session_file: Option<String>,
     pub trace: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ProjectRequirementSummaryOutput {
-    pub summary: ProjectRequirementSummary,
-    pub pi_session_file: Option<String>,
-    pub trace: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ProjectChatSummarySyncInput {
-    pub project: Project,
-    pub requirement_id: String,
-    pub draft: RequirementDraft,
-    pub model_settings: ModelSettings,
-    pub pi_session_file: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ProjectChatSummarySyncOutput {
-    pub pi_session_file: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1244,6 +1205,7 @@ mod tests {
             project_id: "p1".to_owned(),
             title: "Title".to_owned(),
             original_message: "message".to_owned(),
+            origin: RequirementOrigin::Standalone,
             status: RequirementStatus::Clarifying,
             messages: Vec::new(),
             clarification_round: 0,

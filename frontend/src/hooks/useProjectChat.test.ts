@@ -4,7 +4,6 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   abortProjectChat,
-  generateProjectRequirementSummary,
   getProjectChat,
   resetProjectChat,
   sendProjectChatMessage,
@@ -14,7 +13,6 @@ import { useProjectChat } from "./useProjectChat";
 
 vi.mock("../api/client", () => ({
   abortProjectChat: vi.fn(),
-  generateProjectRequirementSummary: vi.fn(),
   getProjectChat: vi.fn(),
   projectChatWebSocketUrl: (id: string) => `ws://test/${id}`,
   resetProjectChat: vi.fn(),
@@ -26,7 +24,6 @@ const response: ProjectChatResponse = {
   messages: [],
   running: false,
   error: null,
-  requirement_summary: null,
   updated_at: "2026-06-25T00:00:00Z",
 };
 
@@ -67,10 +64,6 @@ describe("useProjectChat", () => {
     vi.mocked(sendProjectChatMessage).mockResolvedValue({
       accepted: true,
       turn_id: "turn-1",
-    });
-    vi.mocked(generateProjectRequirementSummary).mockResolvedValue({
-      accepted: true,
-      turn_id: "turn-summary",
     });
     vi.mocked(abortProjectChat).mockResolvedValue({ accepted: true });
     vi.mocked(resetProjectChat).mockResolvedValue(response);
@@ -236,15 +229,5 @@ describe("useProjectChat", () => {
       images: [],
     });
     expect(result.current.projectChat?.running).toBe(true);
-  });
-
-  it("runs the requirement command without sending a user message", async () => {
-    const { result } = renderHook(() => useProjectChat("project-1"));
-    act(() => FakeWebSocket.instances[0].open());
-    await waitFor(() => expect(result.current.projectChat).toEqual(response));
-    await act(async () => result.current.generateRequirementSummary());
-
-    expect(generateProjectRequirementSummary).toHaveBeenCalledWith("project-1");
-    expect(sendProjectChatMessage).not.toHaveBeenCalled();
   });
 });

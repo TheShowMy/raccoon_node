@@ -23,15 +23,16 @@ use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 
 use crate::api::AppState;
 use crate::file_refs::{
-    content_type_value, list_repo_files, read_attachment, read_repo_file, save_attachment,
+    content_type_value, list_repo_files, list_repo_tree, read_attachment, read_repo_file,
+    save_attachment,
 };
 use crate::models::{
     AttachmentUploadRequest, BasicSettings, BasicSettingsUpdate, ClarificationAnswerPayload,
     CurrentProjectResponse, FileReference, ImageAttachment, ModelSettings, ModelSettingsResponse,
     ProjectCanvasResponse, ProjectChatEventEmitter, ProjectChatMessageRequest, ProjectChatResponse,
-    ProjectFileContent, RequirementAnalysisInput, RequirementClarification,
+    ProjectFileContent, ProjectFileTreeEntry, RequirementAnalysisInput, RequirementClarification,
     RequirementConfirmRequest, RequirementConversationResponse, RequirementEvent,
-    RequirementEventEmitter, RequirementMessageRequest, RequirementStatus,
+    RequirementEventEmitter, RequirementMessageRequest, RequirementOrigin, RequirementStatus,
     RequirementTaskDetailResponse, RequirementTaskExecutionInput, RpcStatus, SessionTranscriptPage,
     TerminalAccessRequest, TerminalAccessStatus, TerminalClientMessage, TerminalCommandProfile,
     TerminalCommandProfilesUpdate, TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
@@ -63,6 +64,7 @@ pub struct AcceptedTurn {
 pub struct AcceptedRequirement {
     accepted: bool,
     requirement_id: String,
+    origin: RequirementOrigin,
 }
 
 #[derive(Debug, Serialize)]
@@ -362,6 +364,12 @@ pub struct ProjectFileContentQuery {
     path: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ProjectFileTreeQuery {
+    #[serde(default)]
+    path: String,
+}
+
 pub async fn get_project_files(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
@@ -379,6 +387,26 @@ pub async fn get_project_files(
     };
     Ok(Json(
         list_repo_files(std::path::Path::new(&project.local_path), &query.search).await?,
+    ))
+}
+
+pub async fn get_project_file_tree(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<ProjectFileTreeQuery>,
+) -> Result<Json<Vec<ProjectFileTreeEntry>>, AppError> {
+    let project = {
+        let store = state.store.read().await;
+        store
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?
+    };
+    Ok(Json(
+        list_repo_tree(std::path::Path::new(&project.local_path), &query.path).await?,
     ))
 }
 
@@ -494,38 +522,6 @@ pub async fn send_project_chat_message(
     ))
 }
 
-pub async fn generate_project_requirement_summary(
-    State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
-) -> Result<impl IntoResponse, AppError> {
-    let input = state
-        .store
-        .write()
-        .await
-        .start_project_requirement_summary(&project_id)
-        .await?;
-    if let Err(error) = state.model_provider.begin_project_chat(&project_id).await {
-        state
-            .store
-            .write()
-            .await
-            .apply_project_requirement_summary(
-                &project_id,
-                Err(AppError::conflict(error.to_string())),
-            )
-            .await?;
-        return Err(error);
-    }
-    spawn_project_requirement_summary(state, project_id, input);
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(AcceptedTurn {
-            accepted: true,
-            turn_id: next_turn_id(),
-        }),
-    ))
-}
-
 pub async fn abort_project_chat(
     State(state): State<AppState>,
     AxumPath(project_id): AxumPath<String>,
@@ -571,32 +567,10 @@ pub async fn create_requirement(
     }
     let analysis_guard = RequirementAnalysisGuard::acquire(&state, &project_id)?;
 
-    let branch_input = state
-        .store
-        .write()
-        .await
-        .project_chat_branch_input(&project_id)
-        .await?;
-    let branch_session = match branch_input {
-        Some(input) => {
-            state
-                .model_provider
-                .clone_project_chat_for_requirement(input)
-                .await?
-        }
-        None => None,
-    };
-
     let (requirement_id, input) = {
         let mut store = state.store.write().await;
         store
-            .create_requirement_with_session(
-                &project_id,
-                message,
-                payload.references,
-                payload.images,
-                branch_session,
-            )
+            .create_requirement(&project_id, message, payload.references, payload.images)
             .await?
     };
 
@@ -612,6 +586,94 @@ pub async fn create_requirement(
         Json(AcceptedRequirement {
             accepted: true,
             requirement_id,
+            origin: RequirementOrigin::Standalone,
+        }),
+    ))
+}
+
+pub async fn create_requirement_branch(
+    State(state): State<AppState>,
+    AxumPath(project_id): AxumPath<String>,
+    Json(payload): Json<RequirementMessageRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let message = payload.message.trim().to_owned();
+    if message.is_empty() {
+        return Err(AppError::bad_request("补充说明不能为空"));
+    }
+    let analysis_guard = RequirementAnalysisGuard::acquire(&state, &project_id)?;
+    let branch_input = state
+        .store
+        .write()
+        .await
+        .start_project_chat_requirement_branch(&project_id)
+        .await?;
+    let branch_session = match branch_input {
+        Some(input) => match state
+            .model_provider
+            .clone_project_chat_for_requirement(input)
+            .await
+        {
+            Ok(Some(session)) => Some(session),
+            Ok(None) => {
+                state
+                    .store
+                    .write()
+                    .await
+                    .finish_project_chat_requirement_branch(&project_id)
+                    .await?;
+                return Err(AppError::internal("Pi clone 未返回 child session"));
+            }
+            Err(error) => {
+                state
+                    .store
+                    .write()
+                    .await
+                    .finish_project_chat_requirement_branch(&project_id)
+                    .await?;
+                return Err(error);
+            }
+        },
+        None => None,
+    };
+    let origin = if branch_session.is_some() {
+        RequirementOrigin::ProjectChatBranch
+    } else {
+        RequirementOrigin::Standalone
+    };
+    let created = state
+        .store
+        .write()
+        .await
+        .create_requirement_with_session(
+            &project_id,
+            message,
+            payload.references,
+            payload.images,
+            branch_session,
+        )
+        .await;
+    if origin == RequirementOrigin::ProjectChatBranch {
+        state
+            .store
+            .write()
+            .await
+            .finish_project_chat_requirement_branch(&project_id)
+            .await?;
+    }
+    let (requirement_id, input) = created?;
+    RequirementEventEmitter {
+        requirement_id: requirement_id.clone(),
+        task_id: None,
+        bus: state.requirement_events.clone(),
+    }
+    .emit("message_append", "需求消息已接受。");
+    spawn_requirement_analysis(state, requirement_id.clone(), input, analysis_guard);
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AcceptedRequirement {
+            accepted: true,
+            requirement_id,
+            origin,
         }),
     ))
 }
@@ -1147,49 +1209,15 @@ pub async fn confirm_requirement(
         ensure_publication_ready(&readiness)?;
     }
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
-    let (project_id, sync_input) = {
+    let project_id = {
         let mut store = state.store.write().await;
-        let project_id = store
+        store
             .confirm_requirement(&requirement_id, payload.prompt_id, payload.revision)
-            .await?;
-        let sync_input = store.start_requirement_summary_sync(&requirement_id).await;
-        (project_id, sync_input)
+            .await?
     };
-    match sync_input {
-        Ok(input) => start_requirement_summary_sync(state.clone(), input).await,
-        Err(error) => {
-            tracing::warn!(requirement_id, %error, "failed to start requirement summary sync");
-            if let Err(store_error) = state
-                .store
-                .write()
-                .await
-                .record_requirement_summary_sync_start_failure(&requirement_id, &error)
-                .await
-            {
-                tracing::warn!(requirement_id, %store_error, "failed to persist requirement summary sync start failure");
-            }
-        }
-    }
     spawn_project_scheduler(state.clone(), project_id.clone());
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
-}
-
-pub async fn sync_requirement_chat_summary(
-    State(state): State<AppState>,
-    AxumPath(requirement_id): AxumPath<String>,
-) -> Result<impl IntoResponse, AppError> {
-    let input = state
-        .store
-        .write()
-        .await
-        .start_requirement_summary_sync(&requirement_id)
-        .await?;
-    start_requirement_summary_sync(state, input).await;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(AcceptedOperation { accepted: true }),
-    ))
 }
 
 pub async fn plan_requirement_execution(
@@ -1585,91 +1613,6 @@ fn spawn_project_chat_response(
             emitter.emit(
                 "project_chat_failed",
                 failure.as_deref().unwrap_or("项目问答失败。"),
-            );
-        }
-    });
-}
-
-fn spawn_project_requirement_summary(
-    state: AppState,
-    project_id: String,
-    input: crate::models::ProjectChatInput,
-) {
-    tokio::spawn(async move {
-        let emitter = ProjectChatEventEmitter {
-            project_id: project_id.clone(),
-            bus: state.project_chat_events.clone(),
-        };
-        emitter.emit("project_chat_started", "Pi Agent 开始生成需求说明。");
-        let output = state
-            .model_provider
-            .generate_project_requirement_summary(input, Some(emitter.clone()))
-            .await;
-        let succeeded = output.is_ok();
-        let failure = output.as_ref().err().map(ToString::to_string);
-        let saved = state
-            .store
-            .write()
-            .await
-            .apply_project_requirement_summary(&project_id, output)
-            .await;
-        if let Err(error) = saved {
-            emitter.emit("project_chat_failed", &format!("保存需求说明失败：{error}"));
-        } else if succeeded {
-            emitter.emit("project_chat_completed", "需求说明已生成。");
-        } else {
-            emitter.emit(
-                "project_chat_failed",
-                failure.as_deref().unwrap_or("需求说明生成失败。"),
-            );
-        }
-    });
-}
-
-async fn start_requirement_summary_sync(
-    state: AppState,
-    input: crate::models::ProjectChatSummarySyncInput,
-) {
-    let project_id = input.project.id.clone();
-    let requirement_id = input.requirement_id.clone();
-    if let Err(error) = state.model_provider.begin_project_chat(&project_id).await {
-        let _ = state
-            .store
-            .write()
-            .await
-            .apply_requirement_summary_sync(&project_id, &requirement_id, Err(error))
-            .await;
-        return;
-    }
-    tokio::spawn(async move {
-        let emitter = ProjectChatEventEmitter {
-            project_id: project_id.clone(),
-            bus: state.project_chat_events.clone(),
-        };
-        emitter.emit("project_chat_started", "正在把已确认需求写回普通会话。");
-        let output = state
-            .model_provider
-            .sync_requirement_summary_to_project_chat(input, Some(emitter.clone()))
-            .await;
-        let succeeded = output.is_ok();
-        let failure = output.as_ref().err().map(ToString::to_string);
-        let saved = state
-            .store
-            .write()
-            .await
-            .apply_requirement_summary_sync(&project_id, &requirement_id, output)
-            .await;
-        if let Err(error) = saved {
-            emitter.emit(
-                "project_chat_failed",
-                &format!("保存需求摘要写回状态失败：{error}"),
-            );
-        } else if succeeded {
-            emitter.emit("project_chat_completed", "需求摘要已写回普通会话。");
-        } else {
-            emitter.emit(
-                "project_chat_failed",
-                failure.as_deref().unwrap_or("需求摘要写回失败。"),
             );
         }
     });

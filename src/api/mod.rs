@@ -20,18 +20,18 @@ async fn api_not_found() -> StatusCode {
 use crate::api::git::{execute_git_action, get_git_diff, get_git_status};
 use crate::api::handlers::{
     abort_project_chat, append_requirement_message, cancel_requirement_analysis,
-    confirm_requirement, create_project_terminal, create_requirement, delete_project_terminal,
-    delete_requirement, generate_project_requirement_summary, get_basic_settings,
-    get_current_project, get_model_settings, get_project_attachment, get_project_canvas,
-    get_project_chat, get_project_chat_session, get_project_file_content, get_project_files,
+    confirm_requirement, create_project_terminal, create_requirement, create_requirement_branch,
+    delete_project_terminal, delete_requirement, get_basic_settings, get_current_project,
+    get_model_settings, get_project_attachment, get_project_canvas, get_project_chat,
+    get_project_chat_session, get_project_file_content, get_project_file_tree, get_project_files,
     get_requirement_conversation, get_requirement_session, get_requirement_task,
     get_requirement_task_session, get_terminal_access_status, get_terminal_command_profiles,
     list_project_terminals, plan_requirement_execution, project_chat_events, put_basic_settings,
     put_model_settings, put_terminal_command_profiles, recover_task_group, reload_model_settings,
     requirement_conversation_events, requirement_events, reset_project_chat, restart_system,
     retry_requirement_analysis, send_project_chat_message, spawn_startup_requirement_scheduler,
-    submit_requirement_clarifications, sync_requirement_chat_summary, terminal_websocket,
-    unlock_terminal_access, upload_project_attachment,
+    submit_requirement_clarifications, terminal_websocket, unlock_terminal_access,
+    upload_project_attachment,
 };
 use crate::pi::PiRpcModelProvider;
 use crate::store::JsonStore;
@@ -205,6 +205,7 @@ fn build_app_with_startup_requirements(
         .route("/project/current", get(get_current_project))
         .route("/projects/{id}/canvas", get(get_project_canvas))
         .route("/projects/{id}/files", get(get_project_files))
+        .route("/projects/{id}/files/tree", get(get_project_file_tree))
         .route(
             "/projects/{id}/files/content",
             get(get_project_file_content),
@@ -228,8 +229,8 @@ fn build_app_with_startup_requirements(
         )
         .route("/projects/{id}/chat/events", get(project_chat_events))
         .route(
-            "/projects/{id}/chat/commands/requirement-summary",
-            post(generate_project_requirement_summary),
+            "/projects/{id}/chat/commands/requirement-branch",
+            post(create_requirement_branch),
         )
         .route("/projects/{id}/chat/abort", post(abort_project_chat))
         .route(
@@ -279,10 +280,6 @@ fn build_app_with_startup_requirements(
             post(retry_requirement_analysis),
         )
         .route("/requirements/{id}/confirm", post(confirm_requirement))
-        .route(
-            "/requirements/{id}/sync-chat-summary",
-            post(sync_requirement_chat_summary),
-        )
         .route("/requirements/{id}/plan", post(plan_requirement_execution))
         .route(
             "/requirements/{id}/tasks/{task_id}",

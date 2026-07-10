@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   abortProjectChat,
-  generateProjectRequirementSummary,
   getProjectChat,
   projectChatWebSocketUrl,
   resetProjectChat,
   sendProjectChatMessage,
-  syncRequirementChatSummary,
 } from "../api/client";
 import type {
   ChatSubmission,
@@ -108,18 +106,6 @@ export function useProjectChat(projectId: string | null) {
     [projectId, run],
   );
 
-  const generateRequirementSummary = useCallback(async () => {
-    if (!projectId) return;
-    await run(() => generateProjectRequirementSummary(projectId));
-  }, [projectId, run]);
-
-  const retryRequirementSummarySync = useCallback(
-    async (requirementId: string) => {
-      await run(() => syncRequirementChatSummary(requirementId));
-    },
-    [run],
-  );
-
   const abort = useCallback(async () => {
     if (!projectId || projectChatBusy || !projectChat?.running) return;
     setProjectChatBusy(true);
@@ -154,8 +140,6 @@ export function useProjectChat(projectId: string | null) {
     projectChatError,
     projectChatEvents,
     sendProjectChat,
-    generateRequirementSummary,
-    retryRequirementSummarySync,
     abortProjectChat: abort,
     closeProjectChat,
   };

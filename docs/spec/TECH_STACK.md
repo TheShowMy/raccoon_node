@@ -57,17 +57,16 @@
 - 根页面直接加载固定 `current` 项目画布，不提供 start 画布或项目增删。
 - `.raccoon-node/` 必须加入仓库 `.gitignore`，且运行数据不得逃逸该目录。
 - 所有 LLM、模型列表、模型选择和后续 Agent 能力必须基于 Pi Agent RPC。
-- 需求澄清、确认草案和项目问答生成的需求说明必须通过内置受管 Pi extension 的
-  结构化工具提交；不得恢复文本 JSON 提取。
+- 需求澄清和确认草案必须通过内置受管 Pi extension 的结构化工具提交；不得恢复
+  文本 JSON 提取。
 - 业务状态只以 SQLite 为准；Pi session 只保存完整模型历史，不承担 FIFO、DAG、
   worktree 或恢复状态。
-- 项目聊天始终持有主 Pi session。创建需求时，非空主 session 通过 Pi RPC `clone`
-  派生需求分支并立即切回主 session；空主 session 直接创建独立需求 session。
+- 项目聊天始终持有父 Pi session。`/需求生成` 只在用户提交非空补充说明后执行：
+  完整父问答通过 Pi RPC `clone` 派生 child session；无完整上下文时创建独立需求。
   `ProjectChat.pi_session_file` 与 `Requirement.pi_session_file` 分别保存主/分支引用，
   均不序列化到前端。
-- 需求确认后异步向主 Pi session 写入最终摘要；Pi 内部确认回复不展示，SQLite 中的
-  结构化系统卡片记录 `syncing | synced | failed`。失败不回滚需求，可通过专用 API
-  重试。写回与普通聊天、session 切换共享 single-flight，冲突返回 `409`。
+- 父、子 session 独立演进。需求确认或放弃后恢复父聊天，child 中的需求消息和草案
+  永不写回父 session。活动需求期间普通聊天发送和重置返回 `409`。
 - 同一项目的需求分析保持单飞，繁忙时拒绝新操作，不增加消息队列、steer 或
   follow-up。session 清理只删除 `.raccoon-node/sessions/` 中未被主聊天、需求或任务
   业务状态引用的 JSONL 文件。

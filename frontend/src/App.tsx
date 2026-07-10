@@ -94,7 +94,7 @@ const PANEL_LOADERS: Record<MainPanelKind, () => Promise<unknown>> = {
   tokens: loadTokenWorkbench,
 };
 
-type PanelPhase = "shell" | "focusing" | "content" | "closing";
+type PanelPhase = "shell" | "focusing" | "content";
 
 const nodeTypes = {
   chatNode: ChatCanvasNode,
@@ -363,20 +363,16 @@ export default function App() {
     setPanelPhase("focusing");
     setOpenPanel(panel);
   }, []);
-  const focusedPanel = panelPhase === "closing" ? null : openPanel;
   const handlePanelFocusComplete = useCallback(
     (panel: MainPanelKind | null) => {
       if (panel && panel === openPanel && panelPhase === "focusing") {
         startPanelTransition(() => setPanelPhase("content"));
-      } else if (!panel && panelPhase === "closing") {
-        setOpenPanel(null);
-        setPanelPhase("shell");
       }
     },
     [openPanel, panelPhase],
   );
   const mainCanvasViewport = useMainCanvasViewport({
-    openPanel: focusedPanel,
+    openPanel,
     onFocusComplete: handlePanelFocusComplete,
   });
   const modelSetupGuideStep: ModelSetupGuideStep | null =
@@ -445,10 +441,7 @@ export default function App() {
         sendRequirementMessage: requirement.sendRequirementMessage,
         sendProjectChatMessage: projectChat.sendProjectChat,
         abortProjectChat: projectChat.abortProjectChat,
-        generateProjectRequirementSummary:
-          projectChat.generateRequirementSummary,
         resetProjectChat: projectChat.closeProjectChat,
-        retryRequirementSummarySync: projectChat.retryRequirementSummarySync,
         openRequirement: (requirementId) => {
           const requirement = [
             ...(project.projectCanvas?.active_requirement
@@ -476,12 +469,10 @@ export default function App() {
       project.projectCanvas,
       projectChat.closeProjectChat,
       projectChat.abortProjectChat,
-      projectChat.generateRequirementSummary,
       projectChat.projectChat,
       projectChat.projectChatBusy,
       projectChat.projectChatError,
       projectChat.projectChatEvents,
-      projectChat.retryRequirementSummarySync,
       projectChat.sendProjectChat,
       requirement.confirmRequirement,
       requirement.retryRequirementAnalysis,
@@ -703,10 +694,11 @@ export default function App() {
   );
 
   const closePanel = useCallback(() => {
-    if (!openPanel || panelPhase === "closing") return;
+    if (!openPanel) return;
     if (openPanel === "settings") void terminals.closePiLoginTerminal();
-    setPanelPhase("closing");
-  }, [openPanel, panelPhase, terminals.closePiLoginTerminal]);
+    setOpenPanel(null);
+    setPanelPhase("shell");
+  }, [openPanel, terminals.closePiLoginTerminal]);
 
   const panelContent = useMemo(() => {
     if (panelPhase !== "content" || !openPanel || !current.project) return null;
@@ -725,11 +717,10 @@ export default function App() {
       return (
         <SettingsWorkbench
           data={
-            {
-              ...projectSettingsNode.data,
-              expanded: true,
-              onToggleExpanded: closePanel,
-            } as Extract<StartNodeData, { kind: "project-settings" }>
+            projectSettingsNode.data as Extract<
+              StartNodeData,
+              { kind: "project-settings" }
+            >
           }
         />
       );
@@ -738,11 +729,10 @@ export default function App() {
       return (
         <TerminalWorkbench
           data={
-            {
-              ...projectTerminalNode.data,
-              collapsed: false,
-              onToggleCollapsed: closePanel,
-            } as Extract<StartNodeData, { kind: "project-terminal" }>
+            projectTerminalNode.data as Extract<
+              StartNodeData,
+              { kind: "project-terminal" }
+            >
           }
         />
       );
@@ -751,11 +741,10 @@ export default function App() {
       return (
         <GitWorkbench
           data={
-            {
-              ...projectGitNode.data,
-              phase: "expanded",
-              onToggleExpanded: closePanel,
-            } as Extract<StartNodeData, { kind: "project-git" }>
+            projectGitNode.data as Extract<
+              StartNodeData,
+              { kind: "project-git" }
+            >
           }
         />
       );
@@ -768,11 +757,7 @@ export default function App() {
         return (
           <TokenWorkbench
             data={
-              {
-                ...tokenNode.data,
-                expanded: true,
-                onToggleExpanded: closePanel,
-              } as Extract<StartNodeData, { kind: "token-usage" }>
+              tokenNode.data as Extract<StartNodeData, { kind: "token-usage" }>
             }
           />
         );
@@ -780,7 +765,6 @@ export default function App() {
     }
     return null;
   }, [
-    closePanel,
     current.project,
     openPanel,
     panelPhase,

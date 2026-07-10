@@ -64,7 +64,6 @@ describe("App", () => {
               messages: [],
               running: false,
               error: null,
-              requirement_summary: null,
               updated_at: "2026-07-01T00:00:00Z",
             }),
           );

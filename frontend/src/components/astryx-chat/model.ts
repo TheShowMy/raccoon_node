@@ -17,7 +17,6 @@ export type AstryxChatEntry = {
   references: FileReference[];
   images: ImageAttachment[];
   traceBlocks: TraceBlock[];
-  requirementContext?: ProjectChatMessage["requirement_context"];
   noticeLevel?: "info" | "warn";
 };
 
@@ -76,7 +75,6 @@ export function projectMessageEntries(
     references: message.references ?? [],
     images: message.images ?? [],
     traceBlocks: traceBlocks(message.metadata),
-    requirementContext: message.requirement_context,
   }));
 }
 

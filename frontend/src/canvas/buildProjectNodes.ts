@@ -199,7 +199,7 @@ export interface BuildProjectChatNodeParams {
   projectChatEvents: ConversationEvent[];
   dismissedPromptRequirementId: string | null;
   startRequirement: (
-    description: string | null,
+    description: string,
     attachments: {
       references: FileReference[];
       images: ImageAttachment[];
@@ -208,9 +208,7 @@ export interface BuildProjectChatNodeParams {
   sendRequirementMessage: (payload: ChatSubmission) => Promise<boolean>;
   sendProjectChatMessage: (payload: ChatSubmission) => Promise<boolean>;
   abortProjectChat?: () => Promise<void>;
-  generateProjectRequirementSummary?: () => Promise<void>;
   resetProjectChat: () => Promise<boolean>;
-  retryRequirementSummarySync?: (requirementId: string) => Promise<void>;
   openRequirement?: (requirementId: string) => void;
   loadOlderRequirementHistory: () => Promise<boolean>;
   submitClarifications: (
@@ -486,9 +484,7 @@ export function buildProjectChatNode({
   sendRequirementMessage,
   sendProjectChatMessage,
   abortProjectChat = async () => {},
-  generateProjectRequirementSummary = async () => {},
   resetProjectChat,
-  retryRequirementSummarySync = async () => {},
   openRequirement = () => {},
   loadOlderRequirementHistory,
   submitClarifications,
@@ -530,9 +526,7 @@ export function buildProjectChatNode({
         onStartRequirement: startRequirement,
         onProjectChatSend: sendProjectChatMessage,
         onProjectChatAbort: abortProjectChat,
-        onProjectChatGenerateRequirement: generateProjectRequirementSummary,
         onProjectChatReset: resetProjectChat,
-        onRetryRequirementSummarySync: retryRequirementSummarySync,
         onOpenRequirement: openRequirement,
         onLoadOlderRequirementHistory: loadOlderRequirementHistory,
         onSubmitClarifications: submitClarifications,

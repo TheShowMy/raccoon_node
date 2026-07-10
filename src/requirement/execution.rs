@@ -1528,6 +1528,7 @@ mod tests {
             project_id: "project-1".to_owned(),
             title: title.to_owned(),
             original_message: title.to_owned(),
+            origin: crate::models::RequirementOrigin::Standalone,
             status: crate::models::RequirementStatus::Running,
             messages: Vec::new(),
             clarification_round: 0,

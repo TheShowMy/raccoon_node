@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useMemo } from "react";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { ChatLayout } from "@astryxdesign/core/Chat";
@@ -87,15 +87,6 @@ function AstryxChatSurface({ data }: { data: ChatData }) {
     projectRunning ||
     requirementRunning ||
     timeline.some((item) => item.kind === "requirement" && item.running);
-  const openRequirement = useCallback(
-    (requirementId: string) => data.onOpenRequirement?.(requirementId),
-    [data.onOpenRequirement],
-  );
-  const retryRequirementSummary = useCallback(
-    (requirementId: string) =>
-      void data.onRetryRequirementSummarySync?.(requirementId),
-    [data.onRetryRequirementSummarySync],
-  );
 
   return (
     <Layout
@@ -182,8 +173,6 @@ function AstryxChatSurface({ data }: { data: ChatData }) {
                 isPinned={chatScroll.isPinned}
                 hasOlderHistory={data.hasOlderRequirementHistory}
                 onLoadOlderHistory={data.onLoadOlderRequirementHistory}
-                onOpenRequirement={openRequirement}
-                onRetryRequirement={retryRequirementSummary}
               />
             ) : null}
           </ChatLayout>

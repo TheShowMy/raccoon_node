@@ -2,7 +2,7 @@
 
 ## Objective
 
-保留全屏椭圆主画布和六个固定外围节点，恢复迁移前已经验证的领域层，重新实现模块化 Astryx 前端。`/需求生成` 使用 Pi RPC clone 从普通聊天派生需求分支；分支确认后回到主会话并异步回写最终需求摘要。
+保留全屏椭圆主画布和六个固定外围节点，恢复迁移前已经验证的领域层，重新实现模块化 Astryx 前端。`/需求生成` 使用 Pi RPC clone 从普通聊天派生独立 child session；确认或放弃后返回保持不变的父会话。
 
 测试仓库：
 
@@ -16,13 +16,13 @@ npm run dev
 ## Product Decisions
 
 - 中心节点始终显示“项目对话”，项目消息与需求分支共用一个 Astryx 消息时间线，不提供双 Tab 或独立需求页。
-- `/` 菜单只有 `需求生成` 和 `新建会话`，支持 `/需求生成 <描述>`。
-- 主聊天非空时 clone 当前 Pi 活动分支作为需求 session；为空时创建独立需求 session。
+- `/` 菜单只有 `需求生成` 和 `新建会话`；命令先进入可取消准备态，补充说明非空后才创建需求。
+- 主聊天存在完整问答时 clone 当前 Pi 活动分支作为需求 session；无完整上下文时创建独立需求 session。
 - 需求分支结合主会话上下文和用户新输入完成补充、澄清与确认。
 - 澄清和确认卡片固定在 composer 上方，提交版本化 `prompt_id`、`revision` 和结构化答案。
-- 确认或停止后 composer 回到普通聊天，但完整需求分支继续保留在时间线；放弃会删除该分支。只有确认会向主 Pi session 回写最终摘要。
-- 回写结果显示为系统摘要卡片，不展示 Pi 内部确认回复；失败可重试且不回滚需求。
-- 活动需求分支期间禁用新建普通会话。
+- 确认或放弃后 composer 回到普通聊天；完整需求分支继续保留在时间线，父 session
+  不接收任何需求消息或摘要。
+- 活动需求分支期间禁用普通聊天发送与重置。
 - 主画布保持设置、终端、Git、Token、需求列表、文件六个固定外围节点；同一时间只打开一个主面板。
 - 主画布使用固定镜头，禁止用户平移缩放；鼠标位置只驱动平滑视差。只有需求工作台内的嵌套 DAG 支持平移缩放。
 - 需求和任务只出现在需求面板内部的子画布，不追加到主椭圆。
@@ -117,12 +117,14 @@ npm run dev
 
 ### 2. Pi Requirement Branch
 
-- [x] 完成 Pi clone 需求分支和主会话摘要回写。
+- [x] 完成独立的 Pi child session 分叉契约。
 
-- 非空主 session clone 后保存需求分支文件并立即切回主 session。
-- 空主 session 直接创建需求 session。
-- 确认后异步写回主 session，持久化系统摘要卡片状态。
-- 新增摘要写回重试 API，覆盖并发、恢复、失败和 session 清理测试。
+- `POST /chat/commands/requirement-branch` 要求非空补充说明；完整父问答执行 clone，
+  空上下文创建 `standalone`。
+- `Requirement.origin` 持久化为 `project_chat_branch | standalone`；父、子 session
+  独立演进。
+- 已删除旧 `requirement-summary` 接口、Provider 方法、父会话摘要卡和写回重试。
+- 活动需求期间后端阻止普通聊天发送和重置；父 session 不因确认而变化。
 
 ### 3. Canvas And Chat
 
@@ -142,17 +144,22 @@ npm run dev
 
 ### 5. Settings And Terminal
 
-- [x] 完成设置与终端工作台。
+- [ ] 自动化检查已通过后再完成浏览器验收。
 
 - 设置包含主题、明暗模式、host、port、commit mode、三档模型、RPC 状态与 onboarding。
+- 设置与终端已改为独立 Astryx 工作台，面板只保留外层“关闭面板”，不再复用带
+  `NodeBar` 收起逻辑的旧节点。
 - 保留 Pi 登录终端；普通终端支持会话、xterm WebSocket、输入、resize、关闭和访问授权。
 
 ### 6. Git Token And Files
 
-- [x] 完成 Git、Token 与文件工作台。
+- [ ] 自动化检查已通过后再完成浏览器验收。
 
 - Git 支持状态、diff、stage/unstage、fetch/pull、分支、commit/push 和危险操作确认。
-- Token 展示完整 usage/context；文件工作台支持搜索、树、多 Tab、Markdown 和代码预览。
+- Token 已使用真实百分比标签和 0–100 进度条；文件工作台已切换为后端懒加载树，
+  同时保留搜索、多 Tab、Markdown 和代码预览。
+- Git 工作台只保留外层面板关闭，内部保留 staged/unstaged、diff 和确认流程；仍需
+  浏览器验收分支切换、pull、push 和 commit。
 
 ### 7. Cleanup And Verification
 

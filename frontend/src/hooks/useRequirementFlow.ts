@@ -12,7 +12,7 @@ import type {
   StreamEvent,
 } from "../types/api";
 import {
-  createRequirement,
+  createRequirementBranch,
   appendRequirementMessage,
   getRequirementConversation,
   retryRequirementAnalysis,
@@ -258,20 +258,20 @@ export function useRequirementFlow(
 
   const startRequirement = useCallback(
     async (
-      description: string | null,
+      description: string,
       attachments: {
         references: FileReference[];
         images: ImageAttachment[];
       },
     ): Promise<boolean> => {
       if (!selectedProjectId) return false;
-      const message =
-        description?.trim() || "请基于当前项目对话上下文生成需求。";
+      const message = description.trim();
+      if (!message) return false;
 
       setRequirementBusy(true);
       setRequirementError(null);
       try {
-        const accepted = await createRequirement(selectedProjectId, {
+        const accepted = await createRequirementBranch(selectedProjectId, {
           message,
           references: attachments.references,
           images: attachments.images,

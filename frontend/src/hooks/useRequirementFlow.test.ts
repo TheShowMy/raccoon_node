@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   confirmRequirement,
-  createRequirement,
+  createRequirementBranch,
   getRequirementConversation,
 } from "../api/client";
 import type {
@@ -16,7 +16,7 @@ import type {
 import { useRequirementFlow } from "./useRequirementFlow";
 
 vi.mock("../api/client", () => ({
-  createRequirement: vi.fn(),
+  createRequirementBranch: vi.fn(),
   appendRequirementMessage: vi.fn(),
   getRequirementConversation: vi.fn(),
   submitRequirementClarifications: vi.fn(),
@@ -31,13 +31,13 @@ const requirement: Requirement = {
   project_id: "project-1",
   title: "测试需求",
   original_message: "测试需求",
+  origin: "standalone",
   status: "draft_ready",
   messages: [],
   clarification_round: 0,
   clarifications: [],
   draft: null,
   execution_plan: null,
-  pi_session_file: null,
   error: null,
   created_at: now,
   updated_at: now,
@@ -193,7 +193,7 @@ describe("useRequirementFlow", () => {
       queued_requirements: [],
     };
     const order: string[] = [];
-    vi.mocked(createRequirement).mockResolvedValue({
+    vi.mocked(createRequirementBranch).mockResolvedValue({
       accepted: true,
       requirement_id: requirement.id,
     });
@@ -248,7 +248,7 @@ describe("useRequirementFlow", () => {
     });
 
     expect(accepted).toBe(true);
-    expect(createRequirement).toHaveBeenCalledWith("project-1", {
+    expect(createRequirementBranch).toHaveBeenCalledWith("project-1", {
       message: "重写登录流程",
       ...attachments,
     });
@@ -264,11 +264,7 @@ describe("useRequirementFlow", () => {
     expect(setProjectCanvas).toHaveBeenCalledWith(activeCanvas);
   });
 
-  it("uses a stable context instruction for a command without description", async () => {
-    vi.mocked(createRequirement).mockResolvedValue({
-      accepted: true,
-      requirement_id: requirement.id,
-    });
+  it("rejects a requirement branch without a supplement", async () => {
     const loadProjectCanvas = vi.fn().mockResolvedValue(canvas);
     const { result } = renderHook(() =>
       useRequirementFlow(
@@ -282,17 +278,13 @@ describe("useRequirementFlow", () => {
     );
 
     await act(async () => {
-      await result.current.startRequirement(null, {
+      await result.current.startRequirement("", {
         references: [],
         images: [],
       });
     });
 
-    expect(createRequirement).toHaveBeenCalledWith("project-1", {
-      message: "请基于当前项目对话上下文生成需求。",
-      references: [],
-      images: [],
-    });
+    expect(createRequirementBranch).not.toHaveBeenCalled();
   });
 
   it("loads persisted conversations lazily once and removes only deleted branches", async () => {

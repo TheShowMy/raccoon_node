@@ -4,13 +4,87 @@ use axum::http::header;
 
 use crate::{
     error::AppError,
-    models::{AttachmentUploadRequest, FileReference, ImageAttachment, PromptImage},
+    models::{
+        AttachmentUploadRequest, FileReference, ImageAttachment, ProjectFileTreeEntry,
+        ProjectFileTreeEntryKind, PromptImage,
+    },
     utils::{ensure_child_path, normalize_local_path},
 };
 
 const MAX_REF_BYTES: u64 = 64 * 1024;
 const MAX_ATTACHMENT_BYTES: usize = 5 * 1024 * 1024;
 const MAX_FILE_RESULTS: usize = 100;
+
+fn is_excluded_directory(name: &str) -> bool {
+    matches!(
+        name,
+        ".git" | ".raccoon-node" | "node_modules" | "target" | "dist"
+    )
+}
+
+pub async fn list_repo_tree(
+    repo_path: &Path,
+    relative_directory: &str,
+) -> Result<Vec<ProjectFileTreeEntry>, AppError> {
+    let repo_path = normalize_local_path(repo_path)?;
+    ensure_child_path(&repo_path, &repo_path)?;
+    let relative_directory = relative_directory.trim();
+    if relative_directory
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .any(is_excluded_directory)
+    {
+        return Err(AppError::bad_request("不能浏览内部或构建目录"));
+    }
+    let directory = if relative_directory.is_empty() {
+        repo_path.clone()
+    } else {
+        resolve_relative_path(&repo_path, relative_directory)?
+    };
+    let canonical = tokio::fs::canonicalize(&directory)
+        .await
+        .map_err(|_| AppError::bad_request("目录不存在"))?;
+    ensure_child_path(&repo_path, &canonical)?;
+    if !tokio::fs::metadata(&canonical).await?.is_dir() {
+        return Err(AppError::bad_request("path 必须指向目录"));
+    }
+
+    let mut entries = tokio::fs::read_dir(&canonical).await?;
+    let mut result = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let file_type = entry.file_type().await?;
+        if file_type.is_symlink() || (file_type.is_dir() && is_excluded_directory(&name)) {
+            continue;
+        }
+        if !file_type.is_dir() && !file_type.is_file() {
+            continue;
+        }
+        let path = if relative_directory.is_empty() {
+            name.clone()
+        } else {
+            format!("{relative_directory}/{name}")
+        };
+        result.push(ProjectFileTreeEntry {
+            name,
+            path,
+            kind: if file_type.is_dir() {
+                ProjectFileTreeEntryKind::Directory
+            } else {
+                ProjectFileTreeEntryKind::File
+            },
+        });
+    }
+    result.sort_by(|left, right| {
+        let left_rank = matches!(left.kind, ProjectFileTreeEntryKind::File);
+        let right_rank = matches!(right.kind, ProjectFileTreeEntryKind::File);
+        left_rank
+            .cmp(&right_rank)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(result)
+}
 
 pub async fn list_repo_files(
     repo_path: &Path,
@@ -28,10 +102,7 @@ pub async fn list_repo_files(
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             if entry.file_type().await?.is_dir() {
-                if matches!(
-                    name.as_str(),
-                    ".git" | ".raccoon-node" | "node_modules" | "target" | "dist"
-                ) {
+                if is_excluded_directory(&name) {
                     continue;
                 }
                 stack.push(path);
@@ -402,6 +473,41 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn tree_lists_directories_first_and_loads_nested_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(temp.path().join("src/nested"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir(temp.path().join("target"))
+            .await
+            .unwrap();
+        tokio::fs::write(temp.path().join("README.md"), b"readme")
+            .await
+            .unwrap();
+        tokio::fs::write(temp.path().join("src/lib.rs"), b"lib")
+            .await
+            .unwrap();
+
+        let root = list_repo_tree(temp.path(), "").await.unwrap();
+        assert_eq!(
+            root.iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["src", "README.md"]
+        );
+        let nested = list_repo_tree(temp.path(), "src").await.unwrap();
+        assert_eq!(
+            nested
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["src/nested", "src/lib.rs"]
+        );
+        assert!(list_repo_tree(temp.path(), "../outside").await.is_err());
+        assert!(list_repo_tree(temp.path(), "target").await.is_err());
     }
 
     #[test]

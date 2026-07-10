@@ -17,6 +17,7 @@ import {
   type RequirementTaskDetail,
   type SessionTranscriptPage,
   type ProjectFileContent,
+  type ProjectFileTreeEntry,
   type PublicationReadiness,
   type TerminalAccessStatus,
   type TerminalCommandProfile,
@@ -428,6 +429,24 @@ export async function getProjectFileContent(
   return response.json();
 }
 
+export async function getProjectFileTree(
+  projectId: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<ProjectFileTreeEntry[]> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/files/tree?path=${encodeURIComponent(path)}`,
+    { signal },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取文件树失败");
+  }
+  return response.json();
+}
+
 export async function uploadProjectAttachment(
   projectId: string,
   file: File,
@@ -479,22 +498,6 @@ export async function sendProjectChatMessage(
   return response.json();
 }
 
-export async function generateProjectRequirementSummary(
-  projectId: string,
-): Promise<ChatAccepted> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/chat/commands/requirement-summary`,
-    { method: "POST" },
-  );
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    throw new Error(body?.message ?? "生成需求说明失败");
-  }
-  return response.json();
-}
-
 export async function abortProjectChat(
   projectId: string,
 ): Promise<AcceptedOperation> {
@@ -532,6 +535,31 @@ export async function createRequirement(
       message?: string;
     } | null;
     throw new Error(body?.message ?? "提交需求失败");
+  }
+  return response.json();
+}
+
+export async function createRequirementBranch(
+  projectId: string,
+  payload: {
+    message: string;
+    references: FileReference[];
+    images: ImageAttachment[];
+  },
+): Promise<RequirementAccepted> {
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/chat/commands/requirement-branch`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "创建需求分支失败");
   }
   return response.json();
 }
@@ -635,22 +663,6 @@ export async function confirmRequirement(
       message?: string;
     } | null;
     throw new Error(body?.message ?? "确认需求失败");
-  }
-  return response.json();
-}
-
-export async function syncRequirementChatSummary(
-  requirementId: string,
-): Promise<AcceptedOperation> {
-  const response = await fetch(
-    `/api/requirements/${encodeURIComponent(requirementId)}/sync-chat-summary`,
-    { method: "POST" },
-  );
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    throw new Error(body?.message ?? "重新写回需求摘要失败");
   }
   return response.json();
 }
