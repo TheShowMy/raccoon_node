@@ -15,12 +15,12 @@ npm run dev
 
 ## Product Decisions
 
-- 中心节点默认只显示普通项目聊天，不提供双 Tab。
+- 中心节点始终显示“项目对话”，项目消息与需求分支共用一个 Astryx 消息时间线，不提供双 Tab 或独立需求页。
 - `/` 菜单只有 `需求生成` 和 `新建会话`，支持 `/需求生成 <描述>`。
 - 主聊天非空时 clone 当前 Pi 活动分支作为需求 session；为空时创建独立需求 session。
 - 需求分支结合主会话上下文和用户新输入完成补充、澄清与确认。
 - 澄清和确认卡片固定在 composer 上方，提交版本化 `prompt_id`、`revision` 和结构化答案。
-- 确认、取消或放弃后回到普通聊天；只有确认会向主 Pi session 回写最终摘要。
+- 确认或停止后 composer 回到普通聊天，但完整需求分支继续保留在时间线；放弃会删除该分支。只有确认会向主 Pi session 回写最终摘要。
 - 回写结果显示为系统摘要卡片，不展示 Pi 内部确认回复；失败可重试且不回滚需求。
 - 活动需求分支期间禁用新建普通会话。
 - 主画布保持设置、终端、Git、Token、需求列表、文件六个固定外围节点；同一时间只打开一个主面板。
@@ -55,6 +55,42 @@ npm run dev
   `ChatToolCalls`、`Collapsible`、`Banner`、`AlertDialog` 和 `useStreamingText`。
   中心聊天从模板重新实现；旧 `RequirementChatNode`、旧 chat transcript、旧 composer/bubble
   及其测试全部删除，只保留 API、业务 hooks 和节点数据契约。
+- 阶段 3（Live Chat Follow-up）：重新查询 `ChatLayout`、`ChatToolCalls`、`Collapsible`
+  和 `ai-chat` skeleton。`ChatLayout` 独占节点滚动并将 composer 固定到底部；工具生命周期
+  合并后以单个 `ChatToolCalls` 分组展示。Astryx 0.1.3 没有独立 reasoning 组件，思考过程
+  使用官方 `ChatMessageBubble`、`Collapsible`、`StatusDot`、`Text`、`Markdown` 和
+  `useStreamingText` 组合，运行时展开、完成后折叠。
+- 阶段 3（Requirement Command Follow-up）：在 `frontend/` 执行
+  `npx astryx build "在现有项目聊天历史下，用同一个 ChatComposer 选择 /需求生成 后插入可继续编辑的命令 token，提交成功前不切换消息流"`，
+  并查询 `ai-chat`、`ChatComposerInputSlashCommands`、`ChatComposerInputMultipleTriggers`、
+  `ChatComposer`、`ChatComposerInput` 和 `Token`。`/需求生成` 仅作为黄色内联 token
+  留在项目 composer 中；真实 requirement conversation 就绪前保持项目历史可见，不创建空白临时消息流。
+- 阶段 3（Unified Requirement Timeline Follow-up）：在 `frontend/` 执行
+  `npx astryx build "single continuous AI chat timeline with project messages, requirement branch divider, streaming reasoning tools, and visible confirmation actions above composer"`，
+  并查询 `ChatMessageListFullFeatured`、`ChatComposerDrawerFeedback`、`ChatSystemMessage`、
+  `ChatMessageList` 和 `ChatComposerDrawer`。采用单个 `ChatMessageList`，每个未删除需求通过
+  `ChatSystemMessage variant="divider"` 插入“需求分支”连续区段；prompt 使用不传 `count` 的
+  `ChatComposerDrawer` 固定展开，附件 drawer 继续独立支持折叠。
+- 阶段 3（Requirement Prompt Visibility Follow-up）：执行
+  `npx astryx build "opaque requirement confirmation panel above chat composer with scrollable long content and always-visible footer actions"`，
+  并查询 `LayoutBasicCardLayout`、`LayoutFooterActions`、`CardWithInnerLayout`、`Card`、
+  `LayoutContent` 与 `LayoutFooter`。长确认/澄清内容改为默认不透明 `Card + Layout`：正文仅在
+  `LayoutContent` 内滚动，操作按钮固定在 `LayoutFooter`，不再使用带 muted 叠层的 prompt drawer。
+- 阶段 3（Requirement Prompt Overflow Follow-up）：执行
+  `npx astryx build "requirement confirmation list with wrapped multi-line criteria and isolated inner wheel scrolling"`，
+  并查询 `ListItem`、`List`、`Text` 与 `LayoutContent`。`ListItem.label` 使用 Astryx `Text`
+  ReactNode 解除字符串单行省略，长摘要、验收项、问题和选项按词换行；内部滚动区使用
+  `overscroll-behavior: contain`，并在 prompt card 阻止 wheel 冒泡到外层聊天时间线。
+- 阶段 3（Requirement Prompt Interaction Follow-up）：执行
+  `npx astryx build "interactive confirmation card inside chat composer while message input alone is disabled"`，
+  并查询 `ChatComposer`、`ChatComposerInput` 与 `ChatSendButton`。prompt 显示时不再设置
+  `ChatComposer.isDisabled`（该 prop 会禁用整个根容器的 pointer events），仅禁用输入、附件和发送按钮；
+  prompt 内容、滚动条、确认操作及运行态停止按钮保持可交互。
+- 阶段 3（Chat Performance Follow-up）：执行
+  `npx astryx build "high performance AI chat with long history lazy older messages and fixed composer"`，
+  并查询 `ChatMessageList` 与 `ChatComposerInput`。输入、附件和澄清 draft 下沉到聊天节点，历史使用
+  `ChatMessageList.scrollToTopAction` 按 80 条分批渲染；实时滚动按 animation frame 合并。主 React Flow
+  保持节点引用稳定，工作台先聚焦轻量壳层，再按 Astryx fast motion 的 175ms 时长挂载内容。
 - 阶段 4（Requirement Workbench）：执行
   `astryx build "nested requirement DAG workbench with list, dependency graph and task detail dialog"`。
   参考 `detail-page`、`table-grouped`、`DialogConfirmationDialog`，采用 `List`、`Token`、
@@ -94,7 +130,7 @@ npm run dev
 
 - 使用 AppShell + React Flow 实现中心节点、六个外围节点、单主面板、固定镜头、鼠标视差和程序化视口聚焦。
 - 普通聊天完整支持快照对账、streaming、thinking/tool、停止、重置、附件和文件引用。
-- `/需求生成` 切换同一节点到需求分支；无双 Tab。
+- `/需求生成` 在同一个消息时间线中插入“需求分支”区段；header 和项目历史不切换，无双 Tab 或第二滚动容器。
 - 中心聊天 UI 基于 Astryx `ai-chat` 模板完整重写，不复用迁移前聊天组件。
 
 ### 4. Requirement Workbench

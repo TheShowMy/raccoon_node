@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseProjectChatCommand } from "./commands";
+import { parseProjectChatCommand, projectChatCommandToken } from "./commands";
 
 describe("parseProjectChatCommand", () => {
   it("recognizes requirement preparation and inline descriptions", () => {
@@ -19,6 +19,16 @@ describe("parseProjectChatCommand", () => {
     });
     expect(parseProjectChatCommand("解释 /需求生成")).toEqual({
       type: "message",
+    });
+  });
+
+  it("keeps requirement selection as an editable inline command token", () => {
+    expect(
+      projectChatCommandToken({ id: "requirement", label: "需求生成" }),
+    ).toEqual({
+      value: "/需求生成 ",
+      label: "/需求生成",
+      variant: "yellow",
     });
   });
 });

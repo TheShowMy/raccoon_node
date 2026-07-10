@@ -217,20 +217,24 @@ describe("useProjectChat", () => {
     unmount();
   });
 
-  it("accepts a message, clears attachments, and waits for websocket state", async () => {
+  it("accepts a message payload and waits for websocket state", async () => {
     const { result } = renderHook(() => useProjectChat("project-1"));
     act(() => FakeWebSocket.instances[0].open());
     await waitFor(() => expect(result.current.projectChat).toEqual(response));
 
-    act(() => result.current.setProjectChatInput("  项目入口在哪？  "));
-    await act(async () => result.current.sendProjectChat());
+    await act(async () =>
+      result.current.sendProjectChat({
+        message: "  项目入口在哪？  ",
+        references: [],
+        images: [],
+      }),
+    );
 
     expect(sendProjectChatMessage).toHaveBeenCalledWith("project-1", {
       message: "项目入口在哪？",
       references: [],
       images: [],
     });
-    expect(result.current.projectChatInput).toBe("");
     expect(result.current.projectChat?.running).toBe(true);
   });
 
@@ -238,12 +242,9 @@ describe("useProjectChat", () => {
     const { result } = renderHook(() => useProjectChat("project-1"));
     act(() => FakeWebSocket.instances[0].open());
     await waitFor(() => expect(result.current.projectChat).toEqual(response));
-    act(() => result.current.setProjectChatInput("/生成需求说明"));
-
     await act(async () => result.current.generateRequirementSummary());
 
     expect(generateProjectRequirementSummary).toHaveBeenCalledWith("project-1");
     expect(sendProjectChatMessage).not.toHaveBeenCalled();
-    expect(result.current.projectChatInput).toBe("");
   });
 });

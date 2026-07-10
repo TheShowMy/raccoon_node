@@ -176,4 +176,143 @@ describe("Astryx chat model", () => {
       ],
     });
   });
+
+  it("upserts one tool across start, repeated updates and end", () => {
+    const activity = buildLiveActivity([
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_start",
+        payload: { toolCallId: "tool-1", toolName: "read" },
+      },
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_update",
+        payload: {
+          toolCallId: "tool-1",
+          toolName: "read",
+          partialResult: { content: [{ text: "第一段" }] },
+        },
+      },
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_update",
+        payload: {
+          toolCallId: "tool-1",
+          toolName: "read",
+          partialResult: { content: [{ text: "第一段" }] },
+        },
+      },
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_end",
+        payload: {
+          toolCallId: "tool-1",
+          toolName: "read",
+          result: { content: [{ text: "第一段第二段" }] },
+        },
+      },
+    ]);
+
+    expect(activity.tools).toEqual([
+      expect.objectContaining({
+        id: "tool-1",
+        name: "read",
+        output: "第一段第二段",
+        status: "complete",
+      }),
+    ]);
+  });
+
+  it("matches anonymous lifecycle events without creating update rows", () => {
+    const activity = buildLiveActivity([
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_update",
+        payload: { toolName: "orphan-update" },
+      },
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_start",
+        payload: { toolName: "read", path: "README.md" },
+      },
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_update",
+        payload: { toolName: "read", partialResult: { text: "读取中" } },
+      },
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_end",
+        payload: { toolName: "read", result: { text: "读取完成" } },
+      },
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_end",
+        payload: { toolName: "orphan-end", result: { text: "完成" } },
+      },
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_end",
+        payload: { toolName: "orphan-end", result: { text: "完成" } },
+      },
+    ]);
+
+    expect(activity.tools).toHaveLength(2);
+    expect(activity.tools.map((tool) => tool.name)).toEqual([
+      "read",
+      "orphan-end",
+    ]);
+    expect(activity.tools[0]).toMatchObject({
+      output: "读取中读取完成",
+      status: "complete",
+    });
+  });
+
+  it("keeps four tool calls at four rows throughout their lifecycle", () => {
+    const events = ["read", "search", "edit", "test"].flatMap((name, index) => [
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_start",
+        payload: { toolCallId: `tool-${index}`, toolName: name },
+      },
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_update",
+        payload: { toolCallId: `tool-${index}`, toolName: name },
+      },
+      {
+        requirement_id: "requirement-1",
+        event: "agent.event",
+        message: "",
+        pi_type: "tool_execution_end",
+        payload: { toolCallId: `tool-${index}`, toolName: name },
+      },
+    ]);
+
+    expect(buildLiveActivity(events).tools).toHaveLength(4);
+  });
 });

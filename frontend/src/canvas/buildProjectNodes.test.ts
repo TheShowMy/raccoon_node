@@ -130,24 +130,23 @@ describe("buildProjectNodes", () => {
       projectCanvas: canvas,
       project: canvas.project,
       requirementConversation: null,
-      requirementInput: "",
+      requirementTimeline: [],
+      hasOlderRequirementHistory: false,
       requirementBusy: false,
+      requirementOpeningId: null,
       requirementError: null,
       requirementStreamEvents: [],
       projectChat: null,
-      projectChatInput: "",
       projectChatBusy: false,
       projectChatError: null,
       projectChatEvents: [],
-      clarificationAnswers: {},
       dismissedPromptRequirementId: null,
-      setRequirementInput: () => {},
-      sendRequirementMessage: async () => {},
-      setProjectChatInput: () => {},
-      sendProjectChatMessage: async () => {},
-      resetProjectChat: async () => {},
-      updateClarificationAnswer: () => {},
-      submitClarifications: async () => {},
+      loadOlderRequirementHistory: async () => false,
+      startRequirement: async () => true,
+      sendRequirementMessage: async () => true,
+      sendProjectChatMessage: async () => true,
+      resetProjectChat: async () => true,
+      submitClarifications: async () => true,
       confirmRequirement: async () => {},
       continueEditingRequirement: () => {},
       cancelRequirementAnalysis: async () => {},
@@ -159,7 +158,7 @@ describe("buildProjectNodes", () => {
     );
     const second = mergeProjectNodes(
       structure,
-      buildProjectChatNode({ ...chatParams, requirementInput: "新输入" }),
+      buildProjectChatNode({ ...chatParams, requirementBusy: true }),
     );
 
     for (const node of structure) {
@@ -168,6 +167,59 @@ describe("buildProjectNodes", () => {
     expect(second.find((node) => node.id === "requirement-chat")).not.toBe(
       first.find((node) => node.id === "requirement-chat"),
     );
+  });
+
+  it("forwards requirement creation acceptance to the chat node", async () => {
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [],
+      completed_requirements: [],
+    };
+    let accepted = false;
+    const node = buildProjectChatNode({
+      projectCanvas: canvas,
+      project: canvas.project,
+      requirementConversation: null,
+      requirementTimeline: [],
+      hasOlderRequirementHistory: false,
+      requirementBusy: false,
+      requirementOpeningId: null,
+      requirementError: null,
+      requirementStreamEvents: [],
+      projectChat: null,
+      projectChatBusy: false,
+      projectChatError: null,
+      projectChatEvents: [],
+      dismissedPromptRequirementId: null,
+      loadOlderRequirementHistory: async () => false,
+      startRequirement: async () => accepted,
+      sendRequirementMessage: async () => true,
+      sendProjectChatMessage: async () => true,
+      resetProjectChat: async () => true,
+      submitClarifications: async () => true,
+      confirmRequirement: async () => {},
+      continueEditingRequirement: () => {},
+      cancelRequirementAnalysis: async () => {},
+      abandonRequirement: async () => {},
+    });
+    expect(node?.data.kind).toBe("requirement-chat");
+    if (!node || node.data.kind !== "requirement-chat") return;
+
+    expect(
+      await node.data.onStartRequirement("登录改造", {
+        references: [{ path: "README.md" }],
+        images: [],
+      }),
+    ).toBe(false);
+
+    accepted = true;
+    expect(
+      await node.data.onStartRequirement("登录改造", {
+        references: [{ path: "README.md" }],
+        images: [],
+      }),
+    ).toBe(true);
   });
 
   it("builds the Git node below the pending list with phased dimensions", () => {

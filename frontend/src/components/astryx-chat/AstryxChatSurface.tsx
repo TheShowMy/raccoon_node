@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { ChatLayout } from "@astryxdesign/core/Chat";
@@ -7,60 +7,95 @@ import { Layout, LayoutContent, LayoutHeader } from "@astryxdesign/core/Layout";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text, Heading } from "@astryxdesign/core/Text";
 import { Toolbar } from "@astryxdesign/core/Toolbar";
-import { HStack } from "@astryxdesign/core/Layout";
+import { HStack, VStack } from "@astryxdesign/core/Layout";
 import type { StartNodeData } from "../../types/api";
 import AstryxComposer from "./AstryxComposer";
-import AstryxMessages from "./AstryxMessages";
+import AstryxMessages, { type AstryxTimelineItem } from "./AstryxMessages";
+import { usePinnedChatScroll } from "./usePinnedChatScroll";
 import {
   buildLiveActivity,
   conversationEventsToStreamEvents,
+  hasLiveContent,
   projectMessageEntries,
   requirementItemEntries,
 } from "./model";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 
-export default function AstryxChatSurface({ data }: { data: ChatData }) {
-  const [preparingRequirement, setPreparingRequirement] = useState(false);
-  const hadActiveRequirement = useRef(Boolean(data.requirement));
-  const requirementMode = Boolean(data.requirement) || preparingRequirement;
+function AstryxChatSurface({ data }: { data: ChatData }) {
+  const interactiveRequirementId =
+    data.requirement?.id ?? data.requirementOpeningId;
+  const requirementMode = interactiveRequirementId !== null;
+  const chatScroll = usePinnedChatScroll();
 
-  useEffect(() => {
-    if (data.requirement) {
-      hadActiveRequirement.current = true;
-      setPreparingRequirement(true);
-      return;
-    }
-    if (
-      hadActiveRequirement.current &&
-      !data.busy &&
-      data.conversation === null
-    ) {
-      hadActiveRequirement.current = false;
-      setPreparingRequirement(false);
-    }
-  }, [data.busy, data.conversation, data.requirement]);
-
-  const entries = useMemo(
-    () =>
-      requirementMode
-        ? requirementItemEntries(data.conversation?.items ?? [])
-        : projectMessageEntries(data.projectChat?.messages ?? []),
-    [data.conversation?.items, data.projectChat?.messages, requirementMode],
-  );
-  const activity = useMemo(
+  const projectActivity = useMemo(
     () =>
       buildLiveActivity(
-        requirementMode
-          ? data.streamEvents
-          : conversationEventsToStreamEvents(data.projectChatEvents),
+        conversationEventsToStreamEvents(data.projectChatEvents),
       ),
-    [data.projectChatEvents, data.streamEvents, requirementMode],
+    [data.projectChatEvents],
   );
-  const running = requirementMode
-    ? Boolean(data.busy || data.conversation?.running)
-    : Boolean(data.projectChatBusy || data.projectChat?.running);
-  const title = requirementMode ? "需求分支" : "项目对话";
+  const projectRunning =
+    Boolean(data.projectChatBusy || data.projectChat?.running) ||
+    hasLiveContent(projectActivity);
+  const requirementActivity = useMemo(
+    () => buildLiveActivity(data.streamEvents),
+    [data.streamEvents],
+  );
+  const requirementRunning = Boolean(
+    data.busy ||
+    data.conversation?.running ||
+    data.requirement?.status === "analyzing" ||
+    data.requirementOpeningId ||
+    hasLiveContent(requirementActivity),
+  );
+  const timeline = useMemo<AstryxTimelineItem[]>(() => {
+    const projectItems: AstryxTimelineItem[] = projectMessageEntries(
+      data.projectChat?.messages ?? [],
+    ).map((entry) => ({
+      kind: "project",
+      id: entry.id,
+      createdAt: entry.createdAt,
+      entry,
+    }));
+    const requirementItems: AstryxTimelineItem[] = data.requirementTimeline.map(
+      (branch) => {
+        return {
+          kind: "requirement",
+          id: `requirement-${branch.requirementId}`,
+          createdAt: branch.createdAt,
+          entries: requirementItemEntries(branch.conversation?.items ?? []),
+          running:
+            branch.opening ||
+            branch.loading ||
+            Boolean(branch.conversation?.running) ||
+            branch.requirement?.status === "analyzing",
+          error: branch.error ?? branch.conversation?.error ?? null,
+        };
+      },
+    );
+    return [...projectItems, ...requirementItems].sort((left, right) => {
+      const leftTime = Date.parse(left.createdAt);
+      const rightTime = Date.parse(right.createdAt);
+      return (
+        (Number.isNaN(leftTime) ? 0 : leftTime) -
+        (Number.isNaN(rightTime) ? 0 : rightTime)
+      );
+    });
+  }, [data.projectChat?.messages, data.requirementTimeline]);
+  const effectiveStreaming =
+    projectRunning ||
+    requirementRunning ||
+    timeline.some((item) => item.kind === "requirement" && item.running);
+  const openRequirement = useCallback(
+    (requirementId: string) => data.onOpenRequirement?.(requirementId),
+    [data.onOpenRequirement],
+  );
+  const retryRequirementSummary = useCallback(
+    (requirementId: string) =>
+      void data.onRetryRequirementSummarySync?.(requirementId),
+    [data.onRetryRequirementSummarySync],
+  );
 
   return (
     <Layout
@@ -74,11 +109,11 @@ export default function AstryxChatSurface({ data }: { data: ChatData }) {
             startContent={
               <HStack gap={2} align="center">
                 <StatusDot
-                  variant={running ? "warning" : "success"}
-                  label={running ? "运行中" : "就绪"}
-                  isPulsing={running}
+                  variant={effectiveStreaming ? "warning" : "success"}
+                  label={effectiveStreaming ? "运行中" : "就绪"}
+                  isPulsing={effectiveStreaming}
                 />
-                <Heading level={2}>{title}</Heading>
+                <Heading level={2}>项目对话</Heading>
               </HStack>
             }
             endContent={
@@ -90,54 +125,72 @@ export default function AstryxChatSurface({ data }: { data: ChatData }) {
         </LayoutHeader>
       }
     >
-      <LayoutContent padding={0}>
-        {data.projectChatError && !requirementMode ? (
-          <Banner
-            status="error"
-            title="项目聊天不可用"
-            description={data.projectChatError}
-            container="section"
-            endContent={
-              data.projectChat?.running ? (
-                <Button
-                  label="停止"
-                  variant="secondary"
-                  onClick={() => void data.onProjectChatAbort()}
-                />
-              ) : undefined
-            }
-          />
-        ) : null}
-        <ChatLayout
-          emptyState={
-            <EmptyState
-              title={requirementMode ? "描述你的需求" : "询问当前项目"}
-              isCompact
-            />
-          }
-          composer={
-            <AstryxComposer
-              data={data}
-              requirementMode={requirementMode}
-              onRequirementModeChange={setPreparingRequirement}
-            />
-          }
+      <LayoutContent
+        padding={0}
+        isScrollable={false}
+        data-testid="astryx-chat-content"
+      >
+        <VStack
+          width="100%"
+          height="100%"
+          minHeight={0}
+          data-testid="astryx-chat-stack"
         >
-          {entries.length || running || activity.notices.length ? (
-            <AstryxMessages
-              projectId={data.project.id}
-              entries={entries}
-              activity={activity}
-              running={running}
-              branch={requirementMode}
-              onOpenRequirement={(id) => data.onOpenRequirement?.(id)}
-              onRetryRequirement={(id) =>
-                void data.onRetryRequirementSummarySync?.(id)
+          {data.projectChatError ? (
+            <Banner
+              status="error"
+              title="项目聊天不可用"
+              description={data.projectChatError}
+              container="section"
+              endContent={
+                data.projectChat?.running ? (
+                  <Button
+                    label="停止"
+                    variant="secondary"
+                    onClick={() => void data.onProjectChatAbort()}
+                  />
+                ) : undefined
               }
             />
           ) : null}
-        </ChatLayout>
+          <ChatLayout
+            ref={chatScroll.scrollRef}
+            data-testid="astryx-chat-layout"
+            emptyState={<EmptyState title="询问当前项目" isCompact />}
+            composer={
+              <AstryxComposer
+                data={data}
+                requirementMode={requirementMode}
+                onContentChange={chatScroll.onContentChange}
+              />
+            }
+          >
+            {timeline.length ||
+            effectiveStreaming ||
+            projectActivity.notices.length ? (
+              <AstryxMessages
+                projectId={data.project.id}
+                timeline={timeline}
+                projectActivity={projectActivity}
+                projectRunning={projectRunning}
+                interactiveRequirementId={interactiveRequirementId}
+                requirementActivity={requirementActivity}
+                requirementRunning={requirementRunning}
+                isStreaming={effectiveStreaming}
+                onContentChange={chatScroll.onContentChange}
+                prepareForPrepend={chatScroll.prepareForPrepend}
+                isPinned={chatScroll.isPinned}
+                hasOlderHistory={data.hasOlderRequirementHistory}
+                onLoadOlderHistory={data.onLoadOlderRequirementHistory}
+                onOpenRequirement={openRequirement}
+                onRetryRequirement={retryRequirementSummary}
+              />
+            ) : null}
+          </ChatLayout>
+        </VStack>
       </LayoutContent>
     </Layout>
   );
 }
+
+export default memo(AstryxChatSurface);

@@ -2,7 +2,11 @@
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { confirmRequirement, getRequirementConversation } from "../api/client";
+import {
+  confirmRequirement,
+  createRequirement,
+  getRequirementConversation,
+} from "../api/client";
 import type {
   ProjectCanvasData,
   Requirement,
@@ -127,6 +131,25 @@ describe("useRequirementFlow", () => {
 
   it("selects the confirmed requirement for continued observation", async () => {
     vi.mocked(confirmRequirement).mockResolvedValue(canvas);
+    const beforeConfirmation: RequirementConversation = {
+      ...conversation,
+      prompt: {
+        type: "confirmation",
+        draft: {
+          title: "测试需求",
+          summary: "确认前草案",
+          acceptance_criteria: ["保留完整记录"],
+        },
+        prompt_id: "prompt-1",
+        revision: 1,
+      },
+    };
+    const afterConfirmation: RequirementConversation = {
+      ...conversation,
+      running: false,
+      prompt: null,
+    };
+    vi.mocked(getRequirementConversation).mockResolvedValue(beforeConfirmation);
     const setProjectCanvas = vi.fn();
     const observeRequirement = vi.fn();
     const { result } = renderHook(() =>
@@ -137,7 +160,16 @@ describe("useRequirementFlow", () => {
         setProjectCanvas,
         vi.fn(),
         observeRequirement,
+        [requirement],
       ),
+    );
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket.open());
+    await waitFor(() =>
+      expect(result.current.requirementConversation?.prompt).not.toBeNull(),
+    );
+    vi.mocked(getRequirementConversation).mockResolvedValueOnce(
+      afterConfirmation,
     );
 
     await act(async () => {
@@ -146,19 +178,238 @@ describe("useRequirementFlow", () => {
 
     expect(setProjectCanvas).toHaveBeenCalledWith(canvas);
     expect(observeRequirement).toHaveBeenCalledWith(requirement.id);
+    await waitFor(() => {
+      expect(result.current.requirementTimeline).toHaveLength(1);
+      expect(
+        result.current.requirementTimeline[0].conversation?.prompt,
+      ).toBeNull();
+    });
+  });
+
+  it("opens the accepted requirement socket before the canvas refresh completes", async () => {
+    const activeCanvas: ProjectCanvasData = {
+      ...canvas,
+      active_requirement: { ...requirement, status: "analyzing" },
+      queued_requirements: [],
+    };
+    const order: string[] = [];
+    vi.mocked(createRequirement).mockResolvedValue({
+      accepted: true,
+      requirement_id: requirement.id,
+    });
+    let resolveCanvas!: (data: ProjectCanvasData) => void;
+    const loadProjectCanvas = vi.fn(() => {
+      order.push("canvas-started");
+      return new Promise<ProjectCanvasData>((resolve) => {
+        resolveCanvas = resolve;
+      });
+    });
+    const setProjectCanvas = vi.fn();
+    const { result } = renderHook(() =>
+      useRequirementFlow(
+        "project-1",
+        null,
+        null,
+        setProjectCanvas,
+        loadProjectCanvas,
+        vi.fn(),
+      ),
+    );
+    const attachments = {
+      references: [{ path: "README.md" }],
+      images: [
+        {
+          path: "context.png",
+          name: "context.png",
+          mime_type: "image/png",
+          size_bytes: 10,
+        },
+      ],
+    };
+
+    let accepted = false;
+    let startPromise!: Promise<boolean>;
+    act(() => {
+      startPromise = result.current.startRequirement(
+        "重写登录流程",
+        attachments,
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.openingRequirementId).toBe(requirement.id);
+      expect(FakeWebSocket.instances.at(-1)?.url).toBe(
+        `ws://test/${requirement.id}`,
+      );
+    });
+    await act(async () => {
+      resolveCanvas(activeCanvas);
+      accepted = await startPromise;
+    });
+
+    expect(accepted).toBe(true);
+    expect(createRequirement).toHaveBeenCalledWith("project-1", {
+      message: "重写登录流程",
+      ...attachments,
+    });
+    expect(order).toEqual(["canvas-started"]);
+    expect(result.current.openingRequirementId).toBe(requirement.id);
+    expect(result.current.requirementTimeline).toEqual([
+      expect.objectContaining({
+        requirementId: requirement.id,
+        requirement: null,
+        opening: true,
+      }),
+    ]);
+    expect(setProjectCanvas).toHaveBeenCalledWith(activeCanvas);
+  });
+
+  it("uses a stable context instruction for a command without description", async () => {
+    vi.mocked(createRequirement).mockResolvedValue({
+      accepted: true,
+      requirement_id: requirement.id,
+    });
+    const loadProjectCanvas = vi.fn().mockResolvedValue(canvas);
+    const { result } = renderHook(() =>
+      useRequirementFlow(
+        "project-1",
+        null,
+        null,
+        vi.fn(),
+        loadProjectCanvas,
+        vi.fn(),
+      ),
+    );
+
+    await act(async () => {
+      await result.current.startRequirement(null, {
+        references: [],
+        images: [],
+      });
+    });
+
+    expect(createRequirement).toHaveBeenCalledWith("project-1", {
+      message: "请基于当前项目对话上下文生成需求。",
+      references: [],
+      images: [],
+    });
+  });
+
+  it("loads persisted conversations lazily once and removes only deleted branches", async () => {
+    const first = {
+      ...requirement,
+      id: "requirement-1",
+      status: "completed" as const,
+    };
+    const second = {
+      ...requirement,
+      id: "requirement-2",
+      status: "completed" as const,
+    };
+    vi.mocked(getRequirementConversation).mockImplementation(async (id) => ({
+      ...conversation,
+      id,
+      title: id,
+      status: "completed",
+      running: false,
+    }));
+    const { result, rerender } = renderHook(
+      ({ requirements }) =>
+        useRequirementFlow(
+          "project-1",
+          null,
+          null,
+          vi.fn(),
+          vi.fn(),
+          vi.fn(),
+          requirements,
+        ),
+      { initialProps: { requirements: [first, second] } },
+    );
+
+    await waitFor(() => {
+      expect(result.current.requirementTimeline).toHaveLength(2);
+      expect(
+        result.current.requirementTimeline.filter((item) => item.conversation),
+      ).toHaveLength(1);
+      expect(result.current.hasOlderRequirementHistory).toBe(true);
+    });
+    const stableFirstBranch = result.current.requirementTimeline.find(
+      (item) => item.conversation,
+    );
+    await act(async () => {
+      expect(await result.current.loadOlderRequirementHistory()).toBe(true);
+    });
+    await waitFor(() => {
+      expect(
+        result.current.requirementTimeline.every((item) => item.conversation),
+      ).toBe(true);
+      expect(result.current.hasOlderRequirementHistory).toBe(false);
+    });
+    expect(
+      result.current.requirementTimeline.find(
+        (item) => item.requirementId === stableFirstBranch?.requirementId,
+      ),
+    ).toBe(stableFirstBranch);
+    expect(getRequirementConversation).toHaveBeenCalledTimes(2);
+
+    rerender({ requirements: [first, second] });
+    await Promise.resolve();
+    expect(getRequirementConversation).toHaveBeenCalledTimes(2);
+
+    rerender({ requirements: [second] });
+    await waitFor(() =>
+      expect(
+        result.current.requirementTimeline.map((item) => item.requirementId),
+      ).toEqual([second.id]),
+    );
+    expect(getRequirementConversation).toHaveBeenCalledTimes(2);
+  });
+
+  it("isolates a historical conversation load failure to its branch", async () => {
+    const first = {
+      ...requirement,
+      id: "requirement-ok",
+      status: "completed" as const,
+    };
+    const second = {
+      ...requirement,
+      id: "requirement-failed",
+      status: "completed" as const,
+    };
+    vi.mocked(getRequirementConversation).mockImplementation(async (id) => {
+      if (id === second.id) throw new Error("历史记录不可用");
+      return { ...conversation, id, running: false, status: "completed" };
+    });
+    const { result } = renderHook(() =>
+      useRequirementFlow("project-1", null, null, vi.fn(), vi.fn(), vi.fn(), [
+        first,
+        second,
+      ]),
+    );
+
+    await waitFor(() => {
+      expect(
+        result.current.requirementTimeline.find(
+          (item) => item.requirementId === first.id,
+        )?.conversation,
+      ).not.toBeNull();
+      expect(result.current.hasOlderRequirementHistory).toBe(true);
+    });
+    await act(async () => {
+      expect(await result.current.loadOlderRequirementHistory()).toBe(false);
+    });
+    await waitFor(() => {
+      expect(
+        result.current.requirementTimeline.find(
+          (item) => item.requirementId === second.id,
+        )?.error,
+      ).toBe("历史记录不可用");
+    });
+    expect(result.current.requirementError).toBeNull();
   });
 
   it("dismisses the prompt while continuing and resets it for another requirement", async () => {
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-      callback(0);
-      return 1;
-    });
-    const textarea = document.createElement("textarea");
-    const card = document.createElement("div");
-    card.dataset.chatCard = "requirement";
-    card.append(textarea);
-    document.body.append(card);
-
     const { result, rerender } = renderHook(
       ({ activeRequirementId }) =>
         useRequirementFlow(
@@ -177,13 +428,11 @@ describe("useRequirementFlow", () => {
     });
 
     expect(result.current.dismissedPromptRequirementId).toBe(requirement.id);
-    expect(textarea).toHaveFocus();
 
     rerender({ activeRequirementId: "requirement-2" });
     await waitFor(() => {
       expect(result.current.dismissedPromptRequirementId).toBeNull();
     });
-    card.remove();
   });
 
   it("keeps live process events when a running conversation snapshot is reconciled", async () => {

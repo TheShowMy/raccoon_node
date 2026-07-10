@@ -1,5 +1,6 @@
 import type { Node } from "@xyflow/react";
 import type {
+  ChatSubmission,
   DraftClarificationAnswer,
   BasicSettings,
   BasicSettingsUpdate,
@@ -9,6 +10,7 @@ import type {
   ProjectCanvasData,
   Requirement,
   RequirementConversation,
+  RequirementTimelineBranch,
   RequirementExecutionTask,
   ConversationEvent,
   ProjectChatResponse,
@@ -185,39 +187,36 @@ export interface BuildProjectChatNodeParams {
   projectCanvas: ProjectCanvasData | null;
   project: Project | null;
   requirementConversation: RequirementConversation | null;
-  requirementInput: string;
-  requirementReferences?: FileReference[];
-  requirementImages?: ImageAttachment[];
+  requirementTimeline: RequirementTimelineBranch[];
+  hasOlderRequirementHistory: boolean;
   requirementBusy: boolean;
+  requirementOpeningId: string | null;
   requirementError: string | null;
   requirementStreamEvents: StreamEvent[];
   projectChat: ProjectChatResponse | null;
-  projectChatInput: string;
-  projectChatReferences?: FileReference[];
-  projectChatImages?: ImageAttachment[];
   projectChatBusy: boolean;
   projectChatError: string | null;
   projectChatEvents: ConversationEvent[];
-  clarificationAnswers: Record<string, DraftClarificationAnswer>;
   dismissedPromptRequirementId: string | null;
-  setRequirementInput: (value: string) => void;
-  setRequirementReferences?: (references: FileReference[]) => void;
-  setRequirementImages?: (images: ImageAttachment[]) => void;
-  sendRequirementMessage: () => Promise<void>;
-  setProjectChatInput: (value: string) => void;
-  setProjectChatReferences?: (references: FileReference[]) => void;
-  setProjectChatImages?: (images: ImageAttachment[]) => void;
-  sendProjectChatMessage: () => Promise<void>;
+  startRequirement: (
+    description: string | null,
+    attachments: {
+      references: FileReference[];
+      images: ImageAttachment[];
+    },
+  ) => Promise<boolean>;
+  sendRequirementMessage: (payload: ChatSubmission) => Promise<boolean>;
+  sendProjectChatMessage: (payload: ChatSubmission) => Promise<boolean>;
   abortProjectChat?: () => Promise<void>;
   generateProjectRequirementSummary?: () => Promise<void>;
-  resetProjectChat: () => Promise<void>;
+  resetProjectChat: () => Promise<boolean>;
   retryRequirementSummarySync?: (requirementId: string) => Promise<void>;
   openRequirement?: (requirementId: string) => void;
-  updateClarificationAnswer: (
-    clarification: import("../types/api").RequirementClarification,
-    answer: DraftClarificationAnswer,
-  ) => void;
-  submitClarifications: (requirement: Requirement) => Promise<void>;
+  loadOlderRequirementHistory: () => Promise<boolean>;
+  submitClarifications: (
+    requirement: Requirement,
+    answers: Record<string, DraftClarificationAnswer>,
+  ) => Promise<boolean>;
   confirmRequirement: (requirement: Requirement) => Promise<void>;
   retryRequirementAnalysis?: (requirement: Requirement) => Promise<void>;
   continueEditingRequirement: (requirement: Requirement) => void;
@@ -472,35 +471,26 @@ export function buildProjectChatNode({
   projectCanvas,
   project: currentProject,
   requirementConversation,
-  requirementInput,
-  requirementReferences = [],
-  requirementImages = [],
+  requirementTimeline,
+  hasOlderRequirementHistory,
   requirementBusy,
+  requirementOpeningId,
   requirementError,
   requirementStreamEvents,
   projectChat,
-  projectChatInput,
-  projectChatReferences = [],
-  projectChatImages = [],
   projectChatBusy,
   projectChatError,
   projectChatEvents,
-  clarificationAnswers,
   dismissedPromptRequirementId,
-  setRequirementInput,
-  setRequirementReferences = () => {},
-  setRequirementImages = () => {},
+  startRequirement,
   sendRequirementMessage,
-  setProjectChatInput,
-  setProjectChatReferences = () => {},
-  setProjectChatImages = () => {},
   sendProjectChatMessage,
   abortProjectChat = async () => {},
   generateProjectRequirementSummary = async () => {},
   resetProjectChat,
   retryRequirementSummarySync = async () => {},
   openRequirement = () => {},
-  updateClarificationAnswer,
+  loadOlderRequirementHistory,
   submitClarifications,
   confirmRequirement,
   retryRequirementAnalysis = async () => {},
@@ -523,37 +513,28 @@ export function buildProjectChatNode({
         project,
         requirement: projectCanvas?.active_requirement ?? null,
         conversation: requirementConversation,
+        requirementTimeline,
+        hasOlderRequirementHistory,
         promptDismissed:
           dismissedPromptRequirementId ===
           (projectCanvas?.active_requirement?.id ?? null),
-        input: requirementInput,
-        references: requirementReferences,
-        images: requirementImages,
         busy: requirementBusy,
+        requirementOpeningId,
         error: requirementError,
         streamEvents: requirementStreamEvents,
         projectChat,
-        projectChatInput,
-        projectChatReferences,
-        projectChatImages,
         projectChatBusy,
         projectChatError,
         projectChatEvents,
-        answers: clarificationAnswers,
-        onInputChange: setRequirementInput,
-        onReferencesChange: setRequirementReferences,
-        onImagesChange: setRequirementImages,
         onSend: sendRequirementMessage,
-        onProjectChatInputChange: setProjectChatInput,
-        onProjectChatReferencesChange: setProjectChatReferences,
-        onProjectChatImagesChange: setProjectChatImages,
+        onStartRequirement: startRequirement,
         onProjectChatSend: sendProjectChatMessage,
         onProjectChatAbort: abortProjectChat,
         onProjectChatGenerateRequirement: generateProjectRequirementSummary,
         onProjectChatReset: resetProjectChat,
         onRetryRequirementSummarySync: retryRequirementSummarySync,
         onOpenRequirement: openRequirement,
-        onAnswerChange: updateClarificationAnswer,
+        onLoadOlderRequirementHistory: loadOlderRequirementHistory,
         onSubmitClarifications: submitClarifications,
         onConfirm: confirmRequirement,
         onRetryAnalysis: retryRequirementAnalysis,

@@ -47,8 +47,10 @@ describe("useMainCanvasViewport", () => {
   });
 
   function mount(openPanel: "settings" | null = null) {
+    const onFocusComplete = vi.fn();
     const hook = renderHook(
-      ({ panel }) => useMainCanvasViewport({ openPanel: panel }),
+      ({ panel }) =>
+        useMainCanvasViewport({ openPanel: panel, onFocusComplete }),
       { initialProps: { panel: openPanel } },
     );
     const container = document.createElement("section");
@@ -65,7 +67,7 @@ describe("useMainCanvasViewport", () => {
     });
     hook.result.current.containerRef.current = container;
     act(() => hook.result.current.onInit(instance));
-    return { ...hook, container };
+    return { ...hook, container, onFocusComplete };
   }
 
   it("fits home nodes and follows pointer movement without changing zoom", async () => {
@@ -139,8 +141,10 @@ describe("useMainCanvasViewport", () => {
       expect.objectContaining({
         nodes: [expect.objectContaining({ id: "panel-settings" })],
         maxZoom: 1,
+        duration: 175,
       }),
     );
+    expect(hook.onFocusComplete).toHaveBeenLastCalledWith("settings");
     hook.unmount();
   });
 });

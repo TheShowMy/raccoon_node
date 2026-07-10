@@ -406,6 +406,22 @@ export type RequirementConversation = {
   updated_at: string;
 };
 
+export type RequirementTimelineBranch = {
+  requirementId: string;
+  requirement: Requirement | null;
+  conversation: RequirementConversation | null;
+  loading: boolean;
+  error: string | null;
+  createdAt: string;
+  opening: boolean;
+};
+
+export type ChatSubmission = {
+  message: string;
+  references: FileReference[];
+  images: ImageAttachment[];
+};
+
 export type ProjectCanvasData = {
   project: Project;
   active_requirement: Requirement | null;
@@ -673,39 +689,36 @@ export type StartNodeData =
       project: Project;
       requirement: Requirement | null;
       conversation: RequirementConversation | null;
+      requirementTimeline: RequirementTimelineBranch[];
+      hasOlderRequirementHistory: boolean;
       promptDismissed: boolean;
-      input: string;
-      references?: FileReference[];
-      images?: ImageAttachment[];
       busy: boolean;
+      requirementOpeningId: string | null;
       error: string | null;
       streamEvents: StreamEvent[];
       projectChat: ProjectChatResponse | null;
-      projectChatInput: string;
-      projectChatReferences?: FileReference[];
-      projectChatImages?: ImageAttachment[];
       projectChatBusy: boolean;
       projectChatError: string | null;
       projectChatEvents: ConversationEvent[];
-      answers: Record<string, DraftClarificationAnswer>;
-      onInputChange: (value: string) => void;
-      onReferencesChange?: (references: FileReference[]) => void;
-      onImagesChange?: (images: ImageAttachment[]) => void;
-      onSend: (messageOverride?: string) => Promise<void>;
-      onProjectChatInputChange: (value: string) => void;
-      onProjectChatReferencesChange?: (references: FileReference[]) => void;
-      onProjectChatImagesChange?: (images: ImageAttachment[]) => void;
-      onProjectChatSend: () => Promise<void>;
+      onSend: (payload: ChatSubmission) => Promise<boolean>;
+      onStartRequirement: (
+        description: string | null,
+        attachments: {
+          references: FileReference[];
+          images: ImageAttachment[];
+        },
+      ) => Promise<boolean>;
+      onProjectChatSend: (payload: ChatSubmission) => Promise<boolean>;
       onProjectChatAbort: () => Promise<void>;
       onProjectChatGenerateRequirement: () => Promise<void>;
-      onProjectChatReset: () => Promise<void>;
+      onProjectChatReset: () => Promise<boolean>;
       onRetryRequirementSummarySync?: (requirementId: string) => Promise<void>;
       onOpenRequirement?: (requirementId: string) => void;
-      onAnswerChange: (
-        clarification: RequirementClarification,
-        answer: DraftClarificationAnswer,
-      ) => void;
-      onSubmitClarifications: (requirement: Requirement) => Promise<void>;
+      onLoadOlderRequirementHistory: () => Promise<boolean>;
+      onSubmitClarifications: (
+        requirement: Requirement,
+        answers: Record<string, DraftClarificationAnswer>,
+      ) => Promise<boolean>;
       onConfirm: (requirement: Requirement) => Promise<void>;
       onRetryAnalysis?: (requirement: Requirement) => Promise<void>;
       onContinueEditing: (requirement: Requirement) => void;

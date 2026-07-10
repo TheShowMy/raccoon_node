@@ -1,4 +1,11 @@
-import React, { Suspense, useEffect, useMemo, useState } from "react";
+import React, {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+} from "react";
 import {
   Background,
   MarkerType,
@@ -59,35 +66,45 @@ import {
   useMainCanvasViewport,
 } from "./canvas/mainCanvasViewport";
 
-const FilesWorkbench = React.lazy(
-  () => import("./components/workbenches/FilesWorkbench"),
-);
-const RequirementsWorkbench = React.lazy(
-  () => import("./components/workbenches/RequirementsWorkbench"),
-);
-const SettingsWorkbench = React.lazy(
-  () => import("./components/workbenches/SettingsWorkbench"),
-);
-const TerminalWorkbench = React.lazy(
-  () => import("./components/workbenches/TerminalWorkbench"),
-);
-const GitWorkbench = React.lazy(
-  () => import("./components/workbenches/GitWorkbench"),
-);
-const TokenWorkbench = React.lazy(
-  () => import("./components/workbenches/TokenWorkbench"),
-);
+const loadFilesWorkbench = () =>
+  import("./components/workbenches/FilesWorkbench");
+const loadRequirementsWorkbench = () =>
+  import("./components/workbenches/RequirementsWorkbench");
+const loadSettingsWorkbench = () =>
+  import("./components/workbenches/SettingsWorkbench");
+const loadTerminalWorkbench = () =>
+  import("./components/workbenches/TerminalWorkbench");
+const loadGitWorkbench = () => import("./components/workbenches/GitWorkbench");
+const loadTokenWorkbench = () =>
+  import("./components/workbenches/TokenWorkbench");
+
+const FilesWorkbench = React.lazy(loadFilesWorkbench);
+const RequirementsWorkbench = React.lazy(loadRequirementsWorkbench);
+const SettingsWorkbench = React.lazy(loadSettingsWorkbench);
+const TerminalWorkbench = React.lazy(loadTerminalWorkbench);
+const GitWorkbench = React.lazy(loadGitWorkbench);
+const TokenWorkbench = React.lazy(loadTokenWorkbench);
+
+const PANEL_LOADERS: Record<MainPanelKind, () => Promise<unknown>> = {
+  files: loadFilesWorkbench,
+  requirements: loadRequirementsWorkbench,
+  settings: loadSettingsWorkbench,
+  terminal: loadTerminalWorkbench,
+  git: loadGitWorkbench,
+  tokens: loadTokenWorkbench,
+};
+
+type PanelPhase = "shell" | "focusing" | "content" | "closing";
 
 const nodeTypes = {
   chatNode: ChatCanvasNode,
   orbitNode: OrbitNode,
   workspacePanel: WorkspacePanel,
 };
-const EMPTY_STREAM_EVENTS: StreamEvent[] = [];
 
 type WorkspacePanelData = Record<string, unknown> & {
   title: string;
-  content: React.ReactNode;
+  content: React.ReactNode | null;
   onClose: () => void;
 };
 
@@ -119,9 +136,13 @@ function WorkspacePanel({ data }: NodeProps<Node<WorkspacePanelData>>) {
         }
       >
         <LayoutContent padding={0} isScrollable>
-          <Suspense fallback={<Spinner label="正在加载工作台" />}>
-            {data.content}
-          </Suspense>
+          {data.content ? (
+            <Suspense fallback={<Spinner label="正在加载工作台" />}>
+              {data.content}
+            </Suspense>
+          ) : (
+            <Spinner label="正在准备工作台" />
+          )}
         </LayoutContent>
       </Layout>
     </Card>
@@ -309,6 +330,7 @@ export default function App() {
     project.setProjectCanvas,
     project.loadProjectCanvas,
     project.setSelectedDagRequirementId,
+    project.allProjectRequirements,
   );
   const projectChat = useProjectChat(selectedProjectId);
   const models = useModelSettings(current.applyTheme, current.loadCurrent);
@@ -331,16 +353,38 @@ export default function App() {
   const git = useProjectGit(selectedProjectId);
   const [tokenUsageExpanded, setTokenUsageExpanded] = useState(false);
   const [openPanel, setOpenPanel] = useState<MainPanelKind | null>(null);
-  const mainCanvasViewport = useMainCanvasViewport({ openPanel });
+  const [panelPhase, setPanelPhase] = useState<PanelPhase>("shell");
+  const [, startPanelTransition] = useTransition();
+  const prefetchPanel = useCallback((panel: MainPanelKind) => {
+    void PANEL_LOADERS[panel]();
+  }, []);
+  const openMainPanel = useCallback((panel: MainPanelKind) => {
+    void PANEL_LOADERS[panel]();
+    setPanelPhase("focusing");
+    setOpenPanel(panel);
+  }, []);
+  const focusedPanel = panelPhase === "closing" ? null : openPanel;
+  const handlePanelFocusComplete = useCallback(
+    (panel: MainPanelKind | null) => {
+      if (panel && panel === openPanel && panelPhase === "focusing") {
+        startPanelTransition(() => setPanelPhase("content"));
+      } else if (!panel && panelPhase === "closing") {
+        setOpenPanel(null);
+        setPanelPhase("shell");
+      }
+    },
+    [openPanel, panelPhase],
+  );
+  const mainCanvasViewport = useMainCanvasViewport({
+    openPanel: focusedPanel,
+    onFocusComplete: handlePanelFocusComplete,
+  });
   const modelSetupGuideStep: ModelSetupGuideStep | null =
     models.modelSetupGuideActive
       ? models.settingsExpanded
         ? "models"
         : "settings"
       : null;
-  const requirementConversationEvents = project.selectedDagRequirementId
-    ? EMPTY_STREAM_EVENTS
-    : requirement.requirementStreamEvents;
 
   const projectStructureNodes = useMemo(
     () =>
@@ -386,28 +430,19 @@ export default function App() {
         projectCanvas: project.projectCanvas,
         project: current.project,
         requirementConversation: requirement.requirementConversation,
-        requirementInput: requirement.requirementInput,
-        requirementReferences: requirement.requirementReferences,
-        requirementImages: requirement.requirementImages,
+        requirementTimeline: requirement.requirementTimeline,
+        hasOlderRequirementHistory: requirement.hasOlderRequirementHistory,
         requirementBusy: requirement.requirementBusy,
+        requirementOpeningId: requirement.openingRequirementId,
         requirementError: requirement.requirementError,
-        requirementStreamEvents: requirementConversationEvents,
+        requirementStreamEvents: requirement.requirementStreamEvents,
         projectChat: projectChat.projectChat,
-        projectChatInput: projectChat.projectChatInput,
-        projectChatReferences: projectChat.projectChatReferences,
-        projectChatImages: projectChat.projectChatImages,
         projectChatBusy: projectChat.projectChatBusy,
         projectChatError: projectChat.projectChatError,
         projectChatEvents: projectChat.projectChatEvents,
-        clarificationAnswers: requirement.clarificationAnswers,
         dismissedPromptRequirementId: requirement.dismissedPromptRequirementId,
-        setRequirementInput: requirement.setRequirementInput,
-        setRequirementReferences: requirement.setRequirementReferences,
-        setRequirementImages: requirement.setRequirementImages,
+        startRequirement: requirement.startRequirement,
         sendRequirementMessage: requirement.sendRequirementMessage,
-        setProjectChatInput: projectChat.setProjectChatInput,
-        setProjectChatReferences: projectChat.setProjectChatReferences,
-        setProjectChatImages: projectChat.setProjectChatImages,
         sendProjectChatMessage: projectChat.sendProjectChat,
         abortProjectChat: projectChat.abortProjectChat,
         generateProjectRequirementSummary:
@@ -423,9 +458,9 @@ export default function App() {
             ...(project.projectCanvas?.completed_requirements ?? []),
           ].find((candidate) => candidate.id === requirementId);
           if (requirement) project.selectDagRequirement(requirement);
-          setOpenPanel("requirements");
+          openMainPanel("requirements");
         },
-        updateClarificationAnswer: requirement.updateClarificationAnswer,
+        loadOlderRequirementHistory: requirement.loadOlderRequirementHistory,
         submitClarifications: requirement.submitClarifications,
         confirmRequirement: requirement.confirmRequirement,
         retryRequirementAnalysis: requirement.retryRequirementAnalysis,
@@ -435,6 +470,7 @@ export default function App() {
       }),
     [
       current.project,
+      openMainPanel,
       project.abandonRequirement,
       project.cancelRequirementAnalysis,
       project.projectCanvas,
@@ -445,32 +481,23 @@ export default function App() {
       projectChat.projectChatBusy,
       projectChat.projectChatError,
       projectChat.projectChatEvents,
-      projectChat.projectChatImages,
-      projectChat.projectChatInput,
-      projectChat.projectChatReferences,
       projectChat.retryRequirementSummarySync,
       projectChat.sendProjectChat,
-      projectChat.setProjectChatImages,
-      projectChat.setProjectChatInput,
-      projectChat.setProjectChatReferences,
-      requirement.clarificationAnswers,
       requirement.confirmRequirement,
       requirement.retryRequirementAnalysis,
       requirement.continueEditingRequirement,
       requirement.dismissedPromptRequirementId,
       requirement.requirementBusy,
+      requirement.openingRequirementId,
       requirement.requirementConversation,
+      requirement.requirementTimeline,
+      requirement.hasOlderRequirementHistory,
+      requirement.loadOlderRequirementHistory,
       requirement.requirementError,
-      requirement.requirementImages,
-      requirement.requirementInput,
-      requirement.requirementReferences,
-      requirementConversationEvents,
+      requirement.requirementStreamEvents,
+      requirement.startRequirement,
       requirement.sendRequirementMessage,
-      requirement.setRequirementImages,
-      requirement.setRequirementInput,
-      requirement.setRequirementReferences,
       requirement.submitClarifications,
-      requirement.updateClarificationAnswer,
     ],
   );
 
@@ -675,13 +702,14 @@ export default function App() {
     [project.collapsedTaskGroups, project.selectedDagRequirement],
   );
 
-  const closePanel = () => {
+  const closePanel = useCallback(() => {
+    if (!openPanel || panelPhase === "closing") return;
     if (openPanel === "settings") void terminals.closePiLoginTerminal();
-    setOpenPanel(null);
-  };
+    setPanelPhase("closing");
+  }, [openPanel, panelPhase, terminals.closePiLoginTerminal]);
 
   const panelContent = useMemo(() => {
-    if (!openPanel || !current.project) return null;
+    if (panelPhase !== "content" || !openPanel || !current.project) return null;
     if (openPanel === "files") {
       return <FilesWorkbench projectId={current.project.id} />;
     }
@@ -752,8 +780,10 @@ export default function App() {
     }
     return null;
   }, [
+    closePanel,
     current.project,
     openPanel,
+    panelPhase,
     projectGitNode,
     projectSettingsNode,
     projectStructureNodes,
@@ -772,66 +802,77 @@ export default function App() {
     files: "文件浏览器",
   };
 
-  const nodes = useMemo<Node[]>(() => {
-    if (!projectChatNode || !current.project) return [];
-    const requirements = project.projectCanvas
-      ? [
-          ...(project.projectCanvas.active_requirement
-            ? [project.projectCanvas.active_requirement]
-            : []),
-          ...project.projectCanvas.queued_requirements,
-          ...project.projectCanvas.completed_requirements,
-        ]
-      : [];
-    const orbit = buildOrbitNodes({
-      activePanel: openPanel,
-      gitBranch: git.status?.branch ?? null,
-      modelRpcStatus: models.modelRpcStatus,
-      requirementCount: requirements.length,
-      terminalCount: terminals.sessions.length,
-      tokenContextPercent:
-        project.projectCanvas?.token_usage?.context_percent ?? 0,
-      onOpen: setOpenPanel,
-    });
-    const main: Node[] = [
-      {
-        ...projectChatNode,
-        type: "chatNode",
-        position: { x: 0, y: 0 },
-        style: { width: 960, height: 760, pointerEvents: "all" },
-        draggable: false,
-      },
-      ...orbit,
-    ];
-    if (openPanel && panelContent) {
-      main.push({
-        id: `panel-${openPanel}`,
-        type: "workspacePanel",
-        position: { x: 1540, y: 0 },
-        style: {
-          width: 1380,
-          height: 840,
-          pointerEvents: "all",
-        },
-        data: {
-          title: panelTitle[openPanel],
-          content: panelContent,
-          onClose: closePanel,
-        },
-        draggable: false,
-      });
-    }
-    return main;
-  }, [
-    current.project,
-    git.status?.branch,
-    models.modelRpcStatus,
-    openPanel,
-    panelContent,
-    project.projectCanvas,
-    projectChatNode,
-    terminals.sessions.length,
-  ]);
+  const projectRequirementCount = project.projectCanvas
+    ? Number(Boolean(project.projectCanvas.active_requirement)) +
+      project.projectCanvas.queued_requirements.length +
+      project.projectCanvas.completed_requirements.length
+    : 0;
+  const orbitNodes = useMemo(
+    () =>
+      buildOrbitNodes({
+        activePanel: openPanel,
+        gitBranch: git.status?.branch ?? null,
+        modelRpcStatus: models.modelRpcStatus,
+        requirementCount: projectRequirementCount,
+        terminalCount: terminals.sessions.length,
+        tokenContextPercent:
+          project.projectCanvas?.token_usage?.context_percent ?? 0,
+        onOpen: openMainPanel,
+        onPrefetch: prefetchPanel,
+      }),
+    [
+      git.status?.branch,
+      models.modelRpcStatus,
+      openMainPanel,
+      openPanel,
+      prefetchPanel,
+      project.projectCanvas?.token_usage?.context_percent,
+      projectRequirementCount,
+      terminals.sessions.length,
+    ],
+  );
+  const chatFlowNode = useMemo<Node | null>(
+    () =>
+      projectChatNode
+        ? {
+            ...projectChatNode,
+            type: "chatNode",
+            position: { x: 0, y: 0 },
+            style: { width: 960, height: 760, pointerEvents: "all" },
+            draggable: false,
+          }
+        : null,
+    [projectChatNode],
+  );
+  const panelNode = useMemo<Node | null>(
+    () =>
+      openPanel
+        ? {
+            id: `panel-${openPanel}`,
+            type: "workspacePanel",
+            position: { x: 1540, y: 0 },
+            style: {
+              width: 1380,
+              height: 840,
+              pointerEvents: "all",
+            },
+            data: {
+              title: panelTitle[openPanel],
+              content: panelContent,
+              onClose: closePanel,
+            },
+            draggable: false,
+          }
+        : null,
+    [closePanel, openPanel, panelContent],
+  );
+  const nodes = useMemo<Node[]>(
+    () =>
+      chatFlowNode && current.project
+        ? [chatFlowNode, ...orbitNodes, ...(panelNode ? [panelNode] : [])]
+        : [],
+    [chatFlowNode, current.project, orbitNodes, panelNode],
+  );
 
   const statusBadge = current.error
     ? { label: current.error, variant: "error" as const }

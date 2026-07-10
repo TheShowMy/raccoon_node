@@ -9,9 +9,8 @@ import {
   syncRequirementChatSummary,
 } from "../api/client";
 import type {
+  ChatSubmission,
   ConversationEvent,
-  FileReference,
-  ImageAttachment,
   ProjectChatResponse,
 } from "../types/api";
 import { readError } from "../utils/format";
@@ -23,13 +22,6 @@ export function useProjectChat(projectId: string | null) {
   const [projectChat, setProjectChat] = useState<ProjectChatResponse | null>(
     null,
   );
-  const [projectChatInput, setProjectChatInput] = useState("");
-  const [projectChatReferences, setProjectChatReferences] = useState<
-    FileReference[]
-  >([]);
-  const [projectChatImages, setProjectChatImages] = useState<ImageAttachment[]>(
-    [],
-  );
   const [projectChatBusy, setProjectChatBusy] = useState(false);
   const [projectChatError, setProjectChatError] = useState<string | null>(null);
   const [projectChatEvents, setProjectChatEvents] = useState<
@@ -38,9 +30,6 @@ export function useProjectChat(projectId: string | null) {
 
   useEffect(() => {
     setProjectChat(null);
-    setProjectChatInput("");
-    setProjectChatReferences([]);
-    setProjectChatImages([]);
     setProjectChatBusy(false);
     setProjectChatError(null);
     setProjectChatEvents([]);
@@ -88,8 +77,8 @@ export function useProjectChat(projectId: string | null) {
   });
 
   const run = useCallback(
-    async (operation: () => Promise<unknown>, clearComposer = false) => {
-      if (!projectId || projectChatBusy || projectChat?.running) return;
+    async (operation: () => Promise<unknown>): Promise<boolean> => {
+      if (!projectId || projectChatBusy || projectChat?.running) return false;
       setProjectChatBusy(true);
       setProjectChatError(null);
       try {
@@ -97,13 +86,10 @@ export function useProjectChat(projectId: string | null) {
         setProjectChat((current) =>
           current ? { ...current, running: true, error: null } : current,
         );
-        if (clearComposer) {
-          setProjectChatInput("");
-          setProjectChatReferences([]);
-          setProjectChatImages([]);
-        }
+        return true;
       } catch (reason) {
         setProjectChatError(readError(reason));
+        return false;
       } finally {
         setProjectChatBusy(false);
       }
@@ -111,29 +97,19 @@ export function useProjectChat(projectId: string | null) {
     [projectChat?.running, projectChatBusy, projectId],
   );
 
-  const sendProjectChat = useCallback(async () => {
-    const message = projectChatInput.trim();
-    if (!projectId || !message) return;
-    await run(
-      () =>
-        sendProjectChatMessage(projectId, {
-          message,
-          references: projectChatReferences,
-          images: projectChatImages,
-        }),
-      true,
-    );
-  }, [
-    projectChatImages,
-    projectChatInput,
-    projectChatReferences,
-    projectId,
-    run,
-  ]);
+  const sendProjectChat = useCallback(
+    async (payload: ChatSubmission): Promise<boolean> => {
+      const message = payload.message.trim();
+      if (!projectId || !message) return false;
+      return run(() =>
+        sendProjectChatMessage(projectId, { ...payload, message }),
+      );
+    },
+    [projectId, run],
+  );
 
   const generateRequirementSummary = useCallback(async () => {
     if (!projectId) return;
-    setProjectChatInput("");
     await run(() => generateProjectRequirementSummary(projectId));
   }, [projectId, run]);
 
@@ -157,17 +133,16 @@ export function useProjectChat(projectId: string | null) {
     }
   }, [applySnapshot, projectChat?.running, projectChatBusy, projectId]);
 
-  const closeProjectChat = useCallback(async () => {
-    if (!projectId || projectChatBusy || projectChat?.running) return;
+  const closeProjectChat = useCallback(async (): Promise<boolean> => {
+    if (!projectId || projectChatBusy || projectChat?.running) return false;
     setProjectChatBusy(true);
     setProjectChatError(null);
     try {
       applySnapshot(await resetProjectChat(projectId));
-      setProjectChatInput("");
-      setProjectChatReferences([]);
-      setProjectChatImages([]);
+      return true;
     } catch (reason) {
       setProjectChatError(readError(reason));
+      return false;
     } finally {
       setProjectChatBusy(false);
     }
@@ -175,15 +150,9 @@ export function useProjectChat(projectId: string | null) {
 
   return {
     projectChat,
-    projectChatInput,
-    projectChatReferences,
-    projectChatImages,
     projectChatBusy,
     projectChatError,
     projectChatEvents,
-    setProjectChatInput,
-    setProjectChatReferences,
-    setProjectChatImages,
     sendProjectChat,
     generateRequirementSummary,
     retryRequirementSummarySync,

@@ -16,7 +16,7 @@ import type { MainPanelKind } from "./orbitNodes";
 export const PARALLAX_MAX = 260;
 export const PARALLAX_LERP = 0.16;
 export const PARALLAX_RELEASE_DELAY = 120;
-const PANEL_FOCUS_DURATION = 410;
+export const PANEL_FOCUS_DURATION = 175;
 const PARALLAX_SETTLE_DISTANCE = 0.5;
 
 export const HOME_NODE_IDS = [
@@ -112,25 +112,28 @@ function elementSize(element: HTMLElement): CanvasSize {
 
 export function useMainCanvasViewport({
   openPanel,
+  onFocusComplete,
 }: {
   openPanel: MainPanelKind | null;
+  onFocusComplete?: (panel: MainPanelKind | null) => void;
 }) {
   const containerRef = useRef<HTMLElement>(null);
   const flowRef = useRef<ReactFlowInstance<Node> | null>(null);
   const openPanelRef = useRef(openPanel);
+  const onFocusCompleteRef = useRef(onFocusComplete);
   const baseCenterRef = useRef<Point>({ x: 0, y: 0 });
   const baseZoomRef = useRef(1);
   const targetRef = useRef<Point>({ x: 0, y: 0 });
   const currentRef = useRef<Point>({ x: 0, y: 0 });
   const frameRef = useRef<number | null>(null);
   const fitFrameRef = useRef<number | null>(null);
-  const secondFitFrameRef = useRef<number | null>(null);
   const releaseRef = useRef<number | null>(null);
   const fitGenerationRef = useRef(0);
   const initializedRef = useRef(false);
   const frozenRef = useRef(false);
 
   openPanelRef.current = openPanel;
+  onFocusCompleteRef.current = onFocusComplete;
 
   const cancelParallax = useCallback(() => {
     if (frameRef.current === null) return;
@@ -185,14 +188,10 @@ export function useMainCanvasViewport({
     if (fitFrameRef.current !== null) {
       window.cancelAnimationFrame(fitFrameRef.current);
     }
-    if (secondFitFrameRef.current !== null) {
-      window.cancelAnimationFrame(secondFitFrameRef.current);
-    }
 
     fitFrameRef.current = window.requestAnimationFrame(() => {
-      secondFitFrameRef.current = window.requestAnimationFrame(async () => {
+      void (async () => {
         fitFrameRef.current = null;
-        secondFitFrameRef.current = null;
         const flow = flowRef.current;
         const container = containerRef.current;
         if (!flow || !container || generation !== fitGenerationRef.current) {
@@ -229,7 +228,8 @@ export function useMainCanvasViewport({
           targetRef.current = baseCenter;
           currentRef.current = baseCenter;
         }
-      });
+        onFocusCompleteRef.current?.(panel);
+      })();
     });
   }, [cancelParallax]);
 
@@ -305,9 +305,6 @@ export function useMainCanvasViewport({
       fitGenerationRef.current += 1;
       if (fitFrameRef.current !== null) {
         window.cancelAnimationFrame(fitFrameRef.current);
-      }
-      if (secondFitFrameRef.current !== null) {
-        window.cancelAnimationFrame(secondFitFrameRef.current);
       }
       if (releaseRef.current !== null) {
         window.clearTimeout(releaseRef.current);

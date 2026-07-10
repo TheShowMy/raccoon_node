@@ -24,6 +24,7 @@ export type OrbitNodeData = Record<string, unknown> & {
   icon: ReactNode;
   active: boolean;
   onOpen: () => void;
+  onPrefetch?: () => void;
 };
 
 export interface BuildOrbitNodesInput {
@@ -34,6 +35,7 @@ export interface BuildOrbitNodesInput {
   terminalCount: number;
   tokenContextPercent: number;
   onOpen: (panel: MainPanelKind) => void;
+  onPrefetch?: (panel: MainPanelKind) => void;
 }
 
 export function OrbitNode({ data }: NodeProps<Node<OrbitNodeData>>) {
@@ -44,6 +46,8 @@ export function OrbitNode({ data }: NodeProps<Node<OrbitNodeData>>) {
       variant={data.active ? "primary" : "secondary"}
       className="orbit-tool-button nodrag"
       onClick={data.onOpen}
+      onMouseEnter={data.onPrefetch}
+      onFocus={data.onPrefetch}
     />
   );
 }
@@ -56,6 +60,7 @@ export function buildOrbitNodes({
   terminalCount,
   tokenContextPercent,
   onOpen,
+  onPrefetch,
 }: BuildOrbitNodesInput): Node<OrbitNodeData>[] {
   const definitions: Array<{
     id: string;
@@ -126,6 +131,7 @@ export function buildOrbitNodes({
       icon: definition.icon,
       active: activePanel === definition.kind,
       onOpen: () => onOpen(definition.kind),
+      onPrefetch: onPrefetch ? () => onPrefetch(definition.kind) : undefined,
     },
     draggable: false,
   }));

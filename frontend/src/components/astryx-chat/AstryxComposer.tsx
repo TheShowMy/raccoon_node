@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Button } from "@astryxdesign/core/Button";
 import {
   ChatComposer,
   ChatComposerDrawer,
   ChatComposerInput,
+  ChatSendButton,
+  type ChatComposerInputHandle,
   type ChatComposerTrigger,
 } from "@astryxdesign/core/Chat";
 import { Carousel } from "@astryxdesign/core/Carousel";
@@ -15,7 +17,7 @@ import {
   createStaticSource,
   type SearchableItem,
 } from "@astryxdesign/core/Typeahead";
-import { Paperclip, X } from "lucide-react";
+import { Paperclip } from "lucide-react";
 import { getProjectFiles, uploadProjectAttachment } from "../../api/client";
 import type {
   FileReference,
@@ -23,7 +25,7 @@ import type {
   StartNodeData,
 } from "../../types/api";
 import RequirementPrompt from "./RequirementPrompt";
-import { parseProjectChatCommand } from "./commands";
+import { parseProjectChatCommand, projectChatCommandToken } from "./commands";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 
@@ -41,20 +43,69 @@ function appendUniqueReference(
     : [...references, { path }];
 }
 
+type ComposerDraft = {
+  value: string;
+  references: FileReference[];
+  images: ImageAttachment[];
+};
+
+type ComposerDraftState = Record<string, ComposerDraft>;
+
+type ComposerDraftAction =
+  | { type: "reset" }
+  | { type: "clear"; scope: string }
+  | {
+      type: "update";
+      scope: string;
+      patch: Partial<ComposerDraft>;
+    };
+
+const EMPTY_DRAFT: ComposerDraft = {
+  value: "",
+  references: [],
+  images: [],
+};
+
+function composerDraftReducer(
+  state: ComposerDraftState,
+  action: ComposerDraftAction,
+): ComposerDraftState {
+  if (action.type === "reset") return {};
+  if (action.type === "clear") {
+    if (!(action.scope in state)) return state;
+    const next = { ...state };
+    delete next[action.scope];
+    return next;
+  }
+  return {
+    ...state,
+    [action.scope]: {
+      ...(state[action.scope] ?? EMPTY_DRAFT),
+      ...action.patch,
+    },
+  };
+}
+
 export default function AstryxComposer({
   data,
   requirementMode,
-  onRequirementModeChange,
+  onContentChange,
 }: {
   data: ChatData;
   requirementMode: boolean;
-  onRequirementModeChange: (value: boolean) => void;
+  onContentChange: () => void;
 }) {
   const [files, setFiles] = useState<FileReference[]>([]);
   const [uploading, setUploading] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [inputRevision, setInputRevision] = useState(0);
+  const [drafts, dispatchDraft] = useReducer(composerDraftReducer, {});
   const inputRef = useRef<HTMLInputElement>(null);
+  const inputHandleRef = useRef<ChatComposerInputHandle>(null);
+  const promptPreviouslyVisible = useRef(false);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -64,25 +115,37 @@ export default function AstryxComposer({
     return () => controller.abort();
   }, [data.project.id]);
 
-  const references = requirementMode
-    ? (data.references ?? [])
-    : (data.projectChatReferences ?? []);
-  const images = requirementMode
-    ? (data.images ?? [])
-    : (data.projectChatImages ?? []);
-  const setReferences = requirementMode
-    ? data.onReferencesChange
-    : data.onProjectChatReferencesChange;
-  const setImages = requirementMode
-    ? data.onImagesChange
-    : data.onProjectChatImagesChange;
-  const value = requirementMode ? data.input : data.projectChatInput;
-  const setValue = requirementMode
-    ? data.onInputChange
-    : data.onProjectChatInputChange;
+  useEffect(() => dispatchDraft({ type: "reset" }), [data.project.id]);
+
+  const draftScope = requirementMode
+    ? `requirement:${data.requirement?.id ?? data.requirementOpeningId ?? "opening"}`
+    : "project";
+  const draft = drafts[draftScope] ?? EMPTY_DRAFT;
+  const { value, references, images } = draft;
+  const updateDraft = (patch: Partial<ComposerDraft>) =>
+    dispatchDraft({ type: "update", scope: draftScope, patch });
+  const setReferences = (next: FileReference[]) =>
+    updateDraft({ references: next });
+  const setImages = (next: ImageAttachment[]) => updateDraft({ images: next });
+  const setValue = (next: string) => updateDraft({ value: next });
+  const clearDraft = () => {
+    dispatchDraft({ type: "clear", scope: draftScope });
+    setInputRevision((current) => current + 1);
+  };
   const promptVisible = Boolean(
     requirementMode && data.conversation?.prompt && !data.promptDismissed,
   );
+
+  useEffect(() => {
+    onContentChange();
+  }, [data.conversation?.prompt, data.promptDismissed, onContentChange]);
+
+  useEffect(() => {
+    if (promptPreviouslyVisible.current && !promptVisible && requirementMode) {
+      requestAnimationFrame(() => inputHandleRef.current?.focus());
+    }
+    promptPreviouslyVisible.current = promptVisible;
+  }, [promptVisible, requirementMode]);
 
   const fileSource = useMemo(
     () =>
@@ -92,13 +155,24 @@ export default function AstryxComposer({
     [files],
   );
   const commandSource = useMemo(() => createStaticSource(COMMANDS), []);
+  const hasProjectContext = Boolean(
+    data.projectChat?.messages.some(
+      (message) => message.role === "user" || message.role === "assistant",
+    ),
+  );
+
+  const handleValueChange = (nextValue: string) => {
+    if (submittingRef.current && nextValue === "") return;
+    if (nextValue.trim() !== "/需求生成") setCommandError(null);
+    setValue(nextValue);
+  };
 
   const triggers = useMemo<ChatComposerTrigger[]>(() => {
     const fileTrigger: ChatComposerTrigger = {
       character: "@",
       searchSource: fileSource,
       onSelect: (item) => {
-        setReferences?.(appendUniqueReference(references, item.id));
+        setReferences(appendUniqueReference(references, item.id));
         return { value: `@${item.id}`, label: item.label, variant: "blue" };
       },
     };
@@ -107,29 +181,14 @@ export default function AstryxComposer({
       character: "/",
       searchSource: commandSource,
       onSelect: (item) => {
-        if (item.id === "requirement") {
-          data.onProjectChatInputChange("");
-          onRequirementModeChange(true);
-        } else {
+        if (item.id === "new-session") {
           setResetOpen(true);
         }
-        return {
-          value: `/${item.label}`,
-          label: `/${item.label}`,
-          variant: "yellow",
-        };
+        return projectChatCommandToken(item);
       },
     };
     return [fileTrigger, commandTrigger];
-  }, [
-    commandSource,
-    data,
-    fileSource,
-    onRequirementModeChange,
-    references,
-    requirementMode,
-    setReferences,
-  ]);
+  }, [commandSource, data, fileSource, references, requirementMode]);
 
   const upload = async (incoming: File[]) => {
     const imageFiles = incoming.filter((file) =>
@@ -146,7 +205,7 @@ export default function AstryxComposer({
       for (const file of imageFiles) {
         uploaded.push(await uploadProjectAttachment(data.project.id, file));
       }
-      setImages?.([...images, ...uploaded]);
+      setImages([...images, ...uploaded]);
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : "上传失败");
     } finally {
@@ -157,34 +216,53 @@ export default function AstryxComposer({
   const submit = async (submitted: string) => {
     const message = submitted.trim();
     if (!message) return;
-    if (!requirementMode) {
-      const command = parseProjectChatCommand(message);
-      if (command.type === "requirement") {
-        data.onProjectChatInputChange("");
-        onRequirementModeChange(true);
-        if (command.description) await data.onSend(command.description);
+    submittingRef.current = true;
+    try {
+      if (!requirementMode) {
+        const command = parseProjectChatCommand(message);
+        if (command.type === "requirement") {
+          if (!command.description && !hasProjectContext) {
+            setCommandError("暂无项目对话上下文，请补充需求描述");
+            return;
+          }
+          setCommandError(null);
+          const accepted = await data.onStartRequirement(command.description, {
+            references,
+            images,
+          });
+          if (accepted) clearDraft();
+          return;
+        }
+        if (command.type === "new-session") {
+          setResetOpen(true);
+          return;
+        }
+        const accepted = await data.onProjectChatSend({
+          message,
+          references,
+          images,
+        });
+        if (accepted) clearDraft();
         return;
       }
-      if (command.type === "new-session") {
-        setResetOpen(true);
-        return;
-      }
-      await data.onProjectChatSend();
-      return;
+      const accepted = await data.onSend({ message, references, images });
+      if (accepted) clearDraft();
+    } finally {
+      setInputRevision((current) => current + 1);
+      queueMicrotask(() => {
+        submittingRef.current = false;
+      });
     }
-    await data.onSend();
   };
 
-  const drawerCount =
-    references.length + images.length + (promptVisible ? 1 : 0);
-  const drawer = drawerCount ? (
+  const attachmentCount = references.length + images.length;
+  const attachmentDrawer = attachmentCount ? (
     <ChatComposerDrawer
-      count={drawerCount}
-      label={promptVisible ? "需要处理" : "上下文附件"}
+      count={attachmentCount}
+      label="上下文附件"
       defaultIsCollapsed={false}
     >
       <VStack gap={3} width="100%">
-        {promptVisible ? <RequirementPrompt data={data} /> : null}
         {images.length ? (
           <Carousel gap={1}>
             {images.map((image) => (
@@ -194,7 +272,7 @@ export default function AstryxComposer({
                 alt={image.name}
                 label={image.name}
                 onRemove={() =>
-                  setImages?.(images.filter((item) => item.path !== image.path))
+                  setImages(images.filter((item) => item.path !== image.path))
                 }
               />
             ))}
@@ -207,7 +285,7 @@ export default function AstryxComposer({
                 key={reference.path}
                 label={reference.path}
                 onRemove={() =>
-                  setReferences?.(
+                  setReferences(
                     references.filter((item) => item.path !== reference.path),
                   )
                 }
@@ -218,34 +296,61 @@ export default function AstryxComposer({
       </VStack>
     </ChatComposerDrawer>
   ) : undefined;
+  const promptPanel = promptVisible ? (
+    <RequirementPrompt data={data} />
+  ) : undefined;
+  const drawer =
+    promptPanel || attachmentDrawer ? (
+      <VStack gap={1} width="100%">
+        {promptPanel}
+        {attachmentDrawer}
+      </VStack>
+    ) : undefined;
 
   const running = requirementMode
-    ? Boolean(data.busy || data.conversation?.running)
+    ? Boolean(
+        data.busy ||
+        data.conversation?.running ||
+        data.requirement?.status === "analyzing",
+      )
     : Boolean(data.projectChatBusy || data.projectChat?.running);
-  const composerDisabled = promptVisible || uploading || running;
+  const transitionPending = Boolean(
+    data.requirementOpeningId && !data.requirement,
+  );
+  const composerDisabled =
+    promptVisible || uploading || running || transitionPending;
   const error =
-    attachmentError ?? (requirementMode ? data.error : data.projectChatError);
+    commandError ??
+    attachmentError ??
+    (requirementMode ? data.error : (data.error ?? data.projectChatError));
+  const status = error
+    ? { type: "error" as const, message: error }
+    : transitionPending
+      ? { type: "warning" as const, message: "正在打开需求分支" }
+      : undefined;
+  const stop = () =>
+    void (requirementMode ? data.onCancel() : data.onProjectChatAbort());
 
   return (
     <>
       <ChatComposer
         value={value}
-        onChange={setValue}
+        onChange={handleValueChange}
         onSubmit={(submitted) => void submit(submitted)}
-        onStop={() =>
-          void (requirementMode ? data.onCancel() : data.onProjectChatAbort())
-        }
+        onStop={stop}
         isStopShown={running}
-        isDisabled={composerDisabled}
         density="balanced"
         placeholder={
           requirementMode ? "描述或补充需求" : "询问项目，输入 / 选择命令"
         }
         drawer={drawer}
+        sendButton={<ChatSendButton isDisabled={composerDisabled} />}
         input={
           <ChatComposerInput
+            key={inputRevision}
+            handleRef={inputHandleRef}
             value={value}
-            onChange={setValue}
+            onChange={handleValueChange}
             triggers={triggers}
             onFiles={(incoming) => void upload(incoming)}
             onSubmit={(submitted) => void submit(submitted)}
@@ -264,23 +369,12 @@ export default function AstryxComposer({
               variant="ghost"
               icon={<Paperclip size={16} />}
               isLoading={uploading}
-              isDisabled={running}
+              isDisabled={composerDisabled}
               onClick={() => inputRef.current?.click()}
             />
-            {requirementMode && !data.requirement ? (
-              <Button
-                label="返回项目聊天"
-                tooltip="返回项目聊天"
-                isIconOnly
-                size="sm"
-                variant="ghost"
-                icon={<X size={16} />}
-                onClick={() => onRequirementModeChange(false)}
-              />
-            ) : null}
           </>
         }
-        status={error ? { type: "error", message: error } : undefined}
+        status={status}
         statusPosition="top"
       />
       <input
@@ -304,8 +398,9 @@ export default function AstryxComposer({
         actionVariant="destructive"
         onAction={() => {
           setResetOpen(false);
-          data.onProjectChatInputChange("");
-          void data.onProjectChatReset();
+          void data.onProjectChatReset().then((accepted) => {
+            if (accepted) clearDraft();
+          });
         }}
       />
     </>

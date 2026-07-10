@@ -145,6 +145,65 @@ function normalizeStatus(value: unknown, isError = false) {
   return "running";
 }
 
+function mergeStreamChunk(current: string, incoming: string) {
+  if (!incoming || current.endsWith(incoming)) return current;
+  if (!current || incoming.startsWith(current)) return incoming;
+  if (current.startsWith(incoming)) return current;
+  return current + incoming;
+}
+
+function extractText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(extractText).join("");
+  const record = asRecord(value);
+  for (const key of ["text", "delta", "content", "message"]) {
+    if (record[key] !== undefined) {
+      const text = extractText(record[key]);
+      if (text) return text;
+    }
+  }
+  return "";
+}
+
+function toolOutput(
+  payload: Record<string, unknown>,
+  inner: Record<string, unknown>,
+) {
+  for (const value of [
+    payload.output,
+    payload.partialResult,
+    payload.result,
+    payload.delta,
+    inner.output,
+    inner.partialResult,
+    inner.result,
+    inner.delta,
+  ]) {
+    const text = extractText(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+function liveToolTarget(
+  payload: Record<string, unknown>,
+  inner: Record<string, unknown>,
+  fallback = "workspace",
+) {
+  const direct =
+    firstString(payload, ["target", "path", "command"]) ||
+    firstString(inner, ["target", "path", "command"]);
+  if (direct) return direct;
+  const input =
+    payload.input ??
+    payload.toolInput ??
+    payload.tool_input ??
+    inner.input ??
+    inner.toolInput ??
+    inner.tool_input;
+  return input === undefined ? fallback : toolTarget(input);
+}
+
 export function conversationEventsToStreamEvents(
   events: ConversationEvent[],
 ): StreamEvent[] {
@@ -177,7 +236,13 @@ export function buildLiveActivity(events: StreamEvent[]): AstryxLiveActivity {
     tools: [],
     notices: [],
   };
-  const tools = new Map<string, AstryxLiveActivity["tools"][number]>();
+  const tools = new Map<
+    string,
+    AstryxLiveActivity["tools"][number] & { anonymous: boolean }
+  >();
+  const orphanEnds = new Set<string>();
+  let anonymousSequence = 0;
+  let orphanSequence = 0;
 
   for (const event of events) {
     const payload = asRecord(event.payload);
@@ -188,72 +253,115 @@ export function buildLiveActivity(events: StreamEvent[]): AstryxLiveActivity {
         inner.assistantMessageEvent ??
         inner.assistant_message_event,
     );
-    const kind = String(
-      assistant.type ??
-        event.pi_type ??
-        payload.type ??
-        inner.type ??
-        event.event,
+    const piType = String(
+      event.pi_type ?? payload.type ?? inner.type ?? event.event,
     ).toLowerCase();
-    const text =
+    const assistantType = String(assistant.type ?? "").toLowerCase();
+    const delta =
       firstString(payload, ["delta", "text", "content", "message"]) ||
       firstString(inner, ["delta", "text", "content", "message"]) ||
-      firstString(assistant, ["delta", "text", "content", "message"]) ||
-      event.message;
+      firstString(assistant, ["delta", "text", "content", "message"]);
 
-    if (kind.includes("thinking") || kind.includes("reasoning")) {
-      activity.thinking += text;
+    if (
+      assistantType.includes("thinking") ||
+      assistantType.includes("reasoning") ||
+      piType.includes("thinking") ||
+      piType.includes("reasoning")
+    ) {
+      activity.thinking = mergeStreamChunk(activity.thinking, delta);
       continue;
     }
-    if (kind.includes("tool")) {
-      const id =
+    if (piType.startsWith("tool_execution_")) {
+      const explicitId =
         firstString(payload, ["toolCallId", "tool_call_id", "id"]) ||
-        firstString(inner, ["toolCallId", "tool_call_id", "id"]) ||
-        `tool-${tools.size}`;
-      const previous = tools.get(id);
+        firstString(inner, ["toolCallId", "tool_call_id", "id"]);
       const name =
         firstString(payload, ["toolName", "tool_name", "name"]) ||
         firstString(inner, ["toolName", "tool_name", "name"]) ||
-        previous?.name ||
         "tool";
-      const output =
-        firstString(payload, ["output", "result", "delta"]) ||
-        firstString(inner, ["output", "result", "delta"]);
+      const lifecycle = piType.endsWith("_start")
+        ? "start"
+        : piType.endsWith("_end")
+          ? "end"
+          : "update";
+      let id = explicitId;
+      if (id && lifecycle !== "start" && !tools.has(id)) {
+        const anonymous = [...tools.values()]
+          .reverse()
+          .find(
+            (tool) =>
+              tool.anonymous &&
+              tool.status === "running" &&
+              (name === "tool" || tool.name === name),
+          );
+        if (anonymous) {
+          tools.delete(anonymous.id);
+          tools.set(id, { ...anonymous, id, anonymous: false });
+        }
+      }
+      if (!id && lifecycle !== "start") {
+        const matchingId = [...tools.values()]
+          .reverse()
+          .find(
+            (tool) =>
+              tool.status === "running" &&
+              (name === "tool" || tool.name === name),
+          )?.id;
+        if (matchingId) id = matchingId;
+      }
+      if (!id && lifecycle === "update") continue;
+      const output = toolOutput(payload, inner);
+      if (!id && lifecycle === "end") {
+        const signature = `${name}\u0000${liveToolTarget(payload, inner)}\u0000${output}`;
+        if (orphanEnds.has(signature)) continue;
+        orphanEnds.add(signature);
+        id = `tool-orphan-${orphanSequence++}`;
+      }
+      id ||= `tool-anonymous-${anonymousSequence++}`;
+      const previous = tools.get(id);
       tools.set(id, {
         id,
-        name,
-        target:
-          firstString(payload, ["target", "path", "command"]) ||
-          firstString(inner, ["target", "path", "command"]) ||
-          previous?.target ||
-          "workspace",
-        output: `${previous?.output ?? ""}${output}`,
-        status: normalizeStatus(
-          payload.status ??
-            inner.status ??
-            payload.type ??
-            inner.type ??
-            event.pi_type,
-          Boolean(payload.isError ?? inner.isError),
-        ),
+        name: name === "tool" ? (previous?.name ?? name) : name,
+        target: liveToolTarget(payload, inner, previous?.target),
+        output: mergeStreamChunk(previous?.output ?? "", output),
+        status:
+          lifecycle === "end"
+            ? normalizeStatus(
+                "done",
+                Boolean(
+                  payload.isError ??
+                  payload.is_error ??
+                  inner.isError ??
+                  inner.is_error,
+                ),
+              )
+            : "running",
+        anonymous: previous?.anonymous ?? !explicitId,
       });
       continue;
     }
     if (
-      kind.includes("assistant") ||
-      kind.includes("output") ||
-      kind.includes("message_update") ||
-      kind.includes("text_delta")
+      assistantType.includes("text") ||
+      assistantType.includes("content") ||
+      assistantType.includes("message") ||
+      piType.includes("assistant") ||
+      piType.includes("output") ||
+      piType.includes("message_update") ||
+      piType.includes("text_delta")
     ) {
-      activity.output += text;
+      activity.output = mergeStreamChunk(activity.output, delta);
       continue;
     }
     if (event.event === "notice.append" || event.event === "session.error") {
-      if (text) activity.notices.push(text);
+      if (event.message) activity.notices.push(event.message);
     }
   }
-  activity.tools = [...tools.values()];
+  activity.tools = [...tools.values()].map(({ anonymous: _, ...tool }) => tool);
   return activity;
+}
+
+export function hasLiveContent(activity: AstryxLiveActivity) {
+  return Boolean(activity.thinking || activity.output || activity.tools.length);
 }
 
 export function toolTarget(input: unknown) {

@@ -3,6 +3,25 @@ export type ProjectChatCommand =
   | { type: "new-session" }
   | { type: "message" };
 
+export function projectChatCommandToken(item: { id: string; label: string }): {
+  value: string;
+  label: string;
+  variant: "yellow";
+} {
+  if (item.id === "requirement") {
+    return {
+      value: "/需求生成 ",
+      label: "/需求生成",
+      variant: "yellow",
+    };
+  }
+  return {
+    value: `/${item.label}`,
+    label: `/${item.label}`,
+    variant: "yellow",
+  };
+}
+
 export function parseProjectChatCommand(input: string): ProjectChatCommand {
   const value = input.trim();
   const requirement = value.match(/^\/需求生成(?:\s+([\s\S]+))?$/);

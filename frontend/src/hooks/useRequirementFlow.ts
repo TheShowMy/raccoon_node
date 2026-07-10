@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  ChatSubmission,
   DraftClarificationAnswer,
   FileReference,
   ImageAttachment,
   ProjectCanvasData,
   Requirement,
-  RequirementClarification,
   RequirementConversation,
+  RequirementTimelineBranch,
   ConversationEvent,
   StreamEvent,
 } from "../types/api";
@@ -21,6 +22,8 @@ import {
 } from "../api/client";
 import { readError, buildClarificationAnswerPayload } from "../utils/format";
 import { useConversationSocket } from "./useConversationSocket";
+
+const EMPTY_REQUIREMENTS: Requirement[] = [];
 
 function isStreamEvent(value: unknown): value is StreamEvent {
   if (typeof value !== "object" || value === null) return false;
@@ -42,15 +45,14 @@ export function useRequirementFlow(
     dagRequirementId?: string | null,
   ) => Promise<ProjectCanvasData>,
   observeRequirement: (requirementId: string) => void,
+  allRequirements: Requirement[] = EMPTY_REQUIREMENTS,
 ) {
-  const [requirementInput, setRequirementInput] = useState("");
-  const [requirementReferences, setRequirementReferences] = useState<
-    FileReference[]
-  >([]);
-  const [requirementImages, setRequirementImages] = useState<ImageAttachment[]>(
-    [],
-  );
   const [requirementBusy, setRequirementBusy] = useState(false);
+  const [openingRequirementId, setOpeningRequirementId] = useState<
+    string | null
+  >(null);
+  const [openingRequirementCreatedAt, setOpeningRequirementCreatedAt] =
+    useState<string | null>(null);
   const [requirementError, setRequirementError] = useState<string | null>(null);
   const [requirementStreamEvents, setRequirementStreamEvents] = useState<
     StreamEvent[]
@@ -59,83 +61,271 @@ export function useRequirementFlow(
   const requirementFlushTimeoutRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
-  const [requirementConversation, setRequirementConversation] =
-    useState<RequirementConversation | null>(null);
+  const [requirementConversations, setRequirementConversations] = useState<
+    Record<string, RequirementConversation>
+  >({});
+  const requirementConversationsRef = useRef(requirementConversations);
+  requirementConversationsRef.current = requirementConversations;
+  const [conversationErrors, setConversationErrors] = useState<
+    Record<string, string>
+  >({});
+  const [conversationLoading, setConversationLoading] = useState<
+    Record<string, boolean>
+  >({});
+  const requestedConversationsRef = useRef(new Set<string>());
+  const historyLoadPromiseRef = useRef<Promise<boolean> | null>(null);
+  const timelineBranchesRef = useRef(
+    new Map<string, RequirementTimelineBranch>(),
+  );
   const [dismissedPromptRequirementId, setDismissedPromptRequirementId] =
     useState<string | null>(null);
-  const [clarificationAnswers, setClarificationAnswers] = useState<
-    Record<string, DraftClarificationAnswer>
-  >({});
 
   const loadRequirementConversation = useCallback(
-    async (requirementId: string) => {
-      const data = await getRequirementConversation(requirementId);
-      setRequirementConversation(data);
-      return data;
+    async (requirementId: string, force = false) => {
+      if (!force && requestedConversationsRef.current.has(requirementId)) {
+        return requirementConversationsRef.current[requirementId] ?? null;
+      }
+      requestedConversationsRef.current.add(requirementId);
+      setConversationLoading((current) => ({
+        ...current,
+        [requirementId]: true,
+      }));
+      setConversationErrors((current) => {
+        if (!(requirementId in current)) return current;
+        const next = { ...current };
+        delete next[requirementId];
+        return next;
+      });
+      try {
+        const data = await getRequirementConversation(requirementId);
+        setRequirementConversations((current) => ({
+          ...current,
+          [requirementId]: data,
+        }));
+        return data;
+      } catch (reason) {
+        const message = readError(reason);
+        setConversationErrors((current) => ({
+          ...current,
+          [requirementId]: message,
+        }));
+        throw reason;
+      } finally {
+        setConversationLoading((current) => ({
+          ...current,
+          [requirementId]: false,
+        }));
+      }
     },
     [],
   );
 
+  const conversationRequirementId = activeRequirementId ?? openingRequirementId;
+  const requirementConversation = conversationRequirementId
+    ? (requirementConversations[conversationRequirementId] ?? null)
+    : null;
+
   useEffect(() => {
     setRequirementStreamEvents([]);
-    setClarificationAnswers({});
     setDismissedPromptRequirementId(null);
-    if (!activeRequirementId) setRequirementConversation(null);
-  }, [activeRequirementId]);
+    setRequirementError(null);
+  }, [conversationRequirementId]);
+
+  useEffect(() => {
+    if (
+      openingRequirementId &&
+      allRequirements.some(
+        (requirement) => requirement.id === openingRequirementId,
+      )
+    ) {
+      setOpeningRequirementId(null);
+      setOpeningRequirementCreatedAt(null);
+    }
+  }, [allRequirements, openingRequirementId]);
 
   useEffect(() => {
     if (!selectedProjectId) {
-      setRequirementInput("");
-      setRequirementReferences([]);
-      setRequirementImages([]);
       setRequirementError(null);
+      setOpeningRequirementId(null);
+      setOpeningRequirementCreatedAt(null);
       setRequirementStreamEvents([]);
-      setRequirementConversation(null);
+      setRequirementConversations({});
+      setConversationErrors({});
+      setConversationLoading({});
+      requestedConversationsRef.current.clear();
       setDismissedPromptRequirementId(null);
-      setClarificationAnswers({});
     }
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    const retainedIds = new Set(allRequirements.map(({ id }) => id));
+    if (activeRequirementId) retainedIds.add(activeRequirementId);
+    if (openingRequirementId) retainedIds.add(openingRequirementId);
+    const retain = <T>(current: Record<string, T>) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([id]) => retainedIds.has(id)),
+      ) as Record<string, T>;
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+      return currentKeys.length === nextKeys.length &&
+        currentKeys.every((key) => key in next)
+        ? current
+        : next;
+    };
+    setRequirementConversations(retain);
+    setConversationErrors(retain);
+    setConversationLoading(retain);
+    for (const id of requestedConversationsRef.current) {
+      if (!retainedIds.has(id)) requestedConversationsRef.current.delete(id);
+    }
+  }, [activeRequirementId, allRequirements, openingRequirementId]);
+
+  const orderedRequirementIds = useMemo(
+    () =>
+      [...allRequirements]
+        .sort(
+          (left, right) =>
+            Date.parse(right.created_at) - Date.parse(left.created_at),
+        )
+        .map((requirement) => requirement.id),
+    [allRequirements],
+  );
+
+  const isConversationSettled = useCallback(
+    (requirementId: string) =>
+      requirementId === conversationRequirementId ||
+      Boolean(
+        requirementConversations[requirementId] ||
+        conversationErrors[requirementId] ||
+        conversationLoading[requirementId],
+      ),
+    [
+      conversationErrors,
+      conversationLoading,
+      conversationRequirementId,
+      requirementConversations,
+    ],
+  );
+
+  useEffect(() => {
+    const newestHistoricalId = orderedRequirementIds.find(
+      (requirementId) => requirementId !== conversationRequirementId,
+    );
+    if (!newestHistoricalId || isConversationSettled(newestHistoricalId)) {
+      return;
+    }
+    void loadRequirementConversation(newestHistoricalId).catch(() => {});
+  }, [
+    conversationRequirementId,
+    isConversationSettled,
+    loadRequirementConversation,
+    orderedRequirementIds,
+  ]);
+
+  const hasOlderRequirementHistory = orderedRequirementIds.some(
+    (requirementId) => !isConversationSettled(requirementId),
+  );
+
+  const loadOlderRequirementHistory = useCallback(async () => {
+    if (historyLoadPromiseRef.current) {
+      return historyLoadPromiseRef.current;
+    }
+    const nextId = orderedRequirementIds.find(
+      (requirementId) => !isConversationSettled(requirementId),
+    );
+    if (!nextId) return false;
+    const promise = (async () => {
+      try {
+        await loadRequirementConversation(nextId);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        historyLoadPromiseRef.current = null;
+      }
+    })();
+    historyLoadPromiseRef.current = promise;
+    return promise;
+  }, [
+    isConversationSettled,
+    loadRequirementConversation,
+    orderedRequirementIds,
+  ]);
 
   useEffect(() => {
     setRequirementStreamEvents([]);
   }, [observedRequirementId]);
 
+  const startRequirement = useCallback(
+    async (
+      description: string | null,
+      attachments: {
+        references: FileReference[];
+        images: ImageAttachment[];
+      },
+    ): Promise<boolean> => {
+      if (!selectedProjectId) return false;
+      const message =
+        description?.trim() || "请基于当前项目对话上下文生成需求。";
+
+      setRequirementBusy(true);
+      setRequirementError(null);
+      try {
+        const accepted = await createRequirement(selectedProjectId, {
+          message,
+          references: attachments.references,
+          images: attachments.images,
+        });
+        setOpeningRequirementId(accepted.requirement_id);
+        setOpeningRequirementCreatedAt(new Date().toISOString());
+        setRequirementStreamEvents([]);
+        setDismissedPromptRequirementId(null);
+
+        try {
+          const data = await loadProjectCanvas(selectedProjectId);
+          setProjectCanvas(data);
+        } catch (reason) {
+          setRequirementError(readError(reason));
+        }
+        return true;
+      } catch (reason) {
+        setRequirementError(readError(reason));
+        return false;
+      } finally {
+        setRequirementBusy(false);
+      }
+    },
+    [loadProjectCanvas, selectedProjectId, setProjectCanvas],
+  );
+
   const sendRequirementMessage = useCallback(
-    async (messageOverride?: string) => {
-      const message = (messageOverride ?? requirementInput).trim();
-      if (!message || !selectedProjectId) {
-        return;
+    async (payload: ChatSubmission) => {
+      const message = payload.message.trim();
+      if (!message || !selectedProjectId || !activeRequirementId) {
+        return false;
       }
 
       setRequirementBusy(true);
       setRequirementError(null);
       try {
-        const accepted = activeRequirementId
-          ? await appendRequirementMessage(activeRequirementId, {
-              message,
-              references: requirementReferences,
-              images: requirementImages,
-            })
-          : await createRequirement(selectedProjectId, {
-              message,
-              references: requirementReferences,
-              images: requirementImages,
-            });
+        const accepted = await appendRequirementMessage(activeRequirementId, {
+          message,
+          references: payload.references,
+          images: payload.images,
+        });
         setRequirementStreamEvents([]);
-        setClarificationAnswers({});
         setDismissedPromptRequirementId(null);
         const data = await loadProjectCanvas(selectedProjectId);
         setProjectCanvas(data);
         const nextRequirementId =
           data.active_requirement?.id ?? accepted.requirement_id;
-        void loadRequirementConversation(nextRequirementId).catch((reason) =>
-          setRequirementError(readError(reason)),
+        void loadRequirementConversation(nextRequirementId, true).catch(
+          (reason) => setRequirementError(readError(reason)),
         );
-        setRequirementInput("");
-        setRequirementReferences([]);
-        setRequirementImages([]);
+        return true;
       } catch (reason) {
         setRequirementError(readError(reason));
+        return false;
       } finally {
         setRequirementBusy(false);
       }
@@ -144,9 +334,6 @@ export function useRequirementFlow(
       activeRequirementId,
       loadRequirementConversation,
       loadProjectCanvas,
-      requirementInput,
-      requirementImages,
-      requirementReferences,
       selectedProjectId,
       setProjectCanvas,
     ],
@@ -154,63 +341,78 @@ export function useRequirementFlow(
 
   const handleConversationEvent = useCallback(
     (event: ConversationEvent) => {
-      if (!activeRequirementId) return;
+      if (!conversationRequirementId) return;
       const eventRequirementId = event.payload.requirement_id;
       if (
         typeof eventRequirementId === "string" &&
-        eventRequirementId !== activeRequirementId
+        eventRequirementId !== conversationRequirementId
       ) {
         return;
       }
       if (event.type === "session.error") {
-        setRequirementError(
+        const message =
           typeof event.payload.message === "string"
             ? event.payload.message
-            : "需求分析失败",
-        );
+            : "需求分析失败";
+        setRequirementError(message);
+        setConversationErrors((current) => ({
+          ...current,
+          [conversationRequirementId]: message,
+        }));
       }
       setRequirementStreamEvents((current) => [
         ...current,
-        conversationEventToStreamEvent(activeRequirementId, event),
+        conversationEventToStreamEvent(conversationRequirementId, event),
       ]);
     },
-    [activeRequirementId],
+    [conversationRequirementId],
   );
 
   useConversationSocket({
-    url: activeRequirementId
-      ? requirementConversationWebSocketUrl(activeRequirementId)
+    url: conversationRequirementId
+      ? requirementConversationWebSocketUrl(conversationRequirementId)
       : null,
     loadSnapshot: useCallback(() => {
-      if (!activeRequirementId) throw new Error("需求未加载");
-      return getRequirementConversation(activeRequirementId);
-    }, [activeRequirementId]),
+      if (!conversationRequirementId) throw new Error("需求未加载");
+      requestedConversationsRef.current.add(conversationRequirementId);
+      return getRequirementConversation(conversationRequirementId);
+    }, [conversationRequirementId]),
     onSnapshot: useCallback((snapshot: RequirementConversation) => {
-      setRequirementConversation(snapshot);
+      setRequirementConversations((current) => ({
+        ...current,
+        [snapshot.id]: snapshot,
+      }));
+      setConversationErrors((current) => {
+        if (!current[snapshot.id] && !snapshot.error) return current;
+        const next = { ...current };
+        if (snapshot.error) next[snapshot.id] = snapshot.error;
+        else delete next[snapshot.id];
+        return next;
+      });
       setRequirementError(snapshot.error);
       setRequirementStreamEvents((current) =>
         snapshot.running ? current : [],
       );
     }, []),
     onEvent: handleConversationEvent,
-    onError: setRequirementError,
+    onError: useCallback(
+      (message: string) => {
+        setRequirementError(message);
+        if (!conversationRequirementId) return;
+        setConversationErrors((current) => ({
+          ...current,
+          [conversationRequirementId]: message,
+        }));
+      },
+      [conversationRequirementId],
+    ),
   });
 
-  const updateClarificationAnswer = useCallback(
-    (
-      clarification: RequirementClarification,
-      answer: DraftClarificationAnswer,
-    ) => {
-      setClarificationAnswers((current) => ({
-        ...current,
-        [clarification.id]: answer,
-      }));
-    },
-    [],
-  );
-
   const submitClarifications = useCallback(
-    async (requirement: Requirement) => {
+    async (
+      requirement: Requirement,
+      clarificationAnswers: Record<string, DraftClarificationAnswer>,
+    ): Promise<boolean> => {
       setRequirementBusy(true);
       setRequirementError(null);
       try {
@@ -233,22 +435,23 @@ export function useRequirementFlow(
           prompt,
         );
         setRequirementStreamEvents([]);
-        setClarificationAnswers({});
         setDismissedPromptRequirementId(null);
         setProjectCanvas(data);
         if (data.active_requirement) {
-          void loadRequirementConversation(data.active_requirement.id).catch(
-            (reason) => setRequirementError(readError(reason)),
-          );
+          void loadRequirementConversation(
+            data.active_requirement.id,
+            true,
+          ).catch((reason) => setRequirementError(readError(reason)));
         }
+        return true;
       } catch (reason) {
         setRequirementError(readError(reason));
+        return false;
       } finally {
         setRequirementBusy(false);
       }
     },
     [
-      clarificationAnswers,
       loadRequirementConversation,
       requirementConversation?.prompt,
       setProjectCanvas,
@@ -268,12 +471,14 @@ export function useRequirementFlow(
         setDismissedPromptRequirementId(null);
         setProjectCanvas(data);
         observeRequirement(requirement.id);
+        void loadRequirementConversation(requirement.id, true).catch((reason) =>
+          setRequirementError(readError(reason)),
+        );
         if (data.active_requirement) {
-          void loadRequirementConversation(data.active_requirement.id).catch(
-            (reason) => setRequirementError(readError(reason)),
-          );
-        } else {
-          setRequirementConversation(null);
+          void loadRequirementConversation(
+            data.active_requirement.id,
+            true,
+          ).catch((reason) => setRequirementError(readError(reason)));
         }
       } catch (reason) {
         setRequirementError(readError(reason));
@@ -308,13 +513,6 @@ export function useRequirementFlow(
 
   const continueEditingRequirement = useCallback((requirement: Requirement) => {
     setDismissedPromptRequirementId(requirement.id);
-    requestAnimationFrame(() => {
-      document
-        .querySelector<HTMLTextAreaElement>(
-          '[data-chat-card="requirement"] textarea:not(:disabled)',
-        )
-        ?.focus();
-    });
   }, []);
 
   useEffect(() => {
@@ -434,21 +632,69 @@ export function useRequirementFlow(
     selectedProjectId,
   ]);
 
+  const requirementTimeline = useMemo<RequirementTimelineBranch[]>(() => {
+    const requirementsById = new Map(
+      allRequirements.map((requirement) => [requirement.id, requirement]),
+    );
+    const requirementIds = [...requirementsById.keys()];
+    if (openingRequirementId && !requirementsById.has(openingRequirementId)) {
+      requirementIds.push(openingRequirementId);
+    }
+    const nextBranches = new Map<string, RequirementTimelineBranch>();
+    const branches = requirementIds.map((requirementId) => {
+      const requirement = requirementsById.get(requirementId) ?? null;
+      const conversation = requirementConversations[requirementId] ?? null;
+      const branch: RequirementTimelineBranch = {
+        requirementId,
+        requirement,
+        conversation,
+        loading: Boolean(conversationLoading[requirementId]),
+        error: conversationErrors[requirementId] ?? null,
+        createdAt:
+          requirement?.created_at ??
+          conversation?.items[0]?.created_at ??
+          openingRequirementCreatedAt ??
+          conversation?.updated_at ??
+          new Date(0).toISOString(),
+        opening: openingRequirementId === requirementId,
+      };
+      const previous = timelineBranchesRef.current.get(requirementId);
+      const stable =
+        previous &&
+        previous.requirement === branch.requirement &&
+        previous.conversation === branch.conversation &&
+        previous.loading === branch.loading &&
+        previous.error === branch.error &&
+        previous.createdAt === branch.createdAt &&
+        previous.opening === branch.opening
+          ? previous
+          : branch;
+      nextBranches.set(requirementId, stable);
+      return stable;
+    });
+    timelineBranchesRef.current = nextBranches;
+    return branches;
+  }, [
+    allRequirements,
+    conversationErrors,
+    conversationLoading,
+    openingRequirementCreatedAt,
+    openingRequirementId,
+    requirementConversations,
+  ]);
+
   return {
-    requirementInput,
-    setRequirementInput,
-    requirementReferences,
-    setRequirementReferences,
-    requirementImages,
-    setRequirementImages,
     requirementBusy,
+    openingRequirementId,
     requirementError,
     requirementStreamEvents,
     requirementConversation,
+    requirementTimeline,
+    hasOlderRequirementHistory,
+    loadOlderRequirementHistory,
     dismissedPromptRequirementId,
-    clarificationAnswers,
-    updateClarificationAnswer,
     submitClarifications,
+    startRequirement,
     sendRequirementMessage,
     confirmRequirement: confirm,
     retryRequirementAnalysis: retryAnalysis,

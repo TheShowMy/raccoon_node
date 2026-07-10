@@ -5,7 +5,7 @@ import type { StartNodeData } from "../types/api";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 
-export default function ChatCanvasNode({ data }: NodeProps<Node<ChatData>>) {
+function ChatCanvasNode({ data }: NodeProps<Node<ChatData>>) {
   return (
     <Card
       width="100%"
@@ -17,3 +17,6 @@ export default function ChatCanvasNode({ data }: NodeProps<Node<ChatData>>) {
     </Card>
   );
 }
+
+export default memo(ChatCanvasNode);
+import { memo } from "react";
