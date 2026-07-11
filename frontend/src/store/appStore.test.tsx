@@ -14,6 +14,10 @@ describe("AppStore", () => {
     expect(store.getSnapshot().panelPhase).toBe("content");
 
     store.closePanel();
+    expect(store.getSnapshot().openPanel).toBe("settings");
+    expect(store.getSnapshot().panelPhase).toBe("closing");
+
+    store.closePanelComplete();
     expect(store.getSnapshot().openPanel).toBeNull();
     expect(store.getSnapshot().panelPhase).toBe("shell");
   });
@@ -38,6 +42,7 @@ describe("AppStore", () => {
 
     store.focusPanelComplete();
     store.closePanel();
+    store.closePanelComplete();
     expect(calls).toBe(0);
   });
 });

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App from "./App";
+import App, { shouldVirtualizeCanvasNodes } from "./App";
 import { buildOrbitNodes, OrbitNode } from "./canvas/orbitNodes";
 
 class WebSocketMock {
@@ -195,5 +195,12 @@ describe("App", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /设置/ }));
     expect(onOpen).toHaveBeenCalledWith("settings");
+  });
+
+  it("pre-renders all canvas nodes only during camera transitions", () => {
+    expect(shouldVirtualizeCanvasNodes("shell")).toBe(true);
+    expect(shouldVirtualizeCanvasNodes("content")).toBe(true);
+    expect(shouldVirtualizeCanvasNodes("focusing")).toBe(false);
+    expect(shouldVirtualizeCanvasNodes("closing")).toBe(false);
   });
 });

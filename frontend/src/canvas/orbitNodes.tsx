@@ -19,6 +19,7 @@ export type MainPanelKind =
   | "files";
 
 export type OrbitNodeData = Record<string, unknown> & {
+  panel: MainPanelKind;
   title: string;
   detail: string;
   icon: ReactNode;
@@ -44,8 +45,10 @@ export interface BuildOrbitNodesInput {
   canvasSize?: CanvasSize;
 }
 
-const CHAT_NODE_BOUNDS = { x: 0, y: 0, width: 960, height: 760 };
-const ORBIT_NODE_SIZE = { width: 190, height: 88 };
+export const CHAT_NODE_BOUNDS = { x: 0, y: 0, width: 960, height: 760 };
+export const ORBIT_NODE_SIZE = { width: 190, height: 88 };
+export const WORKSPACE_PANEL_SIZE = { width: 1380, height: 840 };
+const WORKSPACE_PANEL_GAP = 72;
 // Extra clearance added to the chat-node bounding box so orbit nodes never
 // overlap the chat node or each other, even on small viewports.
 const MIN_ORBIT_PADDING = 220;
@@ -213,6 +216,7 @@ export function buildOrbitNodes({
         pointerEvents: "all",
       },
       data: {
+        panel: definition.kind,
         title: definition.title,
         detail: definition.detail({
           activePanel,
@@ -229,6 +233,47 @@ export function buildOrbitNodes({
       draggable: false,
     };
   });
+}
+
+export function workspacePanelPosition(
+  orbitNode: Pick<Node<OrbitNodeData>, "position"> | null | undefined,
+  panelSize = WORKSPACE_PANEL_SIZE,
+): { x: number; y: number } {
+  if (!orbitNode) return { x: 1540, y: 0 };
+
+  const chatCenter = {
+    x: CHAT_NODE_BOUNDS.x + CHAT_NODE_BOUNDS.width / 2,
+    y: CHAT_NODE_BOUNDS.y + CHAT_NODE_BOUNDS.height / 2,
+  };
+  const orbitCenter = {
+    x: orbitNode.position.x + ORBIT_NODE_SIZE.width / 2,
+    y: orbitNode.position.y + ORBIT_NODE_SIZE.height / 2,
+  };
+  const delta = {
+    x: orbitCenter.x - chatCenter.x,
+    y: orbitCenter.y - chatCenter.y,
+  };
+  const distance = Math.hypot(delta.x, delta.y);
+  if (distance === 0) return { x: 1540, y: 0 };
+
+  const direction = { x: delta.x / distance, y: delta.y / distance };
+  const orbitProjection =
+    Math.abs(direction.x) * (ORBIT_NODE_SIZE.width / 2) +
+    Math.abs(direction.y) * (ORBIT_NODE_SIZE.height / 2);
+  const panelProjection =
+    Math.abs(direction.x) * (panelSize.width / 2) +
+    Math.abs(direction.y) * (panelSize.height / 2);
+  const panelDistance =
+    distance + orbitProjection + WORKSPACE_PANEL_GAP + panelProjection;
+  const panelCenter = {
+    x: chatCenter.x + direction.x * panelDistance,
+    y: chatCenter.y + direction.y * panelDistance,
+  };
+
+  return {
+    x: panelCenter.x - panelSize.width / 2,
+    y: panelCenter.y - panelSize.height / 2,
+  };
 }
 
 function staticOrbitPosition(id: string): { x: number; y: number } {

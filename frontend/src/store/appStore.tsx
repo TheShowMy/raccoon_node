@@ -10,7 +10,7 @@ import type { MainPanelKind } from "../canvas/orbitNodes";
 
 export interface AppUiState {
   openPanel: MainPanelKind | null;
-  panelPhase: "shell" | "focusing" | "content";
+  panelPhase: "shell" | "focusing" | "content" | "closing";
   tokenUsageExpanded: boolean;
 }
 
@@ -65,7 +65,15 @@ class Store {
   }
 
   closePanel() {
-    this.setState({ openPanel: null, panelPhase: "shell" });
+    if (this.state.openPanel && this.state.panelPhase !== "closing") {
+      this.setState({ panelPhase: "closing" });
+    }
+  }
+
+  closePanelComplete() {
+    if (this.state.openPanel && this.state.panelPhase === "closing") {
+      this.setState({ openPanel: null, panelPhase: "shell" });
+    }
   }
 
   toggleTokenUsageExpanded() {
@@ -133,13 +141,18 @@ export function useAppUiState<Selected>(
 
 export function useAppStoreActions(): Pick<
   Store,
-  "openPanel" | "closePanel" | "focusPanelComplete" | "toggleTokenUsageExpanded"
+  | "openPanel"
+  | "closePanel"
+  | "closePanelComplete"
+  | "focusPanelComplete"
+  | "toggleTokenUsageExpanded"
 > {
   const store = useContext(AppStoreContext);
   return useMemo(
     () => ({
       openPanel: store.openPanel.bind(store),
       closePanel: store.closePanel.bind(store),
+      closePanelComplete: store.closePanelComplete.bind(store),
       focusPanelComplete: store.focusPanelComplete.bind(store),
       toggleTokenUsageExpanded: store.toggleTokenUsageExpanded.bind(store),
     }),

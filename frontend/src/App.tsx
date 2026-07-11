@@ -56,12 +56,15 @@ import { useModelSettings } from "./hooks/useModelSettings";
 import { useProjectTerminals } from "./hooks/useProjectTerminals";
 import { useProjectGit } from "./hooks/useProjectGit";
 import { useElementSize } from "./hooks/useElementSize";
+import { usePanelEscape } from "./hooks/usePanelEscape";
 import GrayDangoPet from "./components/pet/GrayDangoPet";
 import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsContext";
 import {
   buildOrbitNodes,
   OrbitNode,
   type MainPanelKind,
+  WORKSPACE_PANEL_SIZE,
+  workspacePanelPosition,
 } from "./canvas/orbitNodes";
 import {
   MAIN_CANVAS_INTERACTION_PROPS,
@@ -70,6 +73,7 @@ import {
 import {
   AppStore,
   AppStoreProvider,
+  type AppUiState,
   useAppStoreActions,
   useAppUiState,
 } from "./store/appStore";
@@ -316,6 +320,10 @@ export function getReactFlowKey({
   return `project-${projectId ?? "none"}-${projectLoaded ? "ready" : "loading"}`;
 }
 
+export function shouldVirtualizeCanvasNodes(phase: AppUiState["panelPhase"]) {
+  return phase === "shell" || phase === "content";
+}
+
 export default function App() {
   const store = useMemo(() => new AppStore(), []);
   return (
@@ -370,6 +378,7 @@ function AppCanvas() {
   const panelPhase = useAppUiState((state) => state.panelPhase);
   const tokenUsageExpanded = useAppUiState((state) => state.tokenUsageExpanded);
   const storeActions = useAppStoreActions();
+  const viewportPanel = panelPhase === "closing" ? null : openPanel;
   const [, startPanelTransition] = useTransition();
   const prefetchPanel = useCallback((panel: MainPanelKind) => {
     void PANEL_LOADERS[panel]();
@@ -385,12 +394,15 @@ function AppCanvas() {
     (panel: MainPanelKind | null) => {
       if (panel && panel === openPanel && panelPhase === "focusing") {
         startPanelTransition(() => storeActions.focusPanelComplete());
+      } else if (!panel && openPanel && panelPhase === "closing") {
+        if (openPanel === "settings") void terminals.closePiLoginTerminal();
+        startPanelTransition(() => storeActions.closePanelComplete());
       }
     },
-    [openPanel, panelPhase, storeActions],
+    [openPanel, panelPhase, storeActions, terminals.closePiLoginTerminal],
   );
   const mainCanvasViewport = useMainCanvasViewport({
-    openPanel,
+    openPanel: viewportPanel,
     onFocusComplete: handlePanelFocusComplete,
   });
   const canvasSize = useElementSize(mainCanvasViewport.containerRef);
@@ -713,12 +725,19 @@ function AppCanvas() {
 
   const closePanel = useCallback(() => {
     if (!openPanel) return;
-    if (openPanel === "settings") void terminals.closePiLoginTerminal();
     storeActions.closePanel();
-  }, [openPanel, storeActions, terminals.closePiLoginTerminal]);
+  }, [openPanel, storeActions]);
+
+  usePanelEscape(openPanel, closePanel);
 
   const panelContent = useMemo(() => {
-    if (panelPhase !== "content" || !openPanel || !current.project) return null;
+    if (
+      (panelPhase !== "content" && panelPhase !== "closing") ||
+      !openPanel ||
+      !current.project
+    ) {
+      return null;
+    }
     if (openPanel === "files") {
       return <FilesWorkbench projectId={current.project.id} />;
     }
@@ -847,16 +866,25 @@ function AppCanvas() {
         : null,
     [projectChatNode],
   );
+  const panelPosition = useMemo(
+    () =>
+      workspacePanelPosition(
+        openPanel
+          ? orbitNodes.find((node) => node.data.panel === openPanel)
+          : null,
+      ),
+    [openPanel, orbitNodes],
+  );
   const panelNode = useMemo<Node | null>(
     () =>
       openPanel
         ? {
             id: `panel-${openPanel}`,
             type: "workspacePanel",
-            position: { x: 1540, y: 0 },
+            position: panelPosition,
             style: {
-              width: 1380,
-              height: 840,
+              width: WORKSPACE_PANEL_SIZE.width,
+              height: WORKSPACE_PANEL_SIZE.height,
               pointerEvents: "all",
             },
             data: {
@@ -867,7 +895,7 @@ function AppCanvas() {
             draggable: false,
           }
         : null,
-    [closePanel, openPanel, panelContent],
+    [closePanel, openPanel, panelContent, panelPosition],
   );
   const nodes = useMemo<Node[]>(
     () =>
@@ -940,7 +968,9 @@ function AppCanvas() {
                 nodeTypes={nodeTypes}
                 minZoom={0.05}
                 maxZoom={2}
-                onlyRenderVisibleElements={true}
+                onlyRenderVisibleElements={shouldVirtualizeCanvasNodes(
+                  panelPhase,
+                )}
                 {...MAIN_CANVAS_INTERACTION_PROPS}
                 onInit={mainCanvasViewport.onInit}
                 defaultEdgeOptions={{

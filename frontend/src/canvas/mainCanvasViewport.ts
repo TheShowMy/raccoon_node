@@ -11,6 +11,7 @@ import type {
   ReactFlowProps,
   Viewport,
 } from "@xyflow/react";
+import { getViewportForBounds } from "@xyflow/react";
 import type { MainPanelKind } from "./orbitNodes";
 
 export const PARALLAX_MAX = 260;
@@ -18,6 +19,9 @@ export const PARALLAX_LERP = 0.16;
 export const PARALLAX_RELEASE_DELAY = 120;
 export const PANEL_FOCUS_DURATION = 175;
 const PARALLAX_SETTLE_DISTANCE = 0.5;
+const HOME_VIEW_PADDING = 0.12;
+const HOME_VIEW_MAX_ZOOM = 0.9;
+const MAIN_CANVAS_MIN_ZOOM = 0.05;
 
 export const HOME_NODE_IDS = [
   "requirement-chat",
@@ -123,12 +127,14 @@ export function useMainCanvasViewport({
   const onFocusCompleteRef = useRef(onFocusComplete);
   const baseCenterRef = useRef<Point>({ x: 0, y: 0 });
   const baseZoomRef = useRef(1);
+  const latestPointerRef = useRef<Point | null>(null);
   const targetRef = useRef<Point>({ x: 0, y: 0 });
   const currentRef = useRef<Point>({ x: 0, y: 0 });
   const frameRef = useRef<number | null>(null);
   const fitFrameRef = useRef<number | null>(null);
   const releaseRef = useRef<number | null>(null);
   const fitGenerationRef = useRef(0);
+  const fittingGenerationRef = useRef<number | null>(null);
   const initializedRef = useRef(false);
   const frozenRef = useRef(false);
 
@@ -146,6 +152,7 @@ export function useMainCanvasViewport({
       frameRef.current !== null ||
       openPanelRef.current ||
       frozenRef.current ||
+      fittingGenerationRef.current !== null ||
       prefersReducedMotion()
     ) {
       return;
@@ -160,6 +167,7 @@ export function useMainCanvasViewport({
         !container ||
         openPanelRef.current ||
         frozenRef.current ||
+        fittingGenerationRef.current !== null ||
         prefersReducedMotion()
       ) {
         return;
@@ -184,6 +192,7 @@ export function useMainCanvasViewport({
 
   const fitCurrentView = useCallback(() => {
     const generation = ++fitGenerationRef.current;
+    fittingGenerationRef.current = generation;
     cancelParallax();
     if (fitFrameRef.current !== null) {
       window.cancelAnimationFrame(fitFrameRef.current);
@@ -195,6 +204,9 @@ export function useMainCanvasViewport({
         const flow = flowRef.current;
         const container = containerRef.current;
         if (!flow || !container || generation !== fitGenerationRef.current) {
+          if (generation === fitGenerationRef.current) {
+            fittingGenerationRef.current = null;
+          }
           return;
         }
 
@@ -204,30 +216,52 @@ export function useMainCanvasViewport({
           const node = flow.getNode(id);
           return node ? [node] : [];
         });
-        if (!nodes.length) return;
+        if (!nodes.length) {
+          fittingGenerationRef.current = null;
+          return;
+        }
 
         const reduced = prefersReducedMotion();
         const animate = initializedRef.current && !reduced;
-        await flow.fitView({
-          nodes,
-          padding: panel ? 0.06 : 0.12,
-          maxZoom: panel ? 1 : 0.9,
-          duration: animate ? PANEL_FOCUS_DURATION : 0,
-        });
+        if (panel) {
+          await flow.fitView({
+            nodes,
+            padding: 0.06,
+            maxZoom: 1,
+            duration: animate ? PANEL_FOCUS_DURATION : 0,
+          });
+        } else {
+          const size = elementSize(container);
+          const homeViewport = getViewportForBounds(
+            flow.getNodesBounds(nodes),
+            size.width,
+            size.height,
+            MAIN_CANVAS_MIN_ZOOM,
+            HOME_VIEW_MAX_ZOOM,
+            HOME_VIEW_PADDING,
+          );
+          const baseCenter = centerFromViewport(size, homeViewport);
+          const target =
+            !reduced && latestPointerRef.current
+              ? parallaxTargetForPointer(
+                  baseCenter,
+                  latestPointerRef.current,
+                  container.getBoundingClientRect(),
+                )
+              : baseCenter;
+          await flow.setViewport(viewportFor(size, target, homeViewport.zoom), {
+            duration: animate ? PANEL_FOCUS_DURATION : 0,
+            interpolate: "linear",
+          });
+          if (generation !== fitGenerationRef.current) return;
+          baseCenterRef.current = baseCenter;
+          baseZoomRef.current = homeViewport.zoom;
+          currentRef.current = target;
+          targetRef.current = target;
+        }
         if (generation !== fitGenerationRef.current) return;
         initializedRef.current = true;
-
-        if (!panel) {
-          const viewport = flow.getViewport();
-          const baseCenter = centerFromViewport(
-            elementSize(container),
-            viewport,
-          );
-          baseCenterRef.current = baseCenter;
-          baseZoomRef.current = viewport.zoom;
-          targetRef.current = baseCenter;
-          currentRef.current = baseCenter;
-        }
+        fittingGenerationRef.current = null;
         onFocusCompleteRef.current?.(panel);
       })();
     });
@@ -255,12 +289,14 @@ export function useMainCanvasViewport({
 
   const onPointerMove = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
+      latestPointerRef.current = { x: event.clientX, y: event.clientY };
       const container = containerRef.current;
       if (
         !container ||
         !flowRef.current ||
         openPanelRef.current ||
         frozenRef.current ||
+        fittingGenerationRef.current !== null ||
         prefersReducedMotion()
       ) {
         return;
@@ -303,6 +339,7 @@ export function useMainCanvasViewport({
     () => () => {
       cancelParallax();
       fitGenerationRef.current += 1;
+      fittingGenerationRef.current = null;
       if (fitFrameRef.current !== null) {
         window.cancelAnimationFrame(fitFrameRef.current);
       }
