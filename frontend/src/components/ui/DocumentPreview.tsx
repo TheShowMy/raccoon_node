@@ -61,7 +61,7 @@ export default function DocumentPreview({
           gap={2}
           padding={3}
           isScrollable
-          style={{ maxHeight: "calc(var(--spacing) * 90)" }}
+          style={{ maxHeight: "calc(var(--spacing-1) * 90)" }}
         >
           {loading ? (
             <Stack direction="horizontal" gap={2} align="center">
@@ -95,7 +95,7 @@ export default function DocumentPreview({
                   hasLanguageLabel={false}
                   hasLineNumbers={content.split("\n").length > 4}
                   isWrapped
-                  maxHeight="calc(var(--spacing) * 80)"
+                  maxHeight="calc(var(--spacing-1) * 80)"
                   size="sm"
                   width="100%"
                 />

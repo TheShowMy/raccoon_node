@@ -35,7 +35,7 @@ export default function RequirementDagNode({
       variant="muted"
       startContent={
         <HStack align="center" gap={3}>
-          <Stack style={{ color: "var(--accent-model)" }} aria-hidden>
+          <Stack style={{ color: "var(--color-accent)" }} aria-hidden>
             <GitBranch size={20} />
           </Stack>
           <Stack gap={0.5}>
@@ -92,7 +92,7 @@ export default function RequirementDagNode({
           gap={2}
           padding={2}
           paddingInline={3}
-          style={{ minHeight: 0, borderTop: "1px solid var(--card-border)" }}
+          style={{ minHeight: 0, borderTop: "1px solid var(--color-border)" }}
         >
           <HStack align="center" gap={1} style={{ flexShrink: 0 }}>
             <LoaderCircle size={12} aria-hidden="true" />

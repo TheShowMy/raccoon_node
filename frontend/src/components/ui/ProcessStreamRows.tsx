@@ -30,7 +30,7 @@ export default function ProcessStreamRows({
           hasLanguageLabel={false}
           hasLineNumbers={content.split("\n").length > 4}
           isWrapped
-          maxHeight="calc(var(--spacing) * 55)"
+          maxHeight="calc(var(--spacing-1) * 55)"
           size="sm"
           width="100%"
           container="section"

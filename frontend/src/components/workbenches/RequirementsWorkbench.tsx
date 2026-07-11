@@ -33,7 +33,7 @@ export default function RequirementsWorkbench({
           markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
         }}
       >
-        <Background color="var(--color-border-subtle)" gap={28} size={1} />
+        <Background color="var(--color-border)" gap={28} size={1} />
       </ReactFlow>
     </ReactFlowProvider>
   );

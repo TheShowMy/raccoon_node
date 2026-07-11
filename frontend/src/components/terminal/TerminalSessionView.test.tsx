@@ -102,10 +102,10 @@ beforeEach(() => {
   MockWebSocket.last = null;
   delete document.documentElement.dataset.theme;
   document.documentElement.style.cssText = `
-    --canvas-bg: #0b1120;
-    --text-strong: #f1f5f9;
-    --accent-model: #f97316;
-    --card-border-strong: rgba(148, 163, 184, 0.24);
+    --color-background-surface: #0b1120;
+    --color-text-primary: #f1f5f9;
+    --color-accent: #f97316;
+    --color-border-emphasized: rgba(148, 163, 184, 0.24);
   `;
   global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
   global.ResizeObserver = class {
@@ -128,8 +128,14 @@ describe("TerminalSessionView", () => {
     const socket = MockWebSocket.last;
 
     act(() => {
-      document.documentElement.style.setProperty("--canvas-bg", "#eef3e8");
-      document.documentElement.style.setProperty("--text-strong", "#243126");
+      document.documentElement.style.setProperty(
+        "--color-background-surface",
+        "#eef3e8",
+      );
+      document.documentElement.style.setProperty(
+        "--color-text-primary",
+        "#243126",
+      );
       document.documentElement.dataset.theme = "light";
     });
 
@@ -163,8 +169,14 @@ describe("TerminalSessionView", () => {
     });
 
     act(() => {
-      document.documentElement.style.setProperty("--canvas-bg", "#ffffff");
-      document.documentElement.style.setProperty("--text-strong", "#000000");
+      document.documentElement.style.setProperty(
+        "--color-background-surface",
+        "#ffffff",
+      );
+      document.documentElement.style.setProperty(
+        "--color-text-primary",
+        "#000000",
+      );
       document.documentElement.dataset.theme = "light";
     });
     expect(terminalOptions?.theme).toMatchObject({

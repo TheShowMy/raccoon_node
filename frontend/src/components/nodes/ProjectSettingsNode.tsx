@@ -63,7 +63,7 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
     return (
       <NodeBar
         icon={<SlidersHorizontal size={16} />}
-        accent="var(--accent-model)"
+        accent="var(--color-accent)"
         title="设置"
         subtitle={`${data.basicSettings?.theme_pack ?? "neutral"} · ${
           data.basicSettings?.theme_mode === "light" ? "亮色" : "暗色"
@@ -85,7 +85,7 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
         <NodeBar
           icon={<SlidersHorizontal size={16} />}
           expandedIcon={<Settings size={16} />}
-          accent="var(--accent-model)"
+          accent="var(--color-accent)"
           title="设置"
           expandedTitle="设置工作台"
           expandedSubtitle="基础设置与 Pi 模型"

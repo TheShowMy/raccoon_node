@@ -55,6 +55,7 @@ import { useProjectChat } from "./hooks/useProjectChat";
 import { useModelSettings } from "./hooks/useModelSettings";
 import { useProjectTerminals } from "./hooks/useProjectTerminals";
 import { useProjectGit } from "./hooks/useProjectGit";
+import { useElementSize } from "./hooks/useElementSize";
 import GrayDangoPet from "./components/pet/GrayDangoPet";
 import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsContext";
 import {
@@ -66,6 +67,12 @@ import {
   MAIN_CANVAS_INTERACTION_PROPS,
   useMainCanvasViewport,
 } from "./canvas/mainCanvasViewport";
+import {
+  AppStore,
+  AppStoreProvider,
+  useAppStoreActions,
+  useAppUiState,
+} from "./store/appStore";
 
 const loadFilesWorkbench = () =>
   import("./components/workbenches/FilesWorkbench");
@@ -94,8 +101,6 @@ const PANEL_LOADERS: Record<MainPanelKind, () => Promise<unknown>> = {
   git: loadGitWorkbench,
   tokens: loadTokenWorkbench,
 };
-
-type PanelPhase = "shell" | "focusing" | "content";
 
 const nodeTypes = {
   chatNode: ChatCanvasNode,
@@ -312,6 +317,15 @@ export function getReactFlowKey({
 }
 
 export default function App() {
+  const store = useMemo(() => new AppStore(), []);
+  return (
+    <AppStoreProvider store={store}>
+      <AppCanvas />
+    </AppStoreProvider>
+  );
+}
+
+function AppCanvas() {
   useEffect(() => {
     if (window.location.pathname !== "/") {
       window.history.replaceState(
@@ -352,30 +366,34 @@ export default function App() {
     terminalAccessRequired,
   );
   const git = useProjectGit(selectedProjectId);
-  const [tokenUsageExpanded, setTokenUsageExpanded] = useState(false);
-  const [openPanel, setOpenPanel] = useState<MainPanelKind | null>(null);
-  const [panelPhase, setPanelPhase] = useState<PanelPhase>("shell");
+  const openPanel = useAppUiState((state) => state.openPanel);
+  const panelPhase = useAppUiState((state) => state.panelPhase);
+  const tokenUsageExpanded = useAppUiState((state) => state.tokenUsageExpanded);
+  const storeActions = useAppStoreActions();
   const [, startPanelTransition] = useTransition();
   const prefetchPanel = useCallback((panel: MainPanelKind) => {
     void PANEL_LOADERS[panel]();
   }, []);
-  const openMainPanel = useCallback((panel: MainPanelKind) => {
-    void PANEL_LOADERS[panel]();
-    setPanelPhase("focusing");
-    setOpenPanel(panel);
-  }, []);
+  const openMainPanel = useCallback(
+    (panel: MainPanelKind) => {
+      void PANEL_LOADERS[panel]();
+      storeActions.openPanel(panel);
+    },
+    [storeActions],
+  );
   const handlePanelFocusComplete = useCallback(
     (panel: MainPanelKind | null) => {
       if (panel && panel === openPanel && panelPhase === "focusing") {
-        startPanelTransition(() => setPanelPhase("content"));
+        startPanelTransition(() => storeActions.focusPanelComplete());
       }
     },
-    [openPanel, panelPhase],
+    [openPanel, panelPhase, storeActions],
   );
   const mainCanvasViewport = useMainCanvasViewport({
     openPanel,
     onFocusComplete: handlePanelFocusComplete,
   });
+  const canvasSize = useElementSize(mainCanvasViewport.containerRef);
   const modelSetupGuideStep: ModelSetupGuideStep | null =
     models.modelSetupGuideActive
       ? models.settingsExpanded
@@ -400,8 +418,7 @@ export default function App() {
         planRequirement: project.planRequirement,
         recoverTaskGroup: project.recoverTaskGroup,
         toggleTaskGroupCollapsed: project.toggleTaskGroupCollapsed,
-        onToggleTokenUsageExpanded: () =>
-          setTokenUsageExpanded((current) => !current),
+        onToggleTokenUsageExpanded: storeActions.toggleTokenUsageExpanded,
       }),
     [
       current.project,
@@ -697,9 +714,8 @@ export default function App() {
   const closePanel = useCallback(() => {
     if (!openPanel) return;
     if (openPanel === "settings") void terminals.closePiLoginTerminal();
-    setOpenPanel(null);
-    setPanelPhase("shell");
-  }, [openPanel, terminals.closePiLoginTerminal]);
+    storeActions.closePanel();
+  }, [openPanel, storeActions, terminals.closePiLoginTerminal]);
 
   const panelContent = useMemo(() => {
     if (panelPhase !== "content" || !openPanel || !current.project) return null;
@@ -804,8 +820,10 @@ export default function App() {
           project.projectCanvas?.token_usage?.context_percent ?? 0,
         onOpen: openMainPanel,
         onPrefetch: prefetchPanel,
+        canvasSize,
       }),
     [
+      canvasSize,
       git.status?.branch,
       models.modelRpcStatus,
       openMainPanel,
@@ -922,7 +940,7 @@ export default function App() {
                 nodeTypes={nodeTypes}
                 minZoom={0.05}
                 maxZoom={2}
-                onlyRenderVisibleElements={false}
+                onlyRenderVisibleElements={true}
                 {...MAIN_CANVAS_INTERACTION_PROPS}
                 onInit={mainCanvasViewport.onInit}
                 defaultEdgeOptions={{
@@ -935,11 +953,7 @@ export default function App() {
                   },
                 }}
               >
-                <Background
-                  color="var(--color-border-subtle)"
-                  gap={32}
-                  size={1.5}
-                />
+                <Background color="var(--color-border)" gap={32} size={1.5} />
                 {modelSetupGuideStep ? (
                   <ModelSetupGuide
                     step={modelSetupGuideStep}

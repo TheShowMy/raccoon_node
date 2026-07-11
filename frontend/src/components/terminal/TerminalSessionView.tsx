@@ -41,10 +41,10 @@ function terminalTheme(fixedDark: boolean) {
   const color = (name: string) => styles.getPropertyValue(name).trim();
 
   return {
-    background: color("--canvas-bg"),
-    foreground: color("--text-strong"),
-    cursor: color("--accent-model"),
-    selectionBackground: color("--card-border-strong"),
+    background: color("--color-background-surface"),
+    foreground: color("--color-text-primary"),
+    cursor: color("--color-accent"),
+    selectionBackground: color("--color-border-emphasized"),
   };
 }
 

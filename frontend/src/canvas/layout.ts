@@ -20,6 +20,7 @@ const GROUP_PADDING_X = 20;
 const GROUP_PADDING_BOTTOM = 20;
 const GROUP_COLUMN_GAP = 36;
 const GROUP_ROW_GAP = 14;
+const LAYOUT_CACHE_LIMIT = 32;
 
 type LayoutNode = {
   id: string;
@@ -27,10 +28,65 @@ type LayoutNode = {
   size: TaskSize;
 };
 
+class LayoutCache<Result> {
+  private cache = new Map<string, Result>();
+
+  constructor(private limit: number) {}
+
+  get(key: string): Result | undefined {
+    const value = this.cache.get(key);
+    if (value === undefined) return undefined;
+    // Move to end to keep LRU order.
+    this.cache.delete(key);
+    this.cache.set(key, value);
+    return value;
+  }
+
+  set(key: string, value: Result) {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.limit) {
+      const first = this.cache.keys().next().value;
+      if (first) this.cache.delete(first);
+    }
+    this.cache.set(key, value);
+  }
+}
+
+function taskLayoutKey(tasks: RequirementExecutionTask[]): string {
+  return tasks
+    .map(
+      (task) =>
+        `${task.id}:${task.kind}:${task.depends_on.join(",")}:${task.review_for ?? ""}`,
+    )
+    .join("|");
+}
+
+function taskGroupLayoutKey(
+  task: RequirementExecutionTask,
+  reviews: RequirementExecutionTask[],
+): string {
+  return `${task.id}|${task.kind}|${reviews
+    .map((review) => `${review.id}:${review.kind}:${review.review_for ?? ""}`)
+    .join(",")}`;
+}
+
+const taskLayoutCache = new LayoutCache<Map<string, TaskPosition>>(
+  LAYOUT_CACHE_LIMIT,
+);
+const taskGroupLayoutCache = new LayoutCache<
+  ReturnType<typeof computeTaskGroupLayout>
+>(LAYOUT_CACHE_LIMIT);
+
 export function getTaskLayout(
   tasks: RequirementExecutionTask[],
 ): Map<string, TaskPosition> {
-  return layoutLayers(
+  if (tasks.length === 0) return new Map();
+  const key = taskLayoutKey(tasks);
+  const cached = taskLayoutCache.get(key);
+  if (cached) return cached;
+
+  const result = layoutLayers(
     tasks.filter(isExternalDagTask).map((task) => ({
       id: task.id,
       dependsOn: task.depends_on,
@@ -41,9 +97,25 @@ export function getTaskLayout(
     TASK_COLUMN_GAP,
     TASK_ROW_GAP,
   );
+  const map = new Map(result);
+  taskLayoutCache.set(key, map);
+  return map;
 }
 
 export function getTaskGroupLayout(
+  task: RequirementExecutionTask,
+  reviews: RequirementExecutionTask[],
+) {
+  const key = taskGroupLayoutKey(task, reviews);
+  const cached = taskGroupLayoutCache.get(key);
+  if (cached) return cached;
+
+  const result = computeTaskGroupLayout(task, reviews);
+  taskGroupLayoutCache.set(key, result);
+  return result;
+}
+
+function computeTaskGroupLayout(
   task: RequirementExecutionTask,
   reviews: RequirementExecutionTask[],
 ) {

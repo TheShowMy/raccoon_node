@@ -171,7 +171,7 @@ export default function SessionTranscript({
             justify="between"
             align="center"
             padding={2}
-            style={{ borderBottom: "1px solid var(--card-border)" }}
+            style={{ borderBottom: "1px solid var(--color-border)" }}
           >
             <HStack gap={1}>
               {(["all", "messages", "tools"] as const).map((value) => (
@@ -285,11 +285,11 @@ function StatusRow({
       align="center"
       padding={2}
       style={{
-        margin: "calc(var(--spacing) * 2)",
+        margin: "var(--spacing-4)",
         border: "1px solid",
-        borderColor: isError ? "var(--accent-danger)" : "var(--card-border)",
-        borderRadius: "var(--radius-md)",
-        color: isError ? "var(--accent-danger)" : "var(--text-muted)",
+        borderColor: isError ? "var(--color-error)" : "var(--color-border)",
+        borderRadius: "var(--radius-element)",
+        color: isError ? "var(--color-error)" : "var(--color-text-secondary)",
       }}
     >
       {children}
@@ -306,16 +306,16 @@ function SessionEntryCard({ entry }: { entry: SessionEntry }) {
   };
 
   const roleColors: Record<string, string> = {
-    user: "var(--accent-create)",
-    assistant: "var(--accent-model)",
-    system: "var(--text-muted)",
-    toolResult: "var(--success)",
+    user: "var(--color-accent)",
+    assistant: "var(--color-text-accent)",
+    system: "var(--color-text-secondary)",
+    toolResult: "var(--color-success)",
   };
 
   const borderColor =
     entry.kind === "message"
-      ? (roleColors[entry.role ?? "unknown"] ?? "var(--text-muted)")
-      : "var(--text-muted)";
+      ? (roleColors[entry.role ?? "unknown"] ?? "var(--color-text-secondary)")
+      : "var(--color-text-secondary)";
 
   return (
     <Card padding={3} style={{ borderLeft: `3px solid ${borderColor}` }}>
@@ -423,7 +423,7 @@ function ToolCard({
     <Card
       variant="muted"
       padding={0}
-      style={error ? { borderColor: "var(--accent-danger)" } : undefined}
+      style={error ? { borderColor: "var(--color-error)" } : undefined}
     >
       <Collapsible
         trigger={

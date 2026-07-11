@@ -114,7 +114,7 @@ export default function RequirementTaskNode({
                   flexShrink: 0,
                   width: 28,
                   height: 28,
-                  color: "var(--accent-create)",
+                  color: "var(--color-accent)",
                   borderRadius: 8,
                   border:
                     "1px solid color-mix(in srgb, currentColor 20%, transparent)",
@@ -208,10 +208,10 @@ export default function RequirementTaskNode({
   const isMiniRole = nodeRole === "review_sub_agent";
   const iconColor =
     nodeRole === "code"
-      ? "var(--accent-create)"
+      ? "var(--color-accent)"
       : nodeRole === "review_summary" || nodeRole === "review_sub_agent"
-        ? "var(--accent-model)"
-        : "var(--accent-warning)";
+        ? "var(--color-text-accent)"
+        : "var(--color-warning)";
   return (
     <>
       <Stack
@@ -398,7 +398,7 @@ function TaskDetailDialog({
                 flexShrink: 0,
                 width: 28,
                 height: 28,
-                color: "var(--accent-model)",
+                color: "var(--color-accent)",
                 borderRadius: 8,
                 border:
                   "1px solid color-mix(in srgb, currentColor 20%, transparent)",

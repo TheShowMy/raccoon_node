@@ -1,4 +1,17 @@
 @layer base {
+  :root {
+    /* Project motion/surface tokens mapped to Astryx design tokens. */
+    --motion-duration-fast: var(--duration-fast);
+    --motion-duration-slow: var(--duration-slow);
+    --motion-easing-standard: cubic-bezier(0.4, 0, 0.2, 1);
+    --border-width-thin: 1px;
+    --border-width-thick: 2px;
+    --border-width-focus: 2px;
+    --radius-sm: var(--radius-element);
+    --radius-md: var(--radius-element);
+    --radius-lg: var(--radius-container);
+  }
+
   html,
   body,
   #root {
@@ -20,7 +33,7 @@
     width: 100%;
     height: 100%;
     min-height: 0;
-    background: var(--color-background);
+    background: var(--color-background-body);
   }
 
   .graydango-pet {
@@ -38,7 +51,7 @@
   .graydango-pet__bubble {
     max-width: calc(var(--spacing-1) * 56);
     border-radius: var(--radius-lg);
-    box-shadow: var(--elevation-overlay);
+    box-shadow: var(--shadow-high);
   }
 
   .graydango-pet__bubble[data-tone="warning"] {
@@ -46,7 +59,7 @@
   }
 
   .graydango-pet__bubble[data-tone="error"] {
-    border-color: var(--color-critical);
+    border-color: var(--color-error);
   }
 
   .graydango-pet__sprite {
@@ -83,7 +96,7 @@
   }
 
   .react-flow__node:focus-visible {
-    outline: var(--border-width-focus) solid var(--color-focus-ring);
+    outline: var(--border-width-focus) solid var(--color-accent);
     outline-offset: var(--spacing-1);
   }
 
@@ -98,13 +111,13 @@
   }
 
   .node-card--requirement-chat {
-    box-shadow: var(--elevation-raised);
+    box-shadow: var(--shadow-med);
   }
 
   .node-card--requirement-list,
   .node-card--requirement-dag,
   .node-card--requirement-task {
-    box-shadow: var(--elevation-overlay);
+    box-shadow: var(--shadow-high);
   }
 
   .orbit-tool-button {
@@ -113,11 +126,60 @@
     white-space: normal;
     text-align: start;
     overflow-wrap: anywhere;
-    box-shadow: var(--elevation-raised);
+    box-shadow: var(--shadow-low);
+    transition:
+      transform var(--motion-duration-fast) var(--motion-easing-standard),
+      box-shadow var(--motion-duration-fast) var(--motion-easing-standard),
+      background-color var(--motion-duration-fast) var(--motion-easing-standard),
+      border-color var(--motion-duration-fast) var(--motion-easing-standard);
+  }
+
+  /* Inactive satellites use a surface background with a subtle border so they
+     read as distinct tiles floating around the chat node. !important is used
+     because Astryx Button's atomic classes have higher specificity than this
+     project class. */
+  .orbit-tool-button:not(.orbit-tool-button--active) {
+    background: var(--color-background-card) !important;
+    border: var(--border-width-thin) solid var(--color-border) !important;
+  }
+
+  .orbit-tool-button:hover {
+    transform: translateY(calc(var(--spacing-1) * -0.5));
+    box-shadow: var(--shadow-med);
+  }
+
+  .orbit-tool-button--active {
+    box-shadow: var(--shadow-med);
   }
 
   .workspace-panel {
-    box-shadow: var(--elevation-overlay);
+    box-shadow: var(--shadow-high);
+  }
+
+  .model-setup-guide__blocker {
+    position: absolute;
+    background: var(--color-overlay);
+    opacity: 0;
+    animation: fade-in var(--motion-duration-fast) var(--motion-easing-standard)
+      forwards;
+  }
+
+  .model-setup-guide__spotlight {
+    position: absolute;
+    border: var(--border-width-thick) solid var(--color-accent);
+    border-radius: var(--radius-md);
+    box-shadow: 0 0 0 9999px var(--color-overlay);
+    opacity: 0;
+    animation: fade-in var(--motion-duration-fast) var(--motion-easing-standard)
+      forwards;
+  }
+
+  .model-setup-guide__card {
+    max-width: min(360px, calc(100% - var(--spacing-4) * 2));
+    opacity: 0;
+    transform: translateY(calc(var(--spacing-1) * -1));
+    animation: slide-in var(--motion-duration-fast)
+      var(--motion-easing-standard) forwards;
   }
 
   .chat-command-menu {
@@ -125,13 +187,13 @@
     inset-inline: var(--spacing-4);
     bottom: calc(var(--spacing-1) * 20);
     z-index: 5;
-    box-shadow: var(--elevation-overlay);
+    box-shadow: var(--shadow-high);
   }
 
   .node-link-handle {
     width: var(--spacing-2);
     height: var(--spacing-2);
-    border: var(--border-width-thick) solid var(--color-border-strong);
+    border: var(--border-width-thick) solid var(--color-border-emphasized);
     background: var(--color-accent);
   }
 
@@ -159,7 +221,7 @@
 
   .status-failed,
   .status-rejected {
-    box-shadow: 0 0 calc(var(--spacing-1) * 3) var(--color-critical);
+    box-shadow: 0 0 calc(var(--spacing-1) * 3) var(--color-error);
   }
 
   .status-completed,
@@ -224,7 +286,7 @@
     overflow: auto;
     padding: var(--spacing-2);
     border-radius: var(--radius-sm);
-    background: var(--color-surface-inset);
+    background: var(--color-background-muted);
   }
 
   .react-flow__attribution {
@@ -238,9 +300,33 @@
   }
 }
 
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--spacing-1) * -1));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .react-flow__node,
-  .spin-icon {
+  .spin-icon,
+  .orbit-tool-button,
+  .model-setup-guide__blocker,
+  .model-setup-guide__spotlight,
+  .model-setup-guide__card {
     transition: none;
     animation: none;
   }
