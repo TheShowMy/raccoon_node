@@ -97,7 +97,7 @@ export default function ProjectSettingsNode({ data }: { data: SettingsData }) {
 
   return (
     <>
-      <VStack height="fill" gap={0}>
+      <VStack height="100%" gap={0}>
         <NodeBar
           icon={<SlidersHorizontal size={16} />}
           expandedIcon={<Settings size={16} />}

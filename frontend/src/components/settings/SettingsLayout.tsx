@@ -134,7 +134,7 @@ export default function SettingsLayout({
         <LayoutContent
           padding={4}
           isScrollable={isContentScrollable}
-          className={contentClassName}
+          className={`nodrag nowheel ${contentClassName ?? ""}`.trim()}
         >
           <VStack gap={6} height="100%">
             {isNarrow && (

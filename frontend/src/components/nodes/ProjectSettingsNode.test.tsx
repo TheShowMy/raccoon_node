@@ -78,6 +78,15 @@ it("renders a compact settings entry while collapsed", () => {
   expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
 });
 
+it("marks the scrollable content area with nodrag and nowheel so React Flow lets wheel events scroll", () => {
+  render(<ProjectSettingsNode data={data()} />);
+
+  const content = document.querySelector(
+    ".astryx-layout-content.nodrag.nowheel",
+  );
+  expect(content).toBeInTheDocument();
+});
+
 it("switches pages via sidebar and keeps external-listening confirmation inside the node", () => {
   const props = data();
   render(<ProjectSettingsNode data={props} />);
