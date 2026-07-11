@@ -8,22 +8,40 @@ import type {
 } from "../types/api";
 import { getCurrentProject } from "../api/client";
 import { readError } from "../utils/format";
-import { DEFAULT_ASTRYX_THEME, loadAstryxTheme } from "../theme/astryxThemes";
+import {
+  ASTRYX_THEME_MAP,
+  DEFAULT_ASTRYX_THEME,
+  readCachedTheme,
+  writeCachedTheme,
+} from "../theme/astryxThemes";
+
+function resolveInitialTheme(): {
+  pack: ThemePack;
+  mode: ThemeMode;
+  theme: DefinedTheme;
+} {
+  const cached = readCachedTheme();
+  const pack = cached?.theme_pack ?? "neutral";
+  const mode = cached?.theme_mode ?? "dark";
+  return { pack, mode, theme: ASTRYX_THEME_MAP[pack] ?? DEFAULT_ASTRYX_THEME };
+}
 
 export function useCurrentProject() {
+  const initial = resolveInitialTheme();
   const [project, setProject] = useState<Project | null>(null);
   const [publicationReadiness, setPublicationReadiness] =
     useState<PublicationReadiness | null>(null);
-  const [themePack, setThemePack] = useState<ThemePack>("neutral");
-  const [themeMode, setThemeMode] = useState<ThemeMode>("dark");
-  const [theme, setTheme] = useState<DefinedTheme>(DEFAULT_ASTRYX_THEME);
+  const [themePack, setThemePack] = useState<ThemePack>(initial.pack);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(initial.mode);
+  const [theme, setTheme] = useState<DefinedTheme>(initial.theme);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const applyTheme = useCallback((pack: ThemePack, mode: ThemeMode) => {
     setThemePack(pack);
     setThemeMode(mode);
-    void loadAstryxTheme(pack).then(setTheme);
+    setTheme(ASTRYX_THEME_MAP[pack] ?? DEFAULT_ASTRYX_THEME);
+    writeCachedTheme(pack, mode);
   }, []);
 
   const loadCurrent = useCallback(async () => {

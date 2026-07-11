@@ -175,29 +175,38 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
     return build("");
   }, [activePath, paths, projectId, query, tree]);
 
-  return (
-    <Layout height="fill" padding={0}>
-      <LayoutPanel padding={2} width={320} hasDivider isScrollable>
-        <VStack gap={2}>
-          <TextInput
-            label="搜索文件"
-            isLabelHidden
-            placeholder="搜索仓库文件"
-            startIcon="search"
-            value={query}
-            onChange={setQuery}
+  const fileListPanel = (
+    <LayoutPanel
+      padding={2}
+      width={280}
+      hasDivider
+      isScrollable
+      className="nodrag nowheel"
+    >
+      <VStack gap={2}>
+        <TextInput
+          label="搜索文件"
+          isLabelHidden
+          placeholder="搜索仓库文件"
+          startIcon="search"
+          value={query}
+          onChange={setQuery}
+        />
+        {treeItems.length ? (
+          <TreeList items={treeItems} density="compact" />
+        ) : (
+          <EmptyState
+            isCompact
+            title={query ? "没有匹配文件" : "仓库中没有可预览文件"}
           />
-          {treeItems.length ? (
-            <TreeList items={treeItems} density="compact" />
-          ) : (
-            <EmptyState
-              isCompact
-              title={query ? "没有匹配文件" : "仓库中没有可预览文件"}
-            />
-          )}
-        </VStack>
-      </LayoutPanel>
-      <LayoutContent padding={0} isScrollable>
+        )}
+      </VStack>
+    </LayoutPanel>
+  );
+
+  return (
+    <Layout height="fill" padding={0} start={fileListPanel}>
+      <LayoutContent padding={0} isScrollable className="nodrag nowheel">
         {error ? <Text color="accent">{error}</Text> : null}
         {tabs.length ? (
           <TabList value={activePath ?? ""} onChange={setActivePath} hasDivider>

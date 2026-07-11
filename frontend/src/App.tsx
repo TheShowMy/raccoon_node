@@ -21,7 +21,6 @@ import { AppShell } from "@astryxdesign/core/AppShell";
 import { Badge } from "@astryxdesign/core/Badge";
 import { TopNav, TopNavHeading } from "@astryxdesign/core/TopNav";
 import { Button } from "@astryxdesign/core/Button";
-import { Spinner } from "@astryxdesign/core/Spinner";
 import { Theme } from "@astryxdesign/core/theme";
 import {
   Card,
@@ -58,6 +57,7 @@ import { useProjectGit } from "./hooks/useProjectGit";
 import { useElementSize } from "./hooks/useElementSize";
 import { usePanelEscape } from "./hooks/usePanelEscape";
 import GrayDangoPet from "./components/pet/GrayDangoPet";
+import PanelSkeleton from "./components/ui/PanelSkeleton";
 import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsContext";
 import {
   buildOrbitNodes,
@@ -147,11 +147,9 @@ function WorkspacePanel({ data }: NodeProps<Node<WorkspacePanelData>>) {
       >
         <LayoutContent padding={0} isScrollable>
           {data.content ? (
-            <Suspense fallback={<Spinner label="正在加载工作台" />}>
-              {data.content}
-            </Suspense>
+            <Suspense fallback={<PanelSkeleton />}>{data.content}</Suspense>
           ) : (
-            <Spinner label="正在准备工作台" />
+            <PanelSkeleton />
           )}
         </LayoutContent>
       </Layout>

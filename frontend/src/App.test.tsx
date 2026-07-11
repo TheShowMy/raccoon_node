@@ -36,6 +36,11 @@ function jsonResponse(body: unknown) {
 
 describe("App", () => {
   beforeEach(() => {
+    try {
+      localStorage.clear();
+    } catch {
+      // localStorage can be unavailable in restricted test environments.
+    }
     vi.stubGlobal("WebSocket", WebSocketMock);
     vi.stubGlobal(
       "fetch",
