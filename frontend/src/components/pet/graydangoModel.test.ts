@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { StartNodeData } from "../../types/api";
 import {
   deriveGrayDangoPresentation,
+  GRAYDANGO_DRAG_ANIMATIONS,
   grayDangoDirectionCell,
 } from "./graydangoModel";
 
@@ -90,5 +91,14 @@ describe("grayDangoDirectionCell", () => {
 
   it("uses idle inside the pointer deadzone", () => {
     expect(grayDangoDirectionCell(2, 2, 10)).toBeNull();
+  });
+});
+
+describe("GrayDango drag animations", () => {
+  it("uses the existing directional movement rows", () => {
+    expect(GRAYDANGO_DRAG_ANIMATIONS).toEqual({
+      right: { row: 1, frames: 8 },
+      left: { row: 2, frames: 8 },
+    });
   });
 });

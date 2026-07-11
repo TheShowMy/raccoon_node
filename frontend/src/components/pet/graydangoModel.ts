@@ -24,6 +24,11 @@ export type GrayDangoPresentation = {
 
 export type GrayDangoDirectionCell = { row: 9 | 10; column: number };
 
+export const GRAYDANGO_DRAG_ANIMATIONS = {
+  right: { row: 1, frames: 8 },
+  left: { row: 2, frames: 8 },
+} as const;
+
 const ANIMATIONS: Record<
   GrayDangoAnimation,
   Pick<GrayDangoPresentation, "row" | "frames">

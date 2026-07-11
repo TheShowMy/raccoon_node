@@ -994,7 +994,10 @@ function AppCanvas() {
             </ReactFlowProvider>
           </RequirementTaskEventsProvider>
           {projectChatNode?.data.kind === "requirement-chat" ? (
-            <GrayDangoPet data={projectChatNode.data} />
+            <GrayDangoPet
+              data={projectChatNode.data}
+              containerRef={mainCanvasViewport.containerRef}
+            />
           ) : null}
         </section>
       </AppShell>

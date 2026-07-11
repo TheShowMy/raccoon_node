@@ -38,8 +38,6 @@
 
   .graydango-pet {
     position: absolute;
-    inset-inline-end: var(--spacing-4);
-    bottom: var(--spacing-4);
     z-index: 8;
     display: flex;
     flex-direction: column;
@@ -74,6 +72,14 @@
     filter: drop-shadow(
       0 var(--spacing-1) var(--spacing-2) var(--color-overlay)
     );
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+    cursor: grab;
+  }
+
+  .graydango-pet[data-dragging="true"] .graydango-pet__sprite {
+    cursor: grabbing;
   }
 
   .main-project-flow > .react-flow__renderer,
