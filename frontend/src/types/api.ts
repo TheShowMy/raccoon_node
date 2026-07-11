@@ -281,6 +281,7 @@ export type SessionContentBlock =
 export type ProjectFileContent = {
   path: string;
   content: string;
+  truncated: boolean;
 };
 
 export type TerminalSessionStatus = "starting" | "running" | "exited";

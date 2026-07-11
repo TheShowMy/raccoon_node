@@ -1,6 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use axum::http::header;
+use tokio::io::AsyncReadExt;
 
 use crate::{
     error::AppError,
@@ -12,6 +13,7 @@ use crate::{
 };
 
 const MAX_REF_BYTES: u64 = 64 * 1024;
+pub const MAX_PREVIEW_BYTES: u64 = 1024 * 1024;
 const MAX_ATTACHMENT_BYTES: usize = 5 * 1024 * 1024;
 const MAX_FILE_RESULTS: usize = 100;
 
@@ -158,6 +160,56 @@ pub async fn read_repo_file(repo_path: &Path, relative_path: &str) -> Result<Str
         return Err(AppError::bad_request("引用文件必须是 UTF-8 文本"));
     }
     String::from_utf8(bytes).map_err(|_| AppError::bad_request("引用文件必须是 UTF-8 文本"))
+}
+
+pub async fn preview_repo_file(
+    repo_path: &Path,
+    relative_path: &str,
+    max_bytes: u64,
+) -> Result<(String, bool), AppError> {
+    let repo_path = normalize_local_path(repo_path)?;
+    let first = Path::new(relative_path.trim())
+        .components()
+        .next()
+        .and_then(|component| match component {
+            Component::Normal(name) => name.to_str(),
+            _ => None,
+        });
+    if matches!(first, Some(".git" | ".raccoon-node")) {
+        return Err(AppError::bad_request(
+            "不能引用 Git 或 raccoon-node 内部文件",
+        ));
+    }
+    let path = resolve_relative_path(&repo_path, relative_path)?;
+    let metadata = tokio::fs::metadata(&path)
+        .await
+        .map_err(|_| AppError::bad_request(format!("引用文件不存在：{}", relative_path.trim())))?;
+    if !metadata.is_file() {
+        return Err(AppError::bad_request("引用路径必须是文件"));
+    }
+
+    let truncated = metadata.len() > max_bytes;
+    let file = tokio::fs::File::open(&path).await?;
+    let mut limited = file.take(max_bytes);
+    let mut bytes = Vec::new();
+    limited.read_to_end(&mut bytes).await?;
+
+    if bytes.iter().take(1024).any(|byte| *byte == 0) {
+        return Err(AppError::bad_request("引用文件必须是 UTF-8 文本"));
+    }
+
+    let content = match String::from_utf8(bytes) {
+        Ok(content) => content,
+        Err(error) if truncated => {
+            let valid_up_to = error.utf8_error().valid_up_to();
+            let mut bytes = error.into_bytes();
+            bytes.truncate(valid_up_to);
+            String::from_utf8(bytes).expect("truncation at valid_up_to produces valid UTF-8")
+        }
+        Err(_) => return Err(AppError::bad_request("引用文件必须是 UTF-8 文本")),
+    };
+
+    Ok((content, truncated))
 }
 
 pub async fn build_reference_context(

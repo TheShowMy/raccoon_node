@@ -23,8 +23,8 @@ use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 
 use crate::api::AppState;
 use crate::file_refs::{
-    content_type_value, list_repo_files, list_repo_tree, read_attachment, read_repo_file,
-    save_attachment,
+    MAX_PREVIEW_BYTES, content_type_value, list_repo_files, list_repo_tree, preview_repo_file,
+    read_attachment, save_attachment,
 };
 use crate::models::{
     AttachmentUploadRequest, BasicSettings, BasicSettingsUpdate, ClarificationAnswerPayload,
@@ -425,9 +425,16 @@ pub async fn get_project_file_content(
             .cloned()
             .ok_or_else(|| AppError::not_found("项目不存在"))?
     };
+    let (content, truncated) = preview_repo_file(
+        std::path::Path::new(&project.local_path),
+        &query.path,
+        MAX_PREVIEW_BYTES,
+    )
+    .await?;
     Ok(Json(ProjectFileContent {
         path: query.path.clone(),
-        content: read_repo_file(std::path::Path::new(&project.local_path), &query.path).await?,
+        content,
+        truncated,
     }))
 }
 

@@ -1,107 +1,74 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Banner,
   Button,
   CodeBlock,
   EmptyState,
   HStack,
+  Item,
   Layout,
   LayoutContent,
   LayoutPanel,
+  List,
   Markdown,
-  Tab,
-  TabList,
   Text,
   TextInput,
-  TreeList,
   VStack,
 } from "@astryxdesign/core";
-import type { TreeListItemData } from "@astryxdesign/core/TreeList";
-import { FileCode2, Folder } from "lucide-react";
+import { FileCode2, X } from "lucide-react";
 import {
   getProjectFileContent,
   getProjectFiles,
   getProjectFileTree,
 } from "../../api/client";
 import type { ProjectFileTreeEntry } from "../../types/api";
+import { getLanguageFromPath } from "../../utils/languageFromPath";
+import { FileTree } from "./FileTree";
 
-type OpenFile = { path: string; content: string };
-
-export function buildFileTree(
-  paths: string[],
-  activePath: string | null,
-  onOpen: (path: string) => void,
-): TreeListItemData[] {
-  type Branch = { files: Set<string>; folders: Map<string, Branch> };
-  const root: Branch = { files: new Set(), folders: new Map() };
-  for (const path of paths) {
-    const parts = path.split("/").filter(Boolean);
-    let branch = root;
-    for (const folder of parts.slice(0, -1)) {
-      let child = branch.folders.get(folder);
-      if (!child) {
-        child = { files: new Set(), folders: new Map() };
-        branch.folders.set(folder, child);
-      }
-      branch = child;
-    }
-    const file = parts.at(-1);
-    if (file) branch.files.add(file);
-  }
-
-  const renderBranch = (branch: Branch, prefix: string): TreeListItemData[] => [
-    ...[...branch.folders.entries()]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([name, child]) => {
-        const path = prefix ? `${prefix}/${name}` : name;
-        return {
-          id: `folder:${path}`,
-          label: name,
-          startContent: <Folder size={15} />,
-          isExpanded: prefix === "",
-          children: renderBranch(child, path),
-        };
-      }),
-    ...[...branch.files]
-      .sort((left, right) => left.localeCompare(right))
-      .map((name) => {
-        const path = prefix ? `${prefix}/${name}` : name;
-        return {
-          id: `file:${path}`,
-          label: name,
-          description: prefix || undefined,
-          startContent: <FileCode2 size={15} />,
-          isSelected: path === activePath,
-          onClick: () => onOpen(path),
-        };
-      }),
-  ];
-
-  return renderBranch(root, "");
-}
+type OpenFile = { path: string; content: string; truncated: boolean };
 
 export default function FilesWorkbench({ projectId }: { projectId: string }) {
   const [query, setQuery] = useState("");
-  const [paths, setPaths] = useState<string[]>([]);
+  const [searchPaths, setSearchPaths] = useState<string[]>([]);
   const [tree, setTree] = useState<Record<string, ProjectFileTreeEntry[]>>({});
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
   const [activePath, setActivePath] = useState<string | null>(null);
   const [tabs, setTabs] = useState<OpenFile[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    const loadRoot = async () => {
+      try {
+        const entries = await getProjectFileTree(projectId, "");
+        if (cancelled) return;
+        setTree({ "": entries });
+        setExpandedPaths(new Set([""]));
+        setError(null);
+      } catch (reason) {
+        if (!cancelled) setError(String(reason));
+      }
+    };
+    loadRoot();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setSearchPaths([]);
+      return;
+    }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      const request = query.trim()
-        ? getProjectFiles(projectId, query, controller.signal).then((files) => {
-            setPaths(files.map((file) => file.path));
-          })
-        : getProjectFileTree(projectId, "", controller.signal).then(
-            (entries) => {
-              setTree({ "": entries });
-              setPaths([]);
-            },
-          );
-      request
-        .then(() => setError(null))
+      getProjectFiles(projectId, trimmed, controller.signal)
+        .then((files) => {
+          setSearchPaths(files.map((file) => file.path));
+          setError(null);
+        })
         .catch((reason) => {
           if (!controller.signal.aborted) setError(String(reason));
         });
@@ -112,6 +79,38 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
     };
   }, [projectId, query]);
 
+  const loadDirectory = async (path: string) => {
+    if (tree[path]) return;
+    setLoadingPaths((current) => new Set(current).add(path));
+    try {
+      const entries = await getProjectFileTree(projectId, path);
+      setTree((current) => ({ ...current, [path]: entries }));
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setLoadingPaths((current) => {
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
+    }
+  };
+
+  const toggleDirectory = (path: string) => {
+    setExpandedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+        if (!tree[path]) {
+          void loadDirectory(path);
+        }
+      }
+      return next;
+    });
+  };
+
   const openFile = async (path: string) => {
     setActivePath(path);
     setError(null);
@@ -121,59 +120,71 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
         const existing = current.some((tab) => tab.path === path);
         return existing
           ? current.map((tab) =>
-              tab.path === path ? { path, content: file.content } : tab,
+              tab.path === path
+                ? { path, content: file.content, truncated: file.truncated }
+                : tab,
             )
-          : [...current, { path, content: file.content }];
+          : [
+              ...current,
+              { path, content: file.content, truncated: file.truncated },
+            ];
       });
     } catch (reason) {
       setError(String(reason));
     }
   };
 
+  const closeTab = (path: string) => {
+    const nextTabs = tabs.filter((tab) => tab.path !== path);
+    setTabs(nextTabs);
+    setActivePath((current) =>
+      current === path
+        ? (nextTabs[nextTabs.length - 1]?.path ?? null)
+        : current,
+    );
+  };
+
+  const isSearching = query.trim().length > 0;
   const activeTab = tabs.find((tab) => tab.path === activePath) ?? null;
   const isMarkdown = activeTab?.path.toLowerCase().endsWith(".md") ?? false;
-  const loadDirectory = async (path: string) => {
-    if (tree[path]) return;
-    try {
-      const entries = await getProjectFileTree(projectId, path);
-      setTree((current) => ({ ...current, [path]: entries }));
-    } catch (reason) {
-      setError(String(reason));
-    }
-  };
-  const treeItems = useMemo(() => {
-    if (query.trim()) {
-      return buildFileTree(paths, activePath, (path) => void openFile(path));
-    }
-    const build = (directory: string): TreeListItemData[] =>
-      (tree[directory] ?? []).map((entry) =>
-        entry.kind === "directory"
-          ? {
-              id: `folder:${entry.path}`,
-              label: entry.name,
-              startContent: <Folder size={15} />,
-              onClick: () => void loadDirectory(entry.path),
-              children: tree[entry.path]
-                ? build(entry.path)
-                : [
-                    {
-                      id: `loading:${entry.path}`,
-                      label: "展开以加载",
-                      isDisabled: true,
-                    },
-                  ],
-            }
-          : {
-              id: `file:${entry.path}`,
-              label: entry.name,
-              description: directory || undefined,
-              startContent: <FileCode2 size={15} />,
-              isSelected: entry.path === activePath,
-              onClick: () => void openFile(entry.path),
-            },
+  const language = activeTab
+    ? getLanguageFromPath(activeTab.path)
+    : "plaintext";
+
+  const fileList = useMemo(() => {
+    if (isSearching) {
+      return searchPaths.length ? (
+        <List density="compact" listStyle="none">
+          {searchPaths.map((path) => (
+            <Item
+              key={path}
+              as="div"
+              density="compact"
+              label={path}
+              startContent={<FileCode2 size={15} />}
+              onClick={() => void openFile(path)}
+            />
+          ))}
+        </List>
+      ) : (
+        <EmptyState isCompact title="没有匹配文件" />
       );
-    return build("");
-  }, [activePath, paths, projectId, query, tree]);
+    }
+    if (tree[""]) {
+      return (
+        <FileTree
+          entries={tree[""]}
+          childrenByPath={tree}
+          expandedPaths={expandedPaths}
+          loadingPaths={loadingPaths}
+          activePath={activePath}
+          onToggleDirectory={toggleDirectory}
+          onOpenFile={(path) => void openFile(path)}
+        />
+      );
+    }
+    return <EmptyState isCompact title="仓库中没有可预览文件" />;
+  }, [activePath, expandedPaths, isSearching, loadingPaths, searchPaths, tree]);
 
   const fileListPanel = (
     <LayoutPanel
@@ -192,14 +203,7 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
           value={query}
           onChange={setQuery}
         />
-        {treeItems.length ? (
-          <TreeList items={treeItems} density="compact" />
-        ) : (
-          <EmptyState
-            isCompact
-            title={query ? "没有匹配文件" : "仓库中没有可预览文件"}
-          />
-        )}
+        {fileList}
       </VStack>
     </LayoutPanel>
   );
@@ -208,12 +212,31 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
     <Layout height="fill" padding={0} start={fileListPanel}>
       <LayoutContent padding={0} isScrollable className="nodrag nowheel">
         {error ? <Text color="accent">{error}</Text> : null}
-        {tabs.length ? (
-          <TabList value={activePath ?? ""} onChange={setActivePath} hasDivider>
-            {tabs.map((tab) => (
-              <Tab key={tab.path} value={tab.path} label={tab.path} />
-            ))}
-          </TabList>
+        {tabs.length > 0 ? (
+          <HStack gap={1} padding={2} wrap="wrap">
+            {tabs.map((tab) => {
+              const active = tab.path === activePath;
+              return (
+                <Button
+                  key={tab.path}
+                  label={tab.path}
+                  size="sm"
+                  variant={active ? "secondary" : "ghost"}
+                  endContent={
+                    <X
+                      size={14}
+                      aria-label={`关闭 ${tab.path}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        closeTab(tab.path);
+                      }}
+                    />
+                  }
+                  onClick={() => setActivePath(tab.path)}
+                />
+              );
+            })}
+          </HStack>
         ) : null}
         {activeTab ? (
           <VStack gap={3} padding={4}>
@@ -221,12 +244,19 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
               <FileCode2 size={18} />
               <Text weight="semibold">{activeTab.path}</Text>
             </HStack>
+            {activeTab.truncated ? (
+              <Banner
+                status="warning"
+                title="文件过大"
+                description="仅显示前 1MB，完整文件请使用外部编辑器查看。"
+              />
+            ) : null}
             {isMarkdown ? (
               <Markdown>{activeTab.content}</Markdown>
             ) : (
               <CodeBlock
                 code={activeTab.content}
-                language="plaintext"
+                language={language}
                 title={activeTab.path}
                 width="100%"
                 hasLineNumbers
@@ -234,7 +264,28 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
             )}
           </VStack>
         ) : (
-          <EmptyState isCompact title="选择文件进行预览" />
+          <VStack height="100%" justify="center" align="center" padding={4}>
+            <VStack
+              align="center"
+              gap={0}
+              style={{ position: "relative", marginTop: "-5%" }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  bottom: "100%",
+                  marginBottom: "var(--spacing-4)",
+                }}
+              >
+                <FileCode2 size={40} />
+              </span>
+              <EmptyState
+                title="选择文件进行预览"
+                description="点击左侧文件树中的文件，即可在此处查看代码或文档。"
+              />
+            </VStack>
+          </VStack>
         )}
       </LayoutContent>
     </Layout>

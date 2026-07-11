@@ -14,6 +14,7 @@ describe("DocumentPreview", () => {
     vi.mocked(getProjectFileContent).mockResolvedValue({
       path: "README.md",
       content: "# 项目说明",
+      truncated: false,
     });
     render(<DocumentPreview projectId="current" path="README.md" />);
 

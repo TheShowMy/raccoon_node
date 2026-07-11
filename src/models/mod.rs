@@ -589,6 +589,8 @@ pub enum SessionContentBlock {
 pub struct ProjectFileContent {
     pub path: String,
     pub content: String,
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
