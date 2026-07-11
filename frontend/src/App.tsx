@@ -55,6 +55,7 @@ import { useProjectChat } from "./hooks/useProjectChat";
 import { useModelSettings } from "./hooks/useModelSettings";
 import { useProjectTerminals } from "./hooks/useProjectTerminals";
 import { useProjectGit } from "./hooks/useProjectGit";
+import GrayDangoPet from "./components/pet/GrayDangoPet";
 import { RequirementTaskEventsProvider } from "./contexts/RequirementTaskEventsContext";
 import {
   buildOrbitNodes,
@@ -948,6 +949,9 @@ export default function App() {
               </ReactFlow>
             </ReactFlowProvider>
           </RequirementTaskEventsProvider>
+          {projectChatNode?.data.kind === "requirement-chat" ? (
+            <GrayDangoPet data={projectChatNode.data} />
+          ) : null}
         </section>
       </AppShell>
     </Theme>
