@@ -127,4 +127,10 @@ describe("RequirementListNode", () => {
     fireEvent.click(screen.getByRole("button", { name: "已完成 0" }));
     expect(screen.getByText("暂无已完成需求")).toBeInTheDocument();
   });
+
+  it("marks the requirement list scrollable area with nodrag and nowheel", () => {
+    render(<RequirementListNode data={data([requirement("queued")])} />);
+    const list = document.querySelector(".astryx-stack.nodrag.nowheel");
+    expect(list).toBeInTheDocument();
+  });
 });

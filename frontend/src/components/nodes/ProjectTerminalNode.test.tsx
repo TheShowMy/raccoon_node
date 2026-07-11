@@ -223,4 +223,10 @@ describe("ProjectTerminalNode", () => {
     renderNode({ error: "connection failed" });
     expect(screen.getByText("connection failed")).toBeInTheDocument();
   });
+
+  it("marks scrollable areas with nodrag and nowheel", () => {
+    renderNode({ sessions: [session], activeSessionId: "term-1" });
+    const scrollables = document.querySelectorAll(".nodrag.nowheel");
+    expect(scrollables.length).toBeGreaterThanOrEqual(2);
+  });
 });

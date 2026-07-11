@@ -279,7 +279,7 @@ export default function RequirementTaskNode({
           </Stack>
         </HStack>
         {!isMiniRole ? (
-          <StackItem size="fill" isScrollable>
+          <StackItem size="fill" isScrollable className="nodrag nowheel">
             <Stack gap={2}>
               <Text type="supporting" maxLines={4} wordBreak="break-word">
                 {task.result_summary ?? task.description}

@@ -116,4 +116,10 @@ describe("ProjectGitNode", () => {
     expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
     expect(screen.getByText("任务执行中")).toBeInTheDocument();
   });
+
+  it("marks scrollable areas with nodrag and nowheel", () => {
+    renderNode();
+    const scrollables = document.querySelectorAll(".nodrag.nowheel");
+    expect(scrollables.length).toBeGreaterThanOrEqual(3);
+  });
 });

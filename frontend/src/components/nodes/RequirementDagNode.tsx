@@ -102,6 +102,7 @@ export default function RequirementDagNode({
           </HStack>
           <div
             ref={thinkingScrollRef}
+            className="nodrag nowheel"
             style={{ overflowX: "auto", minWidth: 0 }}
           >
             <Text type="supporting" size="3xs" maxLines={1}>

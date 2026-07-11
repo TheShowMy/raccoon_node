@@ -162,4 +162,10 @@ describe("RequirementDagNode", () => {
     expect(screen.queryByText("思考")).toBeNull();
     expect(screen.queryByText("不应显示的计划摘要")).toBeNull();
   });
+
+  it("marks the thinking scroll strip with nodrag and nowheel", () => {
+    renderNode();
+    const strip = document.querySelector(".nodrag.nowheel");
+    expect(strip).toBeInTheDocument();
+  });
 });

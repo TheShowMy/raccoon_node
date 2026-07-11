@@ -88,7 +88,7 @@ export default function RequirementListNode({
       {requirements.length === 0 ? (
         <EmptyState title={emptyTitle} description={emptyText} isCompact />
       ) : (
-        <Stack className="nodrag nowheel" padding={3} gap={1}>
+        <Stack className="nodrag nowheel" padding={3} gap={1} isScrollable>
           {requirements.map((requirement) => {
             const taskProgress = requirementTaskProgress(requirement);
             const isSelected = data.selectedRequirementId === requirement.id;

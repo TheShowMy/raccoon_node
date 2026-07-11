@@ -48,4 +48,10 @@ describe("TokenUsageNode", () => {
     expect(screen.getByText("缓存读")).toBeInTheDocument();
     expect(screen.getByText("缓存写")).toBeInTheDocument();
   });
+
+  it("marks the expanded scrollable area with nodrag and nowheel", () => {
+    render(<TokenUsageNode data={data({ expanded: true })} />);
+    const scrollable = document.querySelector(".astryx-stack.nodrag.nowheel");
+    expect(scrollable).toBeInTheDocument();
+  });
 });

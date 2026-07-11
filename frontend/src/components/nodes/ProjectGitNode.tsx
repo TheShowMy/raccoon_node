@@ -262,7 +262,13 @@ function BranchSidebar({
   };
 
   return (
-    <VStack width={220} height="100%" isScrollable gap={0}>
+    <VStack
+      width={220}
+      height="100%"
+      isScrollable
+      gap={0}
+      className="nodrag nowheel"
+    >
       <Toolbar
         label="Git 分支操作"
         size="sm"
@@ -448,7 +454,7 @@ function DiffArea({ diff }: { diff: GitDiff | null }) {
   ) : undefined;
 
   const content = (
-    <LayoutContent padding={0} isScrollable>
+    <LayoutContent padding={0} isScrollable className="nodrag nowheel">
       {diff ? (
         diff.binary ? (
           <VStack padding={4}>
@@ -597,7 +603,13 @@ export default function ProjectGitNode({ data }: { data: GitData }) {
               <VStack width="100%" height="100%" gap={0}>
                 <StackItem size="fill">
                   <HStack width="100%" height="100%" gap={0}>
-                    <VStack width={300} height="100%" isScrollable gap={0}>
+                    <VStack
+                      width={300}
+                      height="100%"
+                      isScrollable
+                      gap={0}
+                      className="nodrag nowheel"
+                    >
                       <FileGroup
                         title="未暂存"
                         area="unstaged"

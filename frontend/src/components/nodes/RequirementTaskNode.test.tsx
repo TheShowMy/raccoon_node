@@ -787,4 +787,12 @@ describe("RequirementTaskNode", () => {
         .closest(".task-detail-dialog__stage"),
     ).toHaveClass("is-approved");
   });
+
+  it("marks the task summary scrollable area with nodrag and nowheel", () => {
+    renderNode();
+    const scrollable = document.querySelector(
+      ".astryx-stack-item.nodrag.nowheel",
+    );
+    expect(scrollable).toBeInTheDocument();
+  });
 });
