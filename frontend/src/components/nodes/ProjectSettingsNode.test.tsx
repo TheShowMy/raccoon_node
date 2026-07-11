@@ -78,13 +78,15 @@ it("renders a compact settings entry while collapsed", () => {
   expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
 });
 
-it("switches pages and keeps external-listening confirmation inside the node", () => {
+it("switches pages via sidebar and keeps external-listening confirmation inside the node", () => {
   const props = data();
   render(<ProjectSettingsNode data={props} />);
 
-  const modelsTab = screen.getByRole("button", { name: "模型设置" });
-  expect(modelsTab).toHaveAttribute("data-model-setup-target", "models");
-  fireEvent.click(modelsTab);
+  const modelsNav = screen.getByRole("button", { name: "模型设置" });
+  expect(
+    document.querySelector('[data-model-setup-target="models"]'),
+  ).toBeInTheDocument();
+  fireEvent.click(modelsNav);
   expect(props.onOpenModels).toHaveBeenCalledOnce();
 
   fireEvent.click(screen.getByRole("button", { name: "保存并按需重启" }));
@@ -102,8 +104,10 @@ it("embeds Pi login actions and onboarding in the model page", () => {
   expect(
     screen.getByRole("list", { name: "首次模型配置引导" }),
   ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
   expect(screen.getByRole("region", { name: "Pi 登录终端" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "启动终端" }));
+  fireEvent.click(screen.getByRole("button", { name: "返回模型设置" }));
   fireEvent.click(screen.getByRole("button", { name: "重载模型" }));
   expect(props.onStartPiLogin).toHaveBeenCalledOnce();
   expect(props.onReloadModels).toHaveBeenCalledOnce();
@@ -125,6 +129,7 @@ it("offers restart and close without expanding the project terminal", () => {
   });
   render(<ProjectSettingsNode data={props} />);
 
+  fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
   fireEvent.click(screen.getByRole("button", { name: "重新启动" }));
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   expect(props.onStartPiLogin).toHaveBeenCalledOnce();

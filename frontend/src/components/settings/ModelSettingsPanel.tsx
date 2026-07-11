@@ -1,19 +1,26 @@
 import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 import {
+  ArrowLeft,
   Check,
   KeyRound,
+  Plus,
   Power,
   RefreshCw,
   RotateCw,
   Terminal,
 } from "lucide-react";
+import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
+import { Divider } from "@astryxdesign/core/Divider";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
-import { Grid } from "@astryxdesign/core/Grid";
-import { HStack } from "@astryxdesign/core/HStack";
-import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
+import { Heading } from "@astryxdesign/core/Heading";
+import { HStack, StackItem, VStack } from "@astryxdesign/core/Layout";
 import { Section } from "@astryxdesign/core/Section";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@astryxdesign/core/SegmentedControl";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Stack } from "@astryxdesign/core/Stack";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
@@ -95,6 +102,7 @@ export default function ModelSettingsPanel({
   onReload: () => void;
 }) {
   const [selectedTier, setSelectedTier] = useState<ModelTierKey>("medium");
+  const [showTerminal, setShowTerminal] = useState(false);
   const [accessKey, setAccessKey] = useState("");
   const setting = settings[selectedTier];
   const disabled = rpcStatus !== "ready" || models.length === 0;
@@ -133,8 +141,153 @@ export default function ModelSettingsPanel({
     }
   }
 
+  if (showTerminal) {
+    return (
+      <VStack gap={6} height="100%">
+        <Toolbar
+          label="返回模型设置"
+          size="sm"
+          variant="transparent"
+          startContent={
+            <Button
+              label="返回模型设置"
+              variant="ghost"
+              size="sm"
+              icon={<ArrowLeft size={14} />}
+              onClick={() => setShowTerminal(false)}
+            />
+          }
+        />
+        <Banner
+          status="info"
+          title="添加模型"
+          description="启动终端后输入 /login 登录 Pi，然后执行 /reload 重载模型列表。完成后关闭终端即可返回模型设置。"
+          container="section"
+        />
+        <StackItem size="fill">
+          <Section
+            aria-label="Pi 登录终端"
+            role="region"
+            padding={0}
+            height="100%"
+          >
+            <VStack height="100%" gap={0}>
+              <Toolbar
+                label="Pi 登录终端"
+                size="sm"
+                variant="transparent"
+                startContent={
+                  <HStack gap={2} align="center">
+                    <Terminal size={14} />
+                    <Text type="label">Pi 登录终端</Text>
+                  </HStack>
+                }
+                endContent={
+                  piLoginSession ? (
+                    <>
+                      <Button
+                        label="重新启动"
+                        variant="ghost"
+                        icon={<RotateCw size={13} />}
+                        isDisabled={piLoginBusy}
+                        onClick={() => void onStartPiLogin()}
+                      />
+                      <Button
+                        label="关闭"
+                        variant="ghost"
+                        icon={<Power size={13} />}
+                        isDisabled={piLoginBusy}
+                        onClick={() => void onClosePiLogin()}
+                      />
+                    </>
+                  ) : (
+                    <Button
+                      label={piLoginBusy ? "启动中…" : "启动终端"}
+                      variant="secondary"
+                      icon={<Terminal size={13} />}
+                      isLoading={piLoginBusy}
+                      isDisabled={terminalDisabled}
+                      onClick={() => void onStartPiLogin()}
+                    />
+                  )
+                }
+              />
+              {needsTerminalAccess ? (
+                <HStack
+                  as="form"
+                  className="nodrag"
+                  gap={2}
+                  padding={3}
+                  align="center"
+                  onSubmit={(event) => void authorizeTerminal(event)}
+                >
+                  <KeyRound size={16} />
+                  <TextInput
+                    label="终端密钥"
+                    value={accessKey}
+                    type="password"
+                    placeholder="输入启动密钥"
+                    onChange={setAccessKey}
+                  />
+                  <Button
+                    label="启用终端"
+                    type="submit"
+                    variant="primary"
+                    isLoading={terminalAccessBusy}
+                    isDisabled={!accessKey.trim()}
+                  />
+                  <Text type="supporting" size="2xs">
+                    {terminalAccessError ?? "验证通过后可启动 Pi 登录终端"}
+                  </Text>
+                </HStack>
+              ) : null}
+              <StackItem size="fill">
+                {piLoginSession ? (
+                  <TerminalSessionView
+                    projectId={piLoginSession.project_id}
+                    session={piLoginSession}
+                    fixedDark
+                  />
+                ) : (
+                  <EmptyState
+                    title="连接 Pi 账号"
+                    description="启动终端后手动输入 /login，完成登录再点击“重载模型”。"
+                    icon={<Terminal size={28} />}
+                  />
+                )}
+              </StackItem>
+              {terminalDisabled && !piLoginSession ? (
+                <Stack padding={3} align="center">
+                  <Text type="supporting" size="2xs">
+                    Web 终端仅允许通过本机监听地址使用。
+                  </Text>
+                </Stack>
+              ) : null}
+              {piLoginError ? (
+                <Stack padding={3} align="center">
+                  <Text type="supporting" color="accent" size="2xs">
+                    {piLoginError}
+                  </Text>
+                </Stack>
+              ) : null}
+            </VStack>
+          </Section>
+        </StackItem>
+      </VStack>
+    );
+  }
+
+  const selectedModelName = settings[selectedTier].model_id
+    ? (models.find((model) => model.id === settings[selectedTier].model_id)
+        ?.name ?? settings[selectedTier].model_id)
+    : "未选择";
+  const selectedThinkingLabel =
+    thinkingLevels.find(
+      (level) => level.value === settings[selectedTier].thinking_level,
+    )?.label ?? settings[selectedTier].thinking_level;
+
   return (
-    <Stack gap={3} height="fill">
+    <VStack gap={6}>
       {needsOnboarding ? (
         <HStack as="ol" gap={2} aria-label="首次模型配置引导">
           {steps.map((step, index) => {
@@ -159,8 +312,10 @@ export default function ModelSettingsPanel({
         </HStack>
       ) : null}
 
-      <Grid columns={2} gap={4} align="stretch" height="fill">
-        <Stack gap={3}>
+      <Section padding={4}>
+        <VStack gap={4}>
+          <Heading level={3}>模型 RPC 状态</Heading>
+          <Divider />
           <Toolbar
             label="模型 RPC 状态"
             size="sm"
@@ -197,57 +352,39 @@ export default function ModelSettingsPanel({
               </Text>
             </Section>
           ) : null}
+        </VStack>
+      </Section>
 
-          <Section padding={3}>
-            <RadioList
+      <Section padding={4}>
+        <VStack gap={4}>
+          <Heading level={3}>模型档位配置</Heading>
+          <Divider />
+          <VStack gap={4}>
+            <SegmentedControl
               label="模型档位"
-              isLabelHidden
               value={selectedTier}
               onChange={(value) => setSelectedTier(value as ModelTierKey)}
-              orientation="horizontal"
-              size="sm"
+              layout="fill"
             >
-              {TIERS.map((tier) => {
-                const modelName = settings[tier].model_id
-                  ? (models.find(
-                      (model) => model.id === settings[tier].model_id,
-                    )?.name ?? settings[tier].model_id)
-                  : "未选择";
-                return (
-                  <RadioListItem
-                    key={tier}
-                    value={tier}
-                    label={`${tierLabels[tier]}档`}
-                    description={modelName}
-                    endContent={
-                      <Token
-                        label={
-                          thinkingLevels.find(
-                            (level) =>
-                              level.value === settings[tier].thinking_level,
-                          )?.label ?? settings[tier].thinking_level
-                        }
-                        size="sm"
-                        color="gray"
-                      />
-                    }
-                  />
-                );
-              })}
-            </RadioList>
-          </Section>
+              {TIERS.map((tier) => (
+                <SegmentedControlItem
+                  key={tier}
+                  value={tier}
+                  label={`${tierLabels[tier]}档`}
+                />
+              ))}
+            </SegmentedControl>
 
-          <Section padding={4}>
-            <Stack gap={3}>
-              <Stack gap={0.5}>
-                <Text type="label" weight="semibold">
-                  {tierLabels[selectedTier]}档模型
-                </Text>
-                <Text type="supporting" size="2xs">
-                  用于对应复杂度的 Agent 任务。
-                </Text>
-              </Stack>
-              <Grid columns={2} gap={3}>
+            <HStack gap={2} align="center" wrap="wrap">
+              <Text type="label" size="sm">
+                当前选择
+              </Text>
+              <Token label={selectedModelName} size="sm" color="gray" />
+              <Token label={selectedThinkingLabel} size="sm" color="gray" />
+            </HStack>
+
+            <HStack gap={3} align="start">
+              <StackItem size="fill">
                 <Selector
                   label="模型"
                   value={setting.model_id ?? ""}
@@ -261,6 +398,8 @@ export default function ModelSettingsPanel({
                     })
                   }
                 />
+              </StackItem>
+              <StackItem size="fill">
                 <Selector
                   label="推理强度"
                   value={setting.thinking_level}
@@ -276,125 +415,44 @@ export default function ModelSettingsPanel({
                     });
                   }}
                 />
-              </Grid>
-              <Toolbar
-                label="保存模型设置"
-                size="sm"
-                variant="transparent"
-                endContent={
-                  <Button
-                    label={saving ? "保存中…" : "保存模型设置"}
-                    variant="primary"
-                    isLoading={saving}
-                    isDisabled={disabled}
-                    onClick={onSave}
-                  />
-                }
-              />
-            </Stack>
-          </Section>
-        </Stack>
-
-        <Section aria-label="Pi 登录终端" role="region" padding={0}>
-          <Toolbar
-            label="Pi 登录终端"
-            size="sm"
-            variant="transparent"
-            startContent={
-              <HStack gap={2} align="center">
-                <Terminal size={14} />
-                <Text type="label">Pi 登录终端</Text>
-              </HStack>
-            }
-            endContent={
-              piLoginSession ? (
-                <>
-                  <Button
-                    label="重新启动"
-                    variant="ghost"
-                    icon={<RotateCw size={13} />}
-                    isDisabled={piLoginBusy}
-                    onClick={() => void onStartPiLogin()}
-                  />
-                  <Button
-                    label="关闭"
-                    variant="ghost"
-                    icon={<Power size={13} />}
-                    isDisabled={piLoginBusy}
-                    onClick={() => void onClosePiLogin()}
-                  />
-                </>
-              ) : (
-                <Button
-                  label={piLoginBusy ? "启动中…" : "启动终端"}
-                  variant="secondary"
-                  icon={<Terminal size={13} />}
-                  isLoading={piLoginBusy}
-                  isDisabled={terminalDisabled}
-                  onClick={() => void onStartPiLogin()}
-                />
-              )
-            }
-          />
-          {needsTerminalAccess ? (
-            <HStack
-              as="form"
-              className="nodrag"
-              gap={2}
-              padding={3}
-              align="center"
-              onSubmit={(event) => void authorizeTerminal(event)}
-            >
-              <KeyRound size={16} />
-              <TextInput
-                label="终端密钥"
-                value={accessKey}
-                type="password"
-                placeholder="输入启动密钥"
-                onChange={setAccessKey}
-              />
-              <Button
-                label="启用终端"
-                type="submit"
-                variant="primary"
-                isLoading={terminalAccessBusy}
-                isDisabled={!accessKey.trim()}
-              />
-              <Text type="supporting" size="2xs">
-                {terminalAccessError ?? "验证通过后可启动 Pi 登录终端"}
-              </Text>
+              </StackItem>
             </HStack>
-          ) : null}
-          {piLoginSession ? (
-            <TerminalSessionView
-              projectId={piLoginSession.project_id}
-              session={piLoginSession}
-              fixedDark
+            <Toolbar
+              label="保存模型设置"
+              size="sm"
+              variant="transparent"
+              endContent={
+                <Button
+                  label={saving ? "保存中…" : "保存模型设置"}
+                  variant="primary"
+                  isLoading={saving}
+                  isDisabled={disabled}
+                  onClick={onSave}
+                />
+              }
             />
-          ) : (
-            <EmptyState
-              title="连接 Pi 账号"
-              description="启动终端后手动输入 /login，完成登录再点击“重载模型”。"
-              icon={<Terminal size={28} />}
-              isCompact
+          </VStack>
+        </VStack>
+      </Section>
+
+      <Section padding={4}>
+        <VStack gap={4}>
+          <Heading level={3}>添加模型</Heading>
+          <Divider />
+          <VStack gap={3}>
+            <Text type="supporting" size="2xs">
+              如需使用 Pi 账号下的更多模型，可启动 Pi
+              登录终端并手动登录后重载模型列表。
+            </Text>
+            <Button
+              label="添加模型"
+              variant="secondary"
+              icon={<Plus size={14} />}
+              onClick={() => setShowTerminal(true)}
             />
-          )}
-          {terminalDisabled && !piLoginSession ? (
-            <Stack padding={3} align="center">
-              <Text type="supporting" size="2xs">
-                Web 终端仅允许通过本机监听地址使用。
-              </Text>
-            </Stack>
-          ) : null}
-          {piLoginError ? (
-            <Stack padding={3} align="center">
-              <Text type="supporting" color="accent" size="2xs">
-                {piLoginError}
-              </Text>
-            </Stack>
-          ) : null}
-        </Section>
-      </Grid>
-    </Stack>
+          </VStack>
+        </VStack>
+      </Section>
+    </VStack>
   );
 }
