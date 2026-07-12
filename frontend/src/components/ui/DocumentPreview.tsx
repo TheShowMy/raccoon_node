@@ -98,6 +98,7 @@ export default function DocumentPreview({
                   maxHeight="calc(var(--spacing-1) * 80)"
                   size="sm"
                   width="100%"
+                  style={{ fontFamily: "var(--font-mono)" }}
                 />
               )}
             </>

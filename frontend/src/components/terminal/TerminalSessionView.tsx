@@ -132,6 +132,9 @@ export default function TerminalSessionView({
           cursorBlink: true,
           convertEol: true,
           fontFamily:
+            getComputedStyle(document.documentElement)
+              .getPropertyValue("--font-mono")
+              .trim() ||
             "JetBrains Mono, Cascadia Mono, SFMono-Regular, Consolas, monospace",
           fontSize: 12,
           theme: terminalTheme(fixedDark),

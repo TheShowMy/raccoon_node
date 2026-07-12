@@ -1,4 +1,18 @@
 @layer base {
+  /* Bundled JetBrains Mono Nerd Font for terminal and code preview.
+     The font file lives in frontend/public/fonts and is copied into dist/
+     by Vite, then embedded into the Rust binary by rust_embed. Local font
+     names are kept first so the browser can skip the network when the font
+     is already installed on the user's system. */
+  @font-face {
+    font-family: "JetBrains Mono Nerd";
+    src:
+      local("JetBrainsMono Nerd Font Mono"),
+      local("JetBrainsMonoNFM"),
+      url("/fonts/JetBrainsMonoNerdFontMono-Regular.ttf") format("truetype");
+    font-display: swap;
+  }
+
   :root {
     /* Project motion/surface tokens mapped to Astryx design tokens. */
     --motion-duration-fast: var(--duration-fast);
@@ -10,6 +24,9 @@
     --radius-sm: var(--radius-element);
     --radius-md: var(--radius-element);
     --radius-lg: var(--radius-container);
+    --font-mono:
+      "JetBrains Mono Nerd", "JetBrainsMono Nerd Font Mono", "JetBrainsMonoNFM",
+      "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
   }
 
   html,
