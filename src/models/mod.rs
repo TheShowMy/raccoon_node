@@ -312,6 +312,8 @@ pub struct RequirementClarificationRound {
 pub struct RequirementExecutionPlan {
     pub summary: String,
     pub tasks: Vec<RequirementExecutionTask>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -691,15 +693,26 @@ pub enum TerminalClientMessage {
     Close,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ProjectTokenUsage {
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TokenUsageCategory {
     pub input: u64,
     pub output: u64,
     pub cache_read: u64,
     pub cache_write: u64,
-    pub context_tokens: u64,
-    pub context_window: u64,
-    pub context_percent: f64,
+}
+
+impl TokenUsageCategory {
+    pub fn total(&self) -> u64 {
+        self.input + self.output + self.cache_read + self.cache_write
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ProjectTokenUsage {
+    pub chat: TokenUsageCategory,
+    pub split: TokenUsageCategory,
+    pub task: TokenUsageCategory,
+    pub total: TokenUsageCategory,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

@@ -3,11 +3,20 @@ import { Grid } from "@astryxdesign/core/Grid";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Gauge } from "lucide-react";
-import type { StartNodeData } from "../../types/api";
+import type { StartNodeData, TokenUsageCategory } from "../../types/api";
 import { formatCompactNumber } from "../../utils/format";
 import NodeBar from "../ui/NodeBar";
 
 type Data = Extract<StartNodeData, { kind: "token-usage" }>;
+
+function categoryTotal(category: TokenUsageCategory): number {
+  return (
+    category.input +
+    category.output +
+    category.cache_read +
+    category.cache_write
+  );
+}
 
 function TokenItem({ label, value }: { label: string; value: number }) {
   return (
@@ -32,9 +41,7 @@ function TokenItem({ label, value }: { label: string; value: number }) {
 
 export default function TokenUsageNode({ data }: { data: Data }) {
   const usage = data.usage;
-  const total = usage
-    ? usage.input + usage.output + usage.cache_read + usage.cache_write
-    : 0;
+  const total = usage ? categoryTotal(usage.total) : 0;
 
   return (
     <Stack width="100%" height="100%">
@@ -55,11 +62,10 @@ export default function TokenUsageNode({ data }: { data: Data }) {
           style={{ overflow: "auto" }}
         >
           {usage ? (
-            <Grid columns={2} gap={2} width="100%">
-              <TokenItem label="输入" value={usage.input} />
-              <TokenItem label="输出" value={usage.output} />
-              <TokenItem label="缓存读" value={usage.cache_read} />
-              <TokenItem label="缓存写" value={usage.cache_write} />
+            <Grid columns={3} gap={2} width="100%">
+              <TokenItem label="对话" value={categoryTotal(usage.chat)} />
+              <TokenItem label="拆分任务" value={categoryTotal(usage.split)} />
+              <TokenItem label="任务" value={categoryTotal(usage.task)} />
             </Grid>
           ) : (
             <Stack height="100%" align="center" justify="center">

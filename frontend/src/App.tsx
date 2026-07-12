@@ -843,8 +843,12 @@ function AppCanvas() {
         modelRpcStatus: models.modelRpcStatus,
         requirementCount: projectRequirementCount,
         terminalCount: terminals.sessions.length,
-        tokenContextPercent:
-          project.projectCanvas?.token_usage?.context_percent ?? 0,
+        tokenTotal: project.projectCanvas?.token_usage?.total
+          ? project.projectCanvas.token_usage.total.input +
+            project.projectCanvas.token_usage.total.output +
+            project.projectCanvas.token_usage.total.cache_read +
+            project.projectCanvas.token_usage.total.cache_write
+          : 0,
         onOpen: openMainPanel,
         onPrefetch: prefetchPanel,
         canvasSize,
@@ -856,7 +860,7 @@ function AppCanvas() {
       openMainPanel,
       openPanel,
       prefetchPanel,
-      project.projectCanvas?.token_usage?.context_percent,
+      project.projectCanvas?.token_usage?.total,
       projectRequirementCount,
       terminals.sessions.length,
     ],

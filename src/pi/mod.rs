@@ -943,7 +943,10 @@ impl PiRpcClient {
             .await?;
         response.trace = attach_prompt_diagnostics(response.trace, &rendered_prompt.diagnostics);
         match parse_requirement_plan(&response.assistant_text) {
-            Ok(plan) => Ok(plan),
+            Ok(mut plan) => {
+                plan.trace = response.trace;
+                Ok(plan)
+            }
             Err(parse_error) => {
                 let repair_prompt = build_requirement_plan_json_repair_prompt(
                     &parse_error.to_string(),
@@ -958,11 +961,16 @@ impl PiRpcClient {
                         true,
                     )
                     .await?;
-                parse_requirement_plan(&repaired.assistant_text).map_err(|repair_error| {
-                    AppError::internal(format!(
-                        "执行计划 JSON 解析失败，已尝试同会话修复：{repair_error}"
-                    ))
-                })
+                parse_requirement_plan(&repaired.assistant_text)
+                    .map(|mut plan| {
+                        plan.trace = repaired.trace;
+                        plan
+                    })
+                    .map_err(|repair_error| {
+                        AppError::internal(format!(
+                            "执行计划 JSON 解析失败，已尝试同会话修复：{repair_error}"
+                        ))
+                    })
             }
         }
     }

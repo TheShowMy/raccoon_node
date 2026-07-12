@@ -150,7 +150,11 @@ pub fn parse_requirement_plan(text: &str) -> Result<RequirementExecutionPlan, Ap
     let tasks = expand_execution_tasks(implementation_tasks);
     validate_task_graph(&tasks)?;
 
-    Ok(RequirementExecutionPlan { summary, tasks })
+    Ok(RequirementExecutionPlan {
+        summary,
+        tasks,
+        trace: None,
+    })
 }
 
 fn build_review_sub_agent_prompt_markdown(
@@ -1249,6 +1253,7 @@ mod tests {
         let current = test_task("task-1", "创建骨架", Vec::new());
         let future = test_task("task-2", "实现搜索", vec!["task-1".to_owned()]);
         let plan = RequirementExecutionPlan {
+            trace: None,
             summary: "计划".to_owned(),
             tasks: vec![current.clone(), future],
         };
@@ -1278,6 +1283,7 @@ mod tests {
         }
         let current = test_task("task-1", "创建骨架", Vec::new());
         let plan = RequirementExecutionPlan {
+            trace: None,
             summary: "计划".to_owned(),
             tasks: vec![current.clone()],
         };
@@ -1312,6 +1318,7 @@ mod tests {
         completed_b.result_summary = Some("完成了 B".to_owned());
         let current = test_task("task-c", "任务 C", vec!["task-b".to_owned()]);
         let plan = RequirementExecutionPlan {
+            trace: None,
             summary: "计划".to_owned(),
             tasks: vec![completed_a.clone(), completed_b.clone(), current.clone()],
         };
@@ -1343,6 +1350,7 @@ mod tests {
         completed_b.result_summary = Some("完成了 B".to_owned());
         let current = test_task("task-c", "任务 C", vec!["task-b".to_owned()]);
         let plan = RequirementExecutionPlan {
+            trace: None,
             summary: "计划".to_owned(),
             tasks: vec![completed_b, current.clone()],
         };
@@ -1364,6 +1372,7 @@ mod tests {
         let current = test_task("task-1", "创建骨架", Vec::new());
         let future = test_task("task-2", "实现搜索", vec!["task-1".to_owned()]);
         let plan = RequirementExecutionPlan {
+            trace: None,
             summary: "计划".to_owned(),
             tasks: vec![current.clone(), future],
         };
@@ -1385,6 +1394,7 @@ mod tests {
         let mut task = test_task("merge-review", "最终合并审核", Vec::new());
         task.kind = RequirementTaskKind::MergeReview;
         let plan = RequirementExecutionPlan {
+            trace: None,
             summary: "计划".to_owned(),
             tasks: vec![task.clone()],
         };
@@ -1412,6 +1422,7 @@ mod tests {
         let mut task = test_task("branch-merge-1", "合并分支", Vec::new());
         task.kind = RequirementTaskKind::BranchMerge;
         let plan = RequirementExecutionPlan {
+            trace: None,
             summary: "计划".to_owned(),
             tasks: vec![task.clone()],
         };
@@ -1438,6 +1449,7 @@ mod tests {
         review.kind = RequirementTaskKind::ReviewSubAgent;
         review.review_for = Some("task-1".to_owned());
         let plan = RequirementExecutionPlan {
+            trace: None,
             summary: "计划".to_owned(),
             tasks: vec![implementation.clone(), review.clone()],
         };
@@ -1485,6 +1497,7 @@ mod tests {
         review_summary.kind = RequirementTaskKind::ReviewSummary;
         review_summary.review_for = Some("task-1".to_owned());
         let plan = RequirementExecutionPlan {
+            trace: None,
             summary: "计划".to_owned(),
             tasks: vec![
                 implementation.clone(),

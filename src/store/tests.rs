@@ -118,6 +118,7 @@ use crate::models::{
 #[test]
 fn runnable_tasks_wait_without_error_while_dependencies_are_running() {
     let plan = RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![
             task(
@@ -141,6 +142,7 @@ fn runnable_tasks_wait_without_error_while_dependencies_are_running() {
 #[test]
 fn runnable_tasks_can_start_review_while_parallel_task_is_running() {
     let plan = RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![
             task(
@@ -189,6 +191,7 @@ async fn fixing_task_keeps_execution_input_status_and_clears_stale_result() {
     fixing.execution_warning = Some("旧警告".to_owned());
     let mut active = requirement("requirement");
     active.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![fixing],
     });
@@ -239,6 +242,7 @@ fn reset_review_clears_previous_execution_state() {
     review.execution_warning = Some("warning".to_owned());
     review.error = Some("error".to_owned());
     let mut plan = RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![review],
     };
@@ -285,6 +289,7 @@ async fn review_summary_uses_rejected_sub_agent_feedback() {
     );
     let mut active = requirement("requirement");
     active.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![implementation, sub_agent, summary],
     });
@@ -360,6 +365,7 @@ async fn successful_fix_clears_old_reviews_and_requeues_latest_review() {
         Some("implementation"),
     );
     let mut plan = RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![implementation, review, summary],
     };
@@ -431,6 +437,7 @@ async fn review_history_persists_rejection_fix_and_approval_rounds() {
     );
     let mut active = requirement("requirement");
     active.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![implementation, review, summary],
     });
@@ -530,6 +537,7 @@ async fn review_history_persists_rejection_fix_and_approval_rounds() {
 #[test]
 fn review_rejections_escalate_after_five_rounds() {
     let mut plan = RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![
             task(
@@ -637,6 +645,7 @@ async fn final_failure_keeps_parallel_branch_running_until_all_progress_stops() 
         .unwrap();
     let mut active = requirement("requirement");
     active.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![
             task(
@@ -708,6 +717,7 @@ async fn failed_implementation_groups_recover_independently_and_keep_resources()
     let mut failed = requirement("requirement");
     failed.status = RequirementStatus::Failed;
     failed.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![
             implementation_a,
@@ -784,6 +794,7 @@ async fn recovering_failed_reviews_keeps_successes_and_resets_summary_for_sub_ag
     let mut failed = requirement("requirement");
     failed.status = RequirementStatus::Failed;
     failed.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![implementation, successful_review, failed_review, summary],
     });
@@ -820,6 +831,7 @@ async fn rejected_reviews_are_not_manually_recoverable() {
     );
     let mut active = requirement("requirement");
     active.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![implementation, rejected_review],
     });
@@ -841,6 +853,7 @@ async fn merge_nodes_can_recover_while_another_group_is_running() {
         .unwrap();
     let mut active = requirement("requirement");
     active.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![
             task(
@@ -884,6 +897,7 @@ async fn startup_recovery_persists_interrupted_tasks_and_returns_all_running_req
     let mut store = JsonStore::open(path.clone()).await.unwrap();
     let mut interrupted = requirement("interrupted");
     interrupted.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![
             task(
@@ -900,6 +914,7 @@ async fn startup_recovery_persists_interrupted_tasks_and_returns_all_running_req
     });
     let mut waiting = requirement("waiting");
     waiting.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![task(
             "pending",
@@ -1122,6 +1137,7 @@ async fn stale_pi_session_cleanup_keeps_requirement_and_task_references() {
     );
     active_task.pi_session_file = Some(task_session.to_string_lossy().to_string());
     active.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![active_task],
     });
@@ -1179,6 +1195,7 @@ not valid json
     active_task.pi_session_file = Some(session_file.to_string_lossy().to_string());
     let mut active = requirement("req-1");
     active.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![active_task],
     });
@@ -1314,6 +1331,7 @@ async fn requirement_task_session_rejects_missing_and_escaping_paths() {
     active_task.pi_session_file = Some("../etc/passwd".to_owned());
     let mut active = requirement("req-1");
     active.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![active_task],
     });
@@ -1343,6 +1361,7 @@ async fn requirement_task_session_returns_not_found_when_file_missing() {
     active_task.pi_session_file = Some("missing.jsonl".to_owned());
     let mut active = requirement("req-1");
     active.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![active_task],
     });
@@ -1651,6 +1670,7 @@ async fn task_detail_preserves_diagnostics_but_hides_internal_paths() {
     detail.target_files = vec!["src/lib.rs".to_owned()];
     detail.trace = Some(serde_json::json!({"trace": {"usage": {"input": 1}}}));
     requirement.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
         summary: "detail".to_owned(),
         tasks: vec![detail],
     });
@@ -1760,4 +1780,173 @@ fn task_output(
         recovery_guidance: None,
         trace: None,
     }
+}
+
+fn project_chat_with_usage(project_id: &str, usage: serde_json::Value) -> ProjectChat {
+    let now = Utc::now();
+    ProjectChat {
+        project_id: project_id.to_owned(),
+        messages: vec![ProjectChatMessage {
+            role: ProjectChatMessageRole::Assistant,
+            content: "回答".to_owned(),
+            references: Vec::new(),
+            images: Vec::new(),
+            metadata: Some(serde_json::json!({
+                "type": "pi_trace",
+                "version": 1,
+                "trace": { "usage": usage }
+            })),
+            created_at: now,
+        }],
+        running: false,
+        error: None,
+        pi_session_file: None,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn trace_message(content: &str, usage: serde_json::Value) -> RequirementMessage {
+    let now = Utc::now();
+    RequirementMessage {
+        role: RequirementMessageRole::Trace,
+        content: content.to_owned(),
+        references: Vec::new(),
+        images: Vec::new(),
+        metadata: Some(serde_json::json!({
+            "type": "pi_trace",
+            "version": 1,
+            "trace": { "usage": usage }
+        })),
+        created_at: now,
+    }
+}
+
+#[test]
+fn aggregate_token_usage_classifies_chat_split_and_task() {
+    let mut chat_req = requirement("chat");
+    chat_req.messages.clear();
+
+    let chat = project_chat_with_usage(
+        "project",
+        serde_json::json!({
+            "input": 1,
+            "output": 2,
+            "cacheRead": 3,
+            "cacheWrite": 4,
+        }),
+    );
+
+    let mut split_req = requirement("split");
+    split_req.messages = vec![
+        trace_message(
+            "Pi Agent 分析过程",
+            serde_json::json!({
+                "input": 5,
+                "output": 6,
+                "cacheRead": 7,
+                "cacheWrite": 8,
+            }),
+        ),
+        trace_message(
+            "执行计划生成过程",
+            serde_json::json!({
+                "input": 9,
+                "output": 10,
+                "cacheRead": 11,
+                "cacheWrite": 12,
+            }),
+        ),
+    ];
+
+    let mut task_req = requirement("task");
+    let mut task = task(
+        "task-usage",
+        RequirementTaskKind::Implementation,
+        RequirementTaskStatus::Completed,
+    );
+    task.trace = Some(serde_json::json!({
+        "type": "pi_trace",
+        "version": 1,
+        "trace": {
+            "usage": {
+                "input": 13,
+                "output": 14,
+                "cacheRead": 15,
+                "cacheWrite": 16,
+            }
+        }
+    }));
+    task_req.execution_plan = Some(RequirementExecutionPlan {
+        trace: None,
+        summary: "task-plan".to_owned(),
+        tasks: vec![task],
+    });
+
+    let usage = aggregate_project_token_usage(
+        vec![&chat].into_iter(),
+        vec![&split_req, &task_req].into_iter(),
+    )
+    .unwrap();
+
+    assert_eq!(usage.chat.input, 1);
+    assert_eq!(usage.chat.output, 2);
+    assert_eq!(usage.chat.cache_read, 3);
+    assert_eq!(usage.chat.cache_write, 4);
+
+    assert_eq!(usage.split.input, 5 + 9);
+    assert_eq!(usage.split.output, 6 + 10);
+    assert_eq!(usage.split.cache_read, 7 + 11);
+    assert_eq!(usage.split.cache_write, 8 + 12);
+
+    assert_eq!(usage.task.input, 13);
+    assert_eq!(usage.task.output, 14);
+    assert_eq!(usage.task.cache_read, 15);
+    assert_eq!(usage.task.cache_write, 16);
+
+    assert_eq!(
+        usage.total.input,
+        usage.chat.input + usage.split.input + usage.task.input
+    );
+    assert_eq!(
+        usage.total.output,
+        usage.chat.output + usage.split.output + usage.task.output
+    );
+    assert_eq!(
+        usage.total.cache_read,
+        usage.chat.cache_read + usage.split.cache_read + usage.task.cache_read
+    );
+    assert_eq!(
+        usage.total.cache_write,
+        usage.chat.cache_write + usage.split.cache_write + usage.task.cache_write
+    );
+}
+
+#[test]
+fn aggregate_token_usage_includes_planning_trace_in_split() {
+    let mut req = requirement("plan-trace");
+    req.execution_plan = Some(RequirementExecutionPlan {
+        trace: Some(serde_json::json!({
+            "type": "pi_trace",
+            "version": 1,
+            "trace": {
+                "usage": {
+                    "input": 10,
+                    "output": 20,
+                    "cacheRead": 30,
+                    "cacheWrite": 40,
+                }
+            }
+        })),
+        summary: "plan".to_owned(),
+        tasks: vec![],
+    });
+
+    let usage = aggregate_project_token_usage(std::iter::empty(), vec![&req].into_iter()).unwrap();
+
+    assert_eq!(usage.split.input, 10);
+    assert_eq!(usage.split.output, 20);
+    assert_eq!(usage.split.cache_read, 30);
+    assert_eq!(usage.split.cache_write, 40);
+    assert_eq!(usage.total.input, 10);
 }

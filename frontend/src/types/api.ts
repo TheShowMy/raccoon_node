@@ -431,14 +431,18 @@ export type ProjectCanvasData = {
   token_usage?: ProjectTokenUsage | null;
 };
 
-export type ProjectTokenUsage = {
+export type TokenUsageCategory = {
   input: number;
   output: number;
   cache_read: number;
   cache_write: number;
-  context_tokens: number;
-  context_window: number;
-  context_percent: number;
+};
+
+export type ProjectTokenUsage = {
+  chat: TokenUsageCategory;
+  split: TokenUsageCategory;
+  task: TokenUsageCategory;
+  total: TokenUsageCategory;
 };
 
 export type ProjectChatMessage = {

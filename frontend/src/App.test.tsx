@@ -160,7 +160,7 @@ describe("App", () => {
       modelRpcStatus: "ready",
       requirementCount: 0,
       terminalCount: 0,
-      tokenContextPercent: 0,
+      tokenTotal: 0,
       onOpen: vi.fn(),
     });
     expect(orbitNodes.map((node) => node.id)).toEqual([
@@ -192,7 +192,7 @@ describe("App", () => {
       modelRpcStatus: "ready",
       requirementCount: 0,
       terminalCount: 0,
-      tokenContextPercent: 0,
+      tokenTotal: 0,
       onOpen,
     })[0];
 

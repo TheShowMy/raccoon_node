@@ -26,6 +26,7 @@ use crate::models::{
     RequirementTaskDetailResponse, RequirementTaskExecutionInput, RequirementTaskExecutionOutput,
     RequirementTaskKind, RequirementTaskStatus, SessionContentBlock, SessionEntry,
     SessionTranscriptPage, TerminalCommandProfile, TerminalCommandProfileUpdate,
+    TokenUsageCategory,
 };
 use crate::utils::commit_staged_changes;
 use crate::utils::effective_model_tier;
@@ -366,6 +367,10 @@ impl JsonStore {
         sort_requirements_desc(&mut completed_requirements);
 
         let token_usage = aggregate_project_token_usage(
+            self.data
+                .project_chats
+                .iter()
+                .filter(|chat| chat.project_id == project_id),
             self.data
                 .requirements
                 .iter()
@@ -2329,57 +2334,77 @@ impl JsonStore {
 }
 
 fn aggregate_project_token_usage<'a>(
+    project_chats: impl Iterator<Item = &'a ProjectChat>,
     requirements: impl Iterator<Item = &'a Requirement>,
 ) -> Option<ProjectTokenUsage> {
-    let mut usage = ProjectTokenUsage {
-        input: 0,
-        output: 0,
-        cache_read: 0,
-        cache_write: 0,
-        context_tokens: 0,
-        context_window: 0,
-        context_percent: 0.0,
-    };
+    let mut usage = ProjectTokenUsage::default();
     let mut found = false;
 
-    for requirement in requirements {
-        let Some(plan) = &requirement.execution_plan else {
-            continue;
-        };
-        for task in &plan.tasks {
-            let Some(task_usage) = task.trace.as_ref().and_then(trace_usage) else {
-                continue;
-            };
-            found = true;
-            usage.input += task_usage.get("input").and_then(Value::as_u64).unwrap_or(0);
-            usage.output += task_usage
-                .get("output")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            usage.cache_read += task_usage
-                .get("cacheRead")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            usage.cache_write += task_usage
-                .get("cacheWrite")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
+    for chat in project_chats {
+        for message in &chat.messages {
+            if let Some(metadata) = &message.metadata
+                && add_trace_usage(&mut usage.chat, metadata)
+            {
+                found = true;
+            }
+        }
+    }
 
-            let context = task_usage.get("context").unwrap_or(&Value::Null);
-            usage.context_tokens += context.get("tokens").and_then(Value::as_u64).unwrap_or(0);
-            usage.context_window = usage
-                .context_window
-                .max(context.get("window").and_then(Value::as_u64).unwrap_or(0));
+    for requirement in requirements {
+        for message in &requirement.messages {
+            if message.role != RequirementMessageRole::Trace {
+                continue;
+            }
+            if !matches!(
+                message.content.as_str(),
+                "Pi Agent 分析过程" | "执行计划生成过程"
+            ) {
+                continue;
+            }
+            if let Some(metadata) = &message.metadata
+                && add_trace_usage(&mut usage.split, metadata)
+            {
+                found = true;
+            }
+        }
+
+        if let Some(plan) = &requirement.execution_plan {
+            if let Some(trace) = &plan.trace
+                && add_trace_usage(&mut usage.split, trace)
+            {
+                found = true;
+            }
+            for task in &plan.tasks {
+                if let Some(trace) = &task.trace
+                    && add_trace_usage(&mut usage.task, trace)
+                {
+                    found = true;
+                }
+            }
         }
     }
 
     if !found {
         return None;
     }
-    if usage.context_window > 0 {
-        usage.context_percent = usage.context_tokens as f64 * 100.0 / usage.context_window as f64;
-    }
+
+    usage.total.input = usage.chat.input + usage.split.input + usage.task.input;
+    usage.total.output = usage.chat.output + usage.split.output + usage.task.output;
+    usage.total.cache_read = usage.chat.cache_read + usage.split.cache_read + usage.task.cache_read;
+    usage.total.cache_write =
+        usage.chat.cache_write + usage.split.cache_write + usage.task.cache_write;
     Some(usage)
+}
+
+fn add_trace_usage(category: &mut TokenUsageCategory, trace: &Value) -> bool {
+    let Some(usage) = trace_usage(trace) else {
+        return false;
+    };
+    category.input += usage.get("input").and_then(Value::as_u64).unwrap_or(0);
+    category.output += usage.get("output").and_then(Value::as_u64).unwrap_or(0);
+    category.cache_read += usage.get("cacheRead").and_then(Value::as_u64).unwrap_or(0);
+    category.cache_write += usage.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0);
+    true
 }
 
 pub fn read_session_transcript(

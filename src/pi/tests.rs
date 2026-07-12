@@ -415,6 +415,7 @@ fn dependency_branches_follow_task_dependency_order() {
     task_c.id = "task-c".to_owned();
     task_c.depends_on = vec!["task-b".to_owned(), "task-a".to_owned()];
     let plan = RequirementExecutionPlan {
+        trace: None,
         summary: "plan".to_owned(),
         tasks: vec![task_a, task_b, task_c.clone()],
     };

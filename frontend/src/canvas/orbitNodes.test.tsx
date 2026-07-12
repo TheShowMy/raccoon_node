@@ -15,7 +15,7 @@ describe("workspacePanelPosition", () => {
       modelRpcStatus: "ready",
       requirementCount: 0,
       terminalCount: 0,
-      tokenContextPercent: 0,
+      tokenTotal: 0,
       onOpen: vi.fn(),
       canvasSize: { width: 1280, height: 720 },
     });
@@ -65,7 +65,7 @@ describe("workspacePanelPosition", () => {
       modelRpcStatus: "ready",
       requirementCount: 0,
       terminalCount: 0,
-      tokenContextPercent: 0,
+      tokenTotal: 0,
       onOpen: vi.fn(),
       canvasSize: { width: 1280, height: 720 },
     });

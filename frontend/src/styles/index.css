@@ -27,6 +27,9 @@
     --font-mono:
       "JetBrains Mono Nerd", "JetBrainsMono Nerd Font Mono", "JetBrainsMonoNFM",
       "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    --token-chat: var(--color-accent);
+    --token-split: var(--color-warning);
+    --token-task: var(--color-success);
   }
 
   html,
@@ -149,9 +152,10 @@
   .orbit-tool-button {
     width: 100%;
     height: 100%;
-    white-space: normal;
     text-align: start;
-    overflow-wrap: anywhere;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     box-shadow: var(--shadow-low);
     transition:
       transform var(--motion-duration-fast) var(--motion-easing-standard),
@@ -165,13 +169,22 @@
      because Astryx Button's atomic classes have higher specificity than this
      project class. */
   .orbit-tool-button:not(.orbit-tool-button--active) {
+    color: var(--color-text-primary) !important;
     background: var(--color-background-card) !important;
     border: var(--border-width-thin) solid var(--color-border) !important;
   }
 
-  .orbit-tool-button:hover {
+  .orbit-tool-button:hover:not(.orbit-tool-button--active):not(:disabled):not(
+      [aria-disabled="true"]
+    ) {
     transform: translateY(calc(var(--spacing-1) * -0.5));
     box-shadow: var(--shadow-med);
+    color: var(--color-text-primary) !important;
+  }
+
+  .orbit-tool-button:not(.orbit-tool-button--active):disabled,
+  .orbit-tool-button:not(.orbit-tool-button--active)[aria-disabled="true"] {
+    color: var(--color-text-disabled) !important;
   }
 
   .orbit-tool-button--active {
@@ -345,6 +358,38 @@
 
   .react-flow__attribution {
     display: none;
+  }
+
+  .token-usage-bar {
+    display: flex;
+    width: 100%;
+    height: 8px;
+    overflow: hidden;
+    border-radius: var(--radius-element);
+    background: var(--color-background-muted);
+  }
+
+  .token-usage-segment {
+    height: 100%;
+    transition: width var(--motion-duration-fast) var(--motion-easing-standard);
+  }
+
+  .token-usage-chat {
+    background: var(--token-chat);
+  }
+
+  .token-usage-split {
+    background: var(--token-split);
+  }
+
+  .token-usage-task {
+    background: var(--token-task);
+  }
+
+  .token-usage-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
   }
 }
 

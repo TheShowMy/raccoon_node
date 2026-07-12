@@ -350,13 +350,10 @@ describe("buildProjectNodes", () => {
       queued_requirements: [],
       completed_requirements: [],
       token_usage: {
-        input: 10,
-        output: 20,
-        cache_read: 30,
-        cache_write: 40,
-        context_tokens: 50,
-        context_window: 100,
-        context_percent: 50,
+        chat: { input: 1, output: 2, cache_read: 3, cache_write: 4 },
+        split: { input: 5, output: 6, cache_read: 7, cache_write: 8 },
+        task: { input: 10, output: 20, cache_read: 30, cache_write: 40 },
+        total: { input: 16, output: 28, cache_read: 40, cache_write: 52 },
       },
     };
 

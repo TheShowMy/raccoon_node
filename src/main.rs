@@ -434,6 +434,7 @@ mod tests {
 
     fn test_execution_plan() -> RequirementExecutionPlan {
         RequirementExecutionPlan {
+            trace: None,
             summary: "实现登录需求的执行计划。".to_owned(),
             tasks: vec![
                 test_execution_task(
@@ -1688,6 +1689,7 @@ mod tests {
                 Some("task-usage"),
             );
             requirement.execution_plan = Some(RequirementExecutionPlan {
+                trace: None,
                 summary: "usage".to_owned(),
                 tasks: vec![dependency, task, review],
             });
@@ -1714,9 +1716,9 @@ mod tests {
                 .iter()
                 .any(|requirement| requirement.id == "running")
         );
-        assert_eq!(canvas.token_usage.as_ref().unwrap().input, 10);
-        assert_eq!(canvas.token_usage.as_ref().unwrap().cache_read, 30);
-        assert_eq!(canvas.token_usage.as_ref().unwrap().context_percent, 50.0);
+        assert_eq!(canvas.token_usage.as_ref().unwrap().task.input, 10);
+        assert_eq!(canvas.token_usage.as_ref().unwrap().task.cache_read, 30);
+        assert_eq!(canvas.token_usage.as_ref().unwrap().task.total(), 100);
         assert!(
             canvas
                 .queued_requirements

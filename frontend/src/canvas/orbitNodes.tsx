@@ -1,6 +1,7 @@
 import { memo, type ReactNode } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import type { Node, NodeProps } from "@xyflow/react";
+import { formatCompactNumber } from "../utils/format";
 import {
   Files,
   Gauge,
@@ -40,7 +41,7 @@ export interface BuildOrbitNodesInput {
   modelRpcStatus: string;
   requirementCount: number;
   terminalCount: number;
-  tokenContextPercent: number;
+  tokenTotal: number;
   onOpen: (panel: MainPanelKind) => void;
   onPrefetch?: (panel: MainPanelKind) => void;
   canvasSize?: CanvasSize;
@@ -82,7 +83,7 @@ const ORBIT_DEFINITIONS: Array<{
     title: "终端",
     anchor: { side: "right", offset: 0.25 },
     icon: <TerminalSquare size={20} />,
-    detail: (input) => `${input.terminalCount} 个会话`,
+    detail: (input) => String(input.terminalCount),
   },
   {
     id: "orbit-git",
@@ -98,7 +99,7 @@ const ORBIT_DEFINITIONS: Array<{
     title: "Token",
     anchor: { side: "bottom", offset: 0.5 },
     icon: <Gauge size={20} />,
-    detail: (input) => `${input.tokenContextPercent}% context`,
+    detail: (input) => formatCompactNumber(input.tokenTotal),
   },
   {
     id: "orbit-requirements",
@@ -106,7 +107,7 @@ const ORBIT_DEFINITIONS: Array<{
     title: "需求列表",
     anchor: { side: "left", offset: 0.75 },
     icon: <ListTodo size={20} />,
-    detail: (input) => `${input.requirementCount} 个需求`,
+    detail: (input) => String(input.requirementCount),
   },
   {
     id: "orbit-files",
@@ -114,7 +115,7 @@ const ORBIT_DEFINITIONS: Array<{
     title: "文件",
     anchor: { side: "left", offset: 0.25 },
     icon: <Files size={20} />,
-    detail: () => "搜索与预览",
+    detail: () => "",
   },
 ];
 
@@ -123,7 +124,7 @@ export const OrbitNode = memo(function OrbitNode({
 }: NodeProps<Node<OrbitNodeData>>) {
   return (
     <Button
-      label={`${data.title} · ${data.detail}`}
+      label={data.detail ? `${data.title} · ${data.detail}` : data.title}
       icon={data.icon}
       variant={data.active ? "primary" : "secondary"}
       isDisabled={data.disabled}
