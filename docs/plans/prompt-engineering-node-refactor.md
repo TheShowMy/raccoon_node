@@ -1,5 +1,7 @@
 # 计划文档：借鉴 PlanWeave 的提示词工程与节点化改造
 
+> **Phase 2 修订（2026-07-12）**：新计划不再生成三个外部 ReviewSubAgent 和一个 ReviewSummary。每个实现任务只生成一个 Review 父节点；父 Pi session 通过 `raccoon:parallel-review:v1` 受管工具并发启动三个 `pi --mode rpc --no-session` 子代理。子代理无 session 文件、上下文互相隔离，事件和 usage 作为父 session 工具 details 保存。旧 DAG 继续按原结构恢复。
+
 > 版本：v0.1
 > 日期：2026-07-03
 > 关联研究：[PlanWeave](https://github.com/GaosCode/PlanWeave)、raccoon_node 现有架构

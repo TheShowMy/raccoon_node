@@ -10,7 +10,9 @@ use crate::models::{
     RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
 };
 use crate::prompt::{
-    PromptContract, PromptRenderer, PromptSourceKind, RenderedPrompt, contract_text,
+    MAX_DEPENDENCY_CONTEXT_CHARS, MAX_DEPENDENCY_OUTPUT_CHARS, MAX_JSON_REPAIR_EXCERPT_CHARS,
+    MAX_RECOVERY_GUIDANCE_CHARS, PromptContract, PromptRenderer, PromptSourceKind, RenderedPrompt,
+    SectionKind, contract_text, format_section, truncate_chars,
 };
 
 const GLOBAL_PROMPT: &str = include_str!("../../prompts/global/raccoon.md");
@@ -181,6 +183,43 @@ pub fn build_requirement_task_prompt(
     plan: &RequirementExecutionPlan,
     task: &RequirementExecutionTask,
 ) -> RenderedPrompt {
+    build_requirement_task_prompt_with_session(requirement, plan, task, false)
+}
+
+pub fn build_requirement_task_prompt_with_session(
+    requirement: &Requirement,
+    plan: &RequirementExecutionPlan,
+    task: &RequirementExecutionTask,
+    session_reused: bool,
+) -> RenderedPrompt {
+    if task.kind == RequirementTaskKind::Review {
+        let policy = format_section(
+            SectionKind::Managed,
+            "review-policy",
+            include_str!("../../prompts/skills/code_reviewer.md"),
+        )
+        .expect("static review policy section is valid");
+        let packet = format_section(
+            SectionKind::Managed,
+            "review-packet",
+            &format!(
+                "任务：{}\n描述：{}\n目标文件：{}\n只审核当前工作区 git diff --cached，不修改代码。",
+                task.title,
+                task.description,
+                if task.target_files.is_empty() {
+                    "未限定".to_owned()
+                } else {
+                    task.target_files.join("、")
+                }
+            ),
+        )
+        .expect("generated review packet section is valid");
+        return PromptRenderer::new("parallel_code_reviewer")
+            .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT)
+            .add_source(PromptSourceKind::Skill, "code_reviewer", policy)
+            .add_source(PromptSourceKind::TaskContext, "review_packet", packet)
+            .render();
+    }
     if task.kind == RequirementTaskKind::ReviewSubAgent {
         return PromptRenderer::new("code_reviewer")
             .contract_id(task_output_contract(task.kind).id())
@@ -223,6 +262,7 @@ pub fn build_requirement_task_prompt(
                 recovery_guidance = task
                     .recovery_guidance
                     .as_deref()
+                    .map(|guidance| truncate_chars(guidance, MAX_RECOVERY_GUIDANCE_CHARS).0)
                     .map(|guidance| format!(
                         "\n## 高档模型恢复方案\n{guidance}\n\n必须按方案处理，并仍遵守当前任务边界。"
                     ))
@@ -272,6 +312,31 @@ pub fn build_requirement_task_prompt(
         },
         extra
     );
+
+    if task.kind == RequirementTaskKind::Implementation
+        && task.status == RequirementTaskStatus::Fixing
+        && session_reused
+    {
+        return PromptRenderer::new("implementation_runner")
+            .contract_id(contract.id())
+            .add_source(
+                PromptSourceKind::Contract,
+                contract.id(),
+                contract_text(contract),
+            )
+            .add_source(
+                PromptSourceKind::InlinePolicy,
+                "git_operation_restrictions",
+                GIT_OPERATION_RESTRICTIONS,
+            )
+            .add_source(PromptSourceKind::TaskContext, "fix_delta", current_task)
+            .add_optional_source(
+                PromptSourceKind::ExecutionContext,
+                "failure_context",
+                Some(failure_context),
+            )
+            .render();
+    }
 
     let mut renderer = PromptRenderer::new(task_prompt_role(task.kind))
         .contract_id(contract.id())
@@ -489,7 +554,7 @@ fn requirement_plan_json_contract() -> &'static str {
 }
 
 fn json_repair_excerpt(content: &str) -> String {
-    const MAX_CHARS: usize = 4000;
+    const MAX_CHARS: usize = MAX_JSON_REPAIR_EXCERPT_CHARS;
     let trimmed = content.trim();
     let excerpt = trimmed.chars().take(MAX_CHARS).collect::<String>();
     if trimmed.chars().count() > MAX_CHARS {
@@ -565,18 +630,26 @@ fn direct_dependency_outputs(
     task: &RequirementExecutionTask,
 ) -> String {
     let direct_ids: HashSet<_> = task.depends_on.iter().collect();
+    let mut used = 0usize;
     let outputs = plan
         .tasks
         .iter()
         .filter(|item| {
             item.status == RequirementTaskStatus::Completed && direct_ids.contains(&item.id)
         })
-        .map(|item| {
-            format!(
-                "- {}：{}",
-                item.title,
-                item.result_summary.as_deref().unwrap_or("已完成")
-            )
+        .filter_map(|item| {
+            let (summary, _) = truncate_chars(
+                item.result_summary.as_deref().unwrap_or("已完成"),
+                MAX_DEPENDENCY_OUTPUT_CHARS,
+            );
+            let rendered = format!("- {}：{}", item.title, summary);
+            let remaining = MAX_DEPENDENCY_CONTEXT_CHARS.saturating_sub(used);
+            if remaining == 0 {
+                return None;
+            }
+            let (rendered, _) = truncate_chars(&rendered, remaining);
+            used += rendered.chars().count();
+            Some(rendered)
         })
         .collect::<Vec<_>>();
     if outputs.is_empty() {
@@ -601,63 +674,22 @@ fn expand_execution_tasks(
         ));
         final_dependencies = vec![merge_id];
     }
-    let mut tasks = Vec::with_capacity(implementation_tasks.len() * (REVIEW_ANGLES.len() + 2) + 2);
+    let mut tasks = Vec::with_capacity(implementation_tasks.len() * 2 + 2);
     for task in implementation_tasks {
         tasks.push(task.clone());
-        let review_summary_id = format!("review-summary-{}", task.id);
-        for (index, angle) in REVIEW_ANGLES.iter().enumerate() {
-            tasks.push(RequirementExecutionTask {
-                id: format!("review-sub-{}-{}", task.id, index + 1),
-                title: format!("审核({angle})：{}", task.title),
-                description: format!(
-                    "从「{angle}」角度审核实现节点「{}」的提交和 diff。",
-                    task.title
-                ),
-                depends_on: vec![task.id.clone()],
-                kind: RequirementTaskKind::ReviewSubAgent,
-                model_tier: effective_model_tier(RequirementTaskKind::ReviewSubAgent),
-                timeout_seconds: 90,
-                pi_session_file: None,
-                branch_name: None,
-                worktree_path: None,
-                review_for: Some(task.id.clone()),
-                review_angle: Some((*angle).to_owned()),
-                review_status: RequirementReviewStatus::Pending,
-                review_history: Vec::new(),
-                attempt: 0,
-                execution_failure_count: 0,
-                review_rejection_count: 0,
-                recovery_stage: RequirementRecoveryStage::None,
-                failure_summary: None,
-                recovery_guidance: None,
-                high_tier_execution_used: false,
-                last_review_feedback: None,
-                pull_request_url: None,
-                merged_into: None,
-                cleanup_summary: None,
-                execution_warning: None,
-                trace: None,
-                status: RequirementTaskStatus::Pending,
-                target_files: task.target_files.clone(),
-                result_summary: None,
-                error: None,
-            });
-        }
         tasks.push(RequirementExecutionTask {
-            id: review_summary_id.clone(),
-            title: format!("审核汇总：{}", task.title),
-            description: format!("汇总三个审核 Sub Agent 对「{}」的审核意见。", task.title),
-            depends_on: (1..=REVIEW_ANGLES.len())
-                .map(|index| format!("review-sub-{}-{}", task.id, index))
-                .collect(),
-            kind: RequirementTaskKind::ReviewSummary,
-            model_tier: effective_model_tier(RequirementTaskKind::ReviewSummary),
+            id: format!("review-{}", task.id),
+            title: format!("审核：{}", task.title),
+            description: format!("并行执行三个隔离角度，审核实现节点「{}」。", task.title),
+            depends_on: vec![task.id.clone()],
+            kind: RequirementTaskKind::Review,
+            model_tier: effective_model_tier(RequirementTaskKind::Review),
             timeout_seconds: 90,
             pi_session_file: None,
             branch_name: None,
             worktree_path: None,
             review_for: Some(task.id.clone()),
-            review_angle: Some("审核汇总".to_owned()),
+            review_angle: Some(REVIEW_ANGLES.join("、")),
             review_status: RequirementReviewStatus::Pending,
             review_history: Vec::new(),
             attempt: 0,
@@ -1516,8 +1548,8 @@ mod tests {
         );
 
         let review_prompt = build_requirement_task_prompt(&requirement, &plan, &review).markdown;
-        assert!(review_prompt.contains("本次审核范围见下方「当前任务」"));
-        assert!(review_prompt.contains("当前任务"));
+        assert!(review_prompt.contains("run_parallel_code_review"));
+        assert!(review_prompt.contains("raccoon:managed:start review-packet"));
         assert!(review_prompt.contains("修复道路回收"));
         assert!(
             !review_prompt.contains("完整需求摘要：包含 A 和 B 两个子任务"),
@@ -1648,13 +1680,12 @@ mod tests {
         assert_eq!(
             plan.tasks
                 .iter()
-                .filter(|task| task.kind == RequirementTaskKind::ReviewSubAgent)
+                .filter(|task| task.kind == RequirementTaskKind::Review)
                 .count(),
-            3
+            1
         );
         assert!(plan.tasks.iter().any(|task| {
-            task.kind == RequirementTaskKind::ReviewSummary
-                && task.review_for.as_deref() == Some("task-a")
+            task.kind == RequirementTaskKind::Review && task.review_for.as_deref() == Some("task-a")
         }));
         assert!(
             plan.tasks
@@ -1699,29 +1730,27 @@ mod tests {
         let task_a_reviews = plan
             .tasks
             .iter()
-            .filter(|task| task.kind == RequirementTaskKind::ReviewSubAgent)
+            .filter(|task| task.kind == RequirementTaskKind::Review)
             .filter(|task| task.review_for.as_deref() == Some("task-a"))
             .collect::<Vec<_>>();
-        assert_eq!(task_a_reviews.len(), 3);
-        assert_eq!(task_a_reviews[0].review_angle.as_deref(), Some("正确性"));
+        assert_eq!(task_a_reviews.len(), 1);
         assert_eq!(
-            task_a_reviews[1].review_angle.as_deref(),
-            Some("边界与安全")
-        );
-        assert_eq!(
-            task_a_reviews[2].review_angle.as_deref(),
-            Some("代码质量与测试")
+            task_a_reviews[0].review_angle.as_deref(),
+            Some("正确性、边界与安全、代码质量与测试")
         );
 
         let task_b_summary = plan
             .tasks
             .iter()
             .find(|task| {
-                task.kind == RequirementTaskKind::ReviewSummary
+                task.kind == RequirementTaskKind::Review
                     && task.review_for.as_deref() == Some("task-b")
             })
             .unwrap();
-        assert_eq!(task_b_summary.review_angle.as_deref(), Some("审核汇总"));
+        assert_eq!(
+            task_b_summary.review_angle.as_deref(),
+            Some("正确性、边界与安全、代码质量与测试")
+        );
     }
 
     #[test]

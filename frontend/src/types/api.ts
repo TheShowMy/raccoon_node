@@ -276,6 +276,25 @@ export type SessionContentBlock =
       diff: string | null;
       is_error: boolean;
     }
+  | {
+      type: "subagents";
+      reviews: Array<{
+        angle: string;
+        ok: boolean;
+        error?: string | null;
+        result?: {
+          approved: boolean;
+          feedback: string;
+          result_summary: string;
+        } | null;
+        usage?: {
+          input: number;
+          output: number;
+          cacheRead: number;
+          cacheWrite: number;
+        };
+      }>;
+    }
   | { type: "unknown"; block_type: string; raw: unknown };
 
 export type ProjectFileContent = {
@@ -443,6 +462,20 @@ export type ProjectTokenUsage = {
   split: TokenUsageCategory;
   task: TokenUsageCategory;
   total: TokenUsageCategory;
+  max_context_percent?: number;
+  hotspots?: Array<{
+    label: string;
+    role: string;
+    usage: TokenUsageCategory;
+    context_percent: number;
+  }>;
+  roles?: Array<{ role: string; usage: TokenUsageCategory }>;
+  sources?: Array<{
+    kind: string;
+    label: string;
+    chars: number;
+    estimated_tokens: number;
+  }>;
 };
 
 export type ProjectChatMessage = {
@@ -579,12 +612,21 @@ export type TraceData = {
 };
 
 export type TraceUsage = {
+  scope?: "operation" | "session";
   sessionReused: boolean;
   callCount: number;
   input: number;
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  subagents?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    maxContextTokens: number;
+    maxContextPercent: number;
+  };
   context: {
     tokens: number;
     window: number;

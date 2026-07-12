@@ -33,6 +33,7 @@
 - 任务传输：需求进入执行阶段后继续使用现有 SSE，不与对话 WebSocket 混用。
 - 每日滚动日志（最多 7 个文件）：`<git_root>/.raccoon-node/logs/`
 - 内置受管 Pi extension：`<git_root>/.raccoon-node/extensions/`
+- 代码审核：每个实现任务只有一个持久 Review 父 session；受管 extension 在父会话工具内并发启动三个 `pi --mode rpc --no-session` 只读子代理，子代理上下文隔离且不产生 session 文件。
 - 任务 worktree：`<git_root>/.raccoon-node/worktrees/`
 - 附件：`<git_root>/.raccoon-node/attachments/`
 - 本地打包输出：`build/bin/raccoon`（Windows 为 `raccoon.exe`）

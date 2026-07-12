@@ -436,6 +436,19 @@ pub struct PromptImage {
     pub mime_type: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptReferencePart {
+    pub path: String,
+    pub markdown: String,
+    pub bytes: usize,
+    pub inline: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptReferenceContext {
+    pub parts: Vec<PromptReferencePart>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RequirementTaskKind {
@@ -581,6 +594,9 @@ pub enum SessionContentBlock {
         diff: Option<String>,
         is_error: bool,
     },
+    Subagents {
+        reviews: Value,
+    },
     Unknown {
         block_type: String,
         raw: Value,
@@ -713,6 +729,36 @@ pub struct ProjectTokenUsage {
     pub split: TokenUsageCategory,
     pub task: TokenUsageCategory,
     pub total: TokenUsageCategory,
+    #[serde(default)]
+    pub max_context_percent: f64,
+    #[serde(default)]
+    pub hotspots: Vec<TokenUsageHotspot>,
+    #[serde(default)]
+    pub roles: Vec<TokenUsageRole>,
+    #[serde(default)]
+    pub sources: Vec<PromptSourceUsage>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TokenUsageHotspot {
+    pub label: String,
+    pub role: String,
+    pub usage: TokenUsageCategory,
+    pub context_percent: f64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TokenUsageRole {
+    pub role: String,
+    pub usage: TokenUsageCategory,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PromptSourceUsage {
+    pub kind: String,
+    pub label: String,
+    pub chars: u64,
+    pub estimated_tokens: u64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -958,7 +1004,7 @@ pub trait ModelProvider: Send + Sync {
 pub struct ProjectChatInput {
     pub project: Project,
     pub messages: Vec<ProjectChatMessage>,
-    pub reference_context: Option<String>,
+    pub reference_context: Option<PromptReferenceContext>,
     pub prompt_images: Vec<PromptImage>,
     pub model_settings: ModelSettings,
     pub pi_session_file: Option<String>,
@@ -975,7 +1021,7 @@ pub struct ProjectChatOutput {
 pub struct RequirementAnalysisInput {
     pub project: Project,
     pub messages: Vec<RequirementMessage>,
-    pub reference_context: Option<String>,
+    pub reference_context: Option<PromptReferenceContext>,
     pub prompt_images: Vec<PromptImage>,
     pub clarifications: Vec<RequirementClarification>,
     pub draft: Option<RequirementDraft>,

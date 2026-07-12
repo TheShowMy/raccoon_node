@@ -800,7 +800,7 @@ function toReviewStatus(
 
 function TaskUsage({ usage }: { usage: TraceUsage }) {
   const number = new Intl.NumberFormat("zh-CN");
-  const cacheTotal = usage.input + usage.cacheRead;
+  const cacheTotal = usage.input + usage.cacheRead + usage.cacheWrite;
   const cacheHitRate =
     cacheTotal > 0
       ? `${((usage.cacheRead / cacheTotal) * 100).toFixed(1)}%`
@@ -819,7 +819,9 @@ function TaskUsage({ usage }: { usage: TraceUsage }) {
         <MetadataListItem label="会话是否复用">
           {usage.sessionReused ? "是" : "否"}
         </MetadataListItem>
-        <MetadataListItem label="累计调用数">
+        <MetadataListItem
+          label={usage.scope === "operation" ? "本次模型调用数" : "累计调用数"}
+        >
           {number.format(usage.callCount)} 次
         </MetadataListItem>
         <MetadataListItem label="输入 tokens">

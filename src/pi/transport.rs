@@ -7,7 +7,7 @@ pub(crate) struct PiRpcTransportConfig {
     pub(crate) program: String,
     pub(crate) working_dir: PathBuf,
     pub(crate) session_dir: Option<PathBuf>,
-    pub(crate) extension_path: Option<PathBuf>,
+    pub(crate) extension_paths: Vec<PathBuf>,
 }
 
 impl PiRpcTransportConfig {
@@ -15,13 +15,13 @@ impl PiRpcTransportConfig {
         program: &str,
         session_dir: &Path,
         working_dir: &Path,
-        extension_path: Option<&Path>,
+        extension_paths: &[PathBuf],
     ) -> Self {
         Self {
             program: program.to_owned(),
             working_dir: working_dir.to_path_buf(),
             session_dir: Some(session_dir.to_path_buf()),
-            extension_path: extension_path.map(Path::to_path_buf),
+            extension_paths: extension_paths.to_vec(),
         }
     }
 
@@ -30,7 +30,7 @@ impl PiRpcTransportConfig {
             program: program.to_owned(),
             working_dir: working_dir.to_path_buf(),
             session_dir: None,
-            extension_path: None,
+            extension_paths: Vec::new(),
         }
     }
 
@@ -52,7 +52,7 @@ impl PiRpcTransportConfig {
 
     pub(crate) fn extra_args(&self) -> Vec<String> {
         let mut args = vec!["--no-extensions".to_owned()];
-        if let Some(extension_path) = &self.extension_path {
+        for extension_path in &self.extension_paths {
             args.push("--extension".to_owned());
             args.push(extension_path.to_string_lossy().into_owned());
         }

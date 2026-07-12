@@ -1,4 +1,4 @@
-use super::{PromptDiagnostics, PromptSource, PromptSourceKind};
+use super::{PromptDiagnostics, PromptSource, PromptSourceDelivery, PromptSourceKind};
 
 #[derive(Debug, Clone)]
 pub struct RenderedPrompt {
@@ -57,6 +57,20 @@ impl PromptRenderer {
             source,
             content: content.unwrap_or_default(),
         });
+        self
+    }
+
+    pub(crate) fn add_reference_source(
+        mut self,
+        label: impl Into<String>,
+        content: impl Into<String>,
+        delivery: PromptSourceDelivery,
+        bytes: usize,
+    ) -> Self {
+        let content = content.into();
+        let source = PromptSource::included(PromptSourceKind::ReferenceContext, label, &content)
+            .with_delivery(delivery, bytes);
+        self.parts.push(PromptPart { source, content });
         self
     }
 

@@ -7,7 +7,11 @@ use crate::{
     error::AppError,
     models::{
         AttachmentUploadRequest, FileReference, ImageAttachment, ProjectFileTreeEntry,
-        ProjectFileTreeEntryKind, PromptImage,
+        ProjectFileTreeEntryKind, PromptImage, PromptReferenceContext, PromptReferencePart,
+    },
+    prompt::{
+        MAX_INLINE_REFERENCE_BYTES, MAX_INLINE_REFERENCE_TOTAL_BYTES, MAX_PROMPT_IMAGE_TOTAL_BYTES,
+        MAX_PROMPT_IMAGES, MAX_REFERENCE_FILES,
     },
     utils::{ensure_child_path, normalize_local_path},
 };
@@ -216,43 +220,108 @@ pub async fn build_reference_context(
     repo_path: &Path,
     references: &[FileReference],
     images: &[ImageAttachment],
-) -> Result<Option<String>, AppError> {
+) -> Result<Option<PromptReferenceContext>, AppError> {
     if references.is_empty() && images.is_empty() {
         return Ok(None);
     }
 
-    let mut blocks = Vec::new();
+    if references.len() > MAX_REFERENCE_FILES {
+        return Err(AppError::bad_request(format!(
+            "引用文件最多 {MAX_REFERENCE_FILES} 个，当前为 {} 个",
+            references.len()
+        )));
+    }
+    let mut parts = Vec::new();
+    let mut inline_bytes = 0_u64;
     for reference in references {
-        let content = read_repo_file(repo_path, &reference.path).await?;
-        blocks.push(format!(
-            r#"<file path="{}">
+        let repo_path = normalize_local_path(repo_path)?;
+        let first = Path::new(reference.path.trim())
+            .components()
+            .next()
+            .and_then(|component| match component {
+                Component::Normal(name) => name.to_str(),
+                _ => None,
+            });
+        if matches!(first, Some(".git" | ".raccoon-node")) {
+            return Err(AppError::bad_request(
+                "不能引用 Git 或 raccoon-node 内部文件",
+            ));
+        }
+        let path = resolve_relative_path(&repo_path, &reference.path)?;
+        if tokio::fs::symlink_metadata(&path)
+            .await
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(AppError::bad_request("引用文件不能是符号链接"));
+        }
+        let metadata = tokio::fs::metadata(&path)
+            .await
+            .map_err(|_| AppError::bad_request(format!("引用文件不存在：{}", reference.path)))?;
+        if !metadata.is_file() {
+            return Err(AppError::bad_request("引用路径必须是文件"));
+        }
+        let bytes = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
+        let inline = metadata.len() <= MAX_INLINE_REFERENCE_BYTES
+            && inline_bytes.saturating_add(metadata.len()) <= MAX_INLINE_REFERENCE_TOTAL_BYTES;
+        let markdown = if inline {
+            let content = read_repo_file(&repo_path, &reference.path).await?;
+            inline_bytes += metadata.len();
+            format!(
+                r#"<file path="{}" bytes="{}" inline="true">
 {}
 </file>"#,
-            escape_attr(&reference.path),
-            content
-        ));
+                escape_attr(&reference.path),
+                bytes,
+                content
+            )
+        } else {
+            format!(
+                r#"<file path="{}" bytes="{}" inline="false" />
+文件未内联；仅在确有需要时使用 read 分段读取该仓库相对路径。"#,
+                escape_attr(&reference.path),
+                bytes
+            )
+        };
+        parts.push(PromptReferencePart {
+            path: reference.path.clone(),
+            markdown,
+            bytes,
+            inline,
+        });
     }
     for image in images {
-        blocks.push(format!(
-            r#"<image name="{}" path="{}" />"#,
-            escape_attr(&image.name),
-            escape_attr(&image.path),
-        ));
+        parts.push(PromptReferencePart {
+            path: image.path.clone(),
+            markdown: format!(
+                r#"<image name="{}" path="{}" />"#,
+                escape_attr(&image.name),
+                escape_attr(&image.path),
+            ),
+            bytes: 0,
+            inline: true,
+        });
     }
-
-    Ok(Some(format!(
-        "以下是用户引用的上下文：\n{}",
-        blocks.join("\n\n")
-    )))
+    Ok(Some(PromptReferenceContext { parts }))
 }
 
 pub async fn build_prompt_images(
     project_dir: &Path,
     images: &[ImageAttachment],
 ) -> Result<Vec<PromptImage>, AppError> {
+    if images.len() > MAX_PROMPT_IMAGES {
+        return Err(AppError::bad_request(format!(
+            "提示图片最多 {MAX_PROMPT_IMAGES} 张，当前为 {} 张",
+            images.len()
+        )));
+    }
     let mut prompt_images = Vec::with_capacity(images.len());
+    let mut total_bytes = 0usize;
     for image in images {
         let (bytes, mime_type) = read_attachment(project_dir, &image.path).await?;
+        total_bytes = total_bytes.saturating_add(bytes.len());
+        if total_bytes > MAX_PROMPT_IMAGE_TOTAL_BYTES {
+            return Err(AppError::bad_request("提示图片总大小不能超过 10MB"));
+        }
         prompt_images.push(PromptImage {
             data_base64: base64_encode(&bytes),
             mime_type: mime_type.to_owned(),
@@ -522,6 +591,55 @@ mod tests {
         assert_eq!(files[0].path, "visible.txt");
         assert!(
             read_repo_file(temp.path(), ".raccoon-node/data.db")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn reference_budget_inlines_small_files_and_keeps_large_files_as_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        tokio::fs::write(temp.path().join("small.txt"), "small")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            temp.path().join("large.txt"),
+            vec![b'x'; MAX_INLINE_REFERENCE_BYTES as usize + 1],
+        )
+        .await
+        .unwrap();
+        let context = build_reference_context(
+            temp.path(),
+            &[
+                FileReference {
+                    path: "small.txt".to_owned(),
+                },
+                FileReference {
+                    path: "large.txt".to_owned(),
+                },
+            ],
+            &[],
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(context.parts[0].inline);
+        assert!(context.parts[0].markdown.contains("small"));
+        assert!(!context.parts[1].inline);
+        assert!(context.parts[1].markdown.contains("inline=\"false\""));
+        assert!(!context.parts[1].markdown.contains(&"x".repeat(100)));
+    }
+
+    #[tokio::test]
+    async fn reference_budget_rejects_too_many_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let references = (0..=MAX_REFERENCE_FILES)
+            .map(|index| FileReference {
+                path: format!("{index}.txt"),
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            build_reference_context(temp.path(), &references, &[])
                 .await
                 .is_err()
         );

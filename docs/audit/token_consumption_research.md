@@ -1,5 +1,7 @@
 # Token 消耗优化调研报告
 
+> **实施状态（2026-07-12）**：本报告中的原始建议已结合当前代码修订并落地。项目问答原本已经在 session 复用时省略历史；Pi 原本已经提供真实 session usage/cache。当前实现进一步使用 operation 差值避免重复累计，并将新任务的外部 3 个 ReviewSubAgent + 1 个 ReviewSummary 收敛为一个 Review 父 session。父 session 内通过受管 Pi RPC 工具并发运行三个无持久化、上下文隔离的审核子代理。
+
 > 调研范围：`raccoon_node` 后端提示词组装、Pi Agent RPC 调用、需求/任务/聊天流程。
 > 目标：定位当前不合理的 token 消耗点，参考社区实践，给出可落地的优化建议。本报告不修改代码。
 
@@ -240,6 +242,14 @@ ExecutionContext / ReferenceContext / InlinePolicy）拼接成单一大段 markd
 1. **增量/摘要化上下文**：多轮对话只发变化，历史做摘要。
 2. **稳定/动态分层 + 缓存**：让不变的前缀被模型/平台缓存。
 3. **工具输出压缩**：大段命令/文件输出先入摘要。
+
+## 7. 已采用的实现边界
+
+- 引用文件最多 8 个；单文件 32 KiB、总计 128 KiB 内联，超出大小只传安全仓库相对路径，由 Agent 按需读取。图片最多 3 张、总计 10 MiB。
+- DependencyOutput、ReviewFeedback、RecoveryGuidance 和 JSON repair excerpt 使用集中预算；PromptSource 记录 bytes 和 inline/path_only，但不保存正文 preview。
+- 需求、项目问答和 Fixing 在恢复 session 后只发送本轮 delta；新 session 仍发送完整业务上下文。
+- usage 使用调用前后 `get_session_stats` 差值，父 Review usage 合并三个临时子代理 usage；Token 工作台显示实际调用热点和估算 source 贡献。
+- 不新增 Plan Auditor、rolling-summary LLM 调用、review profile 或角色级 thinking 覆盖。
 
 ---
 

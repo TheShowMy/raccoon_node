@@ -440,7 +440,7 @@ describe("RequirementTaskNode", () => {
     expect(screen.getByText("缓存读取").nextSibling).toHaveTextContent("1,000");
     expect(screen.getByText("缓存写入").nextSibling).toHaveTextContent("240");
     expect(screen.getByText("缓存命中率").nextSibling).toHaveTextContent(
-      "40.0%",
+      "36.5%",
     );
     expect(screen.getByText("上下文 tokens").nextSibling).toHaveTextContent(
       "12,000",

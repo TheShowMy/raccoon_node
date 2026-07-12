@@ -394,6 +394,7 @@ fn session_stats_are_normalized_into_trace_usage() {
             }
         }),
         true,
+        None,
     )
     .unwrap();
 
@@ -401,6 +402,28 @@ fn session_stats_are_normalized_into_trace_usage() {
     assert_eq!(trace["trace"]["usage"]["callCount"], 3);
     assert_eq!(trace["trace"]["usage"]["cacheRead"], 1000);
     assert_eq!(trace["trace"]["usage"]["context"]["window"], 128000);
+}
+
+#[test]
+fn session_stats_use_operation_delta_when_baseline_is_available() {
+    let trace = attach_session_usage(
+        Some(serde_json::json!({ "trace": {} })),
+        &serde_json::json!({
+            "assistantMessages": 5,
+            "tokens": { "input": 150, "output": 60, "cacheRead": 30, "cacheWrite": 10 },
+            "contextUsage": { "tokens": 100, "contextWindow": 1000, "percent": 10.0 }
+        }),
+        true,
+        Some(&serde_json::json!({
+            "assistantMessages": 3,
+            "tokens": { "input": 100, "output": 40, "cacheRead": 20, "cacheWrite": 5 }
+        })),
+    )
+    .unwrap();
+    assert_eq!(trace["trace"]["usage"]["scope"], "operation");
+    assert_eq!(trace["trace"]["usage"]["callCount"], 2);
+    assert_eq!(trace["trace"]["usage"]["input"], 50);
+    assert_eq!(trace["trace"]["usage"]["cacheWrite"], 5);
 }
 
 #[test]

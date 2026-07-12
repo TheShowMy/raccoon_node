@@ -189,6 +189,58 @@ fn record_review_step(
     }
 }
 
+fn record_parallel_review_steps(
+    plan: &mut RequirementExecutionPlan,
+    review_task_id: &str,
+    trace: Option<&Value>,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    let Some(items) = trace
+        .and_then(|trace| trace.pointer("/trace/parallelReview"))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    for item in items {
+        let angle = item.get("angle").and_then(Value::as_str).unwrap_or("综合审核");
+        let approved = item.get("approved").and_then(Value::as_bool).unwrap_or(false);
+        let summary = item
+            .get("resultSummary")
+            .and_then(Value::as_str)
+            .unwrap_or("未提供审核摘要");
+        let feedback = item.get("feedback").and_then(Value::as_str);
+        let Some(implementation_id) = plan
+            .tasks
+            .iter()
+            .find(|task| task.id == review_task_id)
+            .and_then(|task| task.review_for.clone())
+        else {
+            return false;
+        };
+        let Some(round) = plan
+            .tasks
+            .iter_mut()
+            .find(|task| task.id == implementation_id)
+            .and_then(|task| task.review_history.last_mut())
+        else {
+            return false;
+        };
+        round.reviews.push(RequirementReviewStep {
+            task_id: format!("{review_task_id}:{angle}"),
+            angle: angle.to_owned(),
+            status: if approved {
+                RequirementReviewStatus::Approved
+            } else {
+                RequirementReviewStatus::Rejected
+            },
+            summary: summary.to_owned(),
+            failure_reason: (!approved).then(|| feedback.map(str::to_owned)).flatten(),
+            completed_at: now,
+        });
+    }
+    true
+}
+
 fn finish_review_round(
     plan: &mut RequirementExecutionPlan,
     summary_task_id: &str,

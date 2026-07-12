@@ -391,6 +391,36 @@ function SessionBlock({ block }: { block: SessionContentBlock }) {
       </ToolCard>
     );
   }
+  if (block.type === "subagents") {
+    return (
+      <Card variant="muted" padding={0}>
+        <Collapsible trigger="隔离审核子代理" defaultIsOpen={false}>
+          <Stack gap={2} padding={2}>
+            {block.reviews.map((review) => (
+              <Card key={review.angle} variant="muted" padding={2}>
+                <Stack gap={1}>
+                  <Text type="label" weight="semibold">
+                    {review.angle} · {review.ok ? "完成" : "技术失败"}
+                  </Text>
+                  <Text type="supporting">
+                    {review.result
+                      ? `${review.result.approved ? "通过" : "不通过"}：${review.result.result_summary}`
+                      : review.error || "没有结构化结果"}
+                  </Text>
+                  {review.usage ? (
+                    <Text type="supporting" size="3xs">
+                      输入 {review.usage.input} · 输出 {review.usage.output} ·
+                      缓存读取 {review.usage.cacheRead}
+                    </Text>
+                  ) : null}
+                </Stack>
+              </Card>
+            ))}
+          </Stack>
+        </Collapsible>
+      </Card>
+    );
+  }
   return (
     <Card variant="muted" padding={0}>
       <Collapsible

@@ -62,11 +62,39 @@ export default function TokenUsageNode({ data }: { data: Data }) {
           style={{ overflow: "auto" }}
         >
           {usage ? (
-            <Grid columns={3} gap={2} width="100%">
-              <TokenItem label="对话" value={categoryTotal(usage.chat)} />
-              <TokenItem label="拆分任务" value={categoryTotal(usage.split)} />
-              <TokenItem label="任务" value={categoryTotal(usage.task)} />
-            </Grid>
+            <Stack gap={3}>
+              <Grid columns={3} gap={2} width="100%">
+                <TokenItem label="对话" value={categoryTotal(usage.chat)} />
+                <TokenItem
+                  label="拆分任务"
+                  value={categoryTotal(usage.split)}
+                />
+                <TokenItem label="任务" value={categoryTotal(usage.task)} />
+              </Grid>
+              <Text type="supporting" size="3xs">
+                最大上下文占比 {(usage.max_context_percent ?? 0).toFixed(1)}%
+              </Text>
+              {(usage.hotspots ?? []).slice(0, 3).map((item) => (
+                <Text
+                  key={`${item.role}:${item.label}`}
+                  type="supporting"
+                  size="3xs"
+                >
+                  {item.label} · {item.role} ·{" "}
+                  {formatCompactNumber(categoryTotal(item.usage))}
+                </Text>
+              ))}
+              {(usage.sources ?? []).slice(0, 3).map((item) => (
+                <Text
+                  key={`${item.kind}:${item.label}`}
+                  type="supporting"
+                  size="3xs"
+                >
+                  估算来源 {item.label} ·{" "}
+                  {formatCompactNumber(item.estimated_tokens)} tokens
+                </Text>
+              ))}
+            </Stack>
           ) : (
             <Stack height="100%" align="center" justify="center">
               <Text type="supporting">暂无统计</Text>

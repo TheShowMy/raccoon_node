@@ -1,5 +1,7 @@
 # Prompt 工程与上下文结构优化建议
 
+> **状态（2026-07-12）**：此旧计划已由当前实现收敛。Prompt renderer、sources、sections、contracts、分页 session 和统一时间线已经完成；剩余可取部分已落实为集中预算、引用 path-only、operation usage 和单 Review 父会话。本文中的 Plan Auditor、review profile、rolling summary、thinking 强制覆盖和完整 prompt 复制不再属于实施范围。
+
 > 日期：2026-07-05
 > 范围：`raccoon_node` 的需求澄清、执行规划、任务 DAG、Review/Recovery、Pi Agent RPC 会话、React Flow 节点与会话展示。
 > 主线：**优先优化提示词工程结构，其次才是 token/context 消耗控制**。

@@ -33,30 +33,36 @@ use crate::prompt::attach_prompt_diagnostics;
 use crate::requirement::{
     PiResponseFailure, build_recovery_guidance_json_repair_prompt, build_recovery_guidance_prompt,
     build_requirement_plan_json_repair_prompt, build_requirement_plan_prompt,
-    build_requirement_prompt, build_requirement_task_prompt, build_task_output_json_repair_prompt,
-    extract_pi_response, parse_recovery_guidance, parse_requirement_plan,
-    parse_requirement_tool_analysis, parse_task_execution_output,
+    build_requirement_prompt, build_requirement_task_prompt_with_session,
+    build_task_output_json_repair_prompt, extract_pi_response, parse_recovery_guidance,
+    parse_requirement_plan, parse_requirement_tool_analysis, parse_task_execution_output,
 };
 use crate::utils::{ensure_child_path, normalize_local_path, resolve_git_root};
 
 const MAX_PROJECT_CLIENTS: usize = 5;
 const MAX_JSON_REPAIR_ATTEMPTS: usize = 1;
 const CLARIFICATION_EXTENSION: &str = include_str!("assets/raccoon-clarification.mjs");
+const REVIEW_ORCHESTRATOR_EXTENSION: &str = include_str!("assets/raccoon-review-orchestrator.mjs");
+const REVIEW_WORKER_EXTENSION: &str = include_str!("assets/raccoon-review-worker.mjs");
 
-async fn install_clarification_extension(data_root: &Path) -> Result<PathBuf, AppError> {
+async fn install_managed_extension(
+    data_root: &Path,
+    file_name: &str,
+    expected: &str,
+) -> Result<PathBuf, AppError> {
     let directory = data_root.join("extensions");
     ensure_child_path(data_root, &directory)?;
     tokio::fs::create_dir_all(&directory).await?;
-    let path = directory.join("raccoon-clarification.mjs");
+    let path = directory.join(file_name);
     ensure_child_path(&directory, &path)?;
     if std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
         return Err(AppError::bad_request("受管 Pi 插件不能是符号链接"));
     }
     if !matches!(
         tokio::fs::read_to_string(&path).await,
-        Ok(content) if content == CLARIFICATION_EXTENSION
+        Ok(content) if content == expected
     ) {
-        tokio::fs::write(&path, CLARIFICATION_EXTENSION).await?;
+        tokio::fs::write(&path, expected).await?;
     }
     Ok(path)
 }
@@ -72,6 +78,7 @@ pub struct PiRpcModelProvider {
     /// 0=Ready, 1=Reconnecting, 2=Error
     pub rpc_status: Arc<AtomicU8>,
     clarification_extension_path: Option<PathBuf>,
+    review_extension_path: Option<PathBuf>,
     clarification_extension_error: Option<String>,
     heartbeat_shutdown: Arc<AtomicBool>,
     heartbeat_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -85,10 +92,32 @@ impl PiRpcModelProvider {
     pub async fn start(data_root: PathBuf) -> Self {
         let session_dir = data_root.join("sessions");
         let (clarification_extension_path, clarification_extension_error) =
-            match install_clarification_extension(&data_root).await {
+            match install_managed_extension(
+                &data_root,
+                "raccoon-clarification.mjs",
+                CLARIFICATION_EXTENSION,
+            )
+            .await
+            {
                 Ok(path) => (Some(path), None),
                 Err(error) => (None, Some(error.to_string())),
             };
+        let review_extension_path = match install_managed_extension(
+            &data_root,
+            "raccoon-review-worker.mjs",
+            REVIEW_WORKER_EXTENSION,
+        )
+        .await
+        {
+            Ok(_) => install_managed_extension(
+                &data_root,
+                "raccoon-review-orchestrator.mjs",
+                REVIEW_ORCHESTRATOR_EXTENSION,
+            )
+            .await
+            .ok(),
+            Err(_) => None,
+        };
         let project_root = data_root
             .parent()
             .map(Path::to_path_buf)
@@ -130,6 +159,7 @@ impl PiRpcModelProvider {
             startup_error,
             rpc_status,
             clarification_extension_path,
+            review_extension_path,
             clarification_extension_error,
             heartbeat_shutdown,
             heartbeat_task: std::sync::Mutex::new(Some(heartbeat_task)),
@@ -303,8 +333,12 @@ impl PiRpcModelProvider {
                         .unwrap_or_else(|| "受管需求澄清插件不可用".to_owned()),
                 )
             })?;
+        let mut extension_paths = vec![extension_path.to_path_buf()];
+        if let Some(path) = &self.review_extension_path {
+            extension_paths.push(path.clone());
+        }
         let client =
-            PiRpcClient::start_with_extension(&self.session_dir, &working_dir, extension_path)
+            PiRpcClient::start_with_extensions(&self.session_dir, &working_dir, &extension_paths)
                 .await?;
         let client = Arc::new(client);
         clients.insert(project_id, (client.clone(), Instant::now()));
@@ -631,7 +665,7 @@ pub struct PiRpcClient {
 
 impl PiRpcClient {
     pub async fn start(session_dir: &Path, working_dir: &Path) -> Result<Self, AppError> {
-        Self::start_with_optional_extension(session_dir, working_dir, None).await
+        Self::start_with_optional_extensions(session_dir, working_dir, &[]).await
     }
 
     pub async fn start_with_extension(
@@ -639,13 +673,21 @@ impl PiRpcClient {
         working_dir: &Path,
         extension_path: &Path,
     ) -> Result<Self, AppError> {
-        Self::start_with_optional_extension(session_dir, working_dir, Some(extension_path)).await
+        Self::start_with_extensions(session_dir, working_dir, &[extension_path.to_path_buf()]).await
     }
 
-    async fn start_with_optional_extension(
+    pub async fn start_with_extensions(
         session_dir: &Path,
         working_dir: &Path,
-        extension_path: Option<&Path>,
+        extension_paths: &[PathBuf],
+    ) -> Result<Self, AppError> {
+        Self::start_with_optional_extensions(session_dir, working_dir, extension_paths).await
+    }
+
+    async fn start_with_optional_extensions(
+        session_dir: &Path,
+        working_dir: &Path,
+        extension_paths: &[PathBuf],
     ) -> Result<Self, AppError> {
         let session_dir = normalize_local_path(session_dir)?;
         let working_dir = normalize_local_path(working_dir)?;
@@ -659,7 +701,7 @@ impl PiRpcClient {
 
         let mut last_error = None;
         for program in &candidates {
-            match Self::start_with_program(program, &session_dir, &working_dir, extension_path)
+            match Self::start_with_program(program, &session_dir, &working_dir, extension_paths)
                 .await
             {
                 Ok(client) => {
@@ -772,10 +814,10 @@ impl PiRpcClient {
         program: &str,
         session_dir: &Path,
         working_dir: &Path,
-        extension_path: Option<&Path>,
+        extension_paths: &[PathBuf],
     ) -> Result<Self, AppError> {
         let transport_config =
-            PiRpcTransportConfig::session(program, session_dir, working_dir, extension_path);
+            PiRpcTransportConfig::session(program, session_dir, working_dir, extension_paths);
         let _pi_session_config = transport_config.to_pi_session_config();
         let mut command = if cfg!(windows) && program.ends_with(".cmd") {
             let mut command = Command::new("cmd.exe");
@@ -862,6 +904,7 @@ impl PiRpcClient {
         let session_reused = self
             .restore_or_new_session(input.pi_session_file.as_deref())
             .await?;
+        let usage_before = self.get_session_stats().await.ok();
         let session_file = self.get_session_file().await?;
         if let (Some(emitter), Some(session_file)) = (&events, &session_file) {
             emitter.emit_pi_event(serde_json::json!({
@@ -871,7 +914,7 @@ impl PiRpcClient {
         }
         self.ensure_clarification_extension().await?;
         self.prepare_high_model(&input.model_settings).await?;
-        let rendered_prompt = build_requirement_prompt(&input);
+        let rendered_prompt = build_requirement_prompt(&input, session_reused);
         self.prompt_with_images(&rendered_prompt.markdown, &input.prompt_images)
             .await?;
         let mut pi_events = Vec::new();
@@ -895,6 +938,7 @@ impl PiRpcClient {
                     &rendered_prompt.diagnostics,
                 ),
                 session_reused,
+                usage_before.as_ref(),
             )
             .await;
         Ok(parse_requirement_tool_analysis(
@@ -924,12 +968,33 @@ impl PiRpcClient {
         Ok(())
     }
 
+    async fn ensure_parallel_review_extension(&self) -> Result<(), AppError> {
+        let response = self
+            .send_command(serde_json::json!({ "type": "get_commands" }))
+            .await?;
+        let available = response
+            .pointer("/data/commands")
+            .and_then(Value::as_array)
+            .is_some_and(|commands| {
+                commands.iter().any(|command| {
+                    command.get("name").and_then(Value::as_str)
+                        == Some("raccoon-parallel-review-v1")
+                })
+            });
+        if available {
+            Ok(())
+        } else {
+            Err(AppError::internal("受管 Pi 并行审核插件未加载或协议不兼容"))
+        }
+    }
+
     pub async fn plan_requirement_execution(
         &self,
         input: RequirementPlanInput,
         events: Option<RequirementEventEmitter>,
     ) -> Result<crate::models::RequirementExecutionPlan, AppError> {
         self.new_session().await?;
+        let usage_before = self.get_session_stats().await.ok();
         self.prepare_high_model(&input.model_settings).await?;
         let rendered_prompt = build_requirement_plan_prompt(&input.requirement);
         let mut response = self
@@ -944,7 +1009,9 @@ impl PiRpcClient {
         response.trace = attach_prompt_diagnostics(response.trace, &rendered_prompt.diagnostics);
         match parse_requirement_plan(&response.assistant_text) {
             Ok(mut plan) => {
-                plan.trace = response.trace;
+                plan.trace = self
+                    .attach_session_usage(response.trace, false, usage_before.as_ref())
+                    .await;
                 Ok(plan)
             }
             Err(parse_error) => {
@@ -961,16 +1028,16 @@ impl PiRpcClient {
                         true,
                     )
                     .await?;
-                parse_requirement_plan(&repaired.assistant_text)
-                    .map(|mut plan| {
-                        plan.trace = repaired.trace;
-                        plan
-                    })
-                    .map_err(|repair_error| {
+                let mut plan =
+                    parse_requirement_plan(&repaired.assistant_text).map_err(|repair_error| {
                         AppError::internal(format!(
                             "执行计划 JSON 解析失败，已尝试同会话修复：{repair_error}"
                         ))
-                    })
+                    })?;
+                plan.trace = self
+                    .attach_session_usage(repaired.trace, false, usage_before.as_ref())
+                    .await;
+                Ok(plan)
             }
         }
     }
@@ -983,6 +1050,7 @@ impl PiRpcClient {
         let session_reused = self
             .restore_or_new_session(input.task.pi_session_file.as_deref())
             .await?;
+        let usage_before = self.get_session_stats().await.ok();
         if input.task.recovery_stage == crate::models::RequirementRecoveryStage::GuidedRetry
             && input.task.recovery_guidance.is_none()
         {
@@ -1025,6 +1093,9 @@ impl PiRpcClient {
                     })?
                 }
             };
+            response.trace = self
+                .attach_session_usage(response.trace, session_reused, usage_before.as_ref())
+                .await;
             return Ok(RequirementTaskExecutionOutput {
                 result_summary: "高档模型恢复方案已生成。".to_owned(),
                 pi_session_file: self.get_session_file().await?,
@@ -1046,8 +1117,48 @@ impl PiRpcClient {
         self.prepare_model_tier(&input.model_settings, input.task.model_tier)
             .await?;
         let task_timeout = Duration::from_secs(input.task.timeout_seconds);
-        let rendered_prompt =
-            build_requirement_task_prompt(&input.requirement, &input.plan, &input.task);
+        let rendered_prompt = build_requirement_task_prompt_with_session(
+            &input.requirement,
+            &input.plan,
+            &input.task,
+            session_reused,
+        );
+        if input.task.kind == RequirementTaskKind::Review {
+            self.ensure_parallel_review_extension().await?;
+            self.prompt(&rendered_prompt.markdown).await?;
+            let mut pi_events = Vec::new();
+            self.wait_for_agent_end_with_events(
+                Duration::from_secs(input.task.timeout_seconds),
+                Duration::from_secs(input.task.timeout_seconds),
+                &events,
+                |event| {
+                    if let Some(emitter) = &events {
+                        emitter.emit_pi_event(event.clone());
+                    }
+                    pi_events.push(event);
+                },
+            )
+            .await?;
+            let mut output = parse_parallel_review_output(&pi_events)?;
+            let review_details = output
+                .trace
+                .take()
+                .and_then(|trace| trace.pointer("/trace/parallelReview").cloned());
+            let mut trace = attach_prompt_diagnostics(
+                crate::requirement::build_pi_trace_metadata(&pi_events),
+                &rendered_prompt.diagnostics,
+            );
+            if let (Some(trace), Some(review_details)) = (&mut trace, review_details) {
+                trace["trace"]["parallelReview"] = review_details;
+            }
+            output.trace = self
+                .attach_session_usage(trace, session_reused, usage_before.as_ref())
+                .await;
+            output.pi_session_file = self.get_session_file().await?;
+            output.branch_name = input.task.branch_name.clone();
+            output.worktree_path = input.task.worktree_path.clone();
+            return Ok(output);
+        }
         let mut response = self
             .prompt_and_extract_response(
                 &rendered_prompt.markdown,
@@ -1109,6 +1220,9 @@ impl PiRpcClient {
         output.pi_session_file = self.get_session_file().await?;
         output.branch_name = input.task.branch_name.clone();
         output.worktree_path = input.task.worktree_path.clone();
+        output.trace = self
+            .attach_session_usage(output.trace, session_reused, usage_before.as_ref())
+            .await;
         match input.task.kind {
             RequirementTaskKind::BranchMerge | RequirementTaskKind::MergeReview => {
                 commit_task_changes(&input.task, &mut output).await?;
@@ -1129,13 +1243,12 @@ impl PiRpcClient {
         let session_reused = self
             .restore_or_new_session(input.pi_session_file.as_deref())
             .await?;
+        let usage_before = self.get_session_stats().await.ok();
         self.prepare_model_tier(&input.model_settings, RequirementModelTier::Medium)
             .await?;
-        self.prompt_with_images(
-            &crate::chat::build_project_chat_prompt(&input, session_reused),
-            &input.prompt_images,
-        )
-        .await?;
+        let rendered_prompt = crate::chat::build_project_chat_prompt(&input, session_reused);
+        self.prompt_with_images(&rendered_prompt.markdown, &input.prompt_images)
+            .await?;
         let mut pi_events = Vec::new();
         let no_requirement_events = None;
         self.wait_for_agent_end_with_events(
@@ -1150,10 +1263,14 @@ impl PiRpcClient {
             },
         )
         .await?;
-        let response = self
+        let mut response = self
             .extract_pi_response(&pi_events)
             .await
             .map_err(pi_response_failure_error)?;
+        response.trace = attach_prompt_diagnostics(response.trace, &rendered_prompt.diagnostics);
+        response.trace = self
+            .attach_session_usage(response.trace, session_reused, usage_before.as_ref())
+            .await;
         Ok(ProjectChatOutput {
             assistant_message: response.assistant_text,
             pi_session_file: self.get_session_file().await?,
@@ -1413,6 +1530,7 @@ impl PiRpcClient {
         &self,
         trace: Option<Value>,
         session_reused: bool,
+        before: Option<&Value>,
     ) -> Option<Value> {
         let stats = match self.get_session_stats().await {
             Ok(stats) => stats,
@@ -1421,7 +1539,7 @@ impl PiRpcClient {
                 return trace;
             }
         };
-        attach_session_usage(trace, &stats, session_reused)
+        attach_session_usage(trace, &stats, session_reused, before)
     }
 
     async fn extract_pi_response(
@@ -1460,7 +1578,7 @@ impl PiRpcClient {
             .await
             .map_err(pi_response_failure_error)?;
         response.trace = self
-            .attach_session_usage(response.trace, session_reused)
+            .attach_session_usage(response.trace, session_reused, None)
             .await;
         Ok(response)
     }
@@ -1730,26 +1848,87 @@ fn attach_session_usage(
     mut trace: Option<Value>,
     stats: &Value,
     session_reused: bool,
+    before: Option<&Value>,
 ) -> Option<Value> {
     let trace_data = trace.as_mut()?.get_mut("trace")?.as_object_mut()?;
     let tokens = stats.get("tokens").unwrap_or(&Value::Null);
     let context = stats.get("contextUsage").unwrap_or(&Value::Null);
-    let input = tokens.get("input").and_then(Value::as_u64).unwrap_or(0);
-    let output = tokens.get("output").and_then(Value::as_u64).unwrap_or(0);
-    let cache_read = tokens.get("cacheRead").and_then(Value::as_u64).unwrap_or(0);
-    let cache_write = tokens
-        .get("cacheWrite")
+    let delta = |key: &str| {
+        tokens
+            .get(key)
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .saturating_sub(
+                before
+                    .and_then(|value| value.pointer(&format!("/tokens/{key}")))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            )
+    };
+    let mut input = delta("input");
+    let mut output = delta("output");
+    let mut cache_read = delta("cacheRead");
+    let mut cache_write = delta("cacheWrite");
+    let call_count = stats
+        .get("assistantMessages")
         .and_then(Value::as_u64)
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .saturating_sub(
+            before
+                .and_then(|value| value.get("assistantMessages"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        );
+    let mut subagents = serde_json::json!({
+        "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
+        "maxContextTokens": 0, "maxContextPercent": 0.0
+    });
+    if let Some(items) = trace_data.get("parallelReview").and_then(Value::as_array) {
+        for item in items {
+            let usage = item.get("usage").unwrap_or(&Value::Null);
+            for (key, total) in [
+                ("input", &mut input),
+                ("output", &mut output),
+                ("cacheRead", &mut cache_read),
+                ("cacheWrite", &mut cache_write),
+            ] {
+                let value = usage.get(key).and_then(Value::as_u64).unwrap_or(0);
+                *total += value;
+                subagents[key] = serde_json::json!(subagents[key].as_u64().unwrap_or(0) + value);
+            }
+            let context_tokens = usage
+                .pointer("/context/tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let context_percent = usage
+                .pointer("/context/percent")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            subagents["maxContextTokens"] = serde_json::json!(
+                subagents["maxContextTokens"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .max(context_tokens)
+            );
+            subagents["maxContextPercent"] = serde_json::json!(
+                subagents["maxContextPercent"]
+                    .as_f64()
+                    .unwrap_or(0.0)
+                    .max(context_percent)
+            );
+        }
+    }
     trace_data.insert(
         "usage".to_owned(),
         serde_json::json!({
             "sessionReused": session_reused,
-            "callCount": stats.get("assistantMessages").and_then(Value::as_u64).unwrap_or(0),
+            "scope": if before.is_some() { "operation" } else { "session" },
+            "callCount": call_count,
             "input": input,
             "output": output,
             "cacheRead": cache_read,
             "cacheWrite": cache_write,
+            "subagents": subagents,
             "context": {
                 "tokens": context.get("tokens").and_then(Value::as_u64).unwrap_or(0),
                 "window": context.get("contextWindow").and_then(Value::as_u64).unwrap_or(0),
@@ -1758,6 +1937,124 @@ fn attach_session_usage(
         }),
     );
     trace
+}
+
+fn parse_parallel_review_output(
+    events: &[Value],
+) -> Result<RequirementTaskExecutionOutput, AppError> {
+    const PROTOCOL: &str = "raccoon:parallel-review:v1";
+    let details = events
+        .iter()
+        .find(|event| {
+            event.get("type").and_then(Value::as_str) == Some("tool_execution_end")
+                && event.get("toolName").and_then(Value::as_str) == Some("run_parallel_code_review")
+        })
+        .and_then(|event| event.pointer("/result/details"))
+        .ok_or_else(|| AppError::internal("并行审核未返回受管工具结果"))?;
+    if details.get("protocol").and_then(Value::as_str) != Some(PROTOCOL) {
+        return Err(AppError::internal("并行审核协议版本不兼容"));
+    }
+    let reviews = details
+        .get("reviews")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AppError::internal("并行审核结果缺少 reviews"))?;
+    let expected = ["正确性", "边界与安全", "代码质量与测试"];
+    if reviews.len() != expected.len() {
+        return Err(AppError::internal("并行审核必须返回三个审核角度"));
+    }
+    let mut approved = true;
+    let mut feedback = Vec::new();
+    let mut normalized = Vec::new();
+    let mut seen = BTreeSet::new();
+    for review in reviews {
+        let angle = review
+            .get("angle")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::internal("并行审核结果缺少角度"))?;
+        if !expected.contains(&angle) || !seen.insert(angle.to_owned()) {
+            return Err(AppError::internal("并行审核角度缺失、重复或未知"));
+        }
+        if review.get("ok").and_then(Value::as_bool) != Some(true) {
+            return Err(AppError::internal(format!(
+                "审核子代理「{angle}」执行失败：{}",
+                review
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("未知错误")
+            )));
+        }
+        let result = review
+            .get("result")
+            .ok_or_else(|| AppError::internal("审核子代理缺少结构化结论"))?;
+        let item_approved = result
+            .get("approved")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let item_feedback = result
+            .get("feedback")
+            .and_then(Value::as_str)
+            .unwrap_or("未提供反馈");
+        let item_feedback =
+            crate::prompt::truncate_chars(item_feedback, crate::prompt::MAX_REVIEW_FEEDBACK_CHARS)
+                .0;
+        let summary = result
+            .get("result_summary")
+            .and_then(Value::as_str)
+            .unwrap_or(&item_feedback);
+        approved &= item_approved;
+        if !item_approved {
+            feedback.push(format!("{angle}：{item_feedback}"));
+        }
+        normalized.push(serde_json::json!({
+            "angle": angle,
+            "approved": item_approved,
+            "feedback": item_feedback,
+            "resultSummary": summary,
+            "usage": review.get("usage").cloned().unwrap_or(Value::Null),
+        }));
+    }
+    let feedback = if feedback.is_empty() {
+        None
+    } else {
+        Some(
+            crate::prompt::truncate_chars(
+                &feedback.join("\n"),
+                crate::prompt::MAX_REVIEW_FEEDBACK_TOTAL_CHARS,
+            )
+            .0,
+        )
+    };
+    Ok(RequirementTaskExecutionOutput {
+        result_summary: if approved {
+            "三个隔离审核角度均已通过。".to_owned()
+        } else {
+            format!(
+                "审核不通过：{}",
+                feedback.as_deref().unwrap_or("存在审核问题")
+            )
+        },
+        pi_session_file: None,
+        branch_name: None,
+        worktree_path: None,
+        review_status: Some(if approved {
+            RequirementReviewStatus::Approved
+        } else {
+            RequirementReviewStatus::Rejected
+        }),
+        review_feedback: feedback,
+        pull_request_url: None,
+        merged_into: None,
+        cleanup_summary: None,
+        execution_warning: None,
+        changed: None,
+        no_op_reason: None,
+        recovery_guidance: None,
+        trace: Some(serde_json::json!({
+            "type": "pi_trace",
+            "version": 2,
+            "trace": { "parallelReview": normalized }
+        })),
+    })
 }
 
 fn pi_response_failure_error(failure: PiResponseFailure) -> AppError {

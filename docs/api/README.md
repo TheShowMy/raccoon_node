@@ -148,6 +148,8 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
 仅支持 png、jpeg、gif 和 webp，单个附件最大 5MB。附件固定写入
 `.raccoon-node/attachments/`，路径逃逸和符号链接逃逸会被拒绝。
 
+每次 Prompt 最多携带 8 个仓库引用文件和 3 张图片，图片总计不超过 10MB。引用文件单个不超过 32 KiB 且累计不超过 128 KiB 时内联；超过内联预算的文件只发送安全仓库相对路径和大小，由 Pi Agent 按需分段读取，不静默截断需求事实。
+
 ## 项目问答
 
 ### 获取或重置会话
@@ -331,7 +333,7 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
 执行计划中的实现任务通过 `review_history` 返回结构化审核轮次。旧任务没有历史时返回
 空数组；仅保存结果摘要，不包含思考内容或完整工具输出。
 
-审核 Sub Agent 会话不进入任务时间线。
+新执行计划为每个实现任务生成一个 Review 父节点。父 session 内的受管工具并发运行“正确性 / 边界与安全 / 代码质量与测试”三个无持久化隔离子代理；任务 session API 在同一个工具结果中返回三个 subagents 明细，不产生子 session 文件。旧 ReviewSubAgent/ReviewSummary 计划仍按旧协议恢复。
 
 ### JSONL 会话分页
 

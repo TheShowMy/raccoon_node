@@ -16,17 +16,17 @@ use crate::file_refs::{build_prompt_images, build_reference_context};
 use crate::models::{
     AppData, ClarificationAnswer, FileReference, ImageAttachment, ModelSettings, PiModel, Project,
     ProjectCanvasResponse, ProjectChat, ProjectChatInput, ProjectChatMessage,
-    ProjectChatMessageRole, ProjectChatOutput, ProjectChatResponse, ProjectTokenUsage, Requirement,
-    RequirementAnalysisInput, RequirementAnalysisOutput, RequirementClarificationRound,
-    RequirementConversationItem, RequirementConversationPrompt, RequirementConversationResponse,
-    RequirementExecutionPlan, RequirementMessage, RequirementMessageRole, RequirementNoticeLevel,
-    RequirementPlanInput, RequirementProcessStatus, RequirementPromptState,
-    RequirementRecoveryStage, RequirementReviewRound, RequirementReviewRoundStatus,
-    RequirementReviewStatus, RequirementReviewStep, RequirementStatus,
-    RequirementTaskDetailResponse, RequirementTaskExecutionInput, RequirementTaskExecutionOutput,
-    RequirementTaskKind, RequirementTaskStatus, SessionContentBlock, SessionEntry,
-    SessionTranscriptPage, TerminalCommandProfile, TerminalCommandProfileUpdate,
-    TokenUsageCategory,
+    ProjectChatMessageRole, ProjectChatOutput, ProjectChatResponse, ProjectTokenUsage,
+    PromptSourceUsage, Requirement, RequirementAnalysisInput, RequirementAnalysisOutput,
+    RequirementClarificationRound, RequirementConversationItem, RequirementConversationPrompt,
+    RequirementConversationResponse, RequirementExecutionPlan, RequirementMessage,
+    RequirementMessageRole, RequirementNoticeLevel, RequirementPlanInput, RequirementProcessStatus,
+    RequirementPromptState, RequirementRecoveryStage, RequirementReviewRound,
+    RequirementReviewRoundStatus, RequirementReviewStatus, RequirementReviewStep,
+    RequirementStatus, RequirementTaskDetailResponse, RequirementTaskExecutionInput,
+    RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
+    SessionContentBlock, SessionEntry, SessionTranscriptPage, TerminalCommandProfile,
+    TerminalCommandProfileUpdate, TokenUsageCategory, TokenUsageHotspot, TokenUsageRole,
 };
 use crate::utils::commit_staged_changes;
 use crate::utils::effective_model_tier;
@@ -511,12 +511,14 @@ impl JsonStore {
         }
         if task.kind == RequirementTaskKind::Implementation {
             for review in plan.tasks.iter().filter(|candidate| {
-                candidate.kind == RequirementTaskKind::ReviewSummary
-                    && candidate.review_for.as_deref() == Some(task_id)
+                matches!(
+                    candidate.kind,
+                    RequirementTaskKind::Review | RequirementTaskKind::ReviewSummary
+                ) && candidate.review_for.as_deref() == Some(task_id)
             }) {
                 if let Some(session_file) = review.pi_session_file.as_deref() {
                     sources.push((
-                        format!("审核汇总 · {}", review.title),
+                        format!("审核 · {}", review.title),
                         self.resolve_managed_session_path(session_file)?,
                     ));
                 }
@@ -2014,16 +2016,36 @@ impl JsonStore {
                         let review_status = review_update
                             .or(effective_review_status)
                             .unwrap_or(RequirementReviewStatus::Rejected);
-                        record_review_step(
-                            plan,
-                            task_id,
-                            review_status,
-                            effective_result_summary.clone(),
-                            (review_status == RequirementReviewStatus::Rejected)
-                                .then(|| effective_review_feedback.clone())
-                                .flatten(),
-                            now,
-                        );
+                        if task_kind == RequirementTaskKind::Review
+                            && record_parallel_review_steps(
+                                plan,
+                                task_id,
+                                output.trace.as_ref(),
+                                now,
+                            )
+                        {
+                            finish_review_round(
+                                plan,
+                                task_id,
+                                review_status,
+                                effective_result_summary.clone(),
+                                (review_status == RequirementReviewStatus::Rejected)
+                                    .then(|| effective_review_feedback.clone())
+                                    .flatten(),
+                                now,
+                            );
+                        } else {
+                            record_review_step(
+                                plan,
+                                task_id,
+                                review_status,
+                                effective_result_summary.clone(),
+                                (review_status == RequirementReviewStatus::Rejected)
+                                    .then(|| effective_review_feedback.clone())
+                                    .flatten(),
+                                now,
+                            );
+                        }
                     }
                     RequirementTaskKind::ReviewSummary => {
                         let review_status =
@@ -2341,16 +2363,19 @@ fn aggregate_project_token_usage<'a>(
     let mut found = false;
 
     for chat in project_chats {
+        let mut previous = None;
         for message in &chat.messages {
             if let Some(metadata) = &message.metadata
-                && add_trace_usage(&mut usage.chat, metadata)
+                && add_trace_usage_sequence(&mut usage.chat, metadata, &mut previous)
             {
                 found = true;
+                collect_trace_insights(&mut usage, metadata, "项目问答");
             }
         }
     }
 
     for requirement in requirements {
+        let mut previous = None;
         for message in &requirement.messages {
             if message.role != RequirementMessageRole::Trace {
                 continue;
@@ -2362,9 +2387,10 @@ fn aggregate_project_token_usage<'a>(
                 continue;
             }
             if let Some(metadata) = &message.metadata
-                && add_trace_usage(&mut usage.split, metadata)
+                && add_trace_usage_sequence(&mut usage.split, metadata, &mut previous)
             {
                 found = true;
+                collect_trace_insights(&mut usage, metadata, &requirement.title);
             }
         }
 
@@ -2373,12 +2399,14 @@ fn aggregate_project_token_usage<'a>(
                 && add_trace_usage(&mut usage.split, trace)
             {
                 found = true;
+                collect_trace_insights(&mut usage, trace, &format!("规划：{}", requirement.title));
             }
             for task in &plan.tasks {
                 if let Some(trace) = &task.trace
                     && add_trace_usage(&mut usage.task, trace)
                 {
                     found = true;
+                    collect_trace_insights(&mut usage, trace, &task.title);
                 }
             }
         }
@@ -2393,7 +2421,94 @@ fn aggregate_project_token_usage<'a>(
     usage.total.cache_read = usage.chat.cache_read + usage.split.cache_read + usage.task.cache_read;
     usage.total.cache_write =
         usage.chat.cache_write + usage.split.cache_write + usage.task.cache_write;
+    usage
+        .hotspots
+        .sort_by_key(|item| std::cmp::Reverse(item.usage.total()));
+    usage.hotspots.truncate(5);
+    usage
+        .sources
+        .sort_by_key(|item| std::cmp::Reverse(item.chars));
+    usage.sources.truncate(5);
+    usage
+        .roles
+        .sort_by_key(|item| std::cmp::Reverse(item.usage.total()));
     Some(usage)
+}
+
+fn collect_trace_insights(usage: &mut ProjectTokenUsage, trace: &Value, label: &str) {
+    let Some(raw) = trace_usage(trace) else {
+        return;
+    };
+    let category = TokenUsageCategory {
+        input: raw.get("input").and_then(Value::as_u64).unwrap_or(0),
+        output: raw.get("output").and_then(Value::as_u64).unwrap_or(0),
+        cache_read: raw.get("cacheRead").and_then(Value::as_u64).unwrap_or(0),
+        cache_write: raw.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0),
+    };
+    let context_percent = raw
+        .pointer("/context/percent")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    usage.max_context_percent = usage.max_context_percent.max(context_percent);
+    let role = trace
+        .pointer("/trace/prompt/role")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    usage.hotspots.push(TokenUsageHotspot {
+        label: label.to_owned(),
+        role: role.to_owned(),
+        usage: category.clone(),
+        context_percent,
+    });
+    if let Some(existing) = usage.roles.iter_mut().find(|item| item.role == role) {
+        existing.usage.input += category.input;
+        existing.usage.output += category.output;
+        existing.usage.cache_read += category.cache_read;
+        existing.usage.cache_write += category.cache_write;
+    } else {
+        usage.roles.push(TokenUsageRole {
+            role: role.to_owned(),
+            usage: category,
+        });
+    }
+    if let Some(sources) = trace
+        .pointer("/trace/prompt/sources")
+        .and_then(Value::as_array)
+    {
+        for source in sources
+            .iter()
+            .filter(|source| source.get("included").and_then(Value::as_bool) == Some(true))
+        {
+            let kind = source
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let source_label = source
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let chars = source.get("chars").and_then(Value::as_u64).unwrap_or(0);
+            let estimated_tokens = source
+                .get("estimated_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if let Some(existing) = usage
+                .sources
+                .iter_mut()
+                .find(|item| item.kind == kind && item.label == source_label)
+            {
+                existing.chars += chars;
+                existing.estimated_tokens += estimated_tokens;
+            } else {
+                usage.sources.push(PromptSourceUsage {
+                    kind: kind.to_owned(),
+                    label: source_label.to_owned(),
+                    chars,
+                    estimated_tokens,
+                });
+            }
+        }
+    }
 }
 
 fn add_trace_usage(category: &mut TokenUsageCategory, trace: &Value) -> bool {
@@ -2404,6 +2519,41 @@ fn add_trace_usage(category: &mut TokenUsageCategory, trace: &Value) -> bool {
     category.output += usage.get("output").and_then(Value::as_u64).unwrap_or(0);
     category.cache_read += usage.get("cacheRead").and_then(Value::as_u64).unwrap_or(0);
     category.cache_write += usage.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0);
+    true
+}
+
+fn add_trace_usage_sequence(
+    category: &mut TokenUsageCategory,
+    trace: &Value,
+    previous: &mut Option<TokenUsageCategory>,
+) -> bool {
+    let Some(raw) = trace_usage(trace) else {
+        return false;
+    };
+    if raw.get("scope").and_then(Value::as_str) == Some("operation") {
+        return add_trace_usage(category, trace);
+    }
+    let current = TokenUsageCategory {
+        input: raw.get("input").and_then(Value::as_u64).unwrap_or(0),
+        output: raw.get("output").and_then(Value::as_u64).unwrap_or(0),
+        cache_read: raw.get("cacheRead").and_then(Value::as_u64).unwrap_or(0),
+        cache_write: raw.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0),
+    };
+    let reused = raw.get("sessionReused").and_then(Value::as_bool) == Some(true);
+    let base = if reused { previous.as_ref() } else { None };
+    category.input += current
+        .input
+        .saturating_sub(base.map(|item| item.input).unwrap_or(0));
+    category.output += current
+        .output
+        .saturating_sub(base.map(|item| item.output).unwrap_or(0));
+    category.cache_read += current
+        .cache_read
+        .saturating_sub(base.map(|item| item.cache_read).unwrap_or(0));
+    category.cache_write += current
+        .cache_write
+        .saturating_sub(base.map(|item| item.cache_write).unwrap_or(0));
+    *previous = Some(current);
     true
 }
 
@@ -2539,6 +2689,11 @@ fn parse_session_blocks(message: &Value) -> Vec<SessionContentBlock> {
                         raw: block.clone(),
                     }),
             );
+        }
+        if message.get("toolName").and_then(Value::as_str) == Some("run_parallel_code_review")
+            && let Some(reviews) = message.pointer("/details/reviews").cloned()
+        {
+            blocks.push(SessionContentBlock::Subagents { reviews });
         }
         return blocks;
     }

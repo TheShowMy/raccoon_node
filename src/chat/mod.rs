@@ -1,6 +1,7 @@
 use crate::models::{ProjectChatInput, ProjectChatMessageRole};
+use crate::prompt::{PromptRenderer, PromptSourceDelivery, PromptSourceKind, RenderedPrompt};
 
-pub fn build_project_chat_prompt(input: &ProjectChatInput, session_reused: bool) -> String {
+pub fn build_project_chat_prompt(input: &ProjectChatInput, session_reused: bool) -> RenderedPrompt {
     let latest_question = input
         .messages
         .iter()
@@ -26,7 +27,7 @@ pub fn build_project_chat_prompt(input: &ProjectChatInput, session_reused: bool)
             .join("\n")
     };
 
-    format!(
+    let body = format!(
         r#"你是 raccoon_node 的项目问答助手。
 
 项目：{project_name}
@@ -43,7 +44,6 @@ pub fn build_project_chat_prompt(input: &ProjectChatInput, session_reused: bool)
 当前问题：
 {latest_question}
 
-{reference_context}
 "#,
         project_name = input.project.name,
         repo_path = input.project.local_path,
@@ -53,8 +53,32 @@ pub fn build_project_chat_prompt(input: &ProjectChatInput, session_reused: bool)
             format!("历史消息：\n{history}")
         },
         latest_question = latest_question,
-        reference_context = input.reference_context.as_deref().unwrap_or("")
-    )
+    );
+    let mut renderer = PromptRenderer::new("project_chat");
+    if session_reused {
+        renderer = renderer.add_source(
+            PromptSourceKind::TaskContext,
+            "latest_question",
+            format!("继续当前项目问答会话。\n\n当前问题：\n{latest_question}"),
+        );
+    } else {
+        renderer = renderer.add_source(PromptSourceKind::TaskContext, "project_chat", body);
+    }
+    if let Some(reference_context) = &input.reference_context {
+        for part in &reference_context.parts {
+            renderer = renderer.add_reference_source(
+                &part.path,
+                &part.markdown,
+                if part.inline {
+                    PromptSourceDelivery::Inline
+                } else {
+                    PromptSourceDelivery::PathOnly
+                },
+                part.bytes,
+            );
+        }
+    }
+    renderer.render()
 }
 
 #[cfg(test)]
@@ -89,7 +113,7 @@ mod tests {
             pi_session_file: None,
         };
 
-        let prompt = build_project_chat_prompt(&input, false);
+        let prompt = build_project_chat_prompt(&input, false).markdown;
         assert!(prompt.contains("禁止修改文件"));
         assert!(prompt.contains("禁止"));
         assert!(prompt.contains("生成 DAG"));
