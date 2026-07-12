@@ -24,6 +24,7 @@ export type OrbitNodeData = Record<string, unknown> & {
   detail: string;
   icon: ReactNode;
   active: boolean;
+  disabled: boolean;
   onOpen: () => void;
   onPrefetch?: () => void;
 };
@@ -125,6 +126,7 @@ export const OrbitNode = memo(function OrbitNode({
       label={`${data.title} · ${data.detail}`}
       icon={data.icon}
       variant={data.active ? "primary" : "secondary"}
+      isDisabled={data.disabled}
       className={`orbit-tool-button nodrag ${
         data.active ? "orbit-tool-button--active" : ""
       }`}
@@ -206,6 +208,7 @@ export function buildOrbitNodes({
     const position = fallback
       ? staticOrbitPosition(definition.id)
       : orbitPosition(definition.anchor, canvasSize as CanvasSize);
+    const disabled = activePanel !== null;
     return {
       id: definition.id,
       type: "orbitNode",
@@ -213,7 +216,7 @@ export function buildOrbitNodes({
       style: {
         width: ORBIT_NODE_SIZE.width,
         height: ORBIT_NODE_SIZE.height,
-        pointerEvents: "all",
+        pointerEvents: disabled ? "none" : "all",
       },
       data: {
         panel: definition.kind,
@@ -227,6 +230,7 @@ export function buildOrbitNodes({
         } as BuildOrbitNodesInput),
         icon: definition.icon,
         active: activePanel === definition.kind,
+        disabled,
         onOpen: () => onOpen(definition.kind),
         onPrefetch: onPrefetch ? () => onPrefetch(definition.kind) : undefined,
       },

@@ -505,12 +505,34 @@ fn terminal_size(rows: Option<u16>, cols: Option<u16>) -> PtySize {
     }
 }
 
+#[cfg(windows)]
+fn find_windows_shell() -> &'static str {
+    fn exists_on_path(program: &str) -> bool {
+        let Some(paths) = std::env::var_os("PATH") else {
+            return false;
+        };
+        std::env::split_paths(&paths).any(|dir| dir.join(program).is_file())
+    }
+
+    for program in ["pwsh.exe", "powershell.exe"] {
+        if exists_on_path(program) {
+            return program;
+        }
+    }
+    "cmd.exe"
+}
+
 fn shell_command(command: Option<&str>) -> CommandBuilder {
     #[cfg(windows)]
     {
-        let mut builder = CommandBuilder::new("cmd.exe");
+        let shell = find_windows_shell();
+        let mut builder = CommandBuilder::new(shell);
         if let Some(command) = command {
-            builder.args(["/D", "/S", "/C", command]);
+            if shell == "cmd.exe" {
+                builder.args(["/D", "/S", "/C", command]);
+            } else {
+                builder.args(["-NoProfile", "-Command", command]);
+            }
         }
         builder
     }

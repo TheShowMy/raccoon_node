@@ -27,6 +27,7 @@ import type {
   StartNodeData,
   TerminalCommandProfileDraft,
 } from "../../types/api";
+import TerminalAccessForm from "../terminal/TerminalAccessForm";
 import TerminalSessionView from "../terminal/TerminalSessionView";
 import NodeBar from "../ui/NodeBar";
 
@@ -156,33 +157,16 @@ export default function ProjectTerminalNode({ data }: { data: TerminalData }) {
           ) : null}
 
           {needsTerminalAccess ? (
-            <HStack
-              as="form"
-              className="nodrag"
-              gap={2}
-              padding={3}
-              align="center"
-              onSubmit={(event) => void authorizeTerminal(event)}
-            >
-              <KeyRound size={16} />
-              <TextInput
-                label="终端密钥"
-                value={accessKey}
-                type="password"
-                placeholder="输入启动密钥"
+            <Stack padding={3} align="center">
+              <TerminalAccessForm
+                accessKey={accessKey}
+                accessError={data.terminalAccessError}
+                accessBusy={data.terminalAccessBusy}
+                helperText="验证通过后 12 小时内无需再次输入"
                 onChange={setAccessKey}
+                onSubmit={(event) => void authorizeTerminal(event)}
               />
-              <Button
-                label="启用终端"
-                type="submit"
-                variant="primary"
-                isLoading={data.terminalAccessBusy}
-                isDisabled={!accessKey.trim()}
-              />
-              <Text type="supporting" size="2xs">
-                {data.terminalAccessError ?? "验证通过后 12 小时内无需再次输入"}
-              </Text>
-            </HStack>
+            </Stack>
           ) : data.terminalAccessRequired && data.terminalAccessExpiresAt ? (
             <HStack className="nodrag" gap={2} padding={3} align="center">
               <KeyRound size={14} />

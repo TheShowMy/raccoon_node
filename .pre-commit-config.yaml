@@ -44,7 +44,7 @@ repos:
 
       - id: frontend-build
         name: 前端生产构建检查
-        entry: npm --prefix frontend run build
+        entry: npm --prefix frontend run build:ci
         language: system
         files: ^frontend/.*\.(ts|tsx|css|html)$
         pass_filenames: false
@@ -76,3 +76,4 @@ repos:
         language: system
         files: \.rs$
         pass_filenames: false
+        verbose: true

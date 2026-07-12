@@ -730,7 +730,9 @@ function AppCanvas() {
 
   const panelContent = useMemo(() => {
     if (
-      (panelPhase !== "content" && panelPhase !== "closing") ||
+      (panelPhase !== "content" &&
+        panelPhase !== "closing" &&
+        panelPhase !== "focusing") ||
       !openPanel ||
       !current.project
     ) {

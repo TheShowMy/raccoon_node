@@ -57,4 +57,22 @@ describe("workspacePanelPosition", () => {
   it("keeps the legacy right-side position until an orbit node is available", () => {
     expect(workspacePanelPosition(null)).toEqual({ x: 1540, y: 0 });
   });
+
+  it("disables satellite interactions while a panel is open", () => {
+    const nodes = buildOrbitNodes({
+      activePanel: "files",
+      gitBranch: "main",
+      modelRpcStatus: "ready",
+      requirementCount: 0,
+      terminalCount: 0,
+      tokenContextPercent: 0,
+      onOpen: vi.fn(),
+      canvasSize: { width: 1280, height: 720 },
+    });
+
+    expect(nodes.every((node) => node.data.disabled)).toBe(true);
+    expect(nodes.every((node) => node.style?.pointerEvents === "none")).toBe(
+      true,
+    );
+  });
 });

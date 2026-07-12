@@ -3,7 +3,6 @@ import { useMemo, useState } from "react";
 import {
   ArrowLeft,
   Check,
-  KeyRound,
   Plus,
   Power,
   RefreshCw,
@@ -25,7 +24,6 @@ import { Selector } from "@astryxdesign/core/Selector";
 import { Stack } from "@astryxdesign/core/Stack";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
-import { TextInput } from "@astryxdesign/core/TextInput";
 import { Token } from "@astryxdesign/core/Token";
 import { Toolbar } from "@astryxdesign/core/Toolbar";
 import type {
@@ -41,6 +39,7 @@ import {
   thinkingLevels,
   tierLabels,
 } from "../../utils/format";
+import TerminalAccessForm from "../terminal/TerminalAccessForm";
 import TerminalSessionView from "../terminal/TerminalSessionView";
 
 const TIERS: ModelTierKey[] = ["low", "medium", "high"];
@@ -213,33 +212,16 @@ export default function ModelSettingsPanel({
                 }
               />
               {needsTerminalAccess ? (
-                <HStack
-                  as="form"
-                  className="nodrag"
-                  gap={2}
-                  padding={3}
-                  align="center"
-                  onSubmit={(event) => void authorizeTerminal(event)}
-                >
-                  <KeyRound size={16} />
-                  <TextInput
-                    label="终端密钥"
-                    value={accessKey}
-                    type="password"
-                    placeholder="输入启动密钥"
+                <VStack padding={3} align="center">
+                  <TerminalAccessForm
+                    accessKey={accessKey}
+                    accessError={terminalAccessError}
+                    accessBusy={terminalAccessBusy}
+                    helperText="验证通过后可启动 Pi 登录终端"
                     onChange={setAccessKey}
+                    onSubmit={(event) => void authorizeTerminal(event)}
                   />
-                  <Button
-                    label="启用终端"
-                    type="submit"
-                    variant="primary"
-                    isLoading={terminalAccessBusy}
-                    isDisabled={!accessKey.trim()}
-                  />
-                  <Text type="supporting" size="2xs">
-                    {terminalAccessError ?? "验证通过后可启动 Pi 登录终端"}
-                  </Text>
-                </HStack>
+                </VStack>
               ) : null}
               <StackItem size="fill">
                 {piLoginSession ? (
@@ -257,11 +239,12 @@ export default function ModelSettingsPanel({
                 )}
               </StackItem>
               {terminalDisabled && !piLoginSession ? (
-                <Stack padding={3} align="center">
-                  <Text type="supporting" size="2xs">
-                    Web 终端仅允许通过本机监听地址使用。
-                  </Text>
-                </Stack>
+                <Banner
+                  className="nodrag"
+                  status="warning"
+                  title="终端当前不可用"
+                  description="Web 终端仅允许通过本机监听地址使用。"
+                />
               ) : null}
               {piLoginError ? (
                 <Stack padding={3} align="center">
