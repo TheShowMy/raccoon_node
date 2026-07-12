@@ -2,20 +2,15 @@ import { useMemo, useState } from "react";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
+import { Center } from "@astryxdesign/core/Center";
 import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
-import {
-  HStack,
-  Layout,
-  LayoutContent,
-  LayoutPanel,
-  VStack,
-} from "@astryxdesign/core/Layout";
+import { HStack, Layout, LayoutPanel, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { Toolbar } from "@astryxdesign/core/Toolbar";
-import { GitBranch, RefreshCw } from "lucide-react";
+import { FileSearch, GitBranch, RefreshCw } from "lucide-react";
 import type {
   GitAction,
   GitDiffArea,
@@ -260,48 +255,66 @@ export default function GitWorkbench({ data }: { data: GitData }) {
         </LayoutPanel>
       }
     >
-      <LayoutContent padding={3} isScrollable>
-        <VStack gap={3} height="100%">
-          {status?.write_blocked ? (
-            <Banner
-              status="warning"
-              title="Git 写操作已阻止"
-              description={status.blocked_reason ?? undefined}
-            />
-          ) : null}
-          {data.error ? (
-            <Banner
-              status="error"
-              title="Git 操作失败"
-              description={data.error}
-            />
-          ) : null}
-          {data.lastResult ? (
-            <Banner status="success" title={data.lastResult} />
-          ) : null}
-          {data.diff ? (
-            data.diff.binary ? (
-              <EmptyState title="二进制文件不可预览" isCompact />
-            ) : (
-              <CodeBlock
-                code={data.diff.content || "没有可显示的文本差异"}
-                language="diff"
-                title={`${data.diff.path} · ${data.diff.area === "staged" ? "已暂存" : "未暂存"}`}
-                hasLineNumbers
-                width="100%"
+      <div className="git-main-area">
+        <div
+          className="git-diff-area"
+          style={{ overflow: data.diff ? "auto" : "hidden" }}
+        >
+          <VStack gap={3} height="100%">
+            {status?.write_blocked ? (
+              <Banner
+                status="warning"
+                title="Git 写操作已阻止"
+                description={status.blocked_reason ?? undefined}
               />
-            )
-          ) : (
-            <EmptyState title="选择文件查看差异" isCompact />
-          )}
-          <HStack gap={2} align="end">
-            <TextArea
-              label="提交信息"
-              value={commitMessage}
-              rows={3}
-              isDisabled={disabled}
-              onChange={setCommitMessage}
-            />
+            ) : null}
+            {data.error ? (
+              <Banner
+                status="error"
+                title="Git 操作失败"
+                description={data.error}
+              />
+            ) : null}
+            {data.lastResult ? (
+              <Banner status="success" title={data.lastResult} />
+            ) : null}
+            {data.diff ? (
+              data.diff.binary ? (
+                <Center height="100%">
+                  <EmptyState title="二进制文件不可预览" isCompact />
+                </Center>
+              ) : (
+                <CodeBlock
+                  code={data.diff.content || "没有可显示的文本差异"}
+                  language="diff"
+                  title={`${data.diff.path} · ${data.diff.area === "staged" ? "已暂存" : "未暂存"}`}
+                  hasLineNumbers
+                  width="100%"
+                />
+              )
+            ) : (
+              <Center height="100%">
+                <EmptyState
+                  title="选择文件查看差异"
+                  description="在左侧列表中点击文件，即可预览该文件的 Git 差异。"
+                  icon={<FileSearch size={32} aria-hidden="true" />}
+                  isCompact
+                />
+              </Center>
+            )}
+          </VStack>
+        </div>
+        <div className="git-commit-area">
+          <HStack gap={2} align="end" className="git-commit-message">
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <TextArea
+                label="提交信息"
+                value={commitMessage}
+                rows={2}
+                isDisabled={disabled}
+                onChange={setCommitMessage}
+              />
+            </div>
             <Button
               label="提交"
               isDisabled={disabled || !staged.length || !commitMessage.trim()}
@@ -318,8 +331,8 @@ export default function GitWorkbench({ data }: { data: GitData }) {
               }
             />
           </HStack>
-        </VStack>
-      </LayoutContent>
+        </div>
+      </div>
       <AlertDialog
         isOpen={confirmation !== null}
         onOpenChange={(open) => {
