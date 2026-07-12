@@ -467,9 +467,6 @@ describe("AstryxChatSurface", () => {
       target: { textContent: "/需求生成 重写登录流程" },
     });
     fireEvent.keyDown(input, { key: "Enter" });
-    fireEvent.keyDown(screen.getByRole("combobox", { name: "需求补充说明" }), {
-      key: "Enter",
-    });
 
     await waitFor(() =>
       expect(onStartRequirement).toHaveBeenCalledWith("重写登录流程", {
@@ -482,7 +479,7 @@ describe("AstryxChatSurface", () => {
     ).toBeInTheDocument();
   });
 
-  it("prepares a branch with inherited chat before requiring a supplement", async () => {
+  it("starts a requirement using project chat context when no description is given", async () => {
     const onStartRequirement = vi.fn(async () => true);
     render(
       <AstryxChatSurface
@@ -507,26 +504,31 @@ describe("AstryxChatSurface", () => {
     const input = screen.getByRole("combobox", { name: "项目聊天输入" });
     fireEvent.input(input, { target: { textContent: "/需求生成" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(onStartRequirement).not.toHaveBeenCalled();
-    expect(
-      await screen.findByText(/将继承当前聊天 1 条消息/),
-    ).toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(onStartRequirement).toHaveBeenCalledWith("", {
+        references: [],
+        images: [],
+      }),
+    );
     expect(
       screen.getByRole("heading", { name: "项目对话" }),
     ).toBeInTheDocument();
   });
 
-  it("prepares a standalone requirement when no context is available", async () => {
+  it("starts a standalone requirement when no context is available", async () => {
     const onStartRequirement = vi.fn(async () => true);
     render(<AstryxChatSurface data={data({ onStartRequirement })} />);
     const input = screen.getByRole("combobox", { name: "项目聊天输入" });
     fireEvent.input(input, { target: { textContent: "/需求生成" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(onStartRequirement).not.toHaveBeenCalled();
-    expect(
-      await screen.findByText("当前无完整聊天上下文，将创建独立需求。"),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(onStartRequirement).toHaveBeenCalledWith("", {
+        references: [],
+        images: [],
+      }),
+    );
     expect(
       screen.getByRole("heading", { name: "项目对话" }),
     ).toBeInTheDocument();
@@ -648,12 +650,6 @@ describe("AstryxChatSurface", () => {
     });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(
-      screen.getByRole("combobox", { name: "需求补充说明" }),
-    ).toBeInTheDocument();
-    fireEvent.keyDown(screen.getByRole("combobox", { name: "需求补充说明" }), {
-      key: "Enter",
-    });
     view.rerender(
       <AstryxChatSurface data={data({ busy: true, error: null })} />,
     );

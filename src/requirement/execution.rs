@@ -11,8 +11,9 @@ use crate::models::{
 };
 use crate::prompt::{
     MAX_DEPENDENCY_CONTEXT_CHARS, MAX_DEPENDENCY_OUTPUT_CHARS, MAX_JSON_REPAIR_EXCERPT_CHARS,
-    MAX_RECOVERY_GUIDANCE_CHARS, PromptContract, PromptRenderer, PromptSourceKind, RenderedPrompt,
-    SectionKind, contract_text, format_section, truncate_chars,
+    MAX_RECOVERY_GUIDANCE_CHARS, MAX_REVIEW_FEEDBACK_CHARS, PromptContract, PromptRenderer,
+    PromptSourceKind, RenderedPrompt, SectionKind, contract_source_text, contract_text,
+    format_section, strip_markdown_frontmatter, truncate_chars,
 };
 
 const GLOBAL_PROMPT: &str = include_str!("../../prompts/global/raccoon.md");
@@ -70,7 +71,7 @@ JSON 格式："#;
         .add_source(
             PromptSourceKind::Skill,
             "execution_planner",
-            include_str!("../../prompts/skills/execution_planner.md"),
+            strip_markdown_frontmatter(include_str!("../../prompts/skills/execution_planner.md")),
         )
         .add_source(
             PromptSourceKind::InlinePolicy,
@@ -85,7 +86,7 @@ JSON 格式："#;
         .add_source(
             PromptSourceKind::Contract,
             contract.id(),
-            contract_text(contract),
+            contract_source_text(contract),
         )
         .add_source(
             PromptSourceKind::InlinePolicy,
@@ -130,6 +131,7 @@ pub fn parse_requirement_plan(text: &str) -> Result<RequirementExecutionPlan, Ap
             recovery_guidance: None,
             high_tier_execution_used: false,
             last_review_feedback: None,
+            last_review_fix_instructions: None,
             pull_request_url: None,
             merged_into: None,
             cleanup_summary: None,
@@ -196,7 +198,7 @@ pub fn build_requirement_task_prompt_with_session(
         let policy = format_section(
             SectionKind::Managed,
             "review-policy",
-            include_str!("../../prompts/skills/code_reviewer.md"),
+            strip_markdown_frontmatter(include_str!("../../prompts/skills/code_reviewer.md")),
         )
         .expect("static review policy section is valid");
         let packet = format_section(
@@ -239,11 +241,10 @@ pub fn build_requirement_task_prompt_with_session(
         RequirementTaskKind::Implementation => (
             "实现 Agent",
             format!(
-                r#"## 任务边界（必须遵守）
-- 只实现「当前任务」描述中的内容；禁止实现任何未在本描述中明确列出的功能。
-- 只能修改目标文件：{target_files_for_boundary}；禁止改动无关文件。
-- 禁止以“预留”“提前准备”“顺便”等理由实现后续任务的功能。
-- 若发现当前任务已无需修改，返回 changed=false，并在 no_op_reason 说明验证依据。
+                r#"## 任务边界
+- 只实现当前任务描述的内容，禁止实现未明确列出的功能。
+- 只能修改目标文件：{target_files_for_boundary}。
+- 禁止以“预留”“提前准备”“顺便”等理由实现后续任务。
 {fix_feedback}
 {recovery_guidance}"#,
                 target_files_for_boundary = if task.target_files.is_empty() {
@@ -252,9 +253,16 @@ pub fn build_requirement_task_prompt_with_session(
                     task.target_files.join("、")
                 },
                 fix_feedback = if task.status == RequirementTaskStatus::Fixing {
+                    let feedback = task
+                        .last_review_fix_instructions
+                        .as_ref()
+                        .filter(|items| !items.is_empty())
+                        .map(|items| items.join("\n"))
+                        .or_else(|| task.last_review_feedback.clone())
+                        .unwrap_or_else(|| "审核未通过".to_owned());
                     format!(
                         "\n## 修复要求\n- 当前状态：未提交，改动位于暂存区（git diff --cached）\n- 最新审核反馈：{}\n- 必须针对审核反馈产生实际代码修改，禁止 changed=false 或仅重新描述已有实现。\n- 请在原实现基础上修复问题，不要重做无关内容。",
-                        task.last_review_feedback.as_deref().unwrap_or("审核未通过"),
+                        feedback,
                     )
                 } else {
                     String::new()
@@ -269,12 +277,8 @@ pub fn build_requirement_task_prompt_with_session(
                     .unwrap_or_default(),
             ),
         ),
-        RequirementTaskKind::Review => (
-            "代码审核 Agent",
-            format!(
-                "请只审核当前工作区暂存区（git diff --cached）的改动，不要审核旧提交，不要修改代码。\n若无暂存改动，直接通过。\n审核角度：{}",
-                task.review_angle.as_deref().unwrap_or("综合审核")
-            ),
+        RequirementTaskKind::Review => unreachable!(
+            "Review task prompt is built by build_review_task_prompt and returned early"
         ),
         RequirementTaskKind::ReviewSubAgent => {
             unreachable!("ReviewSubAgent uses build_review_sub_agent_prompt_markdown")
@@ -282,7 +286,7 @@ pub fn build_requirement_task_prompt_with_session(
         RequirementTaskKind::ReviewSummary => (
             "代码审核汇总 Agent",
             format!(
-                "请汇总当前工作区暂存区（git diff --cached）的三个审核 Sub Agent 意见。只要任一 Sub Agent 不通过，approved 必须为 false，feedback 和 result_summary 必须明确写审核不通过；禁止状态与文字结论矛盾。若无暂存改动，直接通过。\n{}\n审核角度：{}",
+                "请汇总当前工作区暂存区（git diff --cached）的三个审核 Sub Agent 意见。只要任一 Sub Agent 不通过，approved 必须为 false，feedback 和 result_summary 必须明确写审核不通过；禁止状态与文字结论矛盾。\n{}\n审核角度：{}\n\n输出要求：\n- 若审核不通过，除了 feedback 外，必须在 fix_instructions 中列出仅针对当前任务、可直接执行的修改项；每个条目一行，避免长段分析；删除已通过角度的冗余描述。\n- 若审核通过，fix_instructions 留空数组即可。",
                 review_feedback_for_prompt(plan, task.review_for.as_deref()),
                 task.review_angle.as_deref().unwrap_or("综合审核")
             ),
@@ -300,7 +304,6 @@ pub fn build_requirement_task_prompt_with_session(
     let header = format!(
         "你是当前项目的{role}。\n\nPi Agent 当前工作目录已经是当前节点的独立工作空间。请只执行当前任务。\n必须遵守项目现有技术栈、目录约束和代码风格。\n完成后必须只输出一个 JSON 对象，不要 Markdown，不要代码块。\n\nJSON 格式："
     );
-    let implementation_header = format!("你是当前项目的{role}。");
     let current_task = format!(
         "## 当前任务\n- 标题：{}\n- 描述：{}\n- 目标文件：{}\n{}",
         task.title,
@@ -317,23 +320,49 @@ pub fn build_requirement_task_prompt_with_session(
         && task.status == RequirementTaskStatus::Fixing
         && session_reused
     {
+        let fix_delta =
+            "## 继续修复当前任务\n请基于会话历史中的任务描述和边界，针对以下审核反馈进行修改。";
+        let fix_instructions = task
+            .last_review_fix_instructions
+            .as_ref()
+            .filter(|items| !items.is_empty())
+            .map(|items| items.join("\n"))
+            .or_else(|| {
+                task.last_review_feedback.as_deref().map(|feedback| {
+                    let (truncated, _) = truncate_chars(feedback, MAX_REVIEW_FEEDBACK_CHARS);
+                    format!("{truncated}\n...（审核反馈已截断）")
+                })
+            })
+            .unwrap_or_else(|| "审核未通过，请检查暂存区改动并修复问题。".to_owned());
         return PromptRenderer::new("implementation_runner")
             .contract_id(contract.id())
             .add_source(
-                PromptSourceKind::Contract,
-                contract.id(),
-                contract_text(contract),
+                PromptSourceKind::Skill,
+                "implementation_runner",
+                strip_markdown_frontmatter(include_str!(
+                    "../../prompts/skills/implementation_runner.md"
+                )),
+            )
+            .add_source(PromptSourceKind::TaskContext, "fix_delta", fix_delta)
+            .add_source(
+                PromptSourceKind::ExecutionContext,
+                "fix_instructions",
+                fix_instructions,
             )
             .add_source(
                 PromptSourceKind::InlinePolicy,
                 "git_operation_restrictions",
                 GIT_OPERATION_RESTRICTIONS,
             )
-            .add_source(PromptSourceKind::TaskContext, "fix_delta", current_task)
             .add_optional_source(
                 PromptSourceKind::ExecutionContext,
                 "failure_context",
                 Some(failure_context),
+            )
+            .add_source(
+                PromptSourceKind::Contract,
+                contract.id(),
+                contract_source_text(contract),
             )
             .render();
     }
@@ -342,17 +371,13 @@ pub fn build_requirement_task_prompt_with_session(
         .contract_id(contract.id())
         .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT);
     if task.kind == RequirementTaskKind::Implementation {
-        renderer = renderer
-            .add_source(
-                PromptSourceKind::TaskContext,
-                "task_role",
-                implementation_header,
-            )
-            .add_source(
-                PromptSourceKind::Skill,
-                "implementation_runner",
-                include_str!("../../prompts/skills/implementation_runner.md"),
-            );
+        renderer = renderer.add_source(
+            PromptSourceKind::Skill,
+            "implementation_runner",
+            strip_markdown_frontmatter(include_str!(
+                "../../prompts/skills/implementation_runner.md"
+            )),
+        );
     } else {
         renderer = renderer.add_source(PromptSourceKind::TaskContext, "task_role", header);
     }
@@ -360,7 +385,7 @@ pub fn build_requirement_task_prompt_with_session(
         .add_source(
             PromptSourceKind::Contract,
             contract.id(),
-            contract_text(contract),
+            contract_source_text(contract),
         )
         .add_optional_source(
             PromptSourceKind::ExecutionContext,
@@ -454,7 +479,7 @@ pub fn build_recovery_guidance_prompt(task: &RequirementExecutionTask) -> Render
         .add_source(
             PromptSourceKind::Contract,
             contract.id(),
-            contract_text(contract),
+            contract_source_text(contract),
         )
         .add_source(PromptSourceKind::TaskContext, "recovery_task", task_context)
         .render()
@@ -614,6 +639,13 @@ pub fn parse_task_execution_output(
             }
         }),
         review_feedback: raw.feedback.map(|feedback| feedback.trim().to_owned()),
+        fix_instructions: raw.fix_instructions.map(|items| {
+            items
+                .into_iter()
+                .map(|item| item.trim().to_owned())
+                .filter(|item| !item.is_empty())
+                .collect()
+        }),
         pull_request_url: None,
         merged_into: None,
         cleanup_summary: None,
@@ -700,6 +732,7 @@ fn expand_execution_tasks(
             recovery_guidance: None,
             high_tier_execution_used: false,
             last_review_feedback: None,
+            last_review_fix_instructions: None,
             pull_request_url: None,
             merged_into: None,
             cleanup_summary: None,
@@ -735,6 +768,7 @@ fn expand_execution_tasks(
         recovery_guidance: None,
         high_tier_execution_used: false,
         last_review_feedback: None,
+        last_review_fix_instructions: None,
         pull_request_url: None,
         merged_into: None,
         cleanup_summary: None,
@@ -882,6 +916,7 @@ fn branch_merge_task(
         recovery_guidance: None,
         high_tier_execution_used: false,
         last_review_feedback: None,
+        last_review_fix_instructions: None,
         pull_request_url: None,
         merged_into: None,
         cleanup_summary: None,
@@ -1118,6 +1153,8 @@ struct RawTaskOutput {
     #[serde(default)]
     feedback: Option<String>,
     #[serde(default)]
+    fix_instructions: Option<Vec<String>>,
+    #[serde(default)]
     changed: Option<bool>,
     #[serde(default)]
     no_op_reason: Option<String>,
@@ -1137,8 +1174,9 @@ struct RawRecoveryGuidance {
 mod tests {
     use super::{
         build_recovery_guidance_json_repair_prompt, build_requirement_plan_prompt,
-        build_requirement_task_prompt, build_task_output_json_repair_prompt, effective_model_tier,
-        parse_recovery_guidance, parse_requirement_plan, parse_task_execution_output,
+        build_requirement_task_prompt, build_requirement_task_prompt_with_session,
+        build_task_output_json_repair_prompt, effective_model_tier, parse_recovery_guidance,
+        parse_requirement_plan, parse_task_execution_output,
     };
     use crate::models::{
         Requirement, RequirementDraft, RequirementExecutionPlan, RequirementExecutionTask,
@@ -1293,12 +1331,16 @@ mod tests {
 
         assert!(prompt.contains("\"changed\": true"));
         assert!(prompt.contains("\"no_op_reason\": null"));
-        assert!(prompt.contains("任务边界（必须遵守）"));
-        assert!(prompt.contains("禁止实现任何未在本描述中明确列出的功能"));
-        assert!(prompt.contains("禁止以“预留”“提前准备”“顺便”等理由实现后续任务的功能"));
+        assert!(prompt.contains("## 任务边界"));
+        assert!(prompt.contains("禁止实现未明确列出的功能"));
+        assert!(prompt.contains("禁止以“预留”“提前准备”“顺便”等理由实现后续任务"));
         assert!(prompt.contains("禁止执行 git add"));
         assert!(prompt.contains("禁止手动暂存或提交代码"));
         assert!(prompt.contains("允许只读 Git 命令"));
+        assert!(
+            !prompt.contains("name: implementation_runner"),
+            "skill frontmatter must be stripped"
+        );
         assert!(
             !prompt.contains("实现搜索"),
             "future task titles should not appear"
@@ -1498,6 +1540,80 @@ mod tests {
     }
 
     #[test]
+    fn fixing_prompt_with_reused_session_is_concise_and_uses_fix_instructions() {
+        let requirement = test_requirement("修复页面");
+        let mut implementation = test_task("task-1", "修复实现", Vec::new());
+        implementation.status = RequirementTaskStatus::Fixing;
+        implementation.last_review_fix_instructions =
+            Some(vec!["修复边界校验".to_owned(), "补全测试覆盖".to_owned()]);
+        implementation.last_review_feedback = Some("补充边界校验并补测试。".to_owned());
+        let plan = RequirementExecutionPlan {
+            trace: None,
+            summary: "计划".to_owned(),
+            tasks: vec![implementation.clone()],
+        };
+
+        let prompt =
+            build_requirement_task_prompt_with_session(&requirement, &plan, &implementation, true)
+                .markdown;
+
+        assert!(
+            !prompt.contains("## 当前任务"),
+            "reused session should not repeat full task context"
+        );
+        assert!(
+            !prompt.contains("## 任务边界"),
+            "reused session should not repeat task boundary"
+        );
+        assert!(prompt.contains("修复边界校验"));
+        assert!(prompt.contains("补全测试覆盖"));
+        assert!(
+            prompt.contains("输出契约"),
+            "contract should be wrapped with a heading"
+        );
+        assert!(
+            !prompt.contains("name: implementation_runner"),
+            "skill frontmatter must be stripped"
+        );
+    }
+
+    #[test]
+    fn review_summary_prompt_asks_for_fix_instructions() {
+        let requirement = test_requirement("修复页面");
+        let mut review_summary = test_task("summary-1", "审核汇总", Vec::new());
+        review_summary.kind = RequirementTaskKind::ReviewSummary;
+        review_summary.review_for = Some("task-1".to_owned());
+        let plan = RequirementExecutionPlan {
+            trace: None,
+            summary: "计划".to_owned(),
+            tasks: vec![review_summary.clone()],
+        };
+
+        let prompt = build_requirement_task_prompt(&requirement, &plan, &review_summary).markdown;
+        assert!(prompt.contains("fix_instructions"));
+        assert!(prompt.contains("可直接执行的修改项"));
+    }
+
+    #[test]
+    fn parse_task_output_extracts_fix_instructions() {
+        let output = parse_task_execution_output(
+            r#"{
+              "approved": false,
+              "feedback": "存在阻断问题",
+              "fix_instructions": ["修复 A", "修复 B"],
+              "result_summary": "审核不通过"
+            }"#,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            output.fix_instructions,
+            Some(vec!["修复 A".to_owned(), "修复 B".to_owned()])
+        );
+    }
+
+    #[test]
     fn review_prompts_are_scoped_to_reviewed_task_not_full_requirement() {
         let mut requirement = test_requirement("全量需求");
         if let Some(ref mut draft) = requirement.draft {
@@ -1619,6 +1735,7 @@ mod tests {
             recovery_guidance: None,
             high_tier_execution_used: false,
             last_review_feedback: None,
+            last_review_fix_instructions: None,
             pull_request_url: None,
             merged_into: None,
             cleanup_summary: None,

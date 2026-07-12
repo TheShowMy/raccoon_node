@@ -800,7 +800,7 @@ function toReviewStatus(
 
 function TaskUsage({ usage }: { usage: TraceUsage }) {
   const number = new Intl.NumberFormat("zh-CN");
-  const cacheTotal = usage.input + usage.cacheRead + usage.cacheWrite;
+  const cacheTotal = usage.input + usage.cacheRead;
   const cacheHitRate =
     cacheTotal > 0
       ? `${((usage.cacheRead / cacheTotal) * 100).toFixed(1)}%`
@@ -836,7 +836,9 @@ function TaskUsage({ usage }: { usage: TraceUsage }) {
         <MetadataListItem label="缓存写入">
           {number.format(usage.cacheWrite)}
         </MetadataListItem>
-        <MetadataListItem label="缓存命中率">{cacheHitRate}</MetadataListItem>
+        <MetadataListItem label="缓存读取命中率">
+          {cacheHitRate}
+        </MetadataListItem>
         <MetadataListItem label="上下文 tokens">
           {number.format(usage.context.tokens)}
         </MetadataListItem>

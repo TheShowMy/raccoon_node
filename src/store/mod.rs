@@ -25,8 +25,9 @@ use crate::models::{
     RequirementReviewRoundStatus, RequirementReviewStatus, RequirementReviewStep,
     RequirementStatus, RequirementTaskDetailResponse, RequirementTaskExecutionInput,
     RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
-    SessionContentBlock, SessionEntry, SessionTranscriptPage, TerminalCommandProfile,
-    TerminalCommandProfileUpdate, TokenUsageCategory, TokenUsageHotspot, TokenUsageRole,
+    SessionContentBlock, SessionEntry, SessionTranscriptPage, SubagentReview,
+    TerminalCommandProfile, TerminalCommandProfileUpdate, TokenUsageCategory, TokenUsageHotspot,
+    TokenUsageRole,
 };
 use crate::utils::commit_staged_changes;
 use crate::utils::effective_model_tier;
@@ -1924,6 +1925,7 @@ impl JsonStore {
                 };
                 let effective_review_feedback =
                     rejected_sub_agent_feedback.or_else(|| output.review_feedback.clone());
+                let effective_fix_instructions = output.fix_instructions.clone();
                 let effective_result_summary = if forced_summary_rejection {
                     format!(
                         "审核不通过：{}",
@@ -1976,6 +1978,7 @@ impl JsonStore {
                                 .unwrap_or(RequirementReviewStatus::Rejected);
                             task.review_status = review_status;
                             task.last_review_feedback = effective_review_feedback.clone();
+                            task.last_review_fix_instructions = effective_fix_instructions.clone();
                             task.status = match review_status {
                                 RequirementReviewStatus::Approved => {
                                     RequirementTaskStatus::Completed
@@ -1993,6 +1996,7 @@ impl JsonStore {
                             task.review_status = effective_review_status
                                 .unwrap_or(RequirementReviewStatus::Approved);
                             task.last_review_feedback = effective_review_feedback.clone();
+                            task.last_review_fix_instructions = effective_fix_instructions.clone();
                             task.status = if task.review_status == RequirementReviewStatus::Approved
                             {
                                 RequirementTaskStatus::Completed
@@ -2369,7 +2373,7 @@ fn aggregate_project_token_usage<'a>(
                 && add_trace_usage_sequence(&mut usage.chat, metadata, &mut previous)
             {
                 found = true;
-                collect_trace_insights(&mut usage, metadata, "项目问答");
+                collect_trace_insights(&mut usage, metadata, "项目问答", previous.as_ref());
             }
         }
     }
@@ -2390,7 +2394,7 @@ fn aggregate_project_token_usage<'a>(
                 && add_trace_usage_sequence(&mut usage.split, metadata, &mut previous)
             {
                 found = true;
-                collect_trace_insights(&mut usage, metadata, &requirement.title);
+                collect_trace_insights(&mut usage, metadata, &requirement.title, previous.as_ref());
             }
         }
 
@@ -2399,14 +2403,19 @@ fn aggregate_project_token_usage<'a>(
                 && add_trace_usage(&mut usage.split, trace)
             {
                 found = true;
-                collect_trace_insights(&mut usage, trace, &format!("规划：{}", requirement.title));
+                collect_trace_insights(
+                    &mut usage,
+                    trace,
+                    &format!("规划：{}", requirement.title),
+                    None,
+                );
             }
             for task in &plan.tasks {
                 if let Some(trace) = &task.trace
                     && add_trace_usage(&mut usage.task, trace)
                 {
                     found = true;
-                    collect_trace_insights(&mut usage, trace, &task.title);
+                    collect_trace_insights(&mut usage, trace, &task.title, None);
                 }
             }
         }
@@ -2432,18 +2441,38 @@ fn aggregate_project_token_usage<'a>(
     usage
         .roles
         .sort_by_key(|item| std::cmp::Reverse(item.usage.total()));
+    usage.roles.truncate(5);
     Some(usage)
 }
 
-fn collect_trace_insights(usage: &mut ProjectTokenUsage, trace: &Value, label: &str) {
+fn collect_trace_insights(
+    usage: &mut ProjectTokenUsage,
+    trace: &Value,
+    label: &str,
+    previous: Option<&TokenUsageCategory>,
+) {
     let Some(raw) = trace_usage(trace) else {
         return;
     };
-    let category = TokenUsageCategory {
+    let current = TokenUsageCategory {
         input: raw.get("input").and_then(Value::as_u64).unwrap_or(0),
         output: raw.get("output").and_then(Value::as_u64).unwrap_or(0),
         cache_read: raw.get("cacheRead").and_then(Value::as_u64).unwrap_or(0),
         cache_write: raw.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0),
+    };
+    let category = TokenUsageCategory {
+        input: current
+            .input
+            .saturating_sub(previous.map(|item| item.input).unwrap_or(0)),
+        output: current
+            .output
+            .saturating_sub(previous.map(|item| item.output).unwrap_or(0)),
+        cache_read: current
+            .cache_read
+            .saturating_sub(previous.map(|item| item.cache_read).unwrap_or(0)),
+        cache_write: current
+            .cache_write
+            .saturating_sub(previous.map(|item| item.cache_write).unwrap_or(0)),
     };
     let context_percent = raw
         .pointer("/context/percent")
@@ -2691,9 +2720,15 @@ fn parse_session_blocks(message: &Value) -> Vec<SessionContentBlock> {
             );
         }
         if message.get("toolName").and_then(Value::as_str) == Some("run_parallel_code_review")
-            && let Some(reviews) = message.pointer("/details/reviews").cloned()
+            && let Some(reviews) = message.pointer("/details/reviews")
         {
-            blocks.push(SessionContentBlock::Subagents { reviews });
+            match serde_json::from_value::<Vec<SubagentReview>>(reviews.clone()) {
+                Ok(reviews) => blocks.push(SessionContentBlock::Subagents { reviews }),
+                Err(_) => blocks.push(SessionContentBlock::Unknown {
+                    block_type: "subagents".to_owned(),
+                    raw: reviews.clone(),
+                }),
+            }
         }
         return blocks;
     }

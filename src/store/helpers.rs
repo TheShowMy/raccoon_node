@@ -201,6 +201,25 @@ fn record_parallel_review_steps(
     else {
         return false;
     };
+    if items.is_empty() {
+        return false;
+    }
+    let Some(implementation_id) = plan
+        .tasks
+        .iter()
+        .find(|task| task.id == review_task_id)
+        .and_then(|task| task.review_for.clone())
+    else {
+        return false;
+    };
+    let Some(round) = plan
+        .tasks
+        .iter_mut()
+        .find(|task| task.id == implementation_id)
+        .and_then(|task| task.review_history.last_mut())
+    else {
+        return false;
+    };
     for item in items {
         let angle = item.get("angle").and_then(Value::as_str).unwrap_or("综合审核");
         let approved = item.get("approved").and_then(Value::as_bool).unwrap_or(false);
@@ -209,24 +228,9 @@ fn record_parallel_review_steps(
             .and_then(Value::as_str)
             .unwrap_or("未提供审核摘要");
         let feedback = item.get("feedback").and_then(Value::as_str);
-        let Some(implementation_id) = plan
-            .tasks
-            .iter()
-            .find(|task| task.id == review_task_id)
-            .and_then(|task| task.review_for.clone())
-        else {
-            return false;
-        };
-        let Some(round) = plan
-            .tasks
-            .iter_mut()
-            .find(|task| task.id == implementation_id)
-            .and_then(|task| task.review_history.last_mut())
-        else {
-            return false;
-        };
-        round.reviews.push(RequirementReviewStep {
-            task_id: format!("{review_task_id}:{angle}"),
+        let task_id = format!("{review_task_id}:{angle}");
+        let step = RequirementReviewStep {
+            task_id: task_id.clone(),
             angle: angle.to_owned(),
             status: if approved {
                 RequirementReviewStatus::Approved
@@ -236,7 +240,12 @@ fn record_parallel_review_steps(
             summary: summary.to_owned(),
             failure_reason: (!approved).then(|| feedback.map(str::to_owned)).flatten(),
             completed_at: now,
-        });
+        };
+        if let Some(previous) = round.reviews.iter_mut().find(|review| review.task_id == task_id) {
+            *previous = step;
+        } else {
+            round.reviews.push(step);
+        }
     }
     true
 }
@@ -285,6 +294,7 @@ fn reset_review_for(plan: &mut RequirementExecutionPlan, task_id: &str) {
             candidate.review_status = RequirementReviewStatus::Pending;
             candidate.pi_session_file = None;
             candidate.last_review_feedback = None;
+            candidate.last_review_fix_instructions = None;
             candidate.result_summary = None;
             candidate.trace = None;
             candidate.execution_warning = None;
@@ -336,6 +346,7 @@ fn approve_reviewed_task(
         reviewed.status = RequirementTaskStatus::AwaitingReview;
     }
     reviewed.last_review_feedback = feedback;
+    reviewed.last_review_fix_instructions = None;
     Ok(())
 }
 
@@ -359,6 +370,7 @@ fn reject_reviewed_task(
     reviewed.review_rejection_count = reviewed.review_rejection_count.saturating_add(1);
     reviewed.review_status = RequirementReviewStatus::Rejected;
     reviewed.last_review_feedback = feedback;
+    reviewed.last_review_fix_instructions = None;
     match reviewed.review_rejection_count {
         count if count < MAX_REVIEW_REJECTIONS => {
             reviewed.status = RequirementTaskStatus::Fixing;

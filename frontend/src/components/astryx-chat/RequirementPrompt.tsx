@@ -11,9 +11,14 @@ import {
   LayoutHeader,
   VStack,
 } from "@astryxdesign/core/Layout";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { Text, Heading } from "@astryxdesign/core/Text";
 import { TextArea } from "@astryxdesign/core/TextArea";
-import type { DraftClarificationAnswer, StartNodeData } from "../../types/api";
+import type {
+  DraftClarificationAnswer,
+  RequirementClarification,
+  StartNodeData,
+} from "../../types/api";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 
@@ -23,6 +28,29 @@ function hasAnswer(
   text: string,
 ) {
   return type === "free_text" ? Boolean(text.trim()) : selected.length > 0;
+}
+
+function getAnswer(
+  answers: Record<string, DraftClarificationAnswer>,
+  question: RequirementClarification,
+): DraftClarificationAnswer {
+  return (
+    answers[question.id] ?? {
+      selectedOptions: question.answer?.selected_options ?? [],
+      customText: question.answer?.custom_text ?? "",
+    }
+  );
+}
+
+function isQuestionAnswered(
+  question: RequirementClarification,
+  answer: DraftClarificationAnswer,
+) {
+  return hasAnswer(
+    question.question_type,
+    answer.selectedOptions,
+    answer.customText,
+  );
 }
 
 function MultilineText({ children }: { children: string }) {
@@ -44,10 +72,12 @@ export default function RequirementPrompt({ data }: { data: ChatData }) {
   const [answers, setAnswers] = useState<
     Record<string, DraftClarificationAnswer>
   >({});
+  const [currentStep, setCurrentStep] = useState(0);
 
   useEffect(() => {
     if (!clarificationPrompt) {
       setAnswers({});
+      setCurrentStep(0);
       return;
     }
     setAnswers(
@@ -61,6 +91,7 @@ export default function RequirementPrompt({ data }: { data: ChatData }) {
         ]),
       ),
     );
+    setCurrentStep(0);
   }, [promptKey]);
 
   useEffect(() => {
@@ -142,17 +173,30 @@ export default function RequirementPrompt({ data }: { data: ChatData }) {
     );
   }
 
-  const valid = prompt.questions.every((question) => {
-    const answer = answers[question.id] ?? {
-      selectedOptions: question.answer?.selected_options ?? [],
-      customText: question.answer?.custom_text ?? "",
-    };
-    return hasAnswer(
-      question.question_type,
-      answer.selectedOptions,
-      answer.customText,
-    );
-  });
+  const questions = prompt.questions;
+  const totalSteps = questions.length;
+  const question = questions[currentStep];
+  const answer = getAnswer(answers, question);
+  const currentAnswered = isQuestionAnswered(question, answer);
+  const allAnswered = questions.every((item) =>
+    isQuestionAnswered(item, getAnswer(answers, item)),
+  );
+  const isLastStep = currentStep === totalSteps - 1;
+  const progressValue =
+    totalSteps > 0 ? ((currentStep + 1) / totalSteps) * 100 : 0;
+
+  const choose = (value: string) => {
+    const selectedOptions =
+      question.question_type === "single_choice"
+        ? [value]
+        : answer.selectedOptions.includes(value)
+          ? answer.selectedOptions.filter((item) => item !== value)
+          : [...answer.selectedOptions, value];
+    setAnswers((current) => ({
+      ...current,
+      [question.id]: { ...answer, selectedOptions },
+    }));
+  };
 
   return (
     <Card
@@ -167,7 +211,20 @@ export default function RequirementPrompt({ data }: { data: ChatData }) {
         padding={0}
         header={
           <LayoutHeader hasDivider padding={3}>
-            <Heading level={3}>需要确认的信息</Heading>
+            <VStack gap={2} width="100%">
+              <Heading level={3}>需要确认的信息</Heading>
+              <ProgressBar
+                label="澄清进度"
+                value={progressValue}
+                max={100}
+                isLabelHidden
+                hasValueLabel
+                formatValueLabel={() =>
+                  `问题 ${currentStep + 1} / ${totalSteps}`
+                }
+                variant="accent"
+              />
+            </VStack>
           </LayoutHeader>
         }
         content={
@@ -177,77 +234,47 @@ export default function RequirementPrompt({ data }: { data: ChatData }) {
             label="需求澄清问题"
             style={{ overscrollBehavior: "contain" }}
           >
-            <VStack gap={3} width="100%">
-              {prompt.questions.map((question, questionIndex) => {
-                const answer = answers[question.id] ?? {
-                  selectedOptions: question.answer?.selected_options ?? [],
-                  customText: question.answer?.custom_text ?? "",
-                };
-                const choose = (value: string) => {
-                  const selectedOptions =
-                    question.question_type === "single_choice"
-                      ? [value]
-                      : answer.selectedOptions.includes(value)
-                        ? answer.selectedOptions.filter(
-                            (item) => item !== value,
-                          )
-                        : [...answer.selectedOptions, value];
-                  setAnswers((current) => ({
-                    ...current,
-                    [question.id]: { ...answer, selectedOptions },
-                  }));
-                };
-                return (
-                  <VStack key={question.id} gap={2} width="100%">
-                    <Text
-                      weight="bold"
-                      display="block"
-                      textWrap="wrap"
-                      wordBreak="break-word"
-                    >
-                      {questionIndex + 1}. {question.question}
-                    </Text>
-                    {question.question_type !== "free_text" ? (
-                      <List>
-                        {question.options.map((option) => (
-                          <ListItem
-                            key={option.value}
-                            label={
-                              <MultilineText>{option.label}</MultilineText>
-                            }
-                            description={option.description}
-                            startContent={
-                              <Badge
-                                label={option.recommended ? "推荐" : "选项"}
-                                variant={
-                                  option.recommended ? "info" : "neutral"
-                                }
-                              />
-                            }
-                            isSelected={answer.selectedOptions.includes(
-                              option.value,
-                            )}
-                            onClick={() => choose(option.value)}
-                          />
-                        ))}
-                      </List>
-                    ) : (
-                      <TextArea
-                        label={question.question}
-                        isLabelHidden
-                        value={answer.customText}
-                        rows={3}
-                        onChange={(customText) =>
-                          setAnswers((current) => ({
-                            ...current,
-                            [question.id]: { ...answer, customText },
-                          }))
-                        }
-                      />
-                    )}
-                  </VStack>
-                );
-              })}
+            <VStack key={question.id} gap={3} width="100%">
+              <Text
+                weight="bold"
+                display="block"
+                textWrap="wrap"
+                wordBreak="break-word"
+              >
+                {currentStep + 1}. {question.question}
+              </Text>
+              {question.question_type !== "free_text" ? (
+                <List>
+                  {question.options.map((option) => (
+                    <ListItem
+                      key={option.value}
+                      label={<MultilineText>{option.label}</MultilineText>}
+                      description={option.description}
+                      startContent={
+                        <Badge
+                          label={option.recommended ? "推荐" : "选项"}
+                          variant={option.recommended ? "info" : "neutral"}
+                        />
+                      }
+                      isSelected={answer.selectedOptions.includes(option.value)}
+                      onClick={() => choose(option.value)}
+                    />
+                  ))}
+                </List>
+              ) : (
+                <TextArea
+                  label={question.question}
+                  isLabelHidden
+                  value={answer.customText}
+                  rows={3}
+                  onChange={(customText) =>
+                    setAnswers((current) => ({
+                      ...current,
+                      [question.id]: { ...answer, customText },
+                    }))
+                  }
+                />
+              )}
             </VStack>
           </LayoutContent>
         }
@@ -260,15 +287,32 @@ export default function RequirementPrompt({ data }: { data: ChatData }) {
                 isDisabled={data.busy}
                 onClick={data.onAbandon}
               />
-              <Button
-                label="提交答案"
-                variant="primary"
-                isDisabled={!valid}
-                isLoading={data.busy}
-                onClick={() =>
-                  void data.onSubmitClarifications(requirement, answers)
-                }
-              />
+              {currentStep > 0 && (
+                <Button
+                  label="上一步"
+                  variant="secondary"
+                  isDisabled={data.busy}
+                  onClick={() => setCurrentStep((step) => step - 1)}
+                />
+              )}
+              {!isLastStep ? (
+                <Button
+                  label="下一步"
+                  variant="primary"
+                  isDisabled={!currentAnswered || data.busy}
+                  onClick={() => setCurrentStep((step) => step + 1)}
+                />
+              ) : (
+                <Button
+                  label="提交答案"
+                  variant="primary"
+                  isDisabled={!allAnswered || data.busy}
+                  isLoading={data.busy}
+                  onClick={() =>
+                    void data.onSubmitClarifications(requirement, answers)
+                  }
+                />
+              )}
             </HStack>
           </LayoutFooter>
         }

@@ -11,7 +11,6 @@ import {
 } from "@astryxdesign/core/Chat";
 import { Carousel } from "@astryxdesign/core/Carousel";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
-import { Text } from "@astryxdesign/core/Text";
 import { Thumbnail } from "@astryxdesign/core/Thumbnail";
 import { Token } from "@astryxdesign/core/Token";
 import {
@@ -101,7 +100,6 @@ export default function AstryxComposer({
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
-  const [requirementPrep, setRequirementPrep] = useState(false);
   const [inputRevision, setInputRevision] = useState(0);
   const [drafts, dispatchDraft] = useReducer(composerDraftReducer, {});
   const inputRef = useRef<HTMLInputElement>(null);
@@ -119,12 +117,7 @@ export default function AstryxComposer({
 
   useEffect(() => {
     dispatchDraft({ type: "reset" });
-    setRequirementPrep(false);
   }, [data.project.id]);
-
-  useEffect(() => {
-    if (requirementMode) setRequirementPrep(false);
-  }, [requirementMode]);
 
   const draftScope = requirementMode
     ? `requirement:${data.requirement?.id ?? data.requirementOpeningId ?? "opening"}`
@@ -164,10 +157,6 @@ export default function AstryxComposer({
     [files],
   );
   const commandSource = useMemo(() => createStaticSource(COMMANDS), []);
-  const inheritedMessageCount =
-    data.projectChat?.messages.filter(
-      (message) => message.role === "user" || message.role === "assistant",
-    ).length ?? 0;
 
   const handleValueChange = (nextValue: string) => {
     if (submittingRef.current && nextValue === "") return;
@@ -227,24 +216,17 @@ export default function AstryxComposer({
     submittingRef.current = true;
     try {
       if (!requirementMode) {
-        if (requirementPrep) {
-          const accepted = await data.onStartRequirement(message, {
-            references,
-            images,
-          });
-          if (accepted) {
-            setRequirementPrep(false);
-            clearDraft();
-          }
-          return;
-        }
         const command = parseProjectChatCommand(message);
         if (command.type === "requirement") {
           setCommandError(null);
-          setRequirementPrep(true);
-          setValue(command.description ?? "");
-          setInputRevision((current) => current + 1);
-          onContentChange();
+          const accepted = await data.onStartRequirement(
+            command.description ?? "",
+            {
+              references,
+              images,
+            },
+          );
+          if (accepted) clearDraft();
           return;
         }
         if (command.type === "new-session") {
@@ -310,41 +292,13 @@ export default function AstryxComposer({
       </VStack>
     </ChatComposerDrawer>
   ) : undefined;
-  const preparationDrawer = requirementPrep ? (
-    <ChatComposerDrawer
-      count={inheritedMessageCount}
-      label="需求分叉准备"
-      defaultIsCollapsed={false}
-    >
-      <VStack gap={2} width="100%">
-        <Text weight="semibold">准备生成需求</Text>
-        <Text type="supporting" color="secondary">
-          {inheritedMessageCount
-            ? `将继承当前聊天 ${inheritedMessageCount} 条消息，并创建独立的 Pi child session。`
-            : "当前无完整聊天上下文，将创建独立需求。"}
-        </Text>
-        <HStack justify="end">
-          <Button
-            label="取消"
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setRequirementPrep(false);
-              clearDraft();
-            }}
-          />
-        </HStack>
-      </VStack>
-    </ChatComposerDrawer>
-  ) : undefined;
   const promptPanel = promptVisible ? (
     <RequirementPrompt data={data} />
   ) : undefined;
   const drawer =
-    promptPanel || preparationDrawer || attachmentDrawer ? (
+    promptPanel || attachmentDrawer ? (
       <VStack gap={1} width="100%">
         {promptPanel}
-        {preparationDrawer}
         {attachmentDrawer}
       </VStack>
     ) : undefined;
@@ -360,11 +314,7 @@ export default function AstryxComposer({
     data.requirementOpeningId && !data.requirement,
   );
   const composerDisabled =
-    promptVisible ||
-    uploading ||
-    running ||
-    transitionPending ||
-    (requirementPrep && !value.trim());
+    promptVisible || uploading || running || transitionPending;
   const error =
     commandError ??
     attachmentError ??
@@ -387,11 +337,7 @@ export default function AstryxComposer({
         isStopShown={running}
         density="balanced"
         placeholder={
-          requirementMode
-            ? "描述或补充需求"
-            : requirementPrep
-              ? "补充这次希望落地的具体内容"
-              : "询问项目，输入 / 选择命令"
+          requirementMode ? "描述或补充需求" : "询问项目，输入 / 选择命令"
         }
         drawer={drawer}
         sendButton={<ChatSendButton isDisabled={composerDisabled} />}
@@ -405,13 +351,7 @@ export default function AstryxComposer({
             onFiles={(incoming) => void upload(incoming)}
             onSubmit={(submitted) => void submit(submitted)}
             isDisabled={composerDisabled}
-            label={
-              requirementMode
-                ? "需求输入"
-                : requirementPrep
-                  ? "需求补充说明"
-                  : "项目聊天输入"
-            }
+            label={requirementMode ? "需求输入" : "项目聊天输入"}
             maxRows={6}
           />
         }

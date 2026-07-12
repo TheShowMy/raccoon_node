@@ -6,6 +6,7 @@ import {
   confirmRequirement,
   createRequirementBranch,
   getRequirementConversation,
+  submitRequirementClarifications,
 } from "../api/client";
 import type {
   ProjectCanvasData,
@@ -186,6 +187,88 @@ describe("useRequirementFlow", () => {
     });
   });
 
+  it("submits clarification answers from conversation prompt even if requirement.clarifications is stale", async () => {
+    vi.mocked(submitRequirementClarifications).mockResolvedValue(canvas);
+    const clarifyingConversation: RequirementConversation = {
+      ...conversation,
+      status: "clarifying",
+      running: false,
+      prompt: {
+        type: "clarification",
+        round: 1,
+        prompt_id: "prompt-1",
+        revision: 1,
+        questions: [
+          {
+            id: "q1",
+            question: "范围？",
+            question_type: "single_choice",
+            options: [
+              {
+                value: "current",
+                label: "当前页",
+                description: "只导出当前页",
+                recommended: false,
+              },
+              {
+                value: "all",
+                label: "全部",
+                description: "导出全部数据",
+                recommended: true,
+              },
+            ],
+            answer: null,
+          },
+        ],
+      },
+    };
+    vi.mocked(getRequirementConversation).mockResolvedValue(
+      clarifyingConversation,
+    );
+    const setProjectCanvas = vi.fn();
+    const { result } = renderHook(() =>
+      useRequirementFlow(
+        "project-1",
+        requirement.id,
+        null,
+        setProjectCanvas,
+        vi.fn(),
+        vi.fn(),
+        [requirement],
+      ),
+    );
+    const socket = FakeWebSocket.instances[0];
+    act(() => socket.open());
+    await waitFor(() =>
+      expect(result.current.requirementConversation?.prompt).not.toBeNull(),
+    );
+
+    const staleRequirement: Requirement = {
+      ...requirement,
+      status: "clarifying",
+      clarifications: [],
+    };
+
+    await act(async () => {
+      await result.current.submitClarifications(staleRequirement, {
+        q1: { selectedOptions: ["all"], customText: "" },
+      });
+    });
+
+    expect(submitRequirementClarifications).toHaveBeenCalledTimes(1);
+    expect(submitRequirementClarifications).toHaveBeenCalledWith(
+      staleRequirement.id,
+      [
+        {
+          clarification_id: "q1",
+          selected_options: ["all"],
+          custom_text: null,
+        },
+      ],
+      clarifyingConversation.prompt,
+    );
+  });
+
   it("opens the accepted requirement socket before the canvas refresh completes", async () => {
     const activeCanvas: ProjectCanvasData = {
       ...canvas,
@@ -264,7 +347,7 @@ describe("useRequirementFlow", () => {
     expect(setProjectCanvas).toHaveBeenCalledWith(activeCanvas);
   });
 
-  it("rejects a requirement branch without a supplement", async () => {
+  it("starts a requirement branch with a default message when no supplement is given", async () => {
     const loadProjectCanvas = vi.fn().mockResolvedValue(canvas);
     const { result } = renderHook(() =>
       useRequirementFlow(
@@ -284,7 +367,11 @@ describe("useRequirementFlow", () => {
       });
     });
 
-    expect(createRequirementBranch).not.toHaveBeenCalled();
+    expect(createRequirementBranch).toHaveBeenCalledWith("project-1", {
+      message: "基于上文整理需求",
+      references: [],
+      images: [],
+    });
   });
 
   it("loads persisted conversations lazily once and removes only deleted branches", async () => {

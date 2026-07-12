@@ -82,16 +82,18 @@ impl PromptSource {
         truncated: bool,
     ) -> Self {
         let chars = content.chars().count();
+        let empty = content.trim().is_empty();
+        let has_content = included && !missing && !empty;
         Self {
             kind,
             label: label.into(),
             included,
-            empty: content.trim().is_empty(),
+            empty,
             missing,
             disabled_reason,
             chars,
-            bytes: Some(content.len()),
-            delivery: Some(PromptSourceDelivery::Inline),
+            bytes: has_content.then_some(content.len()),
+            delivery: has_content.then_some(PromptSourceDelivery::Inline),
             estimated_tokens: Some(estimate_tokens(chars)),
             truncated,
             preview: String::new(),

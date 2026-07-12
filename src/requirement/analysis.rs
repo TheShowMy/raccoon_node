@@ -4,7 +4,10 @@ use crate::models::{
     RequirementAnalysisInput, RequirementAnalysisOutput, RequirementClarification,
     RequirementDraft, RequirementMessageRole, RequirementStatus,
 };
-use crate::prompt::{PromptRenderer, PromptSourceDelivery, PromptSourceKind, RenderedPrompt};
+use crate::prompt::{
+    PromptRenderer, PromptSourceDelivery, PromptSourceKind, RenderedPrompt,
+    strip_markdown_frontmatter,
+};
 
 const GLOBAL_PROMPT: &str = include_str!("../../prompts/global/raccoon.md");
 const REQUIREMENT_PROMPT_TEMPLATE: &str =
@@ -25,7 +28,7 @@ pub fn build_requirement_prompt(
         .map(|message| message.content.replace("###", "\\#\\#\\#"))
         .unwrap_or_default();
 
-    let skill = REQUIREMENT_PROMPT_TEMPLATE
+    let skill = strip_markdown_frontmatter(REQUIREMENT_PROMPT_TEMPLATE)
         .replace("{{PROJECT_NAME}}", &input.project.name)
         .replace("{{GIT_URL}}", &input.project.git_url)
         .replace("{{LOCAL_PATH}}", &input.project.local_path)
@@ -43,7 +46,9 @@ pub fn build_requirement_prompt(
     requirement_context.push_str(&format_requirement_context(input).replace("###", "\\#\\#\\#"));
     requirement_context.push_str("\n### END REQUIREMENT CONTEXT ###");
 
-    let mut renderer = PromptRenderer::new("requirement_coordinator");
+    let mut renderer = PromptRenderer::new("requirement_coordinator")
+        .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT)
+        .add_source(PromptSourceKind::Skill, "requirement_coordinator", skill);
     if session_reused {
         renderer = renderer.add_source(
             PromptSourceKind::RequirementContext,
@@ -53,14 +58,11 @@ pub fn build_requirement_prompt(
             ),
         );
     } else {
-        renderer = renderer
-            .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT)
-            .add_source(PromptSourceKind::Skill, "requirement_coordinator", skill)
-            .add_source(
-                PromptSourceKind::RequirementContext,
-                "requirement_context",
-                requirement_context,
-            );
+        renderer = renderer.add_source(
+            PromptSourceKind::RequirementContext,
+            "requirement_context",
+            requirement_context,
+        );
     }
     renderer = renderer.add_optional_source(
         PromptSourceKind::InlinePolicy,
@@ -797,7 +799,9 @@ mod tests {
         assert!(prompt.contains("继续处理同一个需求"));
         assert!(prompt.contains("本轮输入：\n补充支持 CSV"));
         assert!(!prompt.contains("原始需求：增加导出功能"));
-        assert!(!prompt.contains("上一版确认草案"));
+        assert!(!prompt.contains("标题：导出功能"));
+        assert!(!prompt.contains("支持数据导出"));
+        assert!(!prompt.contains("可以下载文件"));
     }
 
     #[test]

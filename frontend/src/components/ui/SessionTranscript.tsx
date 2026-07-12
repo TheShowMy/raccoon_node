@@ -407,10 +407,16 @@ function SessionBlock({ block }: { block: SessionContentBlock }) {
                       ? `${review.result.approved ? "通过" : "不通过"}：${review.result.result_summary}`
                       : review.error || "没有结构化结果"}
                   </Text>
+                  {review.result?.feedback ? (
+                    <Text type="supporting" size="3xs">
+                      反馈：{review.result.feedback}
+                    </Text>
+                  ) : null}
                   {review.usage ? (
                     <Text type="supporting" size="3xs">
                       输入 {review.usage.input} · 输出 {review.usage.output} ·
-                      缓存读取 {review.usage.cacheRead}
+                      缓存读取 {review.usage.cacheRead} · 缓存写入{" "}
+                      {review.usage.cacheWrite}
                     </Text>
                   ) : null}
                 </Stack>

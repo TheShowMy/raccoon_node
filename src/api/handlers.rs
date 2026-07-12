@@ -604,9 +604,6 @@ pub async fn create_requirement_branch(
     Json(payload): Json<RequirementMessageRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let message = payload.message.trim().to_owned();
-    if message.is_empty() {
-        return Err(AppError::bad_request("补充说明不能为空"));
-    }
     let analysis_guard = RequirementAnalysisGuard::acquire(&state, &project_id)?;
     let branch_input = state
         .store

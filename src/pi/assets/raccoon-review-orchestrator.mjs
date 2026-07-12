@@ -19,9 +19,18 @@ function section(prompt, name) {
 }
 
 function invocation(args) {
-  const script = process.argv[1];
-  if (script && fs.existsSync(script)) return { command: process.execPath, args: [script, ...args] };
-  return { command: "pi", args };
+  const program = process.env.RACCOON_PI_EXECUTABLE;
+  if (program) {
+    if (process.platform === "win32" && program.toLowerCase().endsWith(".cmd")) {
+      return { command: "cmd.exe", args: ["/D", "/S", "/C", program, ...args] };
+    }
+    return { command: program, args };
+  }
+  const fallback = process.platform === "win32" ? "pi.cmd" : "pi";
+  if (process.platform === "win32" && fallback.endsWith(".cmd")) {
+    return { command: "cmd.exe", args: ["/D", "/S", "/C", fallback, ...args] };
+  }
+  return { command: fallback, args };
 }
 
 function runChild(angle, prompt, ctx, workerPath, signal, onUpdate) {
@@ -78,7 +87,9 @@ function runChild(angle, prompt, ctx, workerPath, signal, onUpdate) {
 }
 
 export default function (pi) {
+  // Pi 的 tool execute 是串行的；before_agent_start 在每次 agent 启动时触发，可获取当前 prompt。
   pi.on("before_agent_start", (event) => { latestPrompt = event.prompt; });
+  // 该命令仅作为能力标记，供 Pi 识别本 extension 支持的协议；实际执行通过 run_parallel_code_review 工具。
   pi.registerCommand("raccoon-parallel-review-v1", { description: "Raccoon 并行审核协议 v1", handler: async () => {} });
   pi.registerTool({
     name: "run_parallel_code_review",
@@ -86,8 +97,18 @@ export default function (pi) {
     description: "并发运行三个固定、隔离、只读的代码审核子代理。",
     parameters: Type.Object({}),
     async execute(_id, _params, signal, onUpdate, ctx) {
-      const policy = section(latestPrompt, "review-policy");
-      const packet = section(latestPrompt, "review-packet");
+      let policy;
+      let packet;
+      try {
+        policy = section(latestPrompt, "review-policy");
+        packet = section(latestPrompt, "review-packet");
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: `无法解析审核 prompt：${error.message}` }],
+          isError: true,
+          terminate: true,
+        };
+      }
       const workerPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "raccoon-review-worker.mjs");
       const states = ANGLES.map((angle) => ({ angle, status: "running" }));
       const emit = () => onUpdate?.({ content: [{ type: "text", text: `并行审核：${states.filter((item) => item.status !== "running").length}/3 完成` }], details: { protocol: PROTOCOL, subagents: states } });

@@ -1,5 +1,6 @@
 {
   "approved": true,
   "feedback": "汇总后的审核意见，若不通过必须说明代码节点需要如何修复",
+  "fix_instructions": ["必须修改的具体条目 1", "必须修改的具体条目 2"],
   "result_summary": "审核汇总结论"
 }

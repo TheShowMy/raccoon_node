@@ -360,6 +360,8 @@ pub struct RequirementExecutionTask {
     #[serde(default)]
     pub last_review_feedback: Option<String>,
     #[serde(default)]
+    pub last_review_fix_instructions: Option<Vec<String>>,
+    #[serde(default)]
     pub pull_request_url: Option<String>,
     #[serde(default)]
     pub merged_into: Option<String>,
@@ -574,6 +576,31 @@ pub struct SessionEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentReviewResult {
+    pub approved: bool,
+    pub feedback: String,
+    pub result_summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentReviewUsage {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentReview {
+    pub angle: String,
+    pub ok: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub result: Option<SubagentReviewResult>,
+    pub usage: Option<SubagentReviewUsage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionContentBlock {
     Text {
@@ -595,7 +622,7 @@ pub enum SessionContentBlock {
         is_error: bool,
     },
     Subagents {
-        reviews: Value,
+        reviews: Vec<SubagentReview>,
     },
     Unknown {
         block_type: String,
@@ -1065,6 +1092,7 @@ pub struct RequirementTaskExecutionOutput {
     pub worktree_path: Option<String>,
     pub review_status: Option<RequirementReviewStatus>,
     pub review_feedback: Option<String>,
+    pub fix_instructions: Option<Vec<String>>,
     pub pull_request_url: Option<String>,
     pub merged_into: Option<String>,
     pub cleanup_summary: Option<String>,

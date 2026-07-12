@@ -48,3 +48,8 @@ pub(crate) fn contract_text(contract: PromptContract) -> &'static str {
         }
     }
 }
+
+/// 包装后的输出契约文本，用于直接作为 prompt source，避免裸 JSON 出现在模型输入中。
+pub(crate) fn contract_source_text(contract: PromptContract) -> String {
+    format!("## 输出契约（JSON 格式参考）\n{}", contract_text(contract))
+}

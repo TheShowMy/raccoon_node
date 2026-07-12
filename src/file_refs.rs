@@ -231,23 +231,18 @@ pub async fn build_reference_context(
             references.len()
         )));
     }
+    let repo_path = normalize_local_path(repo_path)?;
+    let git_dir = repo_path.join(".git");
+    let raccoon_dir = repo_path.join(".raccoon-node");
     let mut parts = Vec::new();
-    let mut inline_bytes = 0_u64;
+    let mut inline_bytes = 0_usize;
     for reference in references {
-        let repo_path = normalize_local_path(repo_path)?;
-        let first = Path::new(reference.path.trim())
-            .components()
-            .next()
-            .and_then(|component| match component {
-                Component::Normal(name) => name.to_str(),
-                _ => None,
-            });
-        if matches!(first, Some(".git" | ".raccoon-node")) {
+        let path = resolve_relative_path(&repo_path, &reference.path)?;
+        if path.starts_with(&git_dir) || path.starts_with(&raccoon_dir) {
             return Err(AppError::bad_request(
                 "不能引用 Git 或 raccoon-node 内部文件",
             ));
         }
-        let path = resolve_relative_path(&repo_path, &reference.path)?;
         if tokio::fs::symlink_metadata(&path)
             .await
             .is_ok_and(|metadata| metadata.file_type().is_symlink())
@@ -261,11 +256,11 @@ pub async fn build_reference_context(
             return Err(AppError::bad_request("引用路径必须是文件"));
         }
         let bytes = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
-        let inline = metadata.len() <= MAX_INLINE_REFERENCE_BYTES
-            && inline_bytes.saturating_add(metadata.len()) <= MAX_INLINE_REFERENCE_TOTAL_BYTES;
+        let inline = bytes <= MAX_INLINE_REFERENCE_BYTES
+            && inline_bytes.saturating_add(bytes) <= MAX_INLINE_REFERENCE_TOTAL_BYTES;
         let markdown = if inline {
             let content = read_repo_file(&repo_path, &reference.path).await?;
-            inline_bytes += metadata.len();
+            inline_bytes += bytes;
             format!(
                 r#"<file path="{}" bytes="{}" inline="true">
 {}
@@ -604,7 +599,7 @@ mod tests {
             .unwrap();
         tokio::fs::write(
             temp.path().join("large.txt"),
-            vec![b'x'; MAX_INLINE_REFERENCE_BYTES as usize + 1],
+            vec![b'x'; MAX_INLINE_REFERENCE_BYTES + 1],
         )
         .await
         .unwrap();

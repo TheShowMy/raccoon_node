@@ -124,6 +124,8 @@ export function useRequirementFlow(
   const requirementConversation = conversationRequirementId
     ? (requirementConversations[conversationRequirementId] ?? null)
     : null;
+  const requirementConversationRef = useRef(requirementConversation);
+  requirementConversationRef.current = requirementConversation;
 
   useEffect(() => {
     setRequirementStreamEvents([]);
@@ -265,8 +267,7 @@ export function useRequirementFlow(
       },
     ): Promise<boolean> => {
       if (!selectedProjectId) return false;
-      const message = description.trim();
-      if (!message) return false;
+      const message = description.trim() || "基于上文整理需求";
 
       setRequirementBusy(true);
       setRequirementError(null);
@@ -416,7 +417,17 @@ export function useRequirementFlow(
       setRequirementBusy(true);
       setRequirementError(null);
       try {
-        const answers = requirement.clarifications.map((clarification) =>
+        const currentConversation = requirementConversationRef.current;
+        const prompt =
+          currentConversation?.prompt?.type === "clarification"
+            ? currentConversation.prompt
+            : undefined;
+        // 使用 prompt.questions（用户实际看到的问题）作为答案来源，避免
+        // requirement.clarifications 与 conversation snapshot 不同步导致首次
+        // 提交空数组。
+        const sourceClarifications =
+          prompt?.questions ?? requirement.clarifications;
+        const answers = sourceClarifications.map((clarification) =>
           buildClarificationAnswerPayload(
             clarification,
             clarificationAnswers[clarification.id] ?? {
@@ -425,10 +436,6 @@ export function useRequirementFlow(
             },
           ),
         );
-        const prompt =
-          requirementConversation?.prompt?.type === "clarification"
-            ? requirementConversation.prompt
-            : undefined;
         const data = await submitRequirementClarifications(
           requirement.id,
           answers,
@@ -451,11 +458,7 @@ export function useRequirementFlow(
         setRequirementBusy(false);
       }
     },
-    [
-      loadRequirementConversation,
-      requirementConversation?.prompt,
-      setProjectCanvas,
-    ],
+    [loadRequirementConversation, setProjectCanvas],
   );
 
   const confirm = useCallback(
@@ -463,9 +466,10 @@ export function useRequirementFlow(
       setRequirementBusy(true);
       setRequirementError(null);
       try {
+        const currentConversation = requirementConversationRef.current;
         const prompt =
-          requirementConversation?.prompt?.type === "confirmation"
-            ? requirementConversation.prompt
+          currentConversation?.prompt?.type === "confirmation"
+            ? currentConversation.prompt
             : undefined;
         const data = await confirmRequirement(requirement.id, prompt);
         setDismissedPromptRequirementId(null);
@@ -486,12 +490,7 @@ export function useRequirementFlow(
         setRequirementBusy(false);
       }
     },
-    [
-      loadRequirementConversation,
-      observeRequirement,
-      requirementConversation?.prompt,
-      setProjectCanvas,
-    ],
+    [loadRequirementConversation, observeRequirement, setProjectCanvas],
   );
 
   const retryAnalysis = useCallback(

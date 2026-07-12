@@ -127,4 +127,24 @@ mod tests {
         assert_eq!(rendered.diagnostics.empty_count, 1);
         assert_eq!(rendered.diagnostics.included_count, 1);
     }
+
+    #[test]
+    fn reference_source_records_delivery_and_bytes() {
+        let rendered = PromptRenderer::new("role")
+            .add_reference_source(
+                "large.rs",
+                "<file path=\"large.rs\" bytes=\"65536\" inline=\"false\" />",
+                PromptSourceDelivery::PathOnly,
+                65536,
+            )
+            .render();
+
+        let source = rendered
+            .sources
+            .iter()
+            .find(|source| source.label == "large.rs")
+            .expect("missing reference source");
+        assert_eq!(source.delivery, Some(PromptSourceDelivery::PathOnly));
+        assert_eq!(source.bytes, Some(65536));
+    }
 }

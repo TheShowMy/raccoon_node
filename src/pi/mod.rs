@@ -424,7 +424,21 @@ impl ModelProvider for PiRpcModelProvider {
             let client = if no_session {
                 PiRpcClient::start_no_session(&working_dir).await?
             } else {
-                PiRpcClient::start(&self.session_dir, &working_dir).await?
+                // 任务执行子进程需要加载受管扩展：审核任务依赖
+                // raccoon-review-orchestrator.mjs 提供的 run_parallel_code_review 工具。
+                let mut extension_paths = Vec::new();
+                if let Some(path) = &self.clarification_extension_path {
+                    extension_paths.push(path.clone());
+                }
+                if let Some(path) = &self.review_extension_path {
+                    extension_paths.push(path.clone());
+                }
+                PiRpcClient::start_with_extensions(
+                    &self.session_dir,
+                    &working_dir,
+                    &extension_paths,
+                )
+                .await?
             };
             let mut input = input;
             if input.task.branch_name.is_none() {
@@ -762,6 +776,7 @@ impl PiRpcClient {
             .arg("--mode")
             .arg("rpc")
             .args(transport_config.extra_args())
+            .env("RACCOON_PI_EXECUTABLE", program)
             .current_dir(working_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -834,6 +849,7 @@ impl PiRpcClient {
             command.arg("--session-dir").arg(session_dir);
         }
         let mut child = command
+            .env("RACCOON_PI_EXECUTABLE", program)
             .current_dir(working_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1103,6 +1119,7 @@ impl PiRpcClient {
                 worktree_path: input.task.worktree_path.clone(),
                 review_status: None,
                 review_feedback: None,
+                fix_instructions: None,
                 pull_request_url: None,
                 merged_into: None,
                 cleanup_summary: None,
@@ -2042,6 +2059,7 @@ fn parse_parallel_review_output(
             RequirementReviewStatus::Rejected
         }),
         review_feedback: feedback,
+        fix_instructions: None,
         pull_request_url: None,
         merged_into: None,
         cleanup_summary: None,
