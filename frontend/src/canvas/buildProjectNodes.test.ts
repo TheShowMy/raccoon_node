@@ -513,11 +513,11 @@ describe("buildProjectNodes", () => {
       (node) => node.id === "requirement-task-summary",
     )!;
 
-    expect(code.position.x).toBeLessThan(summaryNode.position.x);
-    expect(summaryNode.position.x).toBeLessThan(firstReview.position.x);
+    expect(code.position.x).toBeLessThan(firstReview.position.x);
+    expect(firstReview.position.x).toBeLessThan(summaryNode.position.x);
     expect({ width: code.width, height: code.height }).toEqual({
-      width: 142,
-      height: 142,
+      width: 180,
+      height: 148,
     });
     expect(group.height).toBeGreaterThan(300);
     for (const child of nodes.filter((node) => node.parentId === group.id)) {
@@ -561,12 +561,12 @@ describe("buildProjectNodes", () => {
     )!;
 
     expect({ width: failed.width, height: failed.height }).toEqual({
-      width: 140,
-      height: 52,
+      width: 180,
+      height: 64,
     });
     expect({ width: completed.width, height: completed.height }).toEqual({
-      width: 140,
-      height: 52,
+      width: 180,
+      height: 64,
     });
   });
 

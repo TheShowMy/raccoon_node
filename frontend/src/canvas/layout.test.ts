@@ -91,7 +91,7 @@ describe("canvas task layout", () => {
     );
   });
 
-  it("lays out code, summary, and review nodes in three columns", () => {
+  it("lays out code, review nodes, and summary in dependency order", () => {
     const code = task("implementation");
     const subAgents = Array.from({ length: 3 }, (_, index) =>
       task(`review-${index}`, ["implementation"], "review_sub_agent", {
@@ -108,8 +108,8 @@ describe("canvas task layout", () => {
     const codePosition = layout.positions.get(code.id)!;
     const summaryPosition = layout.positions.get(summary.id)!;
 
-    expect(codePosition.x).toBeLessThan(summaryPosition.x);
-    expect(summaryPosition.x).toBeLessThan(layout.positions.get("review-0")!.x);
+    expect(codePosition.x).toBeLessThan(layout.positions.get("review-0")!.x);
+    expect(layout.positions.get("review-0")!.x).toBeLessThan(summaryPosition.x);
     expect(layout.positions.get("review-0")!.x).toBe(
       layout.positions.get("review-1")!.x,
     );
@@ -142,11 +142,52 @@ describe("canvas task layout", () => {
       getTaskGroupChildSize(
         task("rejected", [], "review_sub_agent", { status: "rejected" }),
       ),
-    ).toEqual({ width: 140, height: 52 });
+    ).toEqual({ width: 180, height: 64 });
     expect(
       getTaskGroupChildSize(
         task("failed", [], "review_sub_agent", { status: "failed" }),
       ),
-    ).toEqual({ width: 140, height: 52 });
+    ).toEqual({ width: 180, height: 64 });
+  });
+
+  it("invalidates the task group cache when dependencies change", () => {
+    const code = task("implementation");
+    const reviewBeforeSummary = task(
+      "review",
+      ["summary"],
+      "review_sub_agent",
+      { review_for: "implementation" },
+    );
+    const summaryBeforeReview = task(
+      "summary",
+      ["implementation"],
+      "review_summary",
+      { review_for: "implementation" },
+    );
+    const first = getTaskGroupLayout(code, [
+      reviewBeforeSummary,
+      summaryBeforeReview,
+    ]);
+
+    const reviewAfterCode = task(
+      "review",
+      ["implementation"],
+      "review_sub_agent",
+      { review_for: "implementation" },
+    );
+    const summaryAfterReview = task("summary", ["review"], "review_summary", {
+      review_for: "implementation",
+    });
+    const second = getTaskGroupLayout(code, [
+      reviewAfterCode,
+      summaryAfterReview,
+    ]);
+
+    expect(first.positions.get("summary")!.x).toBeLessThan(
+      first.positions.get("review")!.x,
+    );
+    expect(second.positions.get("review")!.x).toBeLessThan(
+      second.positions.get("summary")!.x,
+    );
   });
 });

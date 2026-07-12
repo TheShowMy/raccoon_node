@@ -16,10 +16,10 @@ const IMPLEMENTATION_WIDTH = 590;
 const EXTERNAL_TASK_SIZE = { width: 380, height: 220 };
 const GROUP_MIN_HEIGHT = 300;
 const GROUP_HEADER_HEIGHT = 96;
-const GROUP_PADDING_X = 20;
+const GROUP_PADDING_X = 24;
 const GROUP_PADDING_BOTTOM = 20;
-const GROUP_COLUMN_GAP = 36;
-const GROUP_ROW_GAP = 14;
+const GROUP_COLUMN_GAP = 48;
+const GROUP_ROW_GAP = 18;
 const LAYOUT_CACHE_LIMIT = 32;
 
 type LayoutNode = {
@@ -66,8 +66,11 @@ function taskGroupLayoutKey(
   task: RequirementExecutionTask,
   reviews: RequirementExecutionTask[],
 ): string {
-  return `${task.id}|${task.kind}|${reviews
-    .map((review) => `${review.id}:${review.kind}:${review.review_for ?? ""}`)
+  return `${task.id}:${task.kind}:${task.depends_on.join(",")}|${reviews
+    .map(
+      (review) =>
+        `${review.id}:${review.kind}:${review.depends_on.join(",")}:${review.review_for ?? ""}`,
+    )
     .join(",")}`;
 }
 
@@ -119,15 +122,10 @@ function computeTaskGroupLayout(
   task: RequirementExecutionTask,
   reviews: RequirementExecutionTask[],
 ) {
-  const summary = reviews.find((review) => review.kind === "review_summary");
+  const dependencies = getTaskGroupDependencies(task, reviews);
   const nodes = [task, ...reviews].map((item) => ({
     id: item.id,
-    dependsOn:
-      item.id === task.id
-        ? []
-        : item.kind === "review_summary"
-          ? [task.id]
-          : [summary?.id ?? task.id],
+    dependsOn: dependencies.get(item.id) ?? [],
     size: getTaskGroupChildSize(item),
   }));
   const positions = layoutLayers(
@@ -186,9 +184,41 @@ export function getTaskGroupChildSize(
   task: RequirementExecutionTask,
 ): TaskSize {
   if (task.kind === "review_sub_agent" || task.kind === "review") {
-    return { width: 140, height: 52 };
+    return { width: 180, height: 64 };
   }
-  return { width: 142, height: 142 };
+  return { width: 180, height: 148 };
+}
+
+export function getTaskGroupDependencies(
+  task: RequirementExecutionTask,
+  reviews: RequirementExecutionTask[],
+): Map<string, string[]> {
+  const children = [task, ...reviews];
+  const childIds = new Set(children.map((child) => child.id));
+  const reviewIds = reviews
+    .filter(
+      (review) =>
+        review.kind === "review_sub_agent" || review.kind === "review",
+    )
+    .map((review) => review.id);
+
+  return new Map(
+    children.map((child) => {
+      if (child.id === task.id) return [child.id, []];
+
+      const declaredDependencies = child.depends_on.filter((dependency) =>
+        childIds.has(dependency),
+      );
+      if (declaredDependencies.length > 0) {
+        return [child.id, declaredDependencies];
+      }
+
+      if (child.kind === "review_summary") {
+        return [child.id, reviewIds.length > 0 ? reviewIds : [task.id]];
+      }
+      return [child.id, [task.id]];
+    }),
+  );
 }
 
 function layoutLayers(

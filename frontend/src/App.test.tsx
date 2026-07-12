@@ -1,6 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { shouldVirtualizeCanvasNodes } from "./App";
+import App, {
+  positionRequirementWorkbenchNodes,
+  shouldVirtualizeCanvasNodes,
+} from "./App";
 import { buildOrbitNodes, OrbitNode } from "./canvas/orbitNodes";
 
 class WebSocketMock {
@@ -207,5 +210,35 @@ describe("App", () => {
     expect(shouldVirtualizeCanvasNodes("content")).toBe(true);
     expect(shouldVirtualizeCanvasNodes("focusing")).toBe(false);
     expect(shouldVirtualizeCanvasNodes("closing")).toBe(false);
+  });
+
+  it("shifts only root nodes into the requirements workbench", () => {
+    const requirements = {
+      id: "requirements",
+      position: { x: 960, y: 0 },
+      data: {} as never,
+    };
+    const group = {
+      id: "requirement-task-group-task-1",
+      position: { x: 1870, y: 4 },
+      data: {} as never,
+    };
+    const child = {
+      id: "requirement-task-task-1",
+      parentId: group.id,
+      position: { x: 24, y: 96 },
+      data: {} as never,
+    };
+
+    const positioned = positionRequirementWorkbenchNodes([
+      requirements,
+      group,
+      child,
+    ]);
+
+    expect(positioned[0].position).toEqual({ x: 0, y: 20 });
+    expect(positioned[1].position).toEqual({ x: 910, y: 4 });
+    expect(positioned[2]).toBe(child);
+    expect(positioned[2].position).toEqual({ x: 24, y: 96 });
   });
 });

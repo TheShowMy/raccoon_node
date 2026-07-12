@@ -322,6 +322,23 @@ export function shouldVirtualizeCanvasNodes(phase: AppUiState["panelPhase"]) {
   return phase === "shell" || phase === "content";
 }
 
+export function positionRequirementWorkbenchNodes(
+  nodes: Node<StartNodeData>[],
+): Node<StartNodeData>[] {
+  return nodes
+    .filter((node) => node.id !== "token-usage")
+    .map((node) => {
+      if (node.parentId) return node;
+      return {
+        ...node,
+        position: {
+          x: node.id === "requirements" ? 0 : node.position.x - 960,
+          y: node.id === "requirements" ? 20 : node.position.y,
+        },
+      };
+    });
+}
+
 export default function App() {
   const store = useMemo(() => new AppStore(), []);
   return (
@@ -698,16 +715,7 @@ function AppCanvas() {
   );
 
   const requirementNodes = useMemo(
-    () =>
-      projectStructureNodes
-        .filter((node) => node.id !== "token-usage")
-        .map((node) => ({
-          ...node,
-          position: {
-            x: node.id === "requirements" ? 0 : node.position.x - 960,
-            y: node.id === "requirements" ? 20 : node.position.y,
-          },
-        })),
+    () => positionRequirementWorkbenchNodes(projectStructureNodes),
     [projectStructureNodes],
   );
   const requirementEdges = useMemo(

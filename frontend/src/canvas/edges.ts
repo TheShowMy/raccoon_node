@@ -1,6 +1,14 @@
 import { MarkerType, type Edge } from "@xyflow/react";
 import type { Requirement } from "../types/api";
-import { externalNodeId, isExternalDagTask } from "./layout";
+import {
+  externalNodeId,
+  getTaskGroupDependencies,
+  isExternalDagTask,
+} from "./layout";
+
+const ENTRY_EDGE_COLOR = "var(--color-accent)";
+const DEPENDENCY_EDGE_COLOR = "var(--color-border-emphasized)";
+const REVIEW_EDGE_COLOR = "var(--color-border-blue)";
 
 export function buildRequirementDagEdges(
   requirement: Requirement,
@@ -15,8 +23,12 @@ export function buildRequirementDagEdges(
     targetHandle: "requirement-dag-left",
     type: "smoothstep",
     animated: true,
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: ENTRY_EDGE_COLOR,
+    },
     style: {
-      stroke: "var(--edge-model)",
+      stroke: ENTRY_EDGE_COLOR,
       strokeWidth: 2,
     },
   });
@@ -39,8 +51,12 @@ export function buildRequirementDagEdges(
         targetHandle: "requirement-task-left",
         type: "smoothstep",
         animated: task.status === "running",
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: ENTRY_EDGE_COLOR,
+        },
         style: {
-          stroke: "var(--edge-model)",
+          stroke: ENTRY_EDGE_COLOR,
           strokeWidth: 2,
         },
       });
@@ -57,8 +73,12 @@ export function buildRequirementDagEdges(
         targetHandle: "requirement-task-left",
         type: "smoothstep",
         animated: task.status === "running",
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: DEPENDENCY_EDGE_COLOR,
+        },
         style: {
-          stroke: "var(--edge-secondary)",
+          stroke: DEPENDENCY_EDGE_COLOR,
           strokeWidth: 2,
         },
       });
@@ -68,55 +88,35 @@ export function buildRequirementDagEdges(
   for (const task of tasks.filter((task) => task.kind === "implementation")) {
     if (collapsedTaskGroups.has(`${requirement.id}:${task.id}`)) continue;
     const reviews = tasks.filter((review) => review.review_for === task.id);
-    const summary = reviews.find((review) => review.kind === "review_summary");
-    const reviewNodes = reviews.filter(
-      (review) =>
-        review.kind === "review_sub_agent" || review.kind === "review",
-    );
-    if (!summary) continue;
-    flowEdges.push({
-      id: `requirement-task-${task.id}-to-${summary.id}`,
-      source: `requirement-task-${task.id}`,
-      sourceHandle: "requirement-task-right",
-      target: `requirement-task-${summary.id}`,
-      targetHandle: "requirement-task-left",
-      type: "straight",
-      animated: summary.status === "running",
-      markerStart: {
-        type: MarkerType.ArrowClosed,
-        color: "var(--edge-secondary)",
-      },
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        color: "var(--edge-secondary)",
-      },
-      style: {
-        stroke: "var(--edge-secondary)",
-        strokeWidth: 1.4,
-      },
-    });
-    for (const review of reviewNodes) {
-      flowEdges.push({
-        id: `requirement-task-${summary.id}-to-${review.id}`,
-        source: `requirement-task-${summary.id}`,
-        sourceHandle: "requirement-task-right",
-        target: `requirement-task-${review.id}`,
-        targetHandle: "requirement-task-left",
-        type: "straight",
-        animated: review.status === "running" || summary.status === "running",
-        markerStart: {
-          type: MarkerType.ArrowClosed,
-          color: "var(--edge-info)",
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "var(--edge-info)",
-        },
-        style: {
-          stroke: "var(--edge-info)",
-          strokeWidth: 1.3,
-        },
-      });
+    const dependencies = getTaskGroupDependencies(task, reviews);
+    const children = [task, ...reviews];
+    const childById = new Map(children.map((child) => [child.id, child]));
+
+    for (const target of reviews) {
+      for (const dependency of dependencies.get(target.id) ?? []) {
+        if (!childById.has(dependency)) continue;
+        const color =
+          target.kind === "review_sub_agent" || target.kind === "review"
+            ? REVIEW_EDGE_COLOR
+            : DEPENDENCY_EDGE_COLOR;
+        flowEdges.push({
+          id: `requirement-task-${dependency}-to-${target.id}`,
+          source: `requirement-task-${dependency}`,
+          sourceHandle: "requirement-task-right",
+          target: `requirement-task-${target.id}`,
+          targetHandle: "requirement-task-left",
+          type: "straight",
+          animated: target.status === "running",
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color,
+          },
+          style: {
+            stroke: color,
+            strokeWidth: 1.4,
+          },
+        });
+      }
     }
   }
 

@@ -90,7 +90,7 @@ describe("canvas DAG edges", () => {
     }
   });
 
-  it("builds display-only edges through the summary for all review nodes", () => {
+  it("builds internal edges from code through reviews to the summary", () => {
     const edges = buildRequirementDagEdges(
       requirement([
         task("impl", "implementation"),
@@ -123,23 +123,36 @@ describe("canvas DAG edges", () => {
     ).toEqual([
       {
         source: "requirement-task-impl",
-        target: "requirement-task-summary",
-      },
-      {
-        source: "requirement-task-summary",
         target: "requirement-task-review-a",
       },
       {
-        source: "requirement-task-summary",
+        source: "requirement-task-impl",
         target: "requirement-task-review-b",
       },
       {
-        source: "requirement-task-summary",
+        source: "requirement-task-review-a",
         target: "requirement-task-review-c",
+      },
+      {
+        source: "requirement-task-review-a",
+        target: "requirement-task-summary",
+      },
+      {
+        source: "requirement-task-review-b",
+        target: "requirement-task-summary",
+      },
+      {
+        source: "requirement-task-review-c",
+        target: "requirement-task-summary",
       },
     ]);
     expect(
-      internalEdges.every((edge) => edge.markerStart && edge.markerEnd),
+      internalEdges.every((edge) => !edge.markerStart && edge.markerEnd),
+    ).toBe(true);
+    expect(
+      internalEdges.every((edge) =>
+        String(edge.style?.stroke).startsWith("var(--color-"),
+      ),
     ).toBe(true);
   });
 
@@ -166,7 +179,7 @@ describe("canvas DAG edges", () => {
       source: "requirement-task-impl",
       target: "requirement-task-summary",
     });
-    expect(internalEdges[0].markerStart).toBeDefined();
+    expect(internalEdges[0].markerStart).toBeUndefined();
     expect(internalEdges[0].markerEnd).toBeDefined();
   });
 
