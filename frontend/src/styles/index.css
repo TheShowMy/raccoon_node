@@ -138,9 +138,12 @@
   }
 
   .node-card--requirement-list,
-  .node-card--requirement-dag,
-  .node-card--requirement-task {
+  .node-card--requirement-dag {
     box-shadow: var(--shadow-high);
+  }
+
+  .node-card--requirement-task {
+    box-shadow: var(--shadow-med);
   }
 
   .orbit-tool-button {

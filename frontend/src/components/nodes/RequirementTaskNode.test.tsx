@@ -174,7 +174,7 @@ describe("RequirementTaskNode", () => {
     expect(container.querySelector(".task-node--code")).not.toBeNull();
     expect(container.querySelector(".task-node__mini-card--review")).toBeNull();
     expect(container.querySelector(".task-node__mini-arrow")).toBeNull();
-    expect(container).toHaveTextContent("登录已完成");
+    expect(container).not.toHaveTextContent("登录已完成");
     expect(container).not.toHaveTextContent("rn/req/task-1");
     expect(container).not.toHaveTextContent(
       "https://github.com/acme/repo/pull/1",
@@ -343,7 +343,7 @@ describe("RequirementTaskNode", () => {
     ).toHaveClass("task-node--status-completed");
   });
 
-  it("shows execution warning on node and detail dialog", () => {
+  it("shows execution warning in detail dialog only", () => {
     renderNode({
       nodeRole: "group",
       nodeTask: task({
@@ -352,6 +352,7 @@ describe("RequirementTaskNode", () => {
       }),
     });
 
+    expect(screen.queryByText(/前置节点已实现/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "详情" }));
     expect(screen.getByText("执行提示")).toBeInTheDocument();
     expect(screen.getAllByText(/前置节点已实现/).length).toBeGreaterThan(0);
@@ -788,11 +789,10 @@ describe("RequirementTaskNode", () => {
     ).toHaveClass("is-approved");
   });
 
-  it("marks the task summary scrollable area with nodrag and nowheel", () => {
-    renderNode();
-    const scrollable = document.querySelector(
-      ".astryx-stack-item.nodrag.nowheel",
-    );
-    expect(scrollable).toBeInTheDocument();
+  it("renders the node card with status class", () => {
+    const { container } = renderNode();
+    expect(
+      container.querySelector(".task-node--status-completed"),
+    ).toBeInTheDocument();
   });
 });

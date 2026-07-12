@@ -345,7 +345,7 @@ export function buildProjectNodes({
                 position: taskPosition(task.id),
                 style: {
                   width: groupLayout.width,
-                  height: collapsed ? 82 : groupLayout.height,
+                  height: collapsed ? 76 : groupLayout.height,
                 },
                 data: {
                   kind: "requirement-task" as const,

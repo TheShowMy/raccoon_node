@@ -4,22 +4,22 @@ export type TaskPosition = { x: number; y: number };
 export type TaskSize = { width: number; height: number };
 
 export const DAG_NODE_POSITION = { x: 1380, y: 80 };
-export const DAG_NODE_SIZE = { width: 360, height: 260 };
-export const TASK_COLUMN_GAP = 130;
+export const DAG_NODE_SIZE = { width: 360, height: 220 };
+export const TASK_COLUMN_GAP = 120;
 
 export const TASK_BASE_POSITION = {
   x: DAG_NODE_POSITION.x + DAG_NODE_SIZE.width + TASK_COLUMN_GAP,
   y: 4,
 };
-const TASK_ROW_GAP = 72;
-const IMPLEMENTATION_WIDTH = 590;
-const EXTERNAL_TASK_SIZE = { width: 380, height: 220 };
-const GROUP_MIN_HEIGHT = 300;
-const GROUP_HEADER_HEIGHT = 96;
-const GROUP_PADDING_X = 24;
-const GROUP_PADDING_BOTTOM = 20;
-const GROUP_COLUMN_GAP = 48;
-const GROUP_ROW_GAP = 18;
+const TASK_ROW_GAP = 56;
+const IMPLEMENTATION_WIDTH = 560;
+const EXTERNAL_TASK_SIZE = { width: 280, height: 120 };
+const GROUP_MIN_HEIGHT = 220;
+const GROUP_HEADER_HEIGHT = 88;
+const GROUP_PADDING_X = 20;
+const GROUP_PADDING_BOTTOM = 16;
+const GROUP_COLUMN_GAP = 40;
+const GROUP_ROW_GAP = 14;
 const LAYOUT_CACHE_LIMIT = 32;
 
 type LayoutNode = {
@@ -186,7 +186,7 @@ export function getTaskGroupChildSize(
   if (task.kind === "review_sub_agent" || task.kind === "review") {
     return { width: 180, height: 64 };
   }
-  return { width: 180, height: 148 };
+  return { width: 180, height: 120 };
 }
 
 export function getTaskGroupDependencies(

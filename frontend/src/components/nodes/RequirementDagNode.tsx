@@ -16,7 +16,6 @@ export default function RequirementDagNode({
   data: Extract<StartNodeData, { kind: "requirement-dag" }>;
 }) {
   const requirement = data.requirement;
-  const plan = requirement.execution_plan;
   const thinking = useRequirementPlanningThinking();
   const thinkingScrollRef = useRef<HTMLDivElement>(null);
 
@@ -27,58 +26,42 @@ export default function RequirementDagNode({
     }
   }, [thinking]);
 
-  const header = (
-    <Toolbar
-      label="需求 DAG"
-      className="nodrag"
-      size="sm"
-      variant="muted"
-      startContent={
-        <HStack align="center" gap={3}>
-          <Stack style={{ color: "var(--color-accent)" }} aria-hidden>
-            <GitBranch size={20} />
-          </Stack>
-          <Stack gap={0.5}>
-            <Text type="label">需求 DAG</Text>
-            <Text type="supporting" size="3xs">
-              {requirementStatusText(requirement.status)}
-            </Text>
-          </Stack>
-        </HStack>
-      }
-      endContent={
-        <IconButton
-          label="关闭 DAG"
-          tooltip="关闭 DAG"
-          icon={<X size={14} />}
-          size="sm"
-          variant="ghost"
-          onClick={data.onClose}
-        />
-      }
-    />
-  );
-
   return (
     <>
-      {header}
+      <Toolbar
+        label="需求 DAG"
+        className="nodrag"
+        size="sm"
+        variant="muted"
+        startContent={
+          <HStack align="center" gap={3}>
+            <Stack style={{ color: "var(--color-accent)" }} aria-hidden>
+              <GitBranch size={20} />
+            </Stack>
+            <Stack gap={0.5}>
+              <Text type="label">需求 DAG</Text>
+              <Text type="supporting" size="3xs">
+                {requirementStatusText(requirement.status)}
+              </Text>
+            </Stack>
+          </HStack>
+        }
+        endContent={
+          <IconButton
+            label="关闭 DAG"
+            tooltip="关闭 DAG"
+            icon={<X size={14} />}
+            size="sm"
+            variant="ghost"
+            onClick={data.onClose}
+          />
+        }
+      />
 
       <Stack padding={3} gap={2}>
         <Text type="label" maxLines={2} wordBreak="break-word">
           {requirement.title}
         </Text>
-        {!plan && requirement.status === "failed" ? (
-          <Text type="supporting" maxLines={3}>
-            执行 DAG 生成失败，可在右侧需求列表中重新生成。
-          </Text>
-        ) : null}
-        {!plan &&
-        requirement.status !== "planning" &&
-        requirement.status !== "failed" ? (
-          <Text type="supporting" maxLines={3}>
-            确认需求后会自动生成并执行 DAG。
-          </Text>
-        ) : null}
         {data.actionError || requirement.error ? (
           <Text type="supporting" color="accent" maxLines={2}>
             {data.actionError ?? requirement.error}

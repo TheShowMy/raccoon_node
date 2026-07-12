@@ -446,7 +446,7 @@ describe("buildProjectNodes", () => {
     )!;
 
     expect(firstTask.position.x - (dag.position.x + (dag.width ?? 0))).toBe(
-      130,
+      120,
     );
   });
 
@@ -517,9 +517,9 @@ describe("buildProjectNodes", () => {
     expect(firstReview.position.x).toBeLessThan(summaryNode.position.x);
     expect({ width: code.width, height: code.height }).toEqual({
       width: 180,
-      height: 148,
+      height: 120,
     });
-    expect(group.height).toBeGreaterThan(300);
+    expect(group.height).toBeGreaterThan(200);
     for (const child of nodes.filter((node) => node.parentId === group.id)) {
       expect(child.position.x + (child.width ?? 0)).toBeLessThanOrEqual(
         group.width ?? 0,
@@ -588,7 +588,7 @@ describe("buildProjectNodes", () => {
       (node) => node.id === "requirement-task-group-implementation",
     )!;
 
-    expect(group.height).toBe(82);
+    expect(group.height).toBe(76);
     expect(nodes.some((node) => node.parentId === group.id)).toBe(false);
   });
 
