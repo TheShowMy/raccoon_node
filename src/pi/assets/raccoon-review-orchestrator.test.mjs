@@ -657,7 +657,7 @@ test("submit_review_result rejects verdicts before staged diff is read", async (
   assert.match(result.content[0].text, /read_staged_diff/);
 });
 
-test("submit_review_result accepts ordered v5 priority findings without approval", async () => {
+test("submit_review_result accepts ordered priority findings without approval", async () => {
   const tools = createReviewWorkerTools({
     angle: ANGLES[0],
     stagedDiff: Buffer.alloc(0),

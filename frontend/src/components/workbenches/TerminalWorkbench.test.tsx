@@ -1,19 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import TerminalWorkbench from "./TerminalWorkbench";
-import type { StartNodeData } from "../../types/api";
+import type { TerminalWorkbenchModel } from "../../types/viewModels";
 
-const baseData: Extract<StartNodeData, { kind: "project-terminal" }> = {
-  kind: "project-terminal",
+const baseData: TerminalWorkbenchModel = {
   project: {
-    id: "current",
     name: "current",
     git_url: "",
     local_path: "",
-    created_at: "",
-    updated_at: "",
   },
-  collapsed: false,
   sessions: [],
   activeSessionId: null,
   commandProfiles: [],
@@ -23,15 +18,12 @@ const baseData: Extract<StartNodeData, { kind: "project-terminal" }> = {
   terminalDisabledReason: "terminal-authorization-required",
   terminalAccessRequired: true,
   terminalAccessAuthorized: false,
-  terminalAccessExpiresAt: null,
   terminalAccessBusy: false,
   terminalAccessError: null,
-  onToggleCollapsed: vi.fn(),
   onAuthorizeTerminalAccess: vi.fn(),
   onCreateTerminal: vi.fn(),
   onCloseTerminal: vi.fn(),
   onSelectTerminal: vi.fn(),
-  onSaveCommandProfiles: vi.fn(),
 };
 
 describe("TerminalWorkbench", () => {

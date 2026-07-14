@@ -21,7 +21,11 @@ describe("useCurrentProject", () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            project: { id: "current", name: "Raccoon" },
+            project: {
+              name: "Raccoon",
+              git_url: "",
+              local_path: "/repo",
+            },
             theme_pack: "matcha",
             theme_mode: "light",
             publication_readiness: {
@@ -38,8 +42,8 @@ describe("useCurrentProject", () => {
     const { result } = renderHook(() => useCurrentProject());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(fetch).toHaveBeenCalledWith("/api/project/current");
-    expect(result.current.project?.id).toBe("current");
+    expect(fetch).toHaveBeenCalledWith("/api/project");
+    expect(result.current.project?.local_path).toBe("/repo");
     expect(result.current.publicationReadiness?.mode).toBe("local");
     expect(result.current.themePack).toBe("matcha");
     expect(result.current.themeMode).toBe("light");
@@ -59,7 +63,11 @@ describe("useCurrentProject", () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            project: { id: "current", name: "Raccoon" },
+            project: {
+              name: "Raccoon",
+              git_url: "",
+              local_path: "/repo",
+            },
             theme_pack: "matcha",
             theme_mode: "dark",
             publication_readiness: {

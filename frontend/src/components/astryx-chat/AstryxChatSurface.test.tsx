@@ -53,9 +53,7 @@ function branch(
 function requirementFixture(id: string, createdAt: string) {
   return {
     id,
-    project_id: "current",
     title: `需求 ${id}`,
-    original_message: `创建 ${id}`,
     origin: "standalone" as const,
     status: "completed" as const,
     messages: [],
@@ -72,12 +70,9 @@ function data(overrides: Partial<ChatData> = {}): ChatData {
   return {
     kind: "requirement-chat",
     project: {
-      id: "current",
       name: "demo",
       git_url: "",
       local_path: "D:\\demo",
-      created_at: "2026-07-10T00:00:00Z",
-      updated_at: "2026-07-10T00:00:00Z",
     },
     requirement: null,
     conversation: null,
@@ -89,7 +84,6 @@ function data(overrides: Partial<ChatData> = {}): ChatData {
     error: null,
     streamEvents: [],
     projectChat: {
-      project_id: "current",
       messages: [],
       running: false,
       error: null,
@@ -144,7 +138,6 @@ describe("AstryxChatSurface", () => {
     );
     const conversation = {
       id: requirement.id,
-      project_id: "current",
       title: requirement.title,
       status: "completed" as const,
       running: false,
@@ -243,7 +236,6 @@ describe("AstryxChatSurface", () => {
     );
     const firstConversation = {
       id: firstRequirement.id,
-      project_id: "current",
       title: firstRequirement.title,
       status: "completed" as const,
       running: false,
@@ -277,7 +269,6 @@ describe("AstryxChatSurface", () => {
       <AstryxChatSurface
         data={data({
           projectChat: {
-            project_id: "current",
             messages: [
               {
                 role: "user",
@@ -328,9 +319,7 @@ describe("AstryxChatSurface", () => {
     const onConfirm = vi.fn(async () => {});
     const requirement = {
       id: "requirement-1",
-      project_id: "current",
       title: "登录改造",
-      original_message: "改造登录",
       origin: "standalone" as const,
       status: "draft_ready" as const,
       messages: [],
@@ -343,7 +332,6 @@ describe("AstryxChatSurface", () => {
     };
     const conversation = {
       id: requirement.id,
-      project_id: "current",
       title: requirement.title,
       status: "draft_ready" as const,
       running: false,
@@ -388,7 +376,6 @@ describe("AstryxChatSurface", () => {
     };
     const conversation = {
       id: requirement.id,
-      project_id: "current",
       title: requirement.title,
       status: "draft_ready" as const,
       running: false,
@@ -491,7 +478,6 @@ describe("AstryxChatSurface", () => {
       <AstryxChatSurface
         data={data({
           projectChat: {
-            project_id: "current",
             messages: [
               {
                 role: "user",
@@ -543,9 +529,7 @@ describe("AstryxChatSurface", () => {
   it("keeps project history visible while the requirement branch opens", () => {
     const requirement = {
       id: "requirement-1",
-      project_id: "current",
       title: "登录改造",
-      original_message: "改造登录",
       origin: "project_chat_branch" as const,
       status: "analyzing" as const,
       messages: [],
@@ -570,7 +554,6 @@ describe("AstryxChatSurface", () => {
             }),
           ],
           projectChat: {
-            project_id: "current",
             messages: [
               {
                 role: "assistant",
@@ -600,9 +583,7 @@ describe("AstryxChatSurface", () => {
   it("opens the requirement branch when live activity arrives before its snapshot", async () => {
     const requirement = {
       id: "requirement-1",
-      project_id: "current",
       title: "登录改造",
-      original_message: "改造登录",
       origin: "project_chat_branch" as const,
       status: "analyzing" as const,
       messages: [],
@@ -675,7 +656,6 @@ describe("AstryxChatSurface", () => {
       <AstryxChatSurface
         data={data({
           projectChat: {
-            project_id: "current",
             messages: [],
             running: true,
             error: null,
@@ -701,7 +681,6 @@ describe("AstryxChatSurface", () => {
             {
               type: "agent.event",
               payload: {
-                project_id: "current",
                 pi_type: "message_update",
                 event: {
                   type: "message_update",
@@ -728,7 +707,6 @@ describe("AstryxChatSurface", () => {
       <AstryxChatSurface
         data={data({
           projectChat: {
-            project_id: "current",
             messages: [
               {
                 role: "assistant",
@@ -736,7 +714,6 @@ describe("AstryxChatSurface", () => {
                 created_at: "2026-07-10T00:00:00Z",
                 metadata: {
                   type: "pi_trace",
-                  version: 2,
                   trace: {
                     blocks: [
                       {
@@ -784,7 +761,6 @@ describe("AstryxChatSurface", () => {
       <AstryxChatSurface
         data={data({
           projectChat: {
-            project_id: "current",
             messages: [
               {
                 role: "assistant",
@@ -792,7 +768,6 @@ describe("AstryxChatSurface", () => {
                 created_at: "2026-07-10T00:00:00Z",
                 metadata: {
                   type: "pi_trace",
-                  version: 2,
                   trace: {
                     blocks,
                     thinking: "",
@@ -825,7 +800,6 @@ describe("AstryxChatSurface", () => {
         ].map((piType) => ({
           type: "agent.event" as const,
           payload: {
-            project_id: "current",
             pi_type: piType,
             event: {
               type: piType,

@@ -43,12 +43,9 @@ export type RestartResponse = {
 };
 
 export type Project = {
-  id: string;
   name: string;
   git_url: string;
   local_path: string;
-  created_at: string;
-  updated_at: string;
 };
 
 export type GitChangeKind =
@@ -116,7 +113,6 @@ export type RequirementStatus =
   | "clarifying"
   | "draft_ready"
   | "planning"
-  | "plan_ready"
   | "queued"
   | "running"
   | "completed"
@@ -183,7 +179,6 @@ export type WorkflowRunStatus =
 
 export type WorkItemStatus =
   | "pending"
-  | "leased"
   | "running"
   | "accepted"
   | "blocked"
@@ -191,10 +186,52 @@ export type WorkItemStatus =
 
 export type ReviewAngle = "correctness" | "quality" | "security";
 
+export type WorkflowAttemptKind =
+  | "implementation"
+  | "fix"
+  | "integration_fix"
+  | "remote_ci_fix"
+  | "rescue";
+
+export type WorkflowAttemptStatus =
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "superseded";
+
+export type ValidationRunStatus =
+  | "pending"
+  | "passed"
+  | "failed"
+  | "unavailable";
+
+export type FindingPriority = "P0" | "P1" | "P2" | "P3";
+
+export type WorkflowPublicationMode = "local" | "pull_request";
+
+export type WorkflowPublicationProvider = "local" | "github" | "gitlab";
+
+export type WorkflowPublicationPhase =
+  | "prepared"
+  | "pushed"
+  | "review_open"
+  | "waiting_checks"
+  | "merged"
+  | "cleaning"
+  | "completed";
+
+export type WorkflowLocalSyncStatus = "pending" | "synced" | "skipped";
+
+export type WorkflowCleanupStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed";
+
 export type WorkflowRun = {
   id: string;
   requirement_id: string;
-  project_id: string;
   status: WorkflowRunStatus;
   change_spec: ChangeSpec;
   design_notes: Array<{
@@ -214,7 +251,6 @@ export type WorkflowRun = {
   blocked_reason?: string | null;
   paused_operation?: string | null;
   replaces_run_id?: string | null;
-  version: number;
   created_at: string;
   updated_at: string;
   completed_at?: string | null;
@@ -233,31 +269,86 @@ export type WorkItem = {
   attempt_count: number;
   actual_attempt_count: number;
   accepted_attempt_id?: string | null;
-  lease_owner?: string | null;
-  lease_expires_at?: string | null;
-  version: number;
   created_at: string;
   updated_at: string;
+};
+
+export type OperationMetrics = {
+  usage: TokenUsageCategory;
+  scope: string;
+  role?: string | null;
+  context_percent: number;
+  budget?: {
+    limit: number;
+    observed: number;
+    ratio: number;
+    exceeded: boolean;
+    enforced: boolean;
+  } | null;
+  runtime?: {
+    idle_timeout_seconds: number;
+    max_idle_ms: number;
+    activity_count: number;
+    warning_count: number;
+    termination_reason: string;
+  } | null;
+  compaction?: {
+    count: number;
+    completed: number;
+    aborted: number;
+    failed: number;
+    overflow_retries: number;
+    estimated_tokens_saved: number;
+    usage_known: boolean;
+  } | null;
+  sources: Array<{
+    kind: string;
+    label: string;
+    chars: number;
+    estimated_tokens: number;
+  }>;
+};
+
+export type ReviewReport = {
+  selection: {
+    classification: string;
+    angles: ReviewAngle[];
+    skipped_angles: ReviewAngle[];
+    reasons: string[];
+    focus: string;
+    file_count: number;
+    changed_lines: number;
+    diff_bytes: number;
+  };
+  reviews: Array<{
+    angle: ReviewAngle;
+    transport_status: "completed" | "failed";
+    context_mode?: string | null;
+    context_hash?: string | null;
+    context_bytes?: number | null;
+    duration_ms: number;
+    turns: number;
+    submission_correction_count: number;
+    retry_count: number;
+    usage: TokenUsageCategory;
+    runtime?: OperationMetrics["runtime"];
+    error?: string | null;
+  }>;
 };
 
 export type WorkflowAttempt = {
   id: string;
   run_id: string;
   work_item_id?: string | null;
-  kind:
-    | "implementation"
-    | "fix"
-    | "integration_fix"
-    | "remote_ci_fix"
-    | "rescue";
+  kind: WorkflowAttemptKind;
   ordinal: number;
-  status: "running" | "succeeded" | "failed" | "cancelled" | "superseded";
+  status: WorkflowAttemptStatus;
   model_tier: string;
   worktree_fingerprint?: string | null;
   result_summary?: string | null;
   failure_class?: string | null;
   failure_message?: string | null;
-  usage?: unknown;
+  usage?: OperationMetrics | null;
   started_at: string;
   completed_at?: string | null;
 };
@@ -265,7 +356,7 @@ export type WorkflowAttempt = {
 export type WorkflowCheckpoint = {
   id: string;
   run_id: string;
-  kind: "security_precheck" | "final" | "rescue";
+  kind: "final" | "rescue";
   revision: number;
   status:
     | "pending"
@@ -277,8 +368,8 @@ export type WorkflowCheckpoint = {
   snapshot_sha: string;
   required_angles: ReviewAngle[];
   summary?: string | null;
-  review_details?: unknown;
-  usage?: unknown;
+  review_details?: ReviewReport | null;
+  usage?: OperationMetrics | null;
   created_at: string;
   updated_at: string;
   completed_at?: string | null;
@@ -288,7 +379,7 @@ export type WorkflowFinding = {
   id: string;
   checkpoint_id: string;
   angle: ReviewAngle;
-  priority: "P0" | "P1" | "P2" | "P3";
+  priority: FindingPriority;
   status: "open" | "resolved";
   category: string;
   path?: string | null;
@@ -316,13 +407,8 @@ export type WorkflowSnapshot = {
     command: string;
     source: "repository_catalog" | "agent_observation";
     gating: boolean;
-    baseline_status:
-      | "pending"
-      | "passed"
-      | "failed"
-      | "unavailable"
-      | "skipped";
-    final_status: "pending" | "passed" | "failed" | "unavailable" | "skipped";
+    baseline_status: ValidationRunStatus;
+    final_status: ValidationRunStatus;
     baseline_exit_code?: number | null;
     final_exit_code?: number | null;
     output_summary?: string | null;
@@ -333,25 +419,18 @@ export type WorkflowSnapshot = {
   findings: WorkflowFinding[];
   publication?: {
     run_id: string;
-    mode: "local" | "pull_request";
-    provider: "local" | "github" | "gitlab";
-    phase:
-      | "prepared"
-      | "pushed"
-      | "review_open"
-      | "waiting_checks"
-      | "merged"
-      | "cleaning"
-      | "completed";
+    mode: WorkflowPublicationMode;
+    provider: WorkflowPublicationProvider;
+    phase: WorkflowPublicationPhase;
     origin: string;
     target_branch: string;
     source_branch: string;
     review_url?: string | null;
     head_commit?: string | null;
     merge_commit?: string | null;
-    local_sync_status: "pending" | "synced" | "skipped";
+    local_sync_status: WorkflowLocalSyncStatus;
     local_sync_message?: string | null;
-    cleanup_status: "pending" | "running" | "completed" | "failed";
+    cleanup_status: WorkflowCleanupStatus;
     remote_ci_fix_used: boolean;
     last_error?: string | null;
     updated_at: string;
@@ -390,118 +469,6 @@ export type WorkflowEventPage = {
   next_after: number | null;
 };
 
-export type SessionTranscriptPage = {
-  entries: SessionEntry[];
-  next_before: number | null;
-  invalid_lines: number;
-};
-
-export type SessionEntry = {
-  cursor: number;
-  source: string;
-  line: number;
-  kind: string;
-  id: string | null;
-  role: string | null;
-  timestamp: string | null;
-  blocks: SessionContentBlock[];
-  raw: unknown;
-};
-
-export type SessionContentBlock =
-  | { type: "text"; text: string }
-  | { type: "thinking"; text: string }
-  | {
-      type: "tool_call";
-      id: string;
-      name: string;
-      arguments: unknown;
-    }
-  | {
-      type: "tool_result";
-      tool_call_id: string;
-      name: string;
-      output: string;
-      diff: string | null;
-      is_error: boolean;
-    }
-  | {
-      type: "subagents";
-      reviews: Array<{
-        angle: string;
-        transport_status: string;
-        error?: string | null;
-        result?: {
-          findings: Array<{
-            priority: "P0" | "P1" | "P2" | "P3";
-            category: string;
-            path: string;
-            location: string;
-            summary: string;
-            evidence: string;
-            reproduction?: string | null;
-            remediation?: string;
-            scenario_ref?: string | null;
-          }>;
-        } | null;
-        usage?: {
-          input: number;
-          output: number;
-          cacheRead: number;
-          cacheWrite: number;
-          context?: {
-            tokens: number;
-            window: number;
-            percent: number;
-          } | null;
-        };
-        events?: Array<Record<string, unknown>>;
-        turns?: number;
-        retry_count?: number;
-        submission_correction_count?: number;
-        duration_ms?: number;
-        runtime?: {
-          warningAfterMs: number;
-          idleTimeoutMs: number;
-          activityCount: number;
-          idleWarningCount: number;
-          maxIdleMs: number;
-          absoluteTimeout: false;
-        } | null;
-        context_mode?: "contract" | "blind" | string | null;
-        context_hash?: string | null;
-        context_bytes?: number | null;
-        session_persisted?: boolean;
-        events_truncated?: boolean;
-      }>;
-      selection?: {
-        classification: string;
-        angles: string[];
-        skippedAngles: string[];
-        reasons: string[];
-        focus: string;
-        fileCount: number;
-        changedLines: number;
-        diffBytes: number;
-      } | null;
-    }
-  | {
-      type: "compaction";
-      reason: "manual" | "threshold" | "overflow" | string | null;
-      status: "running" | "completed" | "aborted" | "failed" | string;
-      tokens_before: number | null;
-      estimated_tokens_after: number | null;
-      estimated_tokens_saved: number | null;
-      first_kept_entry_id: string | null;
-      from_hook: boolean;
-      read_file_count: number;
-      modified_file_count: number;
-      will_retry: boolean;
-      error: string | null;
-      usage_known: boolean;
-    }
-  | { type: "unknown"; block_type: string; raw: unknown };
-
 export type ProjectFileContent = {
   path: string;
   content: string;
@@ -512,7 +479,6 @@ export type TerminalSessionStatus = "starting" | "running" | "exited";
 
 export type TerminalSession = {
   id: string;
-  project_id: string;
   title: string;
   command: string | null;
   status: TerminalSessionStatus;
@@ -535,12 +501,6 @@ export type TerminalCommandProfile = {
   updated_at: string;
 };
 
-export type TerminalCommandProfileDraft = {
-  id?: string;
-  name: string;
-  command: string;
-};
-
 export type TerminalServerMessage =
   | { type: "output"; data: string }
   | {
@@ -550,16 +510,9 @@ export type TerminalServerMessage =
     }
   | { type: "error"; message: string };
 
-export type TerminalClientMessage =
-  | { type: "input"; data: string }
-  | { type: "resize"; cols: number; rows: number }
-  | { type: "close" };
-
 export type Requirement = {
   id: string;
-  project_id: string;
   title: string;
-  original_message: string;
   origin: "project_chat_branch" | "standalone";
   status: RequirementStatus;
   messages: RequirementMessage[];
@@ -610,19 +563,18 @@ export type RequirementConversationPrompt =
       type: "clarification";
       round: number;
       questions: RequirementClarification[];
-      prompt_id?: string;
-      revision?: number;
+      prompt_id: string;
+      revision: number;
     }
   | {
       type: "confirmation";
       draft: ChangeSpec;
-      prompt_id?: string;
-      revision?: number;
+      prompt_id: string;
+      revision: number;
     };
 
 export type RequirementConversation = {
   id: string;
-  project_id: string;
   title: string;
   status: RequirementStatus;
   running: boolean;
@@ -705,7 +657,6 @@ export type ProjectChatMessage = {
 };
 
 export type ProjectChatResponse = {
-  project_id: string;
   messages: ProjectChatMessage[];
   running: boolean;
   error: string | null;
@@ -727,14 +678,6 @@ export type ConversationEventType =
 export type ConversationEvent = {
   type: ConversationEventType;
   payload: Record<string, unknown>;
-};
-
-export type ProjectChatEvent = {
-  project_id: string;
-  event: string;
-  message: string;
-  pi_type?: string;
-  payload?: unknown;
 };
 
 export type ChatAccepted = {
@@ -907,18 +850,7 @@ export type TraceUsage = {
 
 export type TraceMetadata = {
   type: "pi_trace";
-  version: number;
   trace: TraceData;
-};
-
-export type LiveBubble = {
-  id: string;
-  type: "thinking" | "tool" | "output" | "status";
-  label: string;
-  content: string;
-  preview?: string;
-  toolName?: string;
-  status: "running" | "done" | "error";
 };
 
 export type ThinkingLevel =
@@ -952,47 +884,6 @@ export type ModelSettingsResponse = {
 };
 
 export type StartNodeData =
-  | {
-      kind: "project-settings";
-      expanded: boolean;
-      page: SettingsPage;
-      basicSettings: BasicSettings | null;
-      basicError: string | null;
-      savingBasic: boolean;
-      savingTheme: boolean;
-      modelSettings: ModelSettings;
-      models: PiModel[];
-      modelRpcStatus: "idle" | "loading" | "ready" | "reconnecting" | "error";
-      modelError: string | null;
-      savingModels: boolean;
-      terminalDisabled: boolean;
-      terminalAccessRequired: boolean;
-      terminalAccessAuthorized: boolean;
-      terminalAccessBusy: boolean;
-      terminalAccessError: string | null;
-      piLoginSession: TerminalSession | null;
-      piLoginBusy: boolean;
-      piLoginError: string | null;
-      needsModelOnboarding: boolean;
-      modelDraftComplete: boolean;
-      modelSavedComplete: boolean;
-      onToggleExpanded: () => void;
-      onOpenBasic: () => void;
-      onOpenModels: () => void;
-      onBasicChange: (settings: BasicSettings) => void;
-      onThemeChange: (
-        update: Pick<BasicSettingsUpdate, "theme_pack" | "theme_mode">,
-      ) => Promise<void>;
-      onSaveBasic: (
-        confirmedExternal?: boolean,
-      ) => Promise<BasicSettings | null>;
-      onModelChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
-      onSaveModels: () => Promise<void>;
-      onReloadModels: () => Promise<void>;
-      onAuthorizeTerminalAccess: (key: string) => Promise<boolean>;
-      onStartPiLogin: () => Promise<void>;
-      onClosePiLogin: () => Promise<void>;
-    }
   | {
       kind: "requirement-list";
       pendingRequirements: Requirement[];
@@ -1043,50 +934,6 @@ export type StartNodeData =
       onAbandon: () => void;
     }
   | {
-      kind: "project-terminal";
-      project: Project;
-      collapsed: boolean;
-      sessions: TerminalSession[];
-      activeSessionId: string | null;
-      commandProfiles: TerminalCommandProfile[];
-      busy: boolean;
-      error: string | null;
-      terminalDisabled: boolean;
-      terminalDisabledReason?: string;
-      terminalAccessRequired: boolean;
-      terminalAccessAuthorized: boolean;
-      terminalAccessExpiresAt: string | null;
-      terminalAccessBusy: boolean;
-      terminalAccessError: string | null;
-      onToggleCollapsed: () => void;
-      onAuthorizeTerminalAccess: (key: string) => Promise<boolean>;
-      onCreateTerminal: (
-        command?: string | null,
-        title?: string | null,
-      ) => Promise<void>;
-      onCloseTerminal: (terminalId: string) => Promise<void>;
-      onSelectTerminal: (terminalId: string) => void;
-      onSaveCommandProfiles: (
-        profiles: TerminalCommandProfileDraft[],
-      ) => Promise<void>;
-    }
-  | {
-      kind: "project-git";
-      phase: GitExpansionPhase;
-      status: GitStatus | null;
-      diff: GitDiff | null;
-      selectedPaths: Set<string>;
-      selectedDiff: { path: string; area: GitDiffArea } | null;
-      busy: boolean;
-      error: string | null;
-      lastResult: string | null;
-      onToggleExpanded: () => void;
-      onRefresh: () => Promise<void>;
-      onTogglePath: (path: string) => void;
-      onSelectDiff: (path: string, area: GitDiffArea) => Promise<void>;
-      onAction: (action: GitAction, result: string) => Promise<boolean>;
-    }
-  | {
       kind: "workflow-run";
       requirement: Requirement;
       workflowRun?: WorkflowSnapshot | null;
@@ -1097,10 +944,9 @@ export type StartNodeData =
       kind: "workflow-item";
       workflow: WorkflowSnapshot;
       item: WorkItem;
-    }
-  | {
-      kind: "token-usage";
-      usage: ProjectTokenUsage | null;
-      expanded: boolean;
-      onToggleExpanded: () => void;
     };
+
+export type RequirementNodeData =
+  | Extract<StartNodeData, { kind: "requirement-list" }>
+  | Extract<StartNodeData, { kind: "workflow-run" }>
+  | Extract<StartNodeData, { kind: "workflow-item" }>;

@@ -14,13 +14,12 @@ import { useProjectChat } from "./useProjectChat";
 vi.mock("../api/client", () => ({
   abortProjectChat: vi.fn(),
   getProjectChat: vi.fn(),
-  projectChatWebSocketUrl: (id: string) => `ws://test/${id}`,
+  projectChatWebSocketUrl: () => "ws://test/chat",
   resetProjectChat: vi.fn(),
   sendProjectChatMessage: vi.fn(),
 }));
 
 const response: ProjectChatResponse = {
-  project_id: "project-1",
   messages: [],
   running: false,
   error: null,
@@ -81,17 +80,16 @@ describe("useProjectChat", () => {
         resolveSnapshot = resolve;
       }),
     );
-    const { result } = renderHook(() => useProjectChat("project-1"));
+    const { result } = renderHook(() => useProjectChat());
     const socket = FakeWebSocket.instances[0];
 
-    expect(socket.url).toBe("ws://test/project-1");
+    expect(socket.url).toBe("ws://test/chat");
     expect(getProjectChat).not.toHaveBeenCalled();
     act(() => socket.open());
     act(() =>
       socket.emit({
         type: "agent.event",
         payload: {
-          project_id: "project-1",
           pi_type: "message_update",
           event: {
             type: "message_update",
@@ -108,7 +106,7 @@ describe("useProjectChat", () => {
   });
 
   it("reconciles final events with the persisted snapshot", async () => {
-    const { result } = renderHook(() => useProjectChat("project-1"));
+    const { result } = renderHook(() => useProjectChat());
     const socket = FakeWebSocket.instances[0];
     act(() => socket.open());
     await waitFor(() => expect(result.current.projectChat).toEqual(response));
@@ -126,7 +124,7 @@ describe("useProjectChat", () => {
     act(() =>
       socket.emit({
         type: "snapshot.changed",
-        payload: { project_id: "project-1" },
+        payload: {},
       }),
     );
 
@@ -137,7 +135,7 @@ describe("useProjectChat", () => {
   });
 
   it("keeps live process events when a running snapshot is reconciled", async () => {
-    const { result } = renderHook(() => useProjectChat("project-1"));
+    const { result } = renderHook(() => useProjectChat());
     const socket = FakeWebSocket.instances[0];
     act(() => socket.open());
     await waitFor(() => expect(result.current.projectChat).toEqual(response));
@@ -146,7 +144,6 @@ describe("useProjectChat", () => {
       socket.emit({
         type: "agent.event",
         payload: {
-          project_id: "project-1",
           pi_type: "tool_execution_start",
           event: {
             type: "tool_execution_start",
@@ -167,7 +164,7 @@ describe("useProjectChat", () => {
     act(() =>
       socket.emit({
         type: "snapshot.changed",
-        payload: { project_id: "project-1" },
+        payload: {},
       }),
     );
 
@@ -187,7 +184,7 @@ describe("useProjectChat", () => {
         }),
       )
       .mockResolvedValueOnce(response);
-    const { result, unmount } = renderHook(() => useProjectChat("project-1"));
+    const { result, unmount } = renderHook(() => useProjectChat());
     const first = FakeWebSocket.instances[0];
 
     act(() => first.open());
@@ -211,7 +208,7 @@ describe("useProjectChat", () => {
   });
 
   it("accepts a message payload and waits for websocket state", async () => {
-    const { result } = renderHook(() => useProjectChat("project-1"));
+    const { result } = renderHook(() => useProjectChat());
     act(() => FakeWebSocket.instances[0].open());
     await waitFor(() => expect(result.current.projectChat).toEqual(response));
 
@@ -223,7 +220,7 @@ describe("useProjectChat", () => {
       }),
     );
 
-    expect(sendProjectChatMessage).toHaveBeenCalledWith("project-1", {
+    expect(sendProjectChatMessage).toHaveBeenCalledWith({
       message: "项目入口在哪？",
       references: [],
       images: [],

@@ -86,9 +86,3 @@ export function writeCachedTheme(pack: ThemePack, mode: ThemeMode): void {
     // The current render cycle still applies the selected theme.
   }
 }
-
-export async function loadAstryxTheme(
-  themePack: ThemePack,
-): Promise<DefinedTheme> {
-  return ASTRYX_THEME_MAP[themePack];
-}

@@ -47,7 +47,6 @@ pub struct CompiledWorkflow {
 
 pub fn compile_work_plan(
     requirement_id: &str,
-    project_id: &str,
     source_revision: u32,
     change_spec: ChangeSpec,
     plan: WorkPlan,
@@ -78,9 +77,6 @@ pub fn compile_work_plan(
             attempt_count: 0,
             actual_attempt_count: 0,
             accepted_attempt_id: None,
-            lease_owner: None,
-            lease_expires_at: None,
-            version: 0,
             created_at: now,
             updated_at: now,
         })
@@ -100,7 +96,6 @@ pub fn compile_work_plan(
         run: WorkflowRun {
             id: run_id,
             requirement_id: requirement_id.to_owned(),
-            project_id: project_id.to_owned(),
             status: WorkflowRunStatus::Running,
             change_spec,
             design_notes: plan.design_notes,
@@ -115,7 +110,6 @@ pub fn compile_work_plan(
             blocked_reason: None,
             paused_operation: None,
             replaces_run_id: None,
-            version: 0,
             created_at: now,
             updated_at: now,
             completed_at: None,
@@ -149,9 +143,6 @@ pub fn clone_workflow_for_clean_restart(snapshot: &super::WorkflowSnapshot) -> C
             attempt_count: 0,
             actual_attempt_count: 0,
             accepted_attempt_id: None,
-            lease_owner: None,
-            lease_expires_at: None,
-            version: 0,
             created_at: now,
             updated_at: now,
         })
@@ -168,7 +159,6 @@ pub fn clone_workflow_for_clean_restart(snapshot: &super::WorkflowSnapshot) -> C
         run: WorkflowRun {
             id: run_id,
             requirement_id: snapshot.run.requirement_id.clone(),
-            project_id: snapshot.run.project_id.clone(),
             status: WorkflowRunStatus::Running,
             change_spec: snapshot.run.change_spec.clone(),
             design_notes: snapshot.run.design_notes.clone(),
@@ -183,7 +173,6 @@ pub fn clone_workflow_for_clean_restart(snapshot: &super::WorkflowSnapshot) -> C
             blocked_reason: None,
             paused_operation: None,
             replaces_run_id: Some(snapshot.run.id.clone()),
-            version: 0,
             created_at: now,
             updated_at: now,
             completed_at: None,
@@ -565,7 +554,7 @@ mod tests {
 
     #[test]
     fn compiler_creates_behavior_slices_without_stages() {
-        let compiled = compile_work_plan("req", "current", 1, spec(), plan()).unwrap();
+        let compiled = compile_work_plan("req", 1, spec(), plan()).unwrap();
         assert_eq!(compiled.work_items.len(), 1);
         assert_eq!(compiled.work_items[0].scenario_refs, ["main-page"]);
     }
@@ -593,7 +582,7 @@ mod tests {
             when: "用户浏览内容".to_owned(),
             then: "信息仍然容易理解".to_owned(),
         });
-        assert!(compile_work_plan("req", "current", 1, value, plan()).is_err());
+        assert!(compile_work_plan("req", 1, value, plan()).is_err());
     }
 
     #[test]
@@ -613,10 +602,10 @@ mod tests {
             parallel_item("b", "frontend/b"),
             parallel_item("c", "frontend/c"),
         ];
-        assert!(compile_work_plan("req", "current", 1, spec(), value.clone()).is_ok());
+        assert!(compile_work_plan("req", 1, spec(), value.clone()).is_ok());
 
         value.work_items[1].scope_hints = vec!["frontend/a/child".to_owned()];
-        assert!(compile_work_plan("req", "current", 1, spec(), value).is_err());
+        assert!(compile_work_plan("req", 1, spec(), value).is_err());
     }
 
     #[test]
@@ -626,6 +615,6 @@ mod tests {
         second.id = "secondary".to_owned();
         second.scope_hints = vec!["docs".to_owned()];
         value.work_items.push(second);
-        assert!(compile_work_plan("req", "current", 1, spec(), value).is_err());
+        assert!(compile_work_plan("req", 1, spec(), value).is_err());
     }
 }

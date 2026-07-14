@@ -2,8 +2,6 @@ import type { Node } from "@xyflow/react";
 import type {
   ChatSubmission,
   DraftClarificationAnswer,
-  BasicSettings,
-  BasicSettingsUpdate,
   FileReference,
   ImageAttachment,
   Project,
@@ -11,31 +9,21 @@ import type {
   Requirement,
   RequirementConversation,
   RequirementTimelineBranch,
+  RequirementNodeData,
   ConversationEvent,
   ProjectChatResponse,
-  TerminalCommandProfile,
-  TerminalCommandProfileDraft,
-  TerminalSession,
   StartNodeData,
   StreamEvent,
-  GitAction,
-  GitDiff,
-  GitDiffArea,
-  GitExpansionPhase,
-  GitStatus,
-  ModelSettings,
-  ModelTierKey,
-  ModelTierSetting,
-  PiModel,
-  SettingsPage,
 } from "../types/api";
 import {
-  WORKFLOW_RUN_NODE_POSITION,
+  REQUIREMENT_CHAT_NODE_SIZE,
+  REQUIREMENT_LIST_NODE_SIZE,
   WORKFLOW_RUN_NODE_SIZE,
+  mainNodePositions,
   workflowItemPositions,
 } from "./layout";
 
-function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
+function withDimensions<T extends StartNodeData>(nodes: Node<T>[]): Node<T>[] {
   return nodes.map((node) => {
     if (node.width && node.height) {
       return node;
@@ -51,14 +39,10 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       StartNodeData["kind"],
       { width: number; height: number }
     > = {
-      "project-settings": { width: 960, height: 44 },
-      "requirement-list": { width: 360, height: 760 },
-      "requirement-chat": { width: 960, height: 760 },
-      "project-terminal": { width: 960, height: 44 },
-      "project-git": { width: 360, height: 44 },
+      "requirement-list": REQUIREMENT_LIST_NODE_SIZE,
+      "requirement-chat": REQUIREMENT_CHAT_NODE_SIZE,
       "workflow-run": WORKFLOW_RUN_NODE_SIZE,
       "workflow-item": { width: 340, height: 220 },
-      "token-usage": { width: 360, height: 44 },
     };
 
     const fallback = defaults[node.data.kind];
@@ -77,99 +61,9 @@ export interface BuildProjectNodesParams {
   selectedWorkflowRequirementId: string | null;
   requirementActionBusyId: string | null;
   requirementActionError: string | null;
-  tokenUsageExpanded: boolean;
   closeWorkflow: () => void;
   selectWorkflowRequirement: (requirement: Requirement) => void;
   planRequirement: (requirement: Requirement) => Promise<void>;
-  onToggleTokenUsageExpanded: () => void;
-}
-
-export interface BuildProjectSettingsNodeParams {
-  projectCanvas: ProjectCanvasData | null;
-  project: Project | null;
-  expanded: boolean;
-  page: SettingsPage;
-  basicSettings: BasicSettings | null;
-  basicError: string | null;
-  savingBasic: boolean;
-  savingTheme: boolean;
-  modelSettings: ModelSettings;
-  models: PiModel[];
-  modelRpcStatus: "idle" | "loading" | "ready" | "reconnecting" | "error";
-  modelError: string | null;
-  savingModels: boolean;
-  terminalDisabled: boolean;
-  terminalAccessRequired: boolean;
-  terminalAccessAuthorized: boolean;
-  terminalAccessBusy: boolean;
-  terminalAccessError: string | null;
-  piLoginSession: TerminalSession | null;
-  piLoginBusy: boolean;
-  piLoginError: string | null;
-  needsModelOnboarding: boolean;
-  modelDraftComplete: boolean;
-  modelSavedComplete: boolean;
-  onToggleExpanded: () => void;
-  onOpenBasic: () => void;
-  onOpenModels: () => void;
-  onBasicChange: (settings: BasicSettings) => void;
-  onThemeChange: (
-    update: Pick<BasicSettingsUpdate, "theme_pack" | "theme_mode">,
-  ) => Promise<void>;
-  onSaveBasic: (confirmedExternal?: boolean) => Promise<BasicSettings | null>;
-  onModelChange: (tier: ModelTierKey, setting: ModelTierSetting) => void;
-  onSaveModels: () => Promise<void>;
-  onReloadModels: () => Promise<void>;
-  onAuthorizeTerminalAccess: (key: string) => Promise<boolean>;
-  onStartPiLogin: () => Promise<void>;
-  onClosePiLogin: () => Promise<void>;
-}
-
-export interface BuildProjectTerminalNodeParams {
-  projectCanvas: ProjectCanvasData | null;
-  project: Project | null;
-  collapsed: boolean;
-  sessions: TerminalSession[];
-  activeSessionId: string | null;
-  commandProfiles: TerminalCommandProfile[];
-  busy: boolean;
-  error: string | null;
-  terminalDisabled: boolean;
-  terminalDisabledReason?: string;
-  terminalAccessRequired: boolean;
-  terminalAccessAuthorized: boolean;
-  terminalAccessExpiresAt: string | null;
-  terminalAccessBusy: boolean;
-  terminalAccessError: string | null;
-  onToggleCollapsed: () => void;
-  onAuthorizeTerminalAccess: (key: string) => Promise<boolean>;
-  onCreateTerminal: (
-    command?: string | null,
-    title?: string | null,
-  ) => Promise<void>;
-  onCloseTerminal: (terminalId: string) => Promise<void>;
-  onSelectTerminal: (terminalId: string) => void;
-  onSaveCommandProfiles: (
-    profiles: TerminalCommandProfileDraft[],
-  ) => Promise<void>;
-}
-
-export interface BuildProjectGitNodeParams {
-  projectCanvas: ProjectCanvasData | null;
-  project: Project | null;
-  phase: GitExpansionPhase;
-  status: GitStatus | null;
-  diff: GitDiff | null;
-  selectedPaths: Set<string>;
-  selectedDiff: { path: string; area: GitDiffArea } | null;
-  busy: boolean;
-  error: string | null;
-  lastResult: string | null;
-  onToggleExpanded: () => void;
-  onRefresh: () => Promise<void>;
-  onTogglePath: (path: string) => void;
-  onSelectDiff: (path: string, area: GitDiffArea) => Promise<void>;
-  onAction: (action: GitAction, result: string) => Promise<boolean>;
 }
 
 export interface BuildProjectChatNodeParams {
@@ -218,12 +112,10 @@ export function buildProjectNodes({
   selectedWorkflowRequirementId,
   requirementActionBusyId,
   requirementActionError,
-  tokenUsageExpanded,
   closeWorkflow,
   selectWorkflowRequirement,
   planRequirement,
-  onToggleTokenUsageExpanded,
-}: BuildProjectNodesParams): Node<StartNodeData>[] {
+}: BuildProjectNodesParams): Node<RequirementNodeData>[] {
   const project = projectCanvas?.project ?? currentProject;
   if (!project) {
     return [];
@@ -239,11 +131,13 @@ export function buildProjectNodes({
     ? workflowItemPositions(selectedWorkflow)
     : new Map<string, { x: number; y: number }>();
 
-  return withDimensions([
+  const positions = mainNodePositions();
+
+  return withDimensions<RequirementNodeData>([
     {
       id: "requirements",
       type: "startNode",
-      position: { x: 984, y: 20 },
+      position: positions["requirement-list"],
       style: { width: 360, height: 760 },
       data: {
         kind: "requirement-list",
@@ -260,29 +154,12 @@ export function buildProjectNodes({
         onPlanRequirement: planRequirement,
       },
     },
-    {
-      id: "token-usage",
-      type: "startNode",
-      className: "token-usage-flow-node",
-      position: tokenUsageExpanded ? { x: 984, y: -240 } : { x: 984, y: -44 },
-      style: {
-        width: 360,
-        height: tokenUsageExpanded ? 240 : 44,
-        zIndex: tokenUsageExpanded ? 20 : 1,
-      },
-      data: {
-        kind: "token-usage",
-        usage: projectCanvas?.token_usage ?? null,
-        expanded: tokenUsageExpanded,
-        onToggleExpanded: onToggleTokenUsageExpanded,
-      },
-    },
     ...(selectedWorkflowRequirement
       ? [
           {
             id: "workflow-run",
             type: "startNode" as const,
-            position: WORKFLOW_RUN_NODE_POSITION,
+            position: positions["workflow-run"],
             data: {
               kind: "workflow-run" as const,
               requirement: selectedWorkflowRequirement,
@@ -297,7 +174,7 @@ export function buildProjectNodes({
                 type: "startNode" as const,
                 position:
                   selectedWorkflowItemPositions.get(item.id) ??
-                  WORKFLOW_RUN_NODE_POSITION,
+                  positions["workflow-run"],
                 style: { width: 340, height: 220 },
                 data: {
                   kind: "workflow-item" as const,
@@ -345,11 +222,13 @@ export function buildProjectChatNode({
 
   const activeRequirementId = projectCanvas?.active_requirement?.id ?? "";
 
-  return withDimensions([
+  const positions = mainNodePositions();
+
+  return withDimensions<StartNodeData>([
     {
       id: "requirement-chat",
       type: "startNode",
-      position: { x: 0, y: 20 },
+      position: positions["requirement-chat"],
       data: {
         kind: "requirement-chat",
         project,
@@ -387,218 +266,3 @@ export function buildProjectChatNode({
 }
 
 export { buildWorkflowRunEdges } from "./edges";
-
-export function buildProjectSettingsNode({
-  projectCanvas,
-  project: currentProject,
-  expanded,
-  page,
-  basicSettings,
-  basicError,
-  savingBasic,
-  savingTheme,
-  modelSettings,
-  models,
-  modelRpcStatus,
-  modelError,
-  savingModels,
-  terminalDisabled,
-  terminalAccessRequired,
-  terminalAccessAuthorized,
-  terminalAccessBusy,
-  terminalAccessError,
-  piLoginSession,
-  piLoginBusy,
-  piLoginError,
-  needsModelOnboarding,
-  modelDraftComplete,
-  modelSavedComplete,
-  onToggleExpanded,
-  onOpenBasic,
-  onOpenModels,
-  onBasicChange,
-  onThemeChange,
-  onSaveBasic,
-  onModelChange,
-  onSaveModels,
-  onReloadModels,
-  onAuthorizeTerminalAccess,
-  onStartPiLogin,
-  onClosePiLogin,
-}: BuildProjectSettingsNodeParams): Node<StartNodeData> | null {
-  const project = projectCanvas?.project ?? currentProject;
-  if (!project) return null;
-
-  return withDimensions([
-    {
-      id: "project-settings",
-      type: "startNode",
-      position: expanded ? { x: -180, y: -800 } : { x: 0, y: -44 },
-      style: {
-        width: expanded ? 1320 : 960,
-        height: expanded ? 780 : 44,
-        zIndex: expanded ? 20 : 1,
-      },
-      data: {
-        kind: "project-settings",
-        expanded,
-        page,
-        basicSettings,
-        basicError,
-        savingBasic,
-        savingTheme,
-        modelSettings,
-        models,
-        modelRpcStatus,
-        modelError,
-        savingModels,
-        terminalDisabled,
-        terminalAccessRequired,
-        terminalAccessAuthorized,
-        terminalAccessBusy,
-        terminalAccessError,
-        piLoginSession,
-        piLoginBusy,
-        piLoginError,
-        needsModelOnboarding,
-        modelDraftComplete,
-        modelSavedComplete,
-        onToggleExpanded,
-        onOpenBasic,
-        onOpenModels,
-        onBasicChange,
-        onThemeChange,
-        onSaveBasic,
-        onModelChange,
-        onSaveModels,
-        onReloadModels,
-        onAuthorizeTerminalAccess,
-        onStartPiLogin,
-        onClosePiLogin,
-      },
-    },
-  ])[0];
-}
-
-export function buildProjectTerminalNode({
-  projectCanvas,
-  project: currentProject,
-  collapsed,
-  sessions,
-  activeSessionId,
-  commandProfiles,
-  busy,
-  error,
-  terminalDisabled,
-  terminalDisabledReason,
-  terminalAccessRequired,
-  terminalAccessAuthorized,
-  terminalAccessExpiresAt,
-  terminalAccessBusy,
-  terminalAccessError,
-  onToggleCollapsed,
-  onAuthorizeTerminalAccess,
-  onCreateTerminal,
-  onCloseTerminal,
-  onSelectTerminal,
-  onSaveCommandProfiles,
-}: BuildProjectTerminalNodeParams): Node<StartNodeData> | null {
-  const project = projectCanvas?.project ?? currentProject;
-  if (!project) return null;
-
-  return withDimensions([
-    {
-      id: "project-terminal",
-      type: "startNode",
-      position: { x: 0, y: 800 },
-      style: {
-        width: 960,
-        height: collapsed ? 44 : 460,
-      },
-      data: {
-        kind: "project-terminal",
-        project,
-        collapsed,
-        sessions,
-        activeSessionId,
-        commandProfiles,
-        busy,
-        error,
-        terminalDisabled,
-        terminalDisabledReason,
-        terminalAccessRequired,
-        terminalAccessAuthorized,
-        terminalAccessExpiresAt,
-        terminalAccessBusy,
-        terminalAccessError,
-        onToggleCollapsed,
-        onAuthorizeTerminalAccess,
-        onCreateTerminal,
-        onCloseTerminal,
-        onSelectTerminal,
-        onSaveCommandProfiles,
-      },
-    },
-  ])[0];
-}
-
-export function buildProjectGitNode({
-  projectCanvas,
-  project: currentProject,
-  phase,
-  status,
-  diff,
-  selectedPaths,
-  selectedDiff,
-  busy,
-  error,
-  lastResult,
-  onToggleExpanded,
-  onRefresh,
-  onTogglePath,
-  onSelectDiff,
-  onAction,
-}: BuildProjectGitNodeParams): Node<StartNodeData> | null {
-  const project = projectCanvas?.project ?? currentProject;
-  if (!project) return null;
-
-  return withDimensions([
-    {
-      id: "project-git",
-      type: "startNode",
-      className: "git-flow-node",
-      position: { x: 984, y: 800 },
-      style: {
-        width: phase === "expanded" ? 1320 : 360,
-        height: phase === "collapsed" ? 44 : 780,
-        zIndex: phase === "expanded" ? 20 : 1,
-      },
-      data: {
-        kind: "project-git",
-        phase,
-        status,
-        diff,
-        selectedPaths,
-        selectedDiff,
-        busy,
-        error,
-        lastResult,
-        onToggleExpanded,
-        onRefresh,
-        onTogglePath,
-        onSelectDiff,
-        onAction,
-      },
-    },
-  ])[0];
-}
-
-export function mergeProjectNodes(
-  structureNodes: Node<StartNodeData>[],
-  ...extraNodes: Array<Node<StartNodeData> | null>
-): Node<StartNodeData>[] {
-  return [
-    ...structureNodes,
-    ...extraNodes.filter((node): node is Node<StartNodeData> => Boolean(node)),
-  ];
-}

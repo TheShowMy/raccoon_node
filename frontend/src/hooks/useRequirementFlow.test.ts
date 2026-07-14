@@ -29,9 +29,7 @@ vi.mock("../api/client", () => ({
 const now = "2026-06-25T00:00:00Z";
 const requirement: Requirement = {
   id: "requirement-1",
-  project_id: "project-1",
   title: "测试需求",
-  original_message: "测试需求",
   origin: "standalone",
   status: "draft_ready",
   messages: [],
@@ -44,12 +42,9 @@ const requirement: Requirement = {
 };
 const canvas: ProjectCanvasData = {
   project: {
-    id: "project-1",
     name: "Project",
     git_url: "https://example.com/project.git",
     local_path: "/tmp/project",
-    created_at: now,
-    updated_at: now,
   },
   active_requirement: null,
   queued_requirements: [{ ...requirement, status: "planning" }],
@@ -57,7 +52,6 @@ const canvas: ProjectCanvasData = {
 };
 const conversation: RequirementConversation = {
   id: requirement.id,
-  project_id: requirement.project_id,
   title: requirement.title,
   status: "planning",
   running: true,
@@ -162,7 +156,6 @@ describe("useRequirementFlow", () => {
     const observeRequirement = vi.fn();
     const { result } = renderHook(() =>
       useRequirementFlow(
-        "project-1",
         requirement.id,
         null,
         setProjectCanvas,
@@ -235,7 +228,6 @@ describe("useRequirementFlow", () => {
     const setProjectCanvas = vi.fn();
     const { result } = renderHook(() =>
       useRequirementFlow(
-        "project-1",
         requirement.id,
         null,
         setProjectCanvas,
@@ -297,7 +289,6 @@ describe("useRequirementFlow", () => {
     const setProjectCanvas = vi.fn();
     const { result } = renderHook(() =>
       useRequirementFlow(
-        "project-1",
         null,
         null,
         setProjectCanvas,
@@ -338,7 +329,7 @@ describe("useRequirementFlow", () => {
     });
 
     expect(accepted).toBe(true);
-    expect(createRequirementBranch).toHaveBeenCalledWith("project-1", {
+    expect(createRequirementBranch).toHaveBeenCalledWith({
       message: "重写登录流程",
       ...attachments,
     });
@@ -357,14 +348,7 @@ describe("useRequirementFlow", () => {
   it("starts a requirement branch with a default message when no supplement is given", async () => {
     const loadProjectCanvas = vi.fn().mockResolvedValue(canvas);
     const { result } = renderHook(() =>
-      useRequirementFlow(
-        "project-1",
-        null,
-        null,
-        vi.fn(),
-        loadProjectCanvas,
-        vi.fn(),
-      ),
+      useRequirementFlow(null, null, vi.fn(), loadProjectCanvas, vi.fn()),
     );
 
     await act(async () => {
@@ -374,7 +358,7 @@ describe("useRequirementFlow", () => {
       });
     });
 
-    expect(createRequirementBranch).toHaveBeenCalledWith("project-1", {
+    expect(createRequirementBranch).toHaveBeenCalledWith({
       message: "基于上文整理需求",
       references: [],
       images: [],
@@ -401,15 +385,7 @@ describe("useRequirementFlow", () => {
     }));
     const { result, rerender } = renderHook(
       ({ requirements }) =>
-        useRequirementFlow(
-          "project-1",
-          null,
-          null,
-          vi.fn(),
-          vi.fn(),
-          vi.fn(),
-          requirements,
-        ),
+        useRequirementFlow(null, null, vi.fn(), vi.fn(), vi.fn(), requirements),
       { initialProps: { requirements: [first, second] } },
     );
 
@@ -468,7 +444,7 @@ describe("useRequirementFlow", () => {
       return { ...conversation, id, running: false, status: "completed" };
     });
     const { result } = renderHook(() =>
-      useRequirementFlow("project-1", null, null, vi.fn(), vi.fn(), vi.fn(), [
+      useRequirementFlow(null, null, vi.fn(), vi.fn(), vi.fn(), [
         first,
         second,
       ]),
@@ -499,7 +475,6 @@ describe("useRequirementFlow", () => {
     const { result, rerender } = renderHook(
       ({ activeRequirementId }) =>
         useRequirementFlow(
-          "project-1",
           activeRequirementId,
           null,
           vi.fn(),
@@ -523,14 +498,7 @@ describe("useRequirementFlow", () => {
 
   it("keeps live process events when a running conversation snapshot is reconciled", async () => {
     const { result } = renderHook(() =>
-      useRequirementFlow(
-        "project-1",
-        requirement.id,
-        null,
-        vi.fn(),
-        vi.fn(),
-        vi.fn(),
-      ),
+      useRequirementFlow(requirement.id, null, vi.fn(), vi.fn(), vi.fn()),
     );
     const socket = FakeWebSocket.instances[0];
 
@@ -580,7 +548,6 @@ describe("useRequirementFlow", () => {
     const loadProjectCanvas = vi.fn().mockResolvedValue(canvas);
     const { result } = renderHook(() =>
       useRequirementFlow(
-        "project-1",
         null,
         requirement.id,
         vi.fn(),
@@ -623,10 +590,7 @@ describe("useRequirementFlow", () => {
     await waitFor(() => {
       expect(result.current.requirementStreamEvents).toEqual([]);
       expect(loadProjectCanvas).toHaveBeenCalledTimes(1);
-      expect(loadProjectCanvas).toHaveBeenCalledWith(
-        "project-1",
-        requirement.id,
-      );
+      expect(loadProjectCanvas).toHaveBeenCalledWith(requirement.id);
       expect(getRequirementConversation).not.toHaveBeenCalled();
     });
   });

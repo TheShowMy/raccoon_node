@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     hash::{Hash, Hasher},
     io::ErrorKind,
     path::{Path, PathBuf},
@@ -44,7 +44,6 @@ use crate::workflow::{
     parse_review_angle, validate_change_spec,
 };
 
-const MAX_PROJECT_CLIENTS: usize = 5;
 static PI_OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const CLARIFICATION_EXTENSION: &str = include_str!("assets/raccoon-clarification.mjs");
 const REVIEW_ORCHESTRATOR_EXTENSION: &str = include_str!("assets/raccoon-review-orchestrator.mjs");
@@ -114,9 +113,9 @@ pub struct PiRpcModelProvider {
     pub data_root: PathBuf,
     pub session_dir: PathBuf,
     pub global_client: Arc<tokio::sync::RwLock<Option<Arc<PiRpcClient>>>>,
-    pub project_clients: tokio::sync::Mutex<HashMap<String, (Arc<PiRpcClient>, Instant)>>,
-    pub project_chat_clients: tokio::sync::Mutex<HashMap<String, Arc<PiRpcClient>>>,
-    pub project_chat_operations: tokio::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
+    pub project_client: tokio::sync::Mutex<Option<(Arc<PiRpcClient>, Instant)>>,
+    pub project_chat_client: tokio::sync::Mutex<Option<Arc<PiRpcClient>>>,
+    pub project_chat_operation: tokio::sync::Mutex<Option<Arc<AtomicBool>>>,
     pub startup_error: Option<String>,
     /// 0=Ready, 1=Reconnecting, 2=Error
     pub rpc_status: Arc<AtomicU8>,
@@ -209,9 +208,9 @@ impl PiRpcModelProvider {
             data_root,
             session_dir,
             global_client,
-            project_clients: tokio::sync::Mutex::new(HashMap::new()),
-            project_chat_clients: tokio::sync::Mutex::new(HashMap::new()),
-            project_chat_operations: tokio::sync::Mutex::new(HashMap::new()),
+            project_client: tokio::sync::Mutex::new(None),
+            project_chat_client: tokio::sync::Mutex::new(None),
+            project_chat_operation: tokio::sync::Mutex::new(None),
             startup_error,
             rpc_status,
             clarification_extension_path,
@@ -306,24 +305,10 @@ impl PiRpcModelProvider {
         if let Some(client) = self.global_client.write().await.take() {
             client.shutdown().await;
         }
-        let clients = self
-            .project_clients
-            .lock()
-            .await
-            .drain()
-            .map(|(_, (client, _))| client)
-            .collect::<Vec<_>>();
-        for client in clients {
+        if let Some((client, _)) = self.project_client.lock().await.take() {
             client.shutdown().await;
         }
-        let chat_clients = self
-            .project_chat_clients
-            .lock()
-            .await
-            .drain()
-            .map(|(_, client)| client)
-            .collect::<Vec<_>>();
-        for client in chat_clients {
+        if let Some(client) = self.project_chat_client.lock().await.take() {
             client.shutdown().await;
         }
     }
@@ -334,14 +319,7 @@ impl PiRpcModelProvider {
         if let Some(client) = self.global_client.write().await.take() {
             client.shutdown().await;
         }
-        let clients = self
-            .project_clients
-            .lock()
-            .await
-            .drain()
-            .map(|(_, (client, _))| client)
-            .collect::<Vec<_>>();
-        for client in clients {
+        if let Some((client, _)) = self.project_client.lock().await.take() {
             client.shutdown().await;
         }
 
@@ -367,16 +345,10 @@ impl PiRpcModelProvider {
         &self,
         project: &crate::models::Project,
     ) -> Result<Arc<PiRpcClient>, AppError> {
-        let project_id = project.id.clone();
-        let mut clients = self.project_clients.lock().await;
-
-        if let Some((client, _last_used)) = clients.get_mut(&project_id) {
-            *_last_used = Instant::now();
+        let mut slot = self.project_client.lock().await;
+        if let Some((client, last_used)) = slot.as_mut() {
+            *last_used = Instant::now();
             return Ok(client.clone());
-        }
-
-        if clients.len() >= MAX_PROJECT_CLIENTS {
-            Self::evict_oldest(&mut clients);
         }
 
         let working_dir = resolve_project_working_dir(&self.data_root, &project.local_path)?;
@@ -408,18 +380,8 @@ impl PiRpcModelProvider {
         )
         .await?;
         let client = Arc::new(client);
-        clients.insert(project_id, (client.clone(), Instant::now()));
+        *slot = Some((client.clone(), Instant::now()));
         Ok(client)
-    }
-
-    fn evict_oldest(clients: &mut HashMap<String, (Arc<PiRpcClient>, Instant)>) {
-        let oldest = clients
-            .iter()
-            .min_by_key(|(_id, (_client, instant))| *instant)
-            .map(|(id, _)| id.clone());
-        if let Some(id) = oldest {
-            clients.remove(&id);
-        }
     }
 }
 
@@ -560,13 +522,11 @@ impl ModelProvider for PiRpcModelProvider {
         events: Option<ProjectChatEventEmitter>,
     ) -> ProjectChatFuture<'_> {
         Box::pin(async move {
-            let project_id = input.project.id.clone();
             let operation = self
-                .project_chat_operations
+                .project_chat_operation
                 .lock()
                 .await
-                .get(&project_id)
-                .cloned()
+                .clone()
                 .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
             let result = async {
                 let working_dir =
@@ -588,23 +548,17 @@ impl ModelProvider for PiRpcModelProvider {
                     )
                     .await?,
                 );
-                self.project_chat_clients
-                    .lock()
-                    .await
-                    .insert(project_id.clone(), client.clone());
+                *self.project_chat_client.lock().await = Some(client.clone());
                 if operation.load(Ordering::Relaxed) {
                     client.cancel().await;
                 }
                 let output = client.ask_project_chat(input, events).await;
-                self.project_chat_clients.lock().await.remove(&project_id);
+                self.project_chat_client.lock().await.take();
                 client.shutdown().await;
                 output
             }
             .await;
-            self.project_chat_operations
-                .lock()
-                .await
-                .remove(&project_id);
+            self.project_chat_operation.lock().await.take();
             result
         })
     }
@@ -618,11 +572,11 @@ impl ModelProvider for PiRpcModelProvider {
                 return Ok(None);
             }
             {
-                let mut operations = self.project_chat_operations.lock().await;
-                if operations.contains_key(&input.project.id) {
+                let mut operation = self.project_chat_operation.lock().await;
+                if operation.is_some() {
                     return Err(AppError::conflict("普通会话正在运行，暂时无法创建需求分支"));
                 }
-                operations.insert(input.project.id.clone(), Arc::new(AtomicBool::new(false)));
+                *operation = Some(Arc::new(AtomicBool::new(false)));
             }
             let result = async {
                 let working_dir =
@@ -642,71 +596,50 @@ impl ModelProvider for PiRpcModelProvider {
                 result.map(Some)
             }
             .await;
-            self.project_chat_operations
-                .lock()
-                .await
-                .remove(&input.project.id);
+            self.project_chat_operation.lock().await.take();
             result
         })
     }
 
-    fn begin_project_chat(&self, project_id: &str) -> ModelProviderActionFuture<'_> {
-        let project_id = project_id.to_owned();
+    fn begin_project_chat(&self) -> ModelProviderActionFuture<'_> {
         Box::pin(async move {
-            let mut operations = self.project_chat_operations.lock().await;
-            if operations.contains_key(&project_id) {
+            let mut operation = self.project_chat_operation.lock().await;
+            if operation.is_some() {
                 return Err(AppError::conflict("普通会话正在运行"));
             }
-            operations.insert(project_id, Arc::new(AtomicBool::new(false)));
+            *operation = Some(Arc::new(AtomicBool::new(false)));
             Ok(())
         })
     }
 
-    fn cancel_project_chat(&self, project_id: &str) -> ModelProviderActionFuture<'_> {
-        let project_id = project_id.to_owned();
+    fn cancel_project_chat(&self) -> ModelProviderActionFuture<'_> {
         Box::pin(async move {
             let operation = self
-                .project_chat_operations
+                .project_chat_operation
                 .lock()
                 .await
-                .get(&project_id)
-                .cloned()
+                .clone()
                 .ok_or_else(|| AppError::conflict("项目问答当前未运行"))?;
             operation.store(true, Ordering::Relaxed);
-            if let Some(client) = self
-                .project_chat_clients
-                .lock()
-                .await
-                .get(&project_id)
-                .cloned()
-            {
+            if let Some(client) = self.project_chat_client.lock().await.clone() {
                 client.cancel().await;
             }
             Ok(())
         })
     }
 
-    fn release_project(&self, project_id: &str) -> ModelProviderActionFuture<'_> {
-        let project_id = project_id.to_owned();
+    fn release_project(&self) -> ModelProviderActionFuture<'_> {
         Box::pin(async move {
-            let client = self
-                .project_clients
-                .lock()
-                .await
-                .remove(&project_id)
-                .map(|(client, _)| client);
-            if let Some(client) = client {
+            if let Some((client, _)) = self.project_client.lock().await.take() {
                 client.shutdown().await;
             }
             Ok(())
         })
     }
 
-    fn cancel_requirement_analysis(&self, project_id: &str) -> ModelProviderActionFuture<'_> {
-        let project_id = project_id.to_owned();
+    fn cancel_requirement_analysis(&self) -> ModelProviderActionFuture<'_> {
         Box::pin(async move {
-            let mut clients = self.project_clients.lock().await;
-            if let Some((client, _)) = clients.remove(&project_id) {
+            if let Some((client, _)) = self.project_client.lock().await.take() {
                 client.cancel().await;
             }
             Ok(())
@@ -715,18 +648,16 @@ impl ModelProvider for PiRpcModelProvider {
 
     fn respond_requirement_interaction(
         &self,
-        project_id: &str,
         request_id: &str,
         response: Value,
     ) -> ModelProviderActionFuture<'_> {
-        let project_id = project_id.to_owned();
         let request_id = request_id.to_owned();
         Box::pin(async move {
             let client = self
-                .project_clients
+                .project_client
                 .lock()
                 .await
-                .get(&project_id)
+                .as_ref()
                 .map(|(client, _)| client.clone())
                 .ok_or_else(|| AppError::conflict("澄清会话已结束，请重新分析"))?;
             client
@@ -1301,13 +1232,11 @@ impl PiRpcClient {
             .and_then(Value::as_array)
             .is_some_and(|commands| {
                 commands.iter().any(|command| {
-                    command.get("name").and_then(Value::as_str) == Some("raccoon-requirements-v3")
+                    command.get("name").and_then(Value::as_str) == Some("raccoon-requirements")
                 })
             });
         if !available {
-            return Err(AppError::internal(
-                "受管 Pi 需求澄清插件未加载或协议版本不兼容",
-            ));
+            return Err(AppError::internal("受管 Pi 需求澄清插件未加载或协议不兼容"));
         }
         Ok(())
     }
@@ -1321,8 +1250,7 @@ impl PiRpcClient {
             .and_then(Value::as_array)
             .is_some_and(|commands| {
                 commands.iter().any(|command| {
-                    command.get("name").and_then(Value::as_str)
-                        == Some("raccoon-parallel-review-v5")
+                    command.get("name").and_then(Value::as_str) == Some("raccoon-parallel-review")
                 })
             });
         if available {
@@ -1343,14 +1271,14 @@ impl PiRpcClient {
             .and_then(Value::as_array)
             .is_some_and(|commands| {
                 commands.iter().any(|command| {
-                    command.get("name").and_then(Value::as_str) == Some("raccoon-task-runtime-v4")
+                    command.get("name").and_then(Value::as_str) == Some("raccoon-task-runtime")
                 })
             });
         if available {
             Ok(())
         } else {
             Err(AppError::internal(
-                "受管 Pi 任务运行时插件 v3 未加载或协议不兼容",
+                "受管 Pi 任务运行时插件未加载或协议不兼容",
             ))
         }
     }
@@ -1371,7 +1299,6 @@ impl PiRpcClient {
             let plan = serde_json::from_value::<crate::workflow::WorkPlan>(payload)?;
             compile_work_plan(
                 &input.requirement.id,
-                &input.project.id,
                 input.requirement.analysis_revision,
                 change_spec.clone(),
                 plan.clone(),
@@ -1578,8 +1505,8 @@ impl PiRpcClient {
         let details = parallel_review_tool_details(&pi_events)
             .ok_or_else(|| AppError::internal("并行审核未返回结构化 details"))?;
         let protocol = details.get("protocol").and_then(Value::as_str);
-        if protocol != Some("raccoon:parallel-review:v5") {
-            return Err(AppError::internal("并行审核协议版本不兼容"));
+        if protocol != Some("raccoon:parallel-review") {
+            return Err(AppError::internal("并行审核协议不匹配"));
         }
         let mut findings = Vec::new();
         let mut technical_failures = Vec::new();
@@ -1671,12 +1598,14 @@ impl PiRpcClient {
         let usage = self
             .attach_session_usage(trace, false, usage_before.as_ref())
             .await;
+        let report =
+            crate::workflow::ReviewReport::from_details(details).map_err(AppError::internal)?;
         Ok(WorkflowReviewOutput {
             findings,
             technical_failure: (!technical_failures.is_empty())
                 .then(|| technical_failures.join("；")),
             usage,
-            details: Some(details.clone()),
+            details: Some(report),
         })
     }
 
@@ -2856,8 +2785,8 @@ fn parse_workflow_payload(
     let details = results[0]
         .pointer("/result/details")
         .ok_or_else(|| AppError::internal("受管工作流工具结果缺少 details"))?;
-    if details.get("protocol").and_then(Value::as_str) != Some("raccoon:workflow-output:v3") {
-        return Err(AppError::internal("受管工作流输出协议版本不兼容"));
+    if details.get("protocol").and_then(Value::as_str) != Some("raccoon:workflow-output") {
+        return Err(AppError::internal("受管工作流输出协议不匹配"));
     }
     if details.get("kind").and_then(Value::as_str) != Some(expected_kind) {
         return Err(AppError::internal(format!(

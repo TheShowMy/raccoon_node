@@ -31,7 +31,7 @@ describe("useProjectGit", () => {
   });
 
   it("loads status and toggles expansion in one step", async () => {
-    const { result } = renderHook(() => useProjectGit("current"));
+    const { result } = renderHook(() => useProjectGit());
     await act(async () => Promise.resolve());
     expect(result.current.phase).toBe("collapsed");
 
@@ -45,7 +45,7 @@ describe("useProjectGit", () => {
   it("applies the status returned by a successful action", async () => {
     const next = { ...status, branch: "feature" };
     vi.mocked(executeProjectGitAction).mockResolvedValue(next);
-    const { result } = renderHook(() => useProjectGit("current"));
+    const { result } = renderHook(() => useProjectGit());
     await waitFor(() => expect(result.current.status).toEqual(status));
 
     await act(async () => {

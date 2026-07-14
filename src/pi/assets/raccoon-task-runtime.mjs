@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export const TASK_RUNTIME_PROTOCOL = "raccoon:task-runtime:v4";
-export const WORKFLOW_OUTPUT_PROTOCOL = "raccoon:workflow-output:v3";
+export const TASK_RUNTIME_PROTOCOL = "raccoon:task-runtime";
+export const WORKFLOW_OUTPUT_PROTOCOL = "raccoon:workflow-output";
 export const GIT_WRITE_BLOCK_REASON =
   "Raccoon 禁止任务 Agent 执行 Git 写操作；暂存、提交、分支和发布由外部调度器负责。请继续修改或验证代码，不要重试该 Git 操作。";
 export const WORKSPACE_BLOCK_REASON =
@@ -1086,8 +1086,8 @@ export function createWorkflowTool(kind) {
 }
 
 export default function (pi) {
-  pi.registerCommand("raccoon-task-runtime-v4", {
-    description: "Raccoon 受管任务运行时协议 v4（能力标记）",
+  pi.registerCommand("raccoon-task-runtime", {
+    description: "Raccoon 受管任务运行时协议（能力标记）",
     handler: async () => {},
   });
 

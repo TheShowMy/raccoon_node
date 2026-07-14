@@ -78,11 +78,9 @@ function sameOverlayPlacement(
 }
 
 export default function TerminalSessionView({
-  projectId,
   session,
   fixedDark = false,
 }: {
-  projectId: string;
   session: TerminalSession;
   fixedDark?: boolean;
 }) {
@@ -153,9 +151,7 @@ export default function TerminalSessionView({
         terminal.open(host);
         fit.fit();
 
-        const socket = new WebSocket(
-          terminalWebSocketUrl(projectId, session.id),
-        );
+        const socket = new WebSocket(terminalWebSocketUrl(session.id));
         socketRef.current = socket;
 
         function sendResize() {
@@ -238,7 +234,7 @@ export default function TerminalSessionView({
       disposed = true;
       cleanup?.();
     };
-  }, [fixedDark, overlayReady, projectId, session.id]);
+  }, [fixedDark, overlayReady, session.id]);
 
   const status =
     connectionStatus !== "connected" || error ? (

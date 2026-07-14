@@ -22,17 +22,6 @@ describe("AppStore", () => {
     expect(store.getSnapshot().panelPhase).toBe("shell");
   });
 
-  it("toggles token usage expansion", () => {
-    const store = new AppStore();
-    expect(store.getSnapshot().tokenUsageExpanded).toBe(false);
-
-    store.toggleTokenUsageExpanded();
-    expect(store.getSnapshot().tokenUsageExpanded).toBe(true);
-
-    store.toggleTokenUsageExpanded();
-    expect(store.getSnapshot().tokenUsageExpanded).toBe(false);
-  });
-
   it("does not emit when state is unchanged", () => {
     const store = new AppStore();
     let calls = 0;

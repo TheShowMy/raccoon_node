@@ -27,7 +27,7 @@ import { FileTree } from "./FileTree";
 
 type OpenFile = { path: string; content: string; truncated: boolean };
 
-export default function FilesWorkbench({ projectId }: { projectId: string }) {
+export default function FilesWorkbench() {
   const [query, setQuery] = useState("");
   const [searchPaths, setSearchPaths] = useState<string[]>([]);
   const [tree, setTree] = useState<Record<string, ProjectFileTreeEntry[]>>({});
@@ -41,7 +41,7 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
     let cancelled = false;
     const loadRoot = async () => {
       try {
-        const entries = await getProjectFileTree(projectId, "");
+        const entries = await getProjectFileTree("");
         if (cancelled) return;
         setTree({ "": entries });
         setExpandedPaths(new Set([""]));
@@ -54,7 +54,7 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, []);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -64,7 +64,7 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      getProjectFiles(projectId, trimmed, controller.signal)
+      getProjectFiles(trimmed, controller.signal)
         .then((files) => {
           setSearchPaths(files.map((file) => file.path));
           setError(null);
@@ -77,13 +77,13 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [projectId, query]);
+  }, [query]);
 
   const loadDirectory = async (path: string) => {
     if (tree[path]) return;
     setLoadingPaths((current) => new Set(current).add(path));
     try {
-      const entries = await getProjectFileTree(projectId, path);
+      const entries = await getProjectFileTree(path);
       setTree((current) => ({ ...current, [path]: entries }));
     } catch (reason) {
       setError(String(reason));
@@ -115,7 +115,7 @@ export default function FilesWorkbench({ projectId }: { projectId: string }) {
     setActivePath(path);
     setError(null);
     try {
-      const file = await getProjectFileContent(projectId, path);
+      const file = await getProjectFileContent(path);
       setTabs((current) => {
         const existing = current.some((tab) => tab.path === path);
         return existing

@@ -5,13 +5,11 @@ import {
   getTerminalAccessStatus,
   getProjectTerminals,
   getTerminalCommandProfiles,
-  putTerminalCommandProfiles,
   unlockTerminalAccess,
 } from "../api/client";
 import type {
   TerminalAccessStatus,
   TerminalCommandProfile,
-  TerminalCommandProfileDraft,
   TerminalSession,
 } from "../types/api";
 import { readError } from "../utils/format";
@@ -20,7 +18,6 @@ const PI_LOGIN_COMMAND = "pi --no-session --no-extensions --no-context-files";
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
 export function useProjectTerminals(
-  selectedProjectId: string | null,
   terminalBlockedReason: string | undefined,
   terminalAccessRequired: boolean,
 ) {
@@ -29,7 +26,6 @@ export function useProjectTerminals(
     TerminalCommandProfile[]
   >([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [piLoginSession, setPiLoginSession] = useState<TerminalSession | null>(
@@ -55,36 +51,30 @@ export function useProjectTerminals(
   const terminalDisabled = terminalDisabledReason !== undefined;
 
   useEffect(() => {
-    setCollapsed(true);
     setPiLoginSession(null);
     setPiLoginError(null);
     return () => {
       const session = piLoginSessionRef.current;
       if (session) {
-        void deleteProjectTerminal(session.project_id, session.id);
+        void deleteProjectTerminal(session.id);
       }
     };
-  }, [selectedProjectId]);
+  }, []);
 
   useEffect(() => {
     const closeOnPageHide = () => {
       const session = piLoginSessionRef.current;
       if (!session) return;
-      void fetch(
-        `/api/projects/${encodeURIComponent(session.project_id)}/terminals/${encodeURIComponent(session.id)}`,
-        { method: "DELETE", keepalive: true },
-      );
+      void fetch(`/api/terminals/${encodeURIComponent(session.id)}`, {
+        method: "DELETE",
+        keepalive: true,
+      });
     };
     window.addEventListener("pagehide", closeOnPageHide);
     return () => window.removeEventListener("pagehide", closeOnPageHide);
   }, []);
 
   const loadAccessStatus = useCallback(async () => {
-    if (!selectedProjectId) {
-      setTerminalAccessStatus(null);
-      setTerminalAccessError(null);
-      return;
-    }
     if (!terminalAccessRequired) {
       setTerminalAccessStatus({
         required: false,
@@ -95,12 +85,12 @@ export function useProjectTerminals(
       return;
     }
     try {
-      setTerminalAccessStatus(await getTerminalAccessStatus(selectedProjectId));
+      setTerminalAccessStatus(await getTerminalAccessStatus());
       setTerminalAccessError(null);
     } catch (reason) {
       setTerminalAccessError(readError(reason));
     }
-  }, [selectedProjectId, terminalAccessRequired]);
+  }, [terminalAccessRequired]);
 
   useEffect(() => {
     void loadAccessStatus();
@@ -126,12 +116,6 @@ export function useProjectTerminals(
   ]);
 
   const load = useCallback(async () => {
-    if (!selectedProjectId) {
-      setSessions([]);
-      setCommandProfiles([]);
-      setActiveSessionId(null);
-      return;
-    }
     if (terminalDisabled) {
       setSessions([]);
       setCommandProfiles([]);
@@ -140,8 +124,8 @@ export function useProjectTerminals(
     }
     try {
       const [nextSessions, nextProfiles] = await Promise.all([
-        getProjectTerminals(selectedProjectId),
-        getTerminalCommandProfiles(selectedProjectId),
+        getProjectTerminals(),
+        getTerminalCommandProfiles(),
       ]);
       setSessions(nextSessions);
       setCommandProfiles(nextProfiles);
@@ -154,23 +138,19 @@ export function useProjectTerminals(
     } catch (reason) {
       setError(readError(reason));
     }
-  }, [selectedProjectId, terminalDisabled]);
+  }, [terminalDisabled]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const toggleCollapsed = useCallback(() => {
-    setCollapsed((current) => !current);
-  }, []);
-
   const createTerminal = useCallback(
     async (command?: string | null, title?: string | null) => {
-      if (!selectedProjectId || terminalDisabled) return;
+      if (terminalDisabled) return;
       setBusy(true);
       setError(null);
       try {
-        const session = await createProjectTerminal(selectedProjectId, {
+        const session = await createProjectTerminal({
           command,
           title,
         });
@@ -179,59 +159,47 @@ export function useProjectTerminals(
           session,
         ]);
         setActiveSessionId(session.id);
-        setCollapsed(false);
       } catch (reason) {
         setError(readError(reason));
       } finally {
         setBusy(false);
       }
     },
-    [selectedProjectId, terminalDisabled],
+    [terminalDisabled],
   );
 
-  const authorizeTerminalAccess = useCallback(
-    async (key: string) => {
-      if (!selectedProjectId) return false;
-      setTerminalAccessBusy(true);
-      setTerminalAccessError(null);
-      try {
-        const status = await unlockTerminalAccess(selectedProjectId, key);
-        setTerminalAccessStatus(status);
-        return status.authorized;
-      } catch (reason) {
-        setTerminalAccessError(readError(reason));
-        return false;
-      } finally {
-        setTerminalAccessBusy(false);
-      }
-    },
-    [selectedProjectId],
-  );
+  const authorizeTerminalAccess = useCallback(async (key: string) => {
+    setTerminalAccessBusy(true);
+    setTerminalAccessError(null);
+    try {
+      const status = await unlockTerminalAccess(key);
+      setTerminalAccessStatus(status);
+      return status.authorized;
+    } catch (reason) {
+      setTerminalAccessError(readError(reason));
+      return false;
+    } finally {
+      setTerminalAccessBusy(false);
+    }
+  }, []);
 
-  const closeTerminal = useCallback(
-    async (terminalId: string) => {
-      if (!selectedProjectId) return;
-      setBusy(true);
-      setError(null);
-      try {
-        const nextSessions = await deleteProjectTerminal(
-          selectedProjectId,
-          terminalId,
-        );
-        setSessions(nextSessions);
-        setActiveSessionId((current) =>
-          current && nextSessions.some((session) => session.id === current)
-            ? current
-            : (nextSessions.at(0)?.id ?? null),
-        );
-      } catch (reason) {
-        setError(readError(reason));
-      } finally {
-        setBusy(false);
-      }
-    },
-    [selectedProjectId],
-  );
+  const closeTerminal = useCallback(async (terminalId: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const nextSessions = await deleteProjectTerminal(terminalId);
+      setSessions(nextSessions);
+      setActiveSessionId((current) =>
+        current && nextSessions.some((session) => session.id === current)
+          ? current
+          : (nextSessions.at(0)?.id ?? null),
+      );
+    } catch (reason) {
+      setError(readError(reason));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
   const closePiLoginTerminal = useCallback(async () => {
     const session = piLoginSessionRef.current;
@@ -239,7 +207,7 @@ export function useProjectTerminals(
     setPiLoginBusy(true);
     setPiLoginError(null);
     try {
-      await deleteProjectTerminal(session.project_id, session.id);
+      await deleteProjectTerminal(session.id);
       setPiLoginSession(null);
     } catch (reason) {
       setPiLoginError(readError(reason));
@@ -249,17 +217,17 @@ export function useProjectTerminals(
   }, []);
 
   const startPiLoginTerminal = useCallback(async () => {
-    if (!selectedProjectId || terminalDisabled || piLoginBusy) return;
+    if (terminalDisabled || piLoginBusy) return;
     setPiLoginBusy(true);
     setPiLoginError(null);
     try {
       const previous = piLoginSessionRef.current;
       if (previous) {
-        await deleteProjectTerminal(previous.project_id, previous.id);
+        await deleteProjectTerminal(previous.id);
         setPiLoginSession(null);
       }
       setPiLoginSession(
-        await createProjectTerminal(selectedProjectId, {
+        await createProjectTerminal({
           command: PI_LOGIN_COMMAND,
           title: "Pi 登录",
         }),
@@ -269,34 +237,13 @@ export function useProjectTerminals(
     } finally {
       setPiLoginBusy(false);
     }
-  }, [piLoginBusy, selectedProjectId, terminalDisabled]);
-
-  const saveCommandProfiles = useCallback(
-    async (profiles: TerminalCommandProfileDraft[]) => {
-      if (!selectedProjectId) return;
-      setBusy(true);
-      setError(null);
-      try {
-        const saved = await putTerminalCommandProfiles(
-          selectedProjectId,
-          profiles,
-        );
-        setCommandProfiles(saved);
-      } catch (reason) {
-        setError(readError(reason));
-      } finally {
-        setBusy(false);
-      }
-    },
-    [selectedProjectId],
-  );
+  }, [piLoginBusy, terminalDisabled]);
 
   return useMemo(
     () => ({
       sessions,
       commandProfiles,
       activeSessionId,
-      collapsed,
       busy,
       error,
       load,
@@ -308,11 +255,9 @@ export function useProjectTerminals(
       terminalAccessBusy,
       terminalAccessError,
       authorizeTerminalAccess,
-      toggleCollapsed,
       createTerminal,
       closeTerminal,
       selectTerminal: setActiveSessionId,
-      saveCommandProfiles,
       piLoginSession,
       piLoginBusy,
       piLoginError,
@@ -324,7 +269,6 @@ export function useProjectTerminals(
       authorizeTerminalAccess,
       busy,
       closeTerminal,
-      collapsed,
       commandProfiles,
       createTerminal,
       error,
@@ -333,7 +277,6 @@ export function useProjectTerminals(
       piLoginBusy,
       piLoginError,
       piLoginSession,
-      saveCommandProfiles,
       sessions,
       startPiLoginTerminal,
       terminalAccessAuthorized,
@@ -343,7 +286,6 @@ export function useProjectTerminals(
       terminalAccessStatus?.expires_at,
       terminalDisabled,
       terminalDisabledReason,
-      toggleCollapsed,
     ],
   );
 }

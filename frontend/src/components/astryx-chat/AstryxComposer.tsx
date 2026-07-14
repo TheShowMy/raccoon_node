@@ -109,15 +109,15 @@ export default function AstryxComposer({
 
   useEffect(() => {
     const controller = new AbortController();
-    void getProjectFiles(data.project.id, "", controller.signal)
+    void getProjectFiles("", controller.signal)
       .then(setFiles)
       .catch(() => setFiles([]));
     return () => controller.abort();
-  }, [data.project.id]);
+  }, [data.project.local_path]);
 
   useEffect(() => {
     dispatchDraft({ type: "reset" });
-  }, [data.project.id]);
+  }, [data.project.local_path]);
 
   const draftScope = requirementMode
     ? `requirement:${data.requirement?.id ?? data.requirementOpeningId ?? "opening"}`
@@ -200,7 +200,7 @@ export default function AstryxComposer({
     try {
       const uploaded: ImageAttachment[] = [];
       for (const file of imageFiles) {
-        uploaded.push(await uploadProjectAttachment(data.project.id, file));
+        uploaded.push(await uploadProjectAttachment(file));
       }
       setImages([...images, ...uploaded]);
     } catch (error) {
@@ -264,7 +264,7 @@ export default function AstryxComposer({
             {images.map((image) => (
               <Thumbnail
                 key={image.path}
-                src={`/api/projects/${encodeURIComponent(data.project.id)}/attachments/${encodeURIComponent(image.path)}`}
+                src={`/api/attachments/${encodeURIComponent(image.path)}`}
                 alt={image.name}
                 label={image.name}
                 onRemove={() =>

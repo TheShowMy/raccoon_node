@@ -229,7 +229,30 @@
     width: var(--spacing-2);
     height: var(--spacing-2);
     border: var(--border-width-thick) solid var(--color-border-emphasized);
+    border-radius: 50%;
     background: var(--color-accent);
+  }
+
+  .node-link-handle.react-flow__handle-right {
+    right: 0;
+    top: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  .node-link-handle.react-flow__handle-left {
+    left: 0;
+    top: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  .node-card--workflow-run {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .node-card--workflow-run > .workflow-run-content {
+    flex: 1;
+    min-height: 0;
   }
 
   .task-node--group,

@@ -1,14 +1,41 @@
 import type { WorkflowSnapshot } from "../types/api";
 
-export const WORKFLOW_RUN_NODE_POSITION = { x: 1380, y: 80 };
-export const WORKFLOW_RUN_NODE_SIZE = { width: 560, height: 720 };
+export const MAIN_NODE_Y = 20;
+
+export const REQUIREMENT_CHAT_NODE_SIZE = { width: 960, height: 760 };
+export const REQUIREMENT_LIST_NODE_SIZE = { width: 360, height: 760 };
+export const WORKFLOW_RUN_NODE_SIZE = { width: 560, height: 760 };
+
+const MAIN_NODE_HORIZONTAL_GAP = 60;
 
 const WORK_ITEM_WIDTH = 340;
 const WORK_ITEM_HEIGHT = 220;
 const RANK_GAP = 120;
 const ROW_GAP = 32;
 
+export function mainNodePositions(): Record<
+  "requirement-chat" | "requirement-list" | "workflow-run",
+  { x: number; y: number }
+> {
+  const chatX = 0;
+  const listX =
+    chatX + REQUIREMENT_CHAT_NODE_SIZE.width + MAIN_NODE_HORIZONTAL_GAP;
+  const runX =
+    listX + REQUIREMENT_LIST_NODE_SIZE.width + MAIN_NODE_HORIZONTAL_GAP;
+
+  return {
+    "requirement-chat": { x: chatX, y: MAIN_NODE_Y },
+    "requirement-list": { x: listX, y: MAIN_NODE_Y },
+    "workflow-run": { x: runX, y: MAIN_NODE_Y },
+  };
+}
+
+export function workflowRunNodePosition() {
+  return mainNodePositions()["workflow-run"];
+}
+
 export function workflowItemPositions(workflow: WorkflowSnapshot) {
+  const runPosition = workflowRunNodePosition();
   const byId = new Map(workflow.work_items.map((item) => [item.id, item]));
   const dependencies = new Map<string, string[]>();
   for (const dependency of workflow.dependencies) {
@@ -50,6 +77,8 @@ export function workflowItemPositions(workflow: WorkflowSnapshot) {
 
   const rowOrder = new Map<string, number>();
   const positions = new Map<string, { x: number; y: number }>();
+  const centerY = runPosition.y + WORKFLOW_RUN_NODE_SIZE.height / 2;
+
   for (const rank of [...rankItems.keys()].sort(
     (left, right) => left - right,
   )) {
@@ -70,17 +99,16 @@ export function workflowItemPositions(workflow: WorkflowSnapshot) {
         left.position - right.position
       );
     });
+
     const totalHeight =
       items.length * WORK_ITEM_HEIGHT + Math.max(0, items.length - 1) * ROW_GAP;
-    const startY =
-      WORKFLOW_RUN_NODE_POSITION.y +
-      WORKFLOW_RUN_NODE_SIZE.height / 2 -
-      totalHeight / 2;
+    const startY = centerY - totalHeight / 2;
+
     items.forEach((item, index) => {
       rowOrder.set(item.id, index);
       positions.set(item.id, {
         x:
-          WORKFLOW_RUN_NODE_POSITION.x +
+          runPosition.x +
           WORKFLOW_RUN_NODE_SIZE.width +
           RANK_GAP +
           rank * (WORK_ITEM_WIDTH + RANK_GAP),

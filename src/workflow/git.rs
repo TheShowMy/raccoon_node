@@ -104,12 +104,7 @@ pub async fn prepare_integration_workspace(
     let worktree_root = data_root.join("worktrees");
     let managed_run_root = worktree_root.join(run_id);
     ensure_child_path(&worktree_root, &managed_run_root)?;
-    let legacy_worktree = managed_run_root.join(".git").exists();
-    let worktree = if legacy_worktree {
-        managed_run_root.clone()
-    } else {
-        managed_run_root.join("integration")
-    };
+    let worktree = managed_run_root.join("integration");
     ensure_child_path(&worktree_root, &worktree)?;
     let branch = format!("raccoon/workflow-{run_id}");
     let base_head = git_output(&project_root, &["rev-parse", "HEAD"]).await?;

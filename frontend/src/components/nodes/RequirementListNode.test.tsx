@@ -14,9 +14,7 @@ function requirement(
 ): Requirement {
   return {
     id: status,
-    project_id: "project-1",
     title: `${status} requirement`,
-    original_message: "test",
     origin: "standalone",
     status,
     messages: [],

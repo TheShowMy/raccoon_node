@@ -21,22 +21,21 @@ async fn api_not_found() -> StatusCode {
 use crate::api::git::{execute_git_action, get_git_diff, get_git_status};
 use crate::api::handlers::{
     abort_project_chat, append_requirement_message, cancel_requirement_analysis,
-    confirm_requirement, create_project_terminal, create_requirement, create_requirement_branch,
+    confirm_requirement, create_project_terminal, create_requirement_branch,
     delete_project_terminal, delete_requirement, get_basic_settings, get_current_project,
     get_model_settings, get_project_attachment, get_project_canvas, get_project_chat,
-    get_project_chat_session, get_project_file_content, get_project_file_tree, get_project_files,
-    get_requirement_conversation, get_requirement_session, get_requirement_workflow_run,
-    get_terminal_access_status, get_terminal_command_profiles, get_workflow_attempt_session,
-    get_workflow_events, get_workflow_run, list_project_terminals, project_chat_events,
-    put_basic_settings, put_model_settings, put_terminal_command_profiles, reload_model_settings,
-    requirement_conversation_events, requirement_events, reset_project_chat, restart_system,
-    restart_workflow_run_clean, resume_workflow_run, retry_requirement_analysis,
+    get_project_file_content, get_project_file_tree, get_project_files,
+    get_requirement_conversation, get_requirement_workflow_run, get_terminal_access_status,
+    get_terminal_command_profiles, get_workflow_events, get_workflow_run, list_project_terminals,
+    project_chat_events, put_basic_settings, put_model_settings, put_terminal_command_profiles,
+    reload_model_settings, requirement_conversation_events, requirement_events, reset_project_chat,
+    restart_system, restart_workflow_run_clean, resume_workflow_run, retry_requirement_analysis,
     send_project_chat_message, spawn_startup_requirement_scheduler, start_requirement_workflow,
     submit_requirement_clarifications, terminal_websocket, unlock_terminal_access,
     upload_project_attachment,
 };
 use crate::pi::PiRpcModelProvider;
-use crate::store::JsonStore;
+use crate::store::Store;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LifecycleCommand {
@@ -54,27 +53,28 @@ pub struct RuntimeOptions {
 }
 
 #[derive(Clone)]
+pub struct ProjectContext {
+    pub metadata: crate::models::Project,
+    pub root: std::path::PathBuf,
+}
+
+#[derive(Clone)]
 pub struct AppState {
-    pub store: std::sync::Arc<tokio::sync::RwLock<JsonStore>>,
+    pub store: std::sync::Arc<tokio::sync::RwLock<Store>>,
     pub model_provider: std::sync::Arc<dyn crate::models::ModelProvider>,
     pub requirement_events: crate::models::RequirementEventBus,
     pub project_chat_events: crate::models::ProjectChatEventBus,
     pub terminal_manager: std::sync::Arc<terminal::TerminalManager>,
     pub terminal_access: std::sync::Arc<terminal::TerminalAccess>,
-    pub project_root: std::path::PathBuf,
+    pub project: ProjectContext,
     pub config: std::sync::Arc<tokio::sync::RwLock<crate::config::AppConfig>>,
     pub config_path: std::path::PathBuf,
     pub runtime: RuntimeOptions,
     pub publication_readiness:
         std::sync::Arc<tokio::sync::RwLock<crate::models::PublicationReadiness>>,
-    pub pending_startup_requirement_ids: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
-    pub project_scheduler_locks: std::sync::Arc<
-        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
-    >,
-    pub pending_requirement_interactions:
-        std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, (String, String)>>>,
-    pub active_requirement_analyses:
-        std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    pub resume_workflow_on_startup: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub project_scheduler_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    pub requirement_analysis_active: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub async fn build_app(
@@ -84,16 +84,16 @@ pub async fn build_app(
     runtime: RuntimeOptions,
     publication_readiness: crate::models::PublicationReadiness,
 ) -> Result<(Router, AppState), crate::error::AppError> {
-    let mut store = JsonStore::open_project(project_root.clone()).await?;
+    let mut store = Store::open_project(project_root.clone()).await?;
     cleanup_completed_workflow_workspaces(&store, &project_root).await;
-    let startup_requirement_ids = store.recover_interrupted_requirements().await?;
+    let resume_workflow_on_startup = store.recover_interrupted_requirements().await?;
     store.recover_interrupted_project_chats().await?;
     store.cleanup_stale_pi_sessions().await;
     let model_provider = PiRpcModelProvider::start(store.data_root.clone()).await;
     Ok(build_app_with_startup_requirements(
         store,
         Arc::new(model_provider),
-        startup_requirement_ids,
+        resume_workflow_on_startup,
         config,
         config_path,
         runtime,
@@ -101,7 +101,7 @@ pub async fn build_app(
     ))
 }
 
-async fn cleanup_completed_workflow_workspaces(store: &JsonStore, project_root: &std::path::Path) {
+async fn cleanup_completed_workflow_workspaces(store: &Store, project_root: &std::path::Path) {
     let candidates = match store.db.completed_workflow_workspaces() {
         Ok(candidates) => candidates,
         Err(error) => {
@@ -132,7 +132,7 @@ async fn cleanup_completed_workflow_workspaces(store: &JsonStore, project_root: 
         {
             Ok(()) => {
                 if let Err(error) = store.db.mark_completed_workspace_cleaned(&candidate.run_id) {
-                    tracing::warn!(run_id = candidate.run_id, %error, "failed to persist legacy workflow cleanup");
+                    tracing::warn!(run_id = candidate.run_id, %error, "failed to persist workflow cleanup");
                 }
             }
             Err(error) => tracing::warn!(
@@ -145,7 +145,7 @@ async fn cleanup_completed_workflow_workspaces(store: &JsonStore, project_root: 
 }
 
 pub fn build_app_with_model_provider(
-    store: JsonStore,
+    store: Store,
     _public_dir: PathBuf,
     model_provider: Arc<dyn crate::models::ModelProvider>,
 ) -> Router {
@@ -153,7 +153,7 @@ pub fn build_app_with_model_provider(
     build_app_with_startup_requirements(
         store,
         model_provider,
-        Vec::new(),
+        false,
         Arc::new(tokio::sync::RwLock::new(crate::config::AppConfig::default())),
         config_path,
         RuntimeOptions::default(),
@@ -164,7 +164,7 @@ pub fn build_app_with_model_provider(
 
 #[doc(hidden)]
 pub fn build_app_with_model_provider_and_config(
-    store: JsonStore,
+    store: Store,
     model_provider: Arc<dyn crate::models::ModelProvider>,
     config: crate::config::AppConfig,
     port_overridden: bool,
@@ -176,7 +176,7 @@ pub fn build_app_with_model_provider_and_config(
     build_app_with_startup_requirements(
         store,
         model_provider,
-        Vec::new(),
+        false,
         Arc::new(tokio::sync::RwLock::new(config)),
         config_path,
         RuntimeOptions {
@@ -192,7 +192,7 @@ pub fn build_app_with_model_provider_and_config(
 
 #[doc(hidden)]
 pub fn build_app_with_model_provider_and_runtime(
-    store: JsonStore,
+    store: Store,
     model_provider: Arc<dyn crate::models::ModelProvider>,
     config: crate::config::AppConfig,
     runtime: RuntimeOptions,
@@ -201,7 +201,7 @@ pub fn build_app_with_model_provider_and_runtime(
     build_app_with_startup_requirements(
         store,
         model_provider,
-        Vec::new(),
+        false,
         Arc::new(tokio::sync::RwLock::new(config)),
         config_path,
         runtime,
@@ -210,9 +210,9 @@ pub fn build_app_with_model_provider_and_runtime(
 }
 
 fn build_app_with_startup_requirements(
-    store: JsonStore,
+    store: Store,
     model_provider: Arc<dyn crate::models::ModelProvider>,
-    startup_requirement_ids: Vec<String>,
+    resume_workflow_on_startup: bool,
     config: Arc<tokio::sync::RwLock<crate::config::AppConfig>>,
     config_path: PathBuf,
     runtime: RuntimeOptions,
@@ -225,6 +225,7 @@ fn build_app_with_startup_requirements(
         .parent()
         .map(PathBuf::from)
         .unwrap_or_else(|| store.data_root.clone());
+    let project = store.project.clone();
     let state = AppState {
         store: Arc::new(tokio::sync::RwLock::new(store)),
         model_provider,
@@ -232,77 +233,51 @@ fn build_app_with_startup_requirements(
         project_chat_events: project_chat_tx,
         terminal_manager: Arc::new(terminal::TerminalManager::new()),
         terminal_access: Arc::new(terminal::TerminalAccess::new()),
-        project_root,
+        project: ProjectContext {
+            metadata: project,
+            root: project_root,
+        },
         config,
         config_path,
         runtime,
         publication_readiness: Arc::new(tokio::sync::RwLock::new(publication_readiness)),
-        pending_startup_requirement_ids: Arc::new(tokio::sync::Mutex::new(startup_requirement_ids)),
-        project_scheduler_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        pending_requirement_interactions: Arc::new(tokio::sync::Mutex::new(
-            std::collections::HashMap::new(),
+        resume_workflow_on_startup: Arc::new(std::sync::atomic::AtomicBool::new(
+            resume_workflow_on_startup,
         )),
-        active_requirement_analyses: Arc::new(std::sync::Mutex::new(
-            std::collections::HashSet::new(),
-        )),
+        project_scheduler_lock: Arc::new(tokio::sync::Mutex::new(())),
+        requirement_analysis_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     let api = Router::new()
-        .route("/project/current", get(get_current_project))
-        .route("/projects/{id}/canvas", get(get_project_canvas))
-        .route("/projects/{id}/files", get(get_project_files))
-        .route("/projects/{id}/files/tree", get(get_project_file_tree))
+        .route("/project", get(get_current_project))
+        .route("/canvas", get(get_project_canvas))
+        .route("/files", get(get_project_files))
+        .route("/files/tree", get(get_project_file_tree))
+        .route("/files/content", get(get_project_file_content))
+        .route("/attachments", post(upload_project_attachment))
+        .route("/attachments/{file}", get(get_project_attachment))
+        .route("/chat", get(get_project_chat).delete(reset_project_chat))
+        .route("/chat/messages", post(send_project_chat_message))
+        .route("/chat/events", get(project_chat_events))
+        .route("/chat/requirements", post(create_requirement_branch))
+        .route("/chat/abort", post(abort_project_chat))
         .route(
-            "/projects/{id}/files/content",
-            get(get_project_file_content),
-        )
-        .route(
-            "/projects/{id}/attachments",
-            post(upload_project_attachment),
-        )
-        .route(
-            "/projects/{id}/attachments/{file}",
-            get(get_project_attachment),
-        )
-        .route(
-            "/projects/{id}/chat",
-            get(get_project_chat).delete(reset_project_chat),
-        )
-        .route("/projects/{id}/chat/session", get(get_project_chat_session))
-        .route(
-            "/projects/{id}/chat/messages",
-            post(send_project_chat_message),
-        )
-        .route("/projects/{id}/chat/events", get(project_chat_events))
-        .route(
-            "/projects/{id}/chat/commands/requirement-branch",
-            post(create_requirement_branch),
-        )
-        .route("/projects/{id}/chat/abort", post(abort_project_chat))
-        .route(
-            "/projects/{id}/terminals",
+            "/terminals",
             get(list_project_terminals).post(create_project_terminal),
         )
+        .route("/terminals/{terminal_id}", delete(delete_project_terminal))
+        .route("/terminals/{terminal_id}/ws", get(terminal_websocket))
         .route(
-            "/projects/{id}/terminals/{terminal_id}",
-            delete(delete_project_terminal),
-        )
-        .route(
-            "/projects/{id}/terminals/{terminal_id}/ws",
-            get(terminal_websocket),
-        )
-        .route(
-            "/projects/{id}/terminal-commands",
+            "/terminal-commands",
             get(get_terminal_command_profiles).put(put_terminal_command_profiles),
         )
         .route(
-            "/projects/{id}/terminal-access",
+            "/terminal-access",
             get(get_terminal_access_status).post(unlock_terminal_access),
         )
-        .route("/projects/{id}/git/status", get(get_git_status))
-        .route("/projects/{id}/git/diff", get(get_git_diff))
-        .route("/projects/{id}/git/actions", post(execute_git_action))
-        .route("/projects/{id}/requirements", post(create_requirement))
+        .route("/git/status", get(get_git_status))
+        .route("/git/diff", get(get_git_diff))
+        .route("/git/actions", post(execute_git_action))
         .route(
             "/requirements/{id}/messages",
             post(append_requirement_message),
@@ -315,7 +290,6 @@ fn build_app_with_startup_requirements(
             "/requirements/{id}/conversation/events",
             get(requirement_conversation_events),
         )
-        .route("/requirements/{id}/session", get(get_requirement_session))
         .route(
             "/requirements/{id}/clarifications",
             post(submit_requirement_clarifications),
@@ -336,10 +310,6 @@ fn build_app_with_startup_requirements(
         .route(
             "/workflow-runs/{run_id}/restart-clean",
             post(restart_workflow_run_clean),
-        )
-        .route(
-            "/workflow-runs/{run_id}/attempts/{attempt_id}/session",
-            get(get_workflow_attempt_session),
         )
         .route(
             "/requirements/{id}/cancel",

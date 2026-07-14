@@ -18,75 +18,28 @@ import {
   resumeWorkflowRun,
 } from "../../api/client";
 import type {
+  ModelTierKey,
   StartNodeData,
   WorkflowEvent,
   WorkflowSnapshot,
 } from "../../types/api";
-import { requirementStatusText } from "../../utils/format";
+import {
+  findingPriorityText,
+  requirementStatusText,
+  reviewAngleText,
+  tierLabels,
+  validationStatusText,
+  workflowAttemptKindText,
+  workflowAttemptStatusText,
+  workflowCleanupStatusText,
+  workflowEventLabel,
+  workflowLocalSyncStatusText,
+  workflowPublicationModeText,
+  workflowPublicationPhaseText,
+  workflowPublicationProviderText,
+  workflowRunStatusText,
+} from "../../utils/format";
 import { useRequirementPlanningThinking } from "../../contexts/RequirementTaskEventsContext";
-
-const statusText = {
-  planning: "规划中",
-  running: "执行中",
-  validating: "验证中",
-  reviewing: "审核中",
-  fixing: "集成修复中",
-  rescuing: "Rescue 中",
-  publishing: "远端发布中",
-  paused_technical: "技术暂停",
-  completed: "已完成",
-  blocked: "永久阻塞",
-  cancelled: "已取消",
-} as const;
-
-function eventLabel(event: WorkflowEvent) {
-  const labels: Record<string, string> = {
-    "run.created": "WorkflowRun 已创建",
-    "run.workspace_attached": "集成工作区已就绪",
-    "run.resumed": "从技术暂停恢复",
-    "run.rescue_started": "高级 Rescue 启动",
-    "run.rescuing": "高级 Rescue 继续",
-    "run.publishing": "进入发布阶段",
-    "run.paused_technical": "技术暂停",
-    "run.discarded": "污染 Run 已废弃",
-    "run.restarted_clean": "已从干净工作区重建",
-    "run.completed": "WorkflowRun 完成",
-    "run.blocked": "WorkflowRun 永久阻塞",
-    "work_item.leased": "行为切片已领取",
-    "work_item.fix_requested": "行为切片进入修复",
-    "attempt.started": "Agent attempt 启动",
-    "attempt.succeeded": "Agent attempt 成功",
-    "attempt.failed": "Agent attempt 失败",
-    "attempt.superseded": "并行 attempt 已降级",
-    "attempt.usage_persisted": "Agent usage 已保存",
-    "parallel_batch.serial_fallback": "并行任务降级为串行",
-    "parallel_batch.serial_fallback_exhausted": "串行降级已熔断",
-    "workspace.boundary_blocked": "工作区越界已熔断",
-    "integration.guard_failed": "Integration 守卫失败",
-    "item_workspace.prepared": "隔离工作区已创建",
-    "item_workspace.integrated": "工作项已汇入 integration",
-    "item_workspace.cleaned": "工作项资源已清理",
-    "publication.prepared": "发布配置已冻结",
-    "publication.pushed": "workflow 分支已推送",
-    "publication.review_open": "远端 PR/MR 已创建",
-    "publication.waiting_checks": "等待远端检查与合并",
-    "publication.checks_changed": "远端检查状态变化",
-    "publication.checks_failed": "远端检查失败",
-    "publication.merged": "远端合并完成",
-    "publication.local_sync_finished": "本地主分支同步处理完成",
-    "publication.cleaning": "清理受管资源",
-    "publication.cleanup_failed": "受管资源清理失败",
-    "publication.completed": "发布与清理完成",
-    "validation.completed": "仓库原生验证完成",
-    "checkpoint.started": "最终审核启动",
-    "checkpoint.review_observed": "审核子 Agent 返回",
-    "checkpoint.findings_recorded": "审核 finding 已归并",
-    "checkpoint.approved": "审核通过",
-    "checkpoint.rejected": "审核发现阻断项",
-    "checkpoint.technical_failure": "审核技术失败",
-  };
-  return labels[event.event_type] ?? event.event_type;
-}
 
 function eventDescription(event: WorkflowEvent) {
   for (const key of [
@@ -123,13 +76,7 @@ function usageTokens(value: unknown): number {
 
 function reviewRecords(workflow: WorkflowSnapshot) {
   return workflow.checkpoints.flatMap((checkpoint) => {
-    const details = checkpoint.review_details as
-      | {
-          reviews?: Array<Record<string, unknown>>;
-          selection?: Record<string, unknown>;
-        }
-      | null
-      | undefined;
+    const details = checkpoint.review_details;
     return (details?.reviews ?? []).map((review) => ({
       checkpoint,
       review,
@@ -169,7 +116,7 @@ export default function WorkflowRunNode({
     getWorkflowEvents(workflow.run.id)
       .then((page) => {
         if (!active) return;
-        setEvents(page.events);
+        setEvents(page.events.slice().reverse());
         setNextAfter(page.next_after);
         setTimelineError(null);
       })
@@ -246,7 +193,7 @@ export default function WorkflowRunNode({
     setLoadingEvents(true);
     try {
       const page = await getWorkflowEvents(workflow.run.id, nextAfter);
-      setEvents((current) => [...current, ...page.events]);
+      setEvents((current) => [...current, ...page.events.slice().reverse()]);
       setNextAfter(page.next_after);
       setTimelineError(null);
     } catch (error) {
@@ -290,7 +237,7 @@ export default function WorkflowRunNode({
   return (
     <>
       <Toolbar
-        label="WorkflowRun Inspector"
+        label="工作流运行检查器"
         className="nodrag"
         size="sm"
         variant="muted"
@@ -300,10 +247,10 @@ export default function WorkflowRunNode({
               <GitBranch size={20} />
             </Stack>
             <Stack gap={0.5}>
-              <Text type="label">WorkflowRun Inspector</Text>
+              <Text type="label">工作流运行检查器</Text>
               <Text type="supporting" size="3xs">
                 {workflow
-                  ? statusText[workflow.run.status]
+                  ? workflowRunStatusText(workflow.run.status)
                   : requirementStatusText(requirement.status)}
               </Text>
             </Stack>
@@ -311,8 +258,8 @@ export default function WorkflowRunNode({
         }
         endContent={
           <IconButton
-            label="关闭 WorkflowRun"
-            tooltip="关闭 WorkflowRun"
+            label="关闭"
+            tooltip="关闭"
             icon={<X size={14} />}
             size="sm"
             variant="ghost"
@@ -321,7 +268,12 @@ export default function WorkflowRunNode({
         }
       />
 
-      <Stack padding={3} gap={3} className="nodrag nowheel">
+      <Stack
+        padding={3}
+        gap={3}
+        isScrollable
+        className="nodrag nowheel workflow-run-content"
+      >
         <Stack gap={1}>
           <Text type="label" maxLines={2} wordBreak="break-word">
             {workflow?.run.change_spec.intent ?? requirement.title}
@@ -336,7 +288,7 @@ export default function WorkflowRunNode({
               }
               size="sm"
             />
-            <Token label={`${tokenTotal} tokens`} color="gray" size="sm" />
+            <Token label={`${tokenTotal} token 数`} color="gray" size="sm" />
             <Token
               label={`语义尝试 ${semanticAttempts} / 实际调用 ${actualAttempts}`}
               color={actualAttempts > semanticAttempts ? "yellow" : "gray"}
@@ -344,14 +296,14 @@ export default function WorkflowRunNode({
             />
             <Token
               label={
-                workflow?.run.rescue_used ? "Rescue 已使用" : "Rescue 未使用"
+                workflow?.run.rescue_used ? "深度修复已使用" : "深度修复未使用"
               }
               color={workflow?.run.rescue_used ? "yellow" : "gray"}
               size="sm"
             />
           </HStack>
           <ProgressBar
-            label="WorkflowRun 总体进度"
+            label="总体进度"
             value={completedItems}
             max={Math.max(totalItems, 1)}
             isLabelHidden
@@ -366,19 +318,19 @@ export default function WorkflowRunNode({
             <Divider label="发布" />
             <HStack gap={1} wrap="wrap">
               <Token
-                label={`${workflow.publication.provider} · ${workflow.publication.mode}`}
+                label={`${workflowPublicationProviderText(workflow.publication.provider)} · ${workflowPublicationModeText(workflow.publication.mode)}`}
                 color="gray"
                 size="sm"
               />
               <Token
-                label={workflow.publication.phase}
+                label={workflowPublicationPhaseText(workflow.publication.phase)}
                 color={
                   workflow.publication.phase === "completed" ? "green" : "gray"
                 }
                 size="sm"
               />
               <Token
-                label={`清理 ${workflow.publication.cleanup_status}`}
+                label={`清理 ${workflowCleanupStatusText(workflow.publication.cleanup_status)}`}
                 color={
                   workflow.publication.cleanup_status === "failed"
                     ? "red"
@@ -402,7 +354,10 @@ export default function WorkflowRunNode({
                 }
                 maxLines={2}
               >
-                {workflow.publication.local_sync_message}
+                {workflowLocalSyncStatusText(
+                  workflow.publication.local_sync_status,
+                )}
+                : {workflow.publication.local_sync_message}
               </Text>
             ) : null}
             {workflow.publication.review_url ? (
@@ -446,7 +401,7 @@ export default function WorkflowRunNode({
         ["paused_technical", "blocked"].includes(workflow.run.status) ? (
           <Stack gap={0.5}>
             <Text type="label" size="2xs">
-              Primary cause
+              主要原因
             </Text>
             <Text type="supporting" size="3xs" color="accent" maxLines={3}>
               {primaryCause}
@@ -454,17 +409,17 @@ export default function WorkflowRunNode({
           </Stack>
         ) : null}
 
-        <Divider label={`完整时间线 · ${events.length} 条`} />
-        <Stack
-          gap={1}
-          style={{ overflowY: "auto", maxHeight: "var(--spacing-72)" }}
-        >
+        <Divider label={`事件时间线 · ${events.length} 条`} />
+        <Stack gap={1} className="nodrag nowheel">
           {events.map((event) => (
             <Stack key={event.sequence} gap={0.5} padding={1}>
               <HStack align="center" gap={1}>
-                <StatusDot variant="neutral" label={eventLabel(event)} />
+                <StatusDot
+                  variant="neutral"
+                  label={workflowEventLabel(event.event_type)}
+                />
                 <Text type="label" size="3xs">
-                  {eventLabel(event)}
+                  {workflowEventLabel(event.event_type)}
                 </Text>
                 <Text type="supporting" size="3xs">
                   #{event.sequence}
@@ -482,7 +437,7 @@ export default function WorkflowRunNode({
           ) : null}
           {nextAfter != null ? (
             <Button
-              label="加载后续事件"
+              label="加载更早事件"
               size="sm"
               variant="ghost"
               onClick={loadMore}
@@ -505,10 +460,11 @@ export default function WorkflowRunNode({
                 trigger={
                   <HStack align="center" gap={2}>
                     <Text type="label" size="3xs">
-                      {attempt.kind} · #{attempt.ordinal}
+                      {workflowAttemptKindText(attempt.kind)} · #
+                      {attempt.ordinal}
                     </Text>
                     <Token
-                      label={attempt.status}
+                      label={workflowAttemptStatusText(attempt.status)}
                       color={
                         attempt.status === "succeeded"
                           ? "green"
@@ -519,7 +475,9 @@ export default function WorkflowRunNode({
                       size="sm"
                     />
                     <Text type="supporting" size="3xs">
-                      {attempt.model_tier} · {usageTokens(attempt.usage)} tokens
+                      {tierLabels[attempt.model_tier as ModelTierKey] ??
+                        attempt.model_tier}{" "}
+                      · {usageTokens(attempt.usage)} token 数
                     </Text>
                   </HStack>
                 }
@@ -537,7 +495,7 @@ export default function WorkflowRunNode({
                   ) : null}
                   {attempt.status !== "running" ? (
                     <Button
-                      label="查看 session JSONL"
+                      label="查看会话日志"
                       size="sm"
                       variant="ghost"
                       onClick={() =>
@@ -557,7 +515,7 @@ export default function WorkflowRunNode({
 
         {workflow && workflow.validations.length > 0 ? (
           <Stack gap={1}>
-            <Divider label={`仓库原生验证 · ${workflow.validations.length}`} />
+            <Divider label={`仓库检查 · ${workflow.validations.length}`} />
             {workflow.validations.map((validation) => (
               <Collapsible
                 key={validation.id}
@@ -571,7 +529,7 @@ export default function WorkflowRunNode({
                       {validation.command}
                     </Text>
                     <Token
-                      label={`${validation.baseline_status} → ${validation.final_status}`}
+                      label={`${validationStatusText(validation.baseline_status)} → ${validationStatusText(validation.final_status)}`}
                       color={
                         validation.baseline_status === "passed" &&
                         validation.final_status === "failed"
@@ -585,8 +543,10 @@ export default function WorkflowRunNode({
               >
                 <Stack gap={1} padding={2}>
                   <Text type="supporting" size="3xs">
-                    {validation.source} ·{" "}
-                    {validation.gating ? "gate" : "observation"}
+                    {validation.source === "repository_catalog"
+                      ? "仓库命令"
+                      : "运行观察"}
+                    · {validation.gating ? "门槛检查" : "观察"}
                   </Text>
                   {validation.output_summary ? (
                     <Text type="supporting" size="3xs" maxLines={5}>
@@ -601,14 +561,15 @@ export default function WorkflowRunNode({
 
         {reviews.length > 0 ? (
           <Stack gap={1}>
-            <Divider label={`审核子 Agent · ${reviews.length}`} />
+            <Divider label={`代码审核 · ${reviews.length}`} />
             {reviews.map(({ checkpoint, review, selection }, index) => {
-              const angle = String(review.angle ?? "审核");
-              const transport = String(review.transport_status ?? "unknown");
-              const result = review.result as
-                | { findings?: Array<Record<string, unknown>> }
-                | undefined;
-              const findings = result?.findings ?? [];
+              const angle = review.angle;
+              const transport = review.transport_status;
+              const findings = (workflow?.findings ?? []).filter(
+                (finding) =>
+                  finding.checkpoint_id === checkpoint.id &&
+                  finding.angle === angle,
+              );
               return (
                 <Collapsible
                   key={`${checkpoint.id}-${angle}-${index}`}
@@ -616,76 +577,61 @@ export default function WorkflowRunNode({
                   trigger={
                     <HStack align="center" gap={2}>
                       <Text type="label" size="3xs">
-                        {angle}
+                        {reviewAngleText(angle)}
                       </Text>
                       <Token
-                        label={transport}
+                        label={transport === "completed" ? "已完成" : "失败"}
                         color={transport === "completed" ? "green" : "red"}
                         size="sm"
                       />
                       <Text type="supporting" size="3xs">
-                        {String(review.context_mode ?? "blind")} ·{" "}
-                        {findings.length} findings
+                        {findings.length} 个问题
                       </Text>
                     </HStack>
                   }
                 >
                   <Stack gap={1} padding={2}>
                     <Text type="supporting" size="3xs">
-                      耗时 {String(review.duration_ms ?? 0)} ms · 修正提交{" "}
-                      {String(review.submission_correction_count ?? 0)} 次 ·
-                      重试 {String(review.retry_count ?? 0)} 次 ·{" "}
-                      {usageTokens(review.usage)} tokens
-                    </Text>
-                    <Text type="supporting" size="3xs">
-                      context {String(review.context_bytes ?? 0)} bytes · hash{" "}
-                      {String(review.context_hash ?? "-")}
+                      耗时 {review.duration_ms} ms · 修正提交{" "}
+                      {review.submission_correction_count} 次 · 重试{" "}
+                      {review.retry_count} 次 · {usageTokens(review.usage)}{" "}
+                      token 数
                     </Text>
                     {selection ? (
                       <Text type="supporting" size="3xs" maxLines={4}>
                         选择原因：
-                        {Array.isArray(selection.reasons)
-                          ? selection.reasons.join("；")
-                          : "-"}
+                        {selection.reasons.join("；") || "-"}
                         ；跳过：
-                        {Array.isArray(selection.skippedAngles)
-                          ? selection.skippedAngles.join("、") || "无"
-                          : "-"}
+                        {selection.skipped_angles
+                          .map(reviewAngleText)
+                          .join("、") || "无"}
                       </Text>
                     ) : null}
-                    {review.runtime && typeof review.runtime === "object" ? (
+                    {review.runtime ? (
                       <Text type="supporting" size="3xs">
-                        活动{" "}
-                        {String(
-                          (review.runtime as Record<string, unknown>)
-                            .activityCount ?? 0,
-                        )}{" "}
-                        次 · 空闲告警{" "}
-                        {String(
-                          (review.runtime as Record<string, unknown>)
-                            .idleWarningCount ?? 0,
-                        )}{" "}
-                        次
+                        活动 {review.runtime.activity_count} 次 · 空闲告警{" "}
+                        {review.runtime.warning_count} 次
                       </Text>
                     ) : null}
                     {findings.map((finding, findingIndex) => (
                       <Text
-                        key={`${String(finding.path ?? "finding")}-${findingIndex}`}
+                        key={`${finding.path ?? "finding"}-${findingIndex}`}
                         type="supporting"
                         size="3xs"
                         color={
-                          ["P0", "P1"].includes(String(finding.priority))
+                          finding.priority === "P0" || finding.priority === "P1"
                             ? "accent"
                             : undefined
                         }
                         maxLines={3}
                       >
-                        {String(finding.priority)} · {String(finding.summary)}
+                        {findingPriorityText(finding.priority)} ·{" "}
+                        {finding.summary}
                       </Text>
                     ))}
                     {review.error ? (
                       <Text type="supporting" size="3xs" color="accent">
-                        {String(review.error)}
+                        {review.error}
                       </Text>
                     ) : null}
                   </Stack>
@@ -697,21 +643,21 @@ export default function WorkflowRunNode({
 
         {workflow && workflow.findings.length > 0 ? (
           <Stack gap={1}>
-            <Divider label={`Finding ledger · ${workflow.findings.length}`} />
+            <Divider label={`审核问题 · ${workflow.findings.length}`} />
             {workflow.findings.map((finding) => (
               <HStack key={finding.id} align="center" gap={2}>
                 <Token
-                  label={`${finding.priority} · ${finding.status}`}
+                  label={`${findingPriorityText(finding.priority)} · ${finding.status === "open" ? "未解决" : "已解决"}`}
                   color={
                     finding.status === "open" &&
-                    ["P0", "P1"].includes(finding.priority)
+                    (finding.priority === "P0" || finding.priority === "P1")
                       ? "red"
                       : "gray"
                   }
                   size="sm"
                 />
                 <Text type="supporting" size="3xs" maxLines={2}>
-                  {finding.angle} · {finding.summary}
+                  {reviewAngleText(finding.angle)} · {finding.summary}
                 </Text>
               </HStack>
             ))}

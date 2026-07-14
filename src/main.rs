@@ -276,10 +276,11 @@ mod tests {
         ProjectChatOutput, PublicationReadiness, Requirement, RequirementAnalysisFuture,
         RequirementAnalysisInput, RequirementAnalysisOutput, RequirementClarification,
         RequirementConversationItem, RequirementConversationPrompt, RequirementEventEmitter,
-        RequirementMessage, RequirementMessageRole, RequirementStatus, ThinkingLevel,
+        RequirementMessage, RequirementMessageRole, RequirementPromptState, RequirementStatus,
+        ThinkingLevel,
     };
     use raccoon_node::requirement::build_requirement_prompt;
-    use raccoon_node::store::JsonStore;
+    use raccoon_node::store::Store;
 
     #[derive(Clone)]
     struct FakeModelProvider {
@@ -409,7 +410,6 @@ mod tests {
             pi_session_file: Some("project-chat.jsonl".to_owned()),
             trace: Some(serde_json::json!({
                 "type": "pi_trace",
-                "version": 1,
                 "trace": {
                     "thinking": "检查入口",
                     "output": "",
@@ -447,13 +447,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn initializes_json_store() {
+    async fn initializes_store() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_root = temp_dir.path().to_path_buf();
-        let store = JsonStore::open(data_root.clone()).await.unwrap();
+        let store = Store::open(data_root.clone()).await.unwrap();
 
         assert!(data_root.join("data.db").exists());
-        assert!(store.data.projects.is_empty());
+        assert!(!store.project.name.is_empty());
         assert_eq!(store.data.settings_summary.title, "设置");
         assert_eq!(
             store.data.model_settings.low.thinking_level,
@@ -462,12 +462,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn current_project_api_replaces_start_and_project_mutations() {
+    async fn project_api_returns_the_singleton_project() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut store = JsonStore::open(temp_dir.path().to_path_buf())
-            .await
-            .unwrap();
-        store.data.projects = vec![test_project("current")];
+        let mut store = Store::open(temp_dir.path().to_path_buf()).await.unwrap();
+        store.project = test_project("current");
         let app = build_app_with_model_provider(
             store,
             PathBuf::from("frontend/dist"),
@@ -478,7 +476,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/api/project/current")
+                    .uri("/api/project")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -488,30 +486,11 @@ mod tests {
         let body: serde_json::Value =
             serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
                 .unwrap();
-        assert_eq!(body["project"]["id"], "current");
+        assert_eq!(body["project"]["name"], "current");
         assert_eq!(body["theme_pack"], "neutral");
         assert_eq!(body["theme_mode"], "dark");
         assert_eq!(body["publication_readiness"]["mode"], "local");
         assert_eq!(body["publication_readiness"]["ready"], true);
-
-        for (method, path) in [
-            ("GET", "/api/start"),
-            ("POST", "/api/projects"),
-            ("DELETE", "/api/projects/current"),
-        ] {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(method)
-                        .uri(path)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        }
     }
 
     #[tokio::test]
@@ -571,11 +550,11 @@ mod tests {
                 .success()
         );
 
-        let mut store = JsonStore::open(root.join(".raccoon-node")).await.unwrap();
+        let mut store = Store::open(root.join(".raccoon-node")).await.unwrap();
         let mut project = test_project("current");
         project.local_path = root.to_string_lossy().into_owned();
         project.git_url = remote.to_string_lossy().into_owned();
-        store.data.projects = vec![project];
+        store.project = project;
         let app = build_app_with_model_provider(
             store,
             PathBuf::from("frontend/dist"),
@@ -587,7 +566,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/api/projects/current/git/status")
+                    .uri("/api/git/status")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -604,7 +583,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/api/projects/current/git/diff?path=README.md&area=unstaged")
+                    .uri("/api/git/diff?path=README.md&area=unstaged")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -620,7 +599,7 @@ mod tests {
                 .oneshot(
                     Request::builder()
                         .method("POST")
-                        .uri("/api/projects/current/git/actions")
+                        .uri("/api/git/actions")
                         .header("content-type", "application/json")
                         .body(Body::from(payload.to_string()))
                         .unwrap(),
@@ -665,7 +644,7 @@ mod tests {
             app.clone()
                 .oneshot(
                     Request::builder()
-                        .uri("/api/projects/current/git/diff?path=../secret&area=unstaged")
+                        .uri("/api/git/diff?path=../secret&area=unstaged")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -673,18 +652,6 @@ mod tests {
                 .unwrap()
                 .status(),
             StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            app.oneshot(
-                Request::builder()
-                    .uri("/api/projects/other/git/status")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-            .status(),
-            StatusCode::NOT_FOUND
         );
     }
 
@@ -700,12 +667,13 @@ mod tests {
                 .unwrap()
                 .success()
         );
-        let mut store = JsonStore::open(root.join(".raccoon-node")).await.unwrap();
-        store.data.projects = vec![test_project("current")];
+        let mut store = Store::open(root.join(".raccoon-node")).await.unwrap();
+        store.project = test_project("current");
         let now = Utc::now();
-        let mut requirement = test_requirement("queued", "current", RequirementStatus::Queued, now);
+        let mut requirement = test_requirement("queued", RequirementStatus::Queued, now);
         requirement.draft = Some(test_change_spec("queued"));
         store.data.requirements = vec![requirement];
+        store.persist().await.unwrap();
         let app = build_app_with_model_provider(
             store,
             PathBuf::from("frontend/dist"),
@@ -716,7 +684,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/api/projects/current/git/status")
+                    .uri("/api/git/status")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -730,7 +698,7 @@ mod tests {
             app.oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/projects/current/git/actions")
+                    .uri("/api/git/actions")
                     .header("content-type", "application/json")
                     .body(Body::from(json!({"type": "fetch"}).to_string(),))
                     .unwrap(),
@@ -746,10 +714,10 @@ mod tests {
     async fn basic_settings_api_persists_config_and_updates_runtime_theme() {
         let temp_dir = tempfile::tempdir().unwrap();
         let config_path = temp_dir.path().join(".raccoon-node/config.toml");
-        let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+        let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
             .await
             .unwrap();
-        store.data.projects = vec![test_project("current")];
+        store.project = test_project("current");
         let app = build_app_with_model_provider_and_config(
             store,
             fake_provider(Vec::new()),
@@ -822,7 +790,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/api/project/current")
+                    .uri("/api/project")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -856,10 +824,10 @@ mod tests {
     #[tokio::test]
     async fn theme_only_update_keeps_publication_readiness_unchanged() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+        let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
             .await
             .unwrap();
-        store.data.projects = vec![test_project("current")];
+        store.project = test_project("current");
         let (app, state) = build_app_with_model_provider_and_runtime(
             store,
             fake_provider(Vec::new()),
@@ -913,10 +881,10 @@ mod tests {
     #[tokio::test]
     async fn web_settings_confirm_external_host_and_emit_restart_lifecycle() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+        let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
             .await
             .unwrap();
-        store.data.projects = vec![test_project("current")];
+        store.project = test_project("current");
         let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::unbounded_channel();
         let (app, _) = build_app_with_model_provider_and_runtime(
             store,
@@ -1029,10 +997,10 @@ mod tests {
     #[tokio::test]
     async fn external_host_terminal_access_requires_startup_key() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+        let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
             .await
             .unwrap();
-        store.data.projects = vec![test_project("current")];
+        store.project = test_project("current");
         let (app, state) = build_app_with_model_provider_and_runtime(
             store,
             fake_provider(Vec::new()),
@@ -1048,7 +1016,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/api/projects/current/terminal-access")
+                    .uri("/api/terminal-access")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1065,7 +1033,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/api/projects/current/terminals")
+                    .uri("/api/terminals")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1078,7 +1046,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/projects/current/terminal-access")
+                    .uri("/api/terminal-access")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"key":"wrong"}"#))
                     .unwrap(),
@@ -1093,7 +1061,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/projects/current/terminal-access")
+                    .uri("/api/terminal-access")
                     .header("content-type", "application/json")
                     .body(Body::from(json!({ "key": key }).to_string()))
                     .unwrap(),
@@ -1111,7 +1079,7 @@ mod tests {
         let terminals = app
             .oneshot(
                 Request::builder()
-                    .uri("/api/projects/current/terminals")
+                    .uri("/api/terminals")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1123,16 +1091,16 @@ mod tests {
     #[tokio::test]
     async fn restart_and_model_reload_are_blocked_or_report_rpc_failure() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut busy_store = JsonStore::open(temp_dir.path().join("busy/.raccoon-node"))
+        let mut busy_store = Store::open(temp_dir.path().join("busy/.raccoon-node"))
             .await
             .unwrap();
-        busy_store.data.projects = vec![test_project("current")];
+        busy_store.project = test_project("current");
         busy_store.data.requirements.push(test_requirement(
             "queued",
-            "current",
             RequirementStatus::Queued,
             Utc::now(),
         ));
+        busy_store.persist().await.unwrap();
         let (lifecycle_tx, _) = tokio::sync::mpsc::unbounded_channel();
         let (busy_app, _) = build_app_with_model_provider_and_runtime(
             busy_store,
@@ -1158,10 +1126,10 @@ mod tests {
             assert_eq!(response.status(), StatusCode::CONFLICT);
         }
 
-        let mut idle_store = JsonStore::open(temp_dir.path().join("idle/.raccoon-node"))
+        let mut idle_store = Store::open(temp_dir.path().join("idle/.raccoon-node"))
             .await
             .unwrap();
-        idle_store.data.projects = vec![test_project("current")];
+        idle_store.project = test_project("current");
         let idle_app = build_app_with_model_provider(
             idle_store,
             PathBuf::from("frontend/dist"),
@@ -1193,9 +1161,9 @@ mod tests {
     async fn project_chat_api_persists_messages() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_root = temp_dir.path().join(".raccoon-node");
-        let mut store = JsonStore::open(data_root.clone()).await.unwrap();
-        let project = test_project("alpha");
-        store.data.projects.push(project.clone());
+        let mut store = Store::open(data_root.clone()).await.unwrap();
+        let project = test_project("current");
+        store.project = project.clone();
         store.persist().await.unwrap();
 
         let app = build_app_with_model_provider(
@@ -1208,7 +1176,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri(format!("/api/projects/{}/chat", project.id))
+                    .uri("/api/chat")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1217,7 +1185,6 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(value["project_id"], project.id);
         assert_eq!(value["messages"].as_array().unwrap().len(), 0);
 
         let response = app
@@ -1225,7 +1192,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(format!("/api/projects/{}/chat/messages", project.id))
+                    .uri("/api/chat/messages")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"message":"项目入口在哪里？"}"#))
                     .unwrap(),
@@ -1238,7 +1205,7 @@ mod tests {
         assert_eq!(value["accepted"], true);
         assert!(value["turn_id"].as_str().unwrap().starts_with("turn-"));
 
-        let chat = wait_for_project_chat_answer(&data_root, &project.id).await;
+        let chat = wait_for_project_chat_answer(&data_root).await;
         assert!(!chat.running);
         assert_eq!(chat.messages.len(), 2);
         assert_eq!(chat.messages[0].content, "项目入口在哪里？");
@@ -1256,7 +1223,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri(format!("/api/projects/{}/chat", project.id))
+                    .uri("/api/chat")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1267,7 +1234,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["messages"].as_array().unwrap().len(), 0);
 
-        let store = JsonStore::open(data_root).await.unwrap();
+        let store = Store::open(data_root).await.unwrap();
         assert!(store.data.requirements.is_empty());
     }
 
@@ -1275,9 +1242,9 @@ mod tests {
     async fn requirement_branch_clones_main_chat_without_mutating_parent_session() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_root = temp_dir.path().join(".raccoon-node");
-        let mut store = JsonStore::open(data_root.clone()).await.unwrap();
-        let project = test_project("alpha");
-        store.data.projects.push(project.clone());
+        let mut store = Store::open(data_root.clone()).await.unwrap();
+        let project = test_project("current");
+        store.project = project.clone();
         store.persist().await.unwrap();
         let (provider, cloned_sessions) = fake_branch_provider();
         let app = build_app_with_model_provider(store, PathBuf::from("frontend/dist"), provider);
@@ -1287,7 +1254,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(format!("/api/projects/{}/chat/messages", project.id))
+                    .uri("/api/chat/messages")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"message":"先分析项目结构"}"#))
                     .unwrap(),
@@ -1295,17 +1262,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::ACCEPTED);
-        wait_for_project_chat_answer(&data_root, &project.id).await;
+        wait_for_project_chat_answer(&data_root).await;
 
         let response = app
             .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(format!(
-                        "/api/projects/{}/chat/commands/requirement-branch",
-                        project.id
-                    ))
+                    .uri("/api/chat/requirements")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"message":"基于上文生成需求"}"#))
                     .unwrap(),
@@ -1325,6 +1289,26 @@ mod tests {
         let requirement_id = accepted["requirement_id"].as_str().unwrap();
         wait_for_requirement_status(&data_root, requirement_id, RequirementStatus::DraftReady)
             .await;
+        let draft_store = Store::open(data_root.clone()).await.unwrap();
+        let requirement = draft_store
+            .data
+            .requirements
+            .iter()
+            .find(|requirement| requirement.id == requirement_id)
+            .unwrap();
+        let RequirementPromptState::Confirmation {
+            prompt_id,
+            revision,
+            ..
+        } = requirement.active_prompt.as_ref().unwrap()
+        else {
+            panic!("draft must expose a confirmation prompt");
+        };
+        let confirmation = serde_json::to_vec(&json!({
+            "prompt_id": prompt_id,
+            "revision": revision,
+        }))
+        .unwrap();
 
         let response = app
             .clone()
@@ -1332,20 +1316,16 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri(format!("/api/requirements/{requirement_id}/confirm"))
-                    .body(Body::empty())
+                    .header("content-type", "application/json")
+                    .body(Body::from(confirmation))
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        let stored = JsonStore::open(data_root).await.unwrap();
-        let parent = stored
-            .data
-            .project_chats
-            .iter()
-            .find(|chat| chat.project_id == project.id)
-            .unwrap();
+        let stored = Store::open(data_root).await.unwrap();
+        let parent = stored.data.project_chats.first().unwrap();
         assert_eq!(
             parent.pi_session_file.as_deref(),
             Some("project-chat.jsonl")
@@ -1359,7 +1339,7 @@ mod tests {
     }
 
     #[test]
-    fn project_chat_message_allows_legacy_missing_metadata() {
+    fn project_chat_message_accepts_absent_optional_metadata() {
         let message: raccoon_node::models::ProjectChatMessage =
             serde_json::from_value(serde_json::json!({
                 "role": "assistant",
@@ -1375,7 +1355,7 @@ mod tests {
     #[tokio::test]
     async fn model_settings_api_returns_models_and_handles_rpc_error() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+        let store = Store::open(temp_dir.path().join(".raccoon-node"))
             .await
             .unwrap();
         let app = build_app_with_model_provider(
@@ -1399,9 +1379,7 @@ mod tests {
         assert_eq!(value["rpc_status"], "ready");
         assert_eq!(value["models"][0]["id"], "test/model-a");
 
-        let store = JsonStore::open(temp_dir.path().join("error"))
-            .await
-            .unwrap();
+        let store = Store::open(temp_dir.path().join("error")).await.unwrap();
         let app = build_app_with_model_provider(
             store,
             PathBuf::from("frontend/dist"),
@@ -1427,7 +1405,7 @@ mod tests {
     async fn model_settings_save_validates_models_and_allows_reuse() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_root = temp_dir.path().join(".raccoon-node");
-        let store = JsonStore::open(data_root.clone()).await.unwrap();
+        let store = Store::open(data_root.clone()).await.unwrap();
         let app = build_app_with_model_provider(
             store,
             PathBuf::from("frontend/dist"),
@@ -1453,7 +1431,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        let stored = JsonStore::open(data_root).await.unwrap();
+        let stored = Store::open(data_root).await.unwrap();
         assert_eq!(
             stored.data.model_summary.description,
             "低 / 中 / 高档模型已配置"
@@ -1486,11 +1464,10 @@ mod tests {
     async fn requirement_conversation_maps_items_and_clarification_prompt() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_root = temp_dir.path().join(".raccoon-node");
-        let mut store = JsonStore::open(data_root).await.unwrap();
+        let mut store = Store::open(data_root).await.unwrap();
         let project = test_project("alpha");
         let now = Utc::now();
-        let mut requirement =
-            test_requirement("active", &project.id, RequirementStatus::Clarifying, now);
+        let mut requirement = test_requirement("active", RequirementStatus::Clarifying, now);
         requirement.messages.push(RequirementMessage {
             role: RequirementMessageRole::Assistant,
             content: "需要确认范围。".to_owned(),
@@ -1506,7 +1483,6 @@ mod tests {
             images: Vec::new(),
             metadata: Some(json!({
                 "type": "pi_trace",
-                "version": 1,
                 "trace": {
                     "thinking": "检查用户输入",
                     "output": "",
@@ -1518,8 +1494,15 @@ mod tests {
         });
         requirement.clarification_round = 1;
         requirement.clarifications = vec![test_clarification("q1")];
-        store.data.projects.push(project);
+        requirement.active_prompt = Some(RequirementPromptState::Clarification {
+            prompt_id: "prompt-1".to_owned(),
+            revision: 1,
+            round: 1,
+            questions: requirement.clarifications.clone(),
+        });
+        store.project = project;
         store.data.requirements.push(requirement);
+        store.persist().await.unwrap();
 
         let conversation = store.requirement_conversation("active").unwrap();
         assert_eq!(conversation.items.len(), 3);
@@ -1546,14 +1529,20 @@ mod tests {
     async fn requirement_conversation_maps_confirmation_prompt() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_root = temp_dir.path().join(".raccoon-node");
-        let mut store = JsonStore::open(data_root).await.unwrap();
+        let mut store = Store::open(data_root).await.unwrap();
         let project = test_project("alpha");
         let now = Utc::now();
-        let mut requirement =
-            test_requirement("draft", &project.id, RequirementStatus::DraftReady, now);
-        requirement.draft = Some(test_change_spec("实现账号密码登录入口"));
-        store.data.projects.push(project);
+        let mut requirement = test_requirement("draft", RequirementStatus::DraftReady, now);
+        let draft = test_change_spec("实现账号密码登录入口");
+        requirement.draft = Some(draft.clone());
+        requirement.active_prompt = Some(RequirementPromptState::Confirmation {
+            prompt_id: "prompt-1".to_owned(),
+            revision: 1,
+            draft,
+        });
+        store.project = project;
         store.data.requirements.push(requirement);
+        store.persist().await.unwrap();
 
         let conversation = store.requirement_conversation("draft").unwrap();
         assert!(matches!(
@@ -1568,12 +1557,11 @@ mod tests {
     async fn deletes_active_requirement_and_returns_empty_canvas() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_root = temp_dir.path().join(".raccoon-node");
-        let mut store = JsonStore::open(data_root.clone()).await.unwrap();
+        let mut store = Store::open(data_root.clone()).await.unwrap();
         let project = test_project("alpha");
-        store.data.projects.push(project.clone());
+        store.project = project.clone();
         let now = Utc::now();
-        let requirement =
-            test_requirement("req-1", &project.id, RequirementStatus::Clarifying, now);
+        let requirement = test_requirement("req-1", RequirementStatus::Clarifying, now);
         store.data.requirements.push(requirement.clone());
         store.persist().await.unwrap();
 
@@ -1599,7 +1587,7 @@ mod tests {
             serde_json::from_slice(&body).unwrap();
         assert!(canvas.active_requirement.is_none());
 
-        let store = JsonStore::open(data_root).await.unwrap();
+        let store = Store::open(data_root).await.unwrap();
         assert!(
             !store
                 .data
@@ -1613,17 +1601,12 @@ mod tests {
     async fn requirement_clarification_answers_resume_analysis() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_root = temp_dir.path().join(".raccoon-node");
-        let mut store = JsonStore::open(data_root).await.unwrap();
+        let mut store = Store::open(data_root).await.unwrap();
         let project = test_project("alpha");
-        store.data.projects.push(project.clone());
+        store.project = project;
 
         let (requirement_id, _) = store
-            .create_requirement(
-                &project.id,
-                "实现需求澄清".to_owned(),
-                Vec::new(),
-                Vec::new(),
-            )
+            .create_requirement("实现需求澄清".to_owned(), Vec::new(), Vec::new())
             .await
             .unwrap();
         store
@@ -1641,7 +1624,6 @@ mod tests {
                     failure_code: None,
                     trace: Some(json!({
                         "type": "pi_trace",
-                        "version": 1,
                         "trace": {
                             "thinking": "分析范围",
                             "output": "",
@@ -1669,12 +1651,22 @@ mod tests {
                 .iter()
                 .any(|message| message.role == RequirementMessageRole::Trace)
         );
+        let RequirementPromptState::Clarification {
+            prompt_id,
+            revision,
+            ..
+        } = requirement.active_prompt.as_ref().unwrap()
+        else {
+            panic!("clarifying requirement must expose an active prompt");
+        };
+        let prompt_id = prompt_id.clone();
+        let revision = *revision;
 
         let (_, input) = store
             .submit_requirement_clarifications(
                 &requirement_id,
-                None,
-                None,
+                prompt_id,
+                revision,
                 vec![ClarificationAnswerRequest {
                     clarification_id: "q1".to_owned(),
                     selected_options: vec!["small".to_owned()],
@@ -1714,12 +1706,9 @@ mod tests {
         let now = Utc::now();
         let input = RequirementAnalysisInput {
             project: Project {
-                id: "p1".to_owned(),
                 name: "Test".to_owned(),
                 git_url: "https://example.com/repo.git".to_owned(),
                 local_path: "/tmp/p1/repo".to_owned(),
-                created_at: now,
-                updated_at: now,
             },
             messages: vec![RequirementMessage {
                 role: RequirementMessageRole::User,
@@ -1753,28 +1742,21 @@ mod tests {
     }
 
     fn test_project(id: &str) -> Project {
-        let now = Utc::now();
         Project {
-            id: id.to_owned(),
             name: id.to_owned(),
             git_url: format!("https://example.com/{id}.git"),
             local_path: format!("/tmp/{id}/repo"),
-            created_at: now,
-            updated_at: now,
         }
     }
 
     fn test_requirement(
         id: &str,
-        project_id: &str,
         status: RequirementStatus,
         now: chrono::DateTime<Utc>,
     ) -> Requirement {
         Requirement {
             id: id.to_owned(),
-            project_id: project_id.to_owned(),
             title: id.to_owned(),
-            original_message: id.to_owned(),
             origin: raccoon_node::models::RequirementOrigin::Standalone,
             status,
             messages: vec![RequirementMessage {
@@ -1830,7 +1812,7 @@ mod tests {
         status: RequirementStatus,
     ) -> Requirement {
         for _ in 0..20 {
-            let store = JsonStore::open(data_root.to_path_buf()).await.unwrap();
+            let store = Store::open(data_root.to_path_buf()).await.unwrap();
             if let Some(requirement) = store
                 .data
                 .requirements
@@ -1845,17 +1827,10 @@ mod tests {
         panic!("requirement {requirement_id} did not reach {status:?}");
     }
 
-    async fn wait_for_project_chat_answer(
-        data_root: &Path,
-        project_id: &str,
-    ) -> raccoon_node::models::ProjectChat {
+    async fn wait_for_project_chat_answer(data_root: &Path) -> raccoon_node::models::ProjectChat {
         for _ in 0..20 {
-            let store = JsonStore::open(data_root.to_path_buf()).await.unwrap();
-            if let Some(chat) = store
-                .data
-                .project_chats
-                .iter()
-                .find(|chat| chat.project_id == project_id)
+            let store = Store::open(data_root.to_path_buf()).await.unwrap();
+            if let Some(chat) = store.data.project_chats.first()
                 && !chat.running
                 && chat.messages.len() >= 2
             {
@@ -1863,7 +1838,7 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
-        panic!("project chat {project_id} did not finish");
+        panic!("project chat did not finish");
     }
 
     #[tokio::test]
@@ -1915,24 +1890,18 @@ mod tests {
     async fn concurrent_create_requirement_no_data_loss() {
         let temp_dir = tempfile::tempdir().unwrap();
         let data_root = temp_dir.path().to_path_buf();
-        let mut store = JsonStore::open(data_root.clone()).await.unwrap();
+        let mut store = Store::open(data_root.clone()).await.unwrap();
         let project = test_project("current");
-        store.data.projects.push(project.clone());
+        store.project = project;
 
         let store = Arc::new(RwLock::new(store));
         let mut handles = Vec::new();
         for index in 0..5 {
             let store = store.clone();
-            let project_id = project.id.clone();
             handles.push(tokio::spawn(async move {
                 let mut store = store.write().await;
                 store
-                    .create_requirement(
-                        &project_id,
-                        format!("requirement {index}"),
-                        Vec::new(),
-                        Vec::new(),
-                    )
+                    .create_requirement(format!("requirement {index}"), Vec::new(), Vec::new())
                     .await
             }));
         }
@@ -1941,7 +1910,7 @@ mod tests {
             handle.await.unwrap().unwrap();
         }
 
-        let store = JsonStore::open(data_root).await.unwrap();
+        let store = Store::open(data_root).await.unwrap();
         assert_eq!(store.data.requirements.len(), 5);
     }
 }

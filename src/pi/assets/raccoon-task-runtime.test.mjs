@@ -243,7 +243,7 @@ test("blocks unknown aliases and external Git subcommands", () => {
 test("extension blocks only matching bash calls with the managed reason", () => {
   const pi = loadForRole("chat");
   assert.equal(pi.commands.length, 1);
-  assert.equal(pi.commands[0].name, "raccoon-task-runtime-v4");
+  assert.equal(pi.commands[0].name, "raccoon-task-runtime");
   assert.equal(pi.tools.length, 0);
   const handler = pi.handlers.get("tool_call");
   assert.equal(

@@ -1,15 +1,15 @@
 use std::{collections::BTreeMap, path::Path, time::Duration as StdDuration};
 
-use chrono::{Duration, Utc};
+use chrono::Utc;
 
 use crate::api::AppState;
 use crate::error::AppError;
 use crate::models::{RequirementEventEmitter, RequirementModelTier, RequirementStatus};
 use crate::workflow::{
     CheckpointKind, CheckpointStatus, FailureClass, FindingStatus, ItemGitWorkspace,
-    RemoteReviewState, RepositoryValidationCatalog, ReviewAngle, ValidationRunStatus,
-    ValidationSource, WORK_ITEM_LEASE_SECONDS, WorkflowAgentInput, WorkflowAttemptKind,
-    WorkflowAttemptStatus, WorkflowCleanupStatus, WorkflowItemWorkspace,
+    PausedOperation, RemoteReviewState, RepositoryValidationCatalog, ReviewAngle, ReviewReport,
+    ReviewTransportStatus, ValidationRunStatus, ValidationSource, WorkflowAgentInput,
+    WorkflowAttemptKind, WorkflowAttemptStatus, WorkflowCleanupStatus, WorkflowItemWorkspace,
     WorkflowItemWorkspaceStatus, WorkflowLocalSyncStatus, WorkflowPublicationMode,
     WorkflowPublicationPhase, WorkflowReviewInput, WorkflowRunStatus, WorkflowSnapshot,
     WorkflowValidation, all_work_items_accepted, arm_remote_auto_merge, cherry_pick_item_commit,
@@ -23,7 +23,35 @@ use crate::workflow::{
     worktree_fingerprint,
 };
 
-pub async fn run_workflow_execution_v5(
+pub struct RunDriver {
+    state: AppState,
+    requirement_id: String,
+    run_id: String,
+}
+
+impl RunDriver {
+    pub fn new(state: AppState, requirement_id: String, run_id: String) -> Self {
+        Self {
+            state,
+            requirement_id,
+            run_id,
+        }
+    }
+
+    pub async fn drive(self) -> RequirementStatus {
+        drive_workflow_run(self.state, self.requirement_id, self.run_id).await
+    }
+}
+
+pub async fn run_workflow_execution(
+    state: AppState,
+    requirement_id: String,
+    run_id: String,
+) -> RequirementStatus {
+    RunDriver::new(state, requirement_id, run_id).drive().await
+}
+
+async fn drive_workflow_run(
     state: AppState,
     requirement_id: String,
     run_id: String,
@@ -33,30 +61,28 @@ pub async fn run_workflow_execution_v5(
         task_id: None,
         bus: state.requirement_events.clone(),
     };
-    emitter.emit("workflow_started", "WorkflowRun v5.2 开始执行行为切片。");
+    emitter.emit("workflow_started", "WorkflowRun 开始执行行为切片。");
 
     let (project, model_settings, data_root) = {
         let store = state.store.read().await;
-        let Some(project) = store
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == "current")
-            .cloned()
-        else {
-            return pause_and_sync(
-                &state,
-                &requirement_id,
-                &run_id,
-                "load_project",
-                "当前项目不存在",
-                &emitter,
-            )
-            .await;
+        let model_settings = match store.model_settings() {
+            Ok(settings) => settings,
+            Err(error) => {
+                drop(store);
+                return pause_and_sync(
+                    &state,
+                    &requirement_id,
+                    &run_id,
+                    PausedOperation::LoadSnapshot.as_str(),
+                    &error.to_string(),
+                    &emitter,
+                )
+                .await;
+            }
         };
         (
-            project,
-            store.data.model_settings.clone(),
+            state.project.metadata.clone(),
+            model_settings,
             store.data_root.clone(),
         )
     };
@@ -170,7 +196,7 @@ pub async fn run_workflow_execution_v5(
         store.db.workflow_snapshot(&run_id).ok()
     };
     if let Some(snapshot) = publication_resume
-        && snapshot.run.paused_operation.as_deref() != Some("remote_ci_fix")
+        && snapshot.run.paused_operation != Some(PausedOperation::RemoteCiFix)
         && let (Some(publication), Some(checkpoint)) = (
             snapshot.publication.as_ref(),
             snapshot
@@ -184,7 +210,6 @@ pub async fn run_workflow_execution_v5(
             || snapshot
                 .run
                 .paused_operation
-                .as_deref()
                 .is_some_and(is_publication_resume_operation))
     {
         return publish_approved_workflow(
@@ -270,7 +295,7 @@ pub async fn run_workflow_execution_v5(
         if snapshot.run.status.is_terminal() {
             return sync_terminal(&state, &requirement_id, snapshot.run.status, &emitter).await;
         }
-        if snapshot.run.paused_operation.as_deref() == Some("remote_ci_fix")
+        if snapshot.run.paused_operation == Some(PausedOperation::RemoteCiFix)
             && let (Some(mut publication), Some(checkpoint)) = (
                 snapshot.publication.clone(),
                 snapshot
@@ -318,7 +343,6 @@ pub async fn run_workflow_execution_v5(
         if snapshot
             .run
             .paused_operation
-            .as_deref()
             .is_some_and(is_publication_resume_operation)
             && let Some(checkpoint) = snapshot
                 .checkpoints
@@ -337,50 +361,50 @@ pub async fn run_workflow_execution_v5(
             )
             .await;
         }
-        if snapshot
-            .run
-            .paused_operation
-            .as_deref()
-            .is_some_and(|operation| {
+        if snapshot.run.paused_operation.is_some_and(|operation| {
+            matches!(
+                operation,
+                PausedOperation::CommitIntegration
+                    | PausedOperation::FastForwardIntegration
+                    | PausedOperation::PersistCompletion
+                    | PausedOperation::RescueCommit
+                    | PausedOperation::RescueIntegration
+                    | PausedOperation::PersistRescueCompletion
+                    | PausedOperation::BeginPublication
+                    | PausedOperation::PublicationReadiness
+                    | PausedOperation::PublicationPush
+                    | PausedOperation::PersistPublicationPush
+                    | PausedOperation::PublicationOpenReview
+                    | PausedOperation::PersistPublicationReview
+                    | PausedOperation::PublicationAutoMerge
+                    | PausedOperation::PersistPublicationWait
+                    | PausedOperation::PersistRemoteChecks
+                    | PausedOperation::PublicationExternalAction
+                    | PausedOperation::PublicationPoll
+                    | PausedOperation::PersistRemoteMerge
+                    | PausedOperation::PersistLocalSync
+                    | PausedOperation::PersistCleanupStart
+                    | PausedOperation::PublicationCleanup
+                    | PausedOperation::PersistCleanupCompletion
+                    | PausedOperation::ResumePublication
+                    | PausedOperation::RemoteCiFailedAfterFix
+            )
+        }) && let Some(checkpoint) = snapshot
+            .checkpoints
+            .iter()
+            .rev()
+            .find(|checkpoint| checkpoint.status == CheckpointStatus::Approved)
+        {
+            let rescue = snapshot.run.paused_operation.is_some_and(|operation| {
                 matches!(
                     operation,
-                    "commit_integration"
-                        | "fast_forward_integration"
-                        | "persist_completion"
-                        | "rescue_commit"
-                        | "rescue_integration"
-                        | "persist_rescue_completion"
-                        | "begin_publication"
-                        | "publication_readiness"
-                        | "publication_push"
-                        | "persist_publication_push"
-                        | "publication_open_review"
-                        | "persist_publication_review"
-                        | "publication_auto_merge"
-                        | "persist_publication_wait"
-                        | "persist_remote_checks"
-                        | "publication_external_action"
-                        | "publication_poll"
-                        | "persist_remote_merge"
-                        | "persist_local_sync"
-                        | "persist_cleanup_start"
-                        | "publication_cleanup"
-                        | "persist_cleanup_completion"
-                        | "resume_publication"
-                        | "remote_ci_failed_after_fix"
+                    PausedOperation::RescueCommit
+                        | PausedOperation::RescueIntegration
+                        | PausedOperation::RescueSnapshot
+                        | PausedOperation::RescueAgent
+                        | PausedOperation::RescueValidationOrReview
                 )
-            })
-            && let Some(checkpoint) = snapshot
-                .checkpoints
-                .iter()
-                .rev()
-                .find(|checkpoint| checkpoint.status == CheckpointStatus::Approved)
-        {
-            let rescue = snapshot
-                .run
-                .paused_operation
-                .as_deref()
-                .is_some_and(|operation| operation.starts_with("rescue_"));
+            });
             return resume_approved_integration(
                 &state,
                 &requirement_id,
@@ -486,25 +510,23 @@ pub async fn run_workflow_execution_v5(
         .await
         {
             Ok(FinalDecision::Approved(checkpoint_id)) => {
-                let commit = match commit_integration_checkpoint(
-                    &workspace.worktree,
-                    "完成 WorkflowRun v5.2",
-                )
-                .await
-                {
-                    Ok(commit) => commit,
-                    Err(error) => {
-                        return pause_and_sync(
-                            &state,
-                            &requirement_id,
-                            &run_id,
-                            "commit_integration",
-                            &error.to_string(),
-                            &emitter,
-                        )
-                        .await;
-                    }
-                };
+                let commit =
+                    match commit_integration_checkpoint(&workspace.worktree, "完成 WorkflowRun")
+                        .await
+                    {
+                        Ok(commit) => commit,
+                        Err(error) => {
+                            return pause_and_sync(
+                                &state,
+                                &requirement_id,
+                                &run_id,
+                                "commit_integration",
+                                &error.to_string(),
+                                &emitter,
+                            )
+                            .await;
+                        }
+                    };
                 let started = {
                     let store = state.store.read().await;
                     store.db.begin_workflow_publication(
@@ -606,33 +628,33 @@ pub async fn run_workflow_execution_v5(
     }
 }
 
-fn is_publication_resume_operation(operation: &str) -> bool {
+fn is_publication_resume_operation(operation: PausedOperation) -> bool {
     matches!(
         operation,
-        "begin_publication"
-            | "begin_rescue_publication"
-            | "load_publication"
-            | "local_integration"
-            | "persist_local_merge"
-            | "publication_readiness"
-            | "publication_push"
-            | "persist_publication_push"
-            | "publication_snapshot"
-            | "publication_open_review"
-            | "persist_publication_review"
-            | "publication_auto_merge"
-            | "persist_publication_wait"
-            | "persist_remote_checks"
-            | "persist_remote_ci_fix"
-            | "remote_ci_failed_after_fix"
-            | "publication_external_action"
-            | "publication_poll"
-            | "persist_remote_merge"
-            | "persist_local_sync"
-            | "persist_cleanup_start"
-            | "publication_cleanup"
-            | "persist_cleanup_completion"
-            | "persist_completion"
+        PausedOperation::BeginPublication
+            | PausedOperation::BeginRescuePublication
+            | PausedOperation::LoadPublication
+            | PausedOperation::LocalIntegration
+            | PausedOperation::PersistLocalMerge
+            | PausedOperation::PublicationReadiness
+            | PausedOperation::PublicationPush
+            | PausedOperation::PersistPublicationPush
+            | PausedOperation::PublicationSnapshot
+            | PausedOperation::PublicationOpenReview
+            | PausedOperation::PersistPublicationReview
+            | PausedOperation::PublicationAutoMerge
+            | PausedOperation::PersistPublicationWait
+            | PausedOperation::PersistRemoteChecks
+            | PausedOperation::PersistRemoteCiFix
+            | PausedOperation::RemoteCiFailedAfterFix
+            | PausedOperation::PublicationExternalAction
+            | PausedOperation::PublicationPoll
+            | PausedOperation::PersistRemoteMerge
+            | PausedOperation::PersistLocalSync
+            | PausedOperation::PersistCleanupStart
+            | PausedOperation::PublicationCleanup
+            | PausedOperation::PersistCleanupCompletion
+            | PausedOperation::PersistCompletion
     )
 }
 
@@ -711,15 +733,9 @@ async fn execute_next_work_batch(
             .prepare_work_item_fix(&item.id)
             .map_err(|error| error.to_string())?;
     }
-    let worker_id = format!("workflow-v5:{}", snapshot.run.id);
     let items = {
         let store = state.store.read().await;
-        store.db.claim_runnable_work_items(
-            &snapshot.run.id,
-            &worker_id,
-            Utc::now() + Duration::seconds(WORK_ITEM_LEASE_SECONDS),
-            claim_limit,
-        )
+        store.db.runnable_work_items(&snapshot.run.id, claim_limit)
     }
     .map_err(|error| error.to_string())?;
     if items.is_empty() {
@@ -770,7 +786,6 @@ async fn execute_next_work_batch(
                 Some(&item.id),
                 policy.kind,
                 tier_label(policy.model_tier),
-                &worker_id,
             )
         }
         .map_err(|error| error.to_string())?;
@@ -1614,7 +1629,6 @@ async fn run_integration_fix(
             None,
             WorkflowAttemptKind::IntegrationFix,
             "high",
-            "workflow-v5-integration-fix",
         )
     }
     .map_err(|error| AttemptFailure::Technical(error.to_string()))?;
@@ -1957,23 +1971,25 @@ async fn finish_rescue_decision(
 ) -> RequirementStatus {
     match decision {
         Ok(FinalDecision::Approved(checkpoint_id)) => {
-            let commit =
-                match commit_integration_checkpoint(&workspace.worktree, "Rescue WorkflowRun v5.2")
-                    .await
-                {
-                    Ok(commit) => commit,
-                    Err(error) => {
-                        return pause_and_sync(
-                            state,
-                            requirement_id,
-                            run_id,
-                            "rescue_commit",
-                            &error.to_string(),
-                            emitter,
-                        )
-                        .await;
-                    }
-                };
+            let commit = match commit_integration_checkpoint(
+                &workspace.worktree,
+                "Rescue WorkflowRun",
+            )
+            .await
+            {
+                Ok(commit) => commit,
+                Err(error) => {
+                    return pause_and_sync(
+                        state,
+                        requirement_id,
+                        run_id,
+                        "rescue_commit",
+                        &error.to_string(),
+                        emitter,
+                    )
+                    .await;
+                }
+            };
             let started = {
                 let store = state.store.read().await;
                 store.db.begin_workflow_publication(
@@ -2035,9 +2051,9 @@ async fn resume_approved_integration(
         "审核已经通过，仅重试未完成的提交、快进或状态持久化。",
     );
     let title = if rescue {
-        "Rescue WorkflowRun v5.2"
+        "Rescue WorkflowRun"
     } else {
-        "完成 WorkflowRun v5.2"
+        "完成 WorkflowRun"
     };
     let commit = match commit_integration_checkpoint(&workspace.worktree, title).await {
         Ok(commit) => commit,
@@ -2742,14 +2758,11 @@ async fn run_remote_ci_fix(
         .map_err(|error| error.to_string())?;
     let (project, model_settings) = {
         let store = state.store.read().await;
-        let project = store
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == "current")
-            .cloned()
-            .ok_or_else(|| "当前项目不存在".to_owned())?;
-        (project, store.data.model_settings.clone())
+        let project = store.project.clone();
+        (
+            project,
+            store.model_settings().map_err(|error| error.to_string())?,
+        )
     };
     {
         let store = state.store.read().await;
@@ -2760,13 +2773,9 @@ async fn run_remote_ci_fix(
     }
     let attempt = {
         let store = state.store.read().await;
-        store.db.start_workflow_attempt(
-            run_id,
-            None,
-            WorkflowAttemptKind::RemoteCiFix,
-            "high",
-            "workflow-v5-remote-ci-fix",
-        )
+        store
+            .db
+            .start_workflow_attempt(run_id, None, WorkflowAttemptKind::RemoteCiFix, "high")
     }
     .map_err(|error| error.to_string())?;
     let result = state
@@ -2899,13 +2908,9 @@ async fn run_rescue_feedback(
     }
     let attempt = {
         let store = state.store.read().await;
-        store.db.start_workflow_attempt(
-            run_id,
-            None,
-            WorkflowAttemptKind::Rescue,
-            "high",
-            "workflow-v5-rescue-feedback",
-        )
+        store
+            .db
+            .start_workflow_attempt(run_id, None, WorkflowAttemptKind::Rescue, "high")
     }
     .map_err(|error| error.to_string())?;
     let before_diff = staged_integration_diff(&workspace.worktree)
@@ -3001,18 +3006,10 @@ fn review_angles_for_checkpoint(
         let retry_angles = checkpoint
             .review_details
             .as_ref()
-            .and_then(|details| details.get("reviews"))
-            .and_then(serde_json::Value::as_array)
             .into_iter()
-            .flatten()
-            .filter(|review| {
-                review
-                    .get("transport_status")
-                    .and_then(serde_json::Value::as_str)
-                    != Some("completed")
-            })
-            .filter_map(|review| review.get("angle").and_then(serde_json::Value::as_str))
-            .filter_map(crate::workflow::parse_review_angle)
+            .flat_map(|details| &details.reviews)
+            .filter(|review| review.transport_status != ReviewTransportStatus::Completed)
+            .map(|review| review.angle)
             .collect::<Vec<_>>();
         if !retry_angles.is_empty() {
             return ordered_unique_angles(retry_angles);
@@ -3117,20 +3114,12 @@ fn diff_paths(diff: &str) -> Vec<String> {
         .collect()
 }
 
-fn completed_review_angles(details: Option<&serde_json::Value>) -> Vec<ReviewAngle> {
+fn completed_review_angles(details: Option<&ReviewReport>) -> Vec<ReviewAngle> {
     let angles = details
-        .and_then(|value| value.get("reviews"))
-        .and_then(serde_json::Value::as_array)
         .into_iter()
-        .flatten()
-        .filter(|review| {
-            review
-                .get("transport_status")
-                .and_then(serde_json::Value::as_str)
-                == Some("completed")
-        })
-        .filter_map(|review| review.get("angle").and_then(serde_json::Value::as_str))
-        .filter_map(crate::workflow::parse_review_angle)
+        .flat_map(|details| &details.reviews)
+        .filter(|review| review.transport_status == ReviewTransportStatus::Completed)
+        .map(|review| review.angle)
         .collect::<Vec<_>>();
     ordered_unique_angles(angles)
 }
@@ -3217,10 +3206,10 @@ async fn sync_terminal(
     emitter: &RequirementEventEmitter,
 ) -> RequirementStatus {
     let message = match status {
-        WorkflowRunStatus::Completed => "WorkflowRun v5.2 已完成。",
-        WorkflowRunStatus::Blocked => "WorkflowRun v5.2 已阻塞。",
-        WorkflowRunStatus::Cancelled => "WorkflowRun v5.2 已取消。",
-        _ => "WorkflowRun v5.2 仍在运行。",
+        WorkflowRunStatus::Completed => "WorkflowRun 已完成。",
+        WorkflowRunStatus::Blocked => "WorkflowRun 已阻塞。",
+        WorkflowRunStatus::Cancelled => "WorkflowRun 已取消。",
+        _ => "WorkflowRun 仍在运行。",
     };
     let result = {
         let mut store = state.store.write().await;
@@ -3283,13 +3272,24 @@ mod tests {
     #[test]
     fn completed_review_angles_ignore_failed_transports() {
         let details = serde_json::json!({
+            "selection": {
+                "classification": "source",
+                "angles": ["正确性", "边界与安全"],
+                "skippedAngles": [],
+                "reasons": [],
+                "focus": "",
+                "fileCount": 1,
+                "changedLines": 1,
+                "diffBytes": 1
+            },
             "reviews": [
                 {"angle": "正确性", "transport_status": "completed"},
                 {"angle": "边界与安全", "transport_status": "failed"}
             ]
         });
+        let report = ReviewReport::from_details(&details).unwrap();
         assert_eq!(
-            completed_review_angles(Some(&details)),
+            completed_review_angles(Some(&report)),
             [ReviewAngle::Correctness]
         );
     }

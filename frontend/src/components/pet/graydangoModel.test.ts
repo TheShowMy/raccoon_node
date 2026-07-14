@@ -11,7 +11,7 @@ type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 function chatData(overrides: Partial<ChatData> = {}): ChatData {
   return {
     kind: "requirement-chat",
-    project: { id: "current", name: "repo" } as ChatData["project"],
+    project: { name: "repo", git_url: "", local_path: "/repo" },
     requirement: null,
     conversation: null,
     requirementTimeline: [],
@@ -85,7 +85,7 @@ describe("grayDangoDirectionCell", () => {
     [100, 0, { row: 9, column: 4 }],
     [0, 100, { row: 10, column: 0 }],
     [-100, 0, { row: 10, column: 4 }],
-  ])("maps pointer vector (%s, %s) to the v2 atlas", (x, y, expected) => {
+  ])("maps pointer vector (%s, %s) to the current atlas", (x, y, expected) => {
     expect(grayDangoDirectionCell(x, y, 10)).toEqual(expected);
   });
 

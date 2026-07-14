@@ -56,8 +56,8 @@ const EMPTY_ACTIVITY: AstryxLiveActivity = {
   notices: [],
 };
 
-function attachmentUrl(projectId: string, path: string) {
-  return `/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(path)}`;
+function attachmentUrl(path: string) {
+  return `/api/attachments/${encodeURIComponent(path)}`;
 }
 
 function AssistantIcon() {
@@ -150,13 +150,7 @@ function TraceBlocks({ blocks }: { blocks: TraceBlock[] }) {
   );
 }
 
-function Attachments({
-  projectId,
-  entry,
-}: {
-  projectId: string;
-  entry: AstryxChatEntry;
-}) {
+function Attachments({ entry }: { entry: AstryxChatEntry }) {
   if (!entry.references.length && !entry.images.length) return null;
   return (
     <VStack gap={2} width="100%">
@@ -165,7 +159,7 @@ function Attachments({
           {entry.images.map((image) => (
             <Thumbnail
               key={image.path}
-              src={attachmentUrl(projectId, image.path)}
+              src={attachmentUrl(image.path)}
               alt={image.name}
               label={image.name}
             />
@@ -183,13 +177,7 @@ function Attachments({
   );
 }
 
-function Entry({
-  projectId,
-  entry,
-}: {
-  projectId: string;
-  entry: AstryxChatEntry;
-}) {
+function Entry({ entry }: { entry: AstryxChatEntry }) {
   if (entry.role === "system") {
     return <ChatSystemMessage>{entry.text || "状态已更新"}</ChatSystemMessage>;
   }
@@ -198,7 +186,7 @@ function Entry({
       sender={entry.role}
       avatar={entry.role === "assistant" ? <AssistantIcon /> : undefined}
     >
-      <Attachments projectId={projectId} entry={entry} />
+      <Attachments entry={entry} />
       <TraceBlocks blocks={entry.traceBlocks} />
       {entry.text ? (
         <ChatMessageBubble
@@ -279,7 +267,6 @@ const MemoEntry = memo(Entry);
 const MemoLiveActivity = memo(LiveActivity);
 
 function AstryxMessages({
-  projectId,
   timeline,
   projectActivity,
   projectRunning,
@@ -293,7 +280,6 @@ function AstryxMessages({
   hasOlderHistory,
   onLoadOlderHistory,
 }: {
-  projectId: string;
   timeline: AstryxTimelineItem[];
   projectActivity: AstryxLiveActivity;
   projectRunning: boolean;
@@ -322,11 +308,6 @@ function AstryxMessages({
     [timeline],
   );
   const previousTotalRef = useRef(totalPersistentRows);
-
-  useEffect(() => {
-    setVisibleCount(HISTORY_BATCH_SIZE);
-    previousTotalRef.current = totalPersistentRows;
-  }, [projectId]);
 
   useEffect(() => {
     const previous = previousTotalRef.current;
@@ -432,7 +413,7 @@ function AstryxMessages({
       {timeline.map((item) =>
         item.kind === "project" ? (
           selection.projectIds.has(item.id) ? (
-            <MemoEntry key={item.id} projectId={projectId} entry={item.entry} />
+            <MemoEntry key={item.id} entry={item.entry} />
           ) : null
         ) : selection.requirementIds.has(item.id) ||
           item.id === `requirement-${interactiveRequirementId}` ? (
@@ -440,7 +421,7 @@ function AstryxMessages({
             <ChatSystemMessage variant="divider">需求分支</ChatSystemMessage>
             {item.entries.map((entry) =>
               selection.requirementEntryIds.has(`${item.id}:${entry.id}`) ? (
-                <MemoEntry key={entry.id} projectId={projectId} entry={entry} />
+                <MemoEntry key={entry.id} entry={entry} />
               ) : null,
             )}
             {item.error && selection.requirementErrorIds.has(item.id) ? (

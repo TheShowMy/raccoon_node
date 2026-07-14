@@ -9,7 +9,6 @@ import type { StartNodeData, WorkItemStatus } from "../../types/api";
 
 const statusText: Record<WorkItemStatus, string> = {
   pending: "待执行",
-  leased: "已领取",
   running: "执行中",
   accepted: "已交付",
   blocked: "待修复",

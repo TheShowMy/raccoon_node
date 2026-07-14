@@ -25,9 +25,7 @@ vi.mock("../../api/client", () => ({
 function requirement(status: Requirement["status"] = "planning"): Requirement {
   return {
     id: "req-1",
-    project_id: "current",
     title: "实现需求",
-    original_message: "实现需求",
     origin: "standalone",
     status,
     messages: [],
@@ -67,7 +65,6 @@ function workflow(status: WorkflowSnapshot["run"]["status"]): WorkflowSnapshot {
     run: {
       id: "run-1",
       requirement_id: "req-1",
-      project_id: "current",
       status,
       change_spec: {
         intent: "让任务稳定完成",
@@ -90,7 +87,6 @@ function workflow(status: WorkflowSnapshot["run"]["status"]): WorkflowSnapshot {
         status === "paused_technical" ? "checkpoint 协议失败" : null,
       paused_operation:
         status === "paused_technical" ? "review_checkpoint" : null,
-      version: 1,
       created_at: "2026-07-13T00:00:00Z",
       updated_at: "2026-07-13T00:01:00Z",
     },
@@ -221,7 +217,7 @@ describe("WorkflowRunNode", () => {
   });
 
   it("hides the strip and plan summary after planning", () => {
-    renderNode([], "plan_ready");
+    renderNode([], "running");
 
     expect(screen.queryByText("思考")).toBeNull();
     expect(screen.queryByText("不应显示的计划摘要")).toBeNull();
@@ -229,8 +225,30 @@ describe("WorkflowRunNode", () => {
 
   it("marks the thinking scroll strip with nodrag and nowheel", () => {
     renderNode();
-    const strip = document.querySelector(".nodrag.nowheel");
-    expect(strip).toBeInTheDocument();
+    const strips = document.querySelectorAll(".nodrag.nowheel");
+    expect(strips.length).toBeGreaterThan(0);
+  });
+
+  it("marks the event timeline scroll area with nodrag and nowheel", async () => {
+    vi.mocked(getWorkflowEvents).mockResolvedValue({
+      events: Array.from({ length: 5 }, (_, index) => ({
+        sequence: index + 1,
+        run_id: "run-1",
+        entity_type: "run" as const,
+        entity_id: `entity-${index + 1}`,
+        event_type: `operation.${index + 1}` as const,
+        payload: {},
+        created_at: "2026-07-13T00:01:00Z",
+      })),
+      next_after: null,
+    });
+
+    renderNode([], "running", workflow("running"));
+
+    const heading = await screen.findByText("事件时间线 · 5 条");
+    const timeline = heading.closest(".astryx-stack");
+    expect(timeline).toHaveClass("nodrag");
+    expect(timeline).toHaveClass("nowheel");
   });
 
   it("shows all 21 persisted events and the primary technical cause", async () => {
@@ -261,11 +279,11 @@ describe("WorkflowRunNode", () => {
 
     renderNode([], "running", workflow("paused_technical"));
 
-    expect(await screen.findByText("完整时间线 · 21 条")).toBeInTheDocument();
+    expect(await screen.findByText("事件时间线 · 21 条")).toBeInTheDocument();
     expect(screen.getByText("审核技术失败")).toBeInTheDocument();
-    expect(screen.getByText("仓库原生验证完成")).toBeInTheDocument();
-    expect(screen.getByText("高级 Rescue 启动")).toBeInTheDocument();
-    expect(screen.getByText("Primary cause")).toBeInTheDocument();
+    expect(screen.getByText("仓库检查完成")).toBeInTheDocument();
+    expect(screen.getByText("启动深度修复")).toBeInTheDocument();
+    expect(screen.getByText("主要原因")).toBeInTheDocument();
     expect(screen.getAllByText(/checkpoint 协议失败/).length).toBeGreaterThan(
       0,
     );

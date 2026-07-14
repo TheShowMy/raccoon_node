@@ -56,7 +56,7 @@ export function buildWorkflowRunEdges(
         target: `workflow-item-${item.id}`,
         targetHandle: "workflow-item-left",
         type: "smoothstep",
-        animated: ["leased", "running"].includes(item.status),
+        animated: item.status === "running",
         markerEnd: {
           type: MarkerType.ArrowClosed,
           color: DEPENDENCY_EDGE_COLOR,

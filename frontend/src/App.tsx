@@ -36,16 +36,17 @@ import { X } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import "./styles/index.css";
 
-import type { StartNodeData, StreamEvent } from "./types/api";
+import type { RequirementNodeData } from "./types/api";
+import type {
+  GitWorkbenchModel,
+  SettingsWorkbenchModel,
+  TerminalWorkbenchModel,
+} from "./types/viewModels";
 import ChatCanvasNode from "./canvas/ChatCanvasNode";
 import { buildWorkflowRunEdges } from "./canvas/edges";
 import {
   buildProjectChatNode,
-  buildProjectGitNode,
   buildProjectNodes,
-  buildProjectSettingsNode,
-  buildProjectTerminalNode,
-  mergeProjectNodes,
 } from "./canvas/buildProjectNodes";
 import { useCurrentProject } from "./hooks/useCurrentProject";
 import { useProjectCanvas } from "./hooks/useProjectCanvas";
@@ -308,14 +309,8 @@ function ModelSetupGuide({
   );
 }
 
-export function getReactFlowKey({
-  projectId,
-  projectLoaded,
-}: {
-  projectId: string | null;
-  projectLoaded: boolean;
-}) {
-  return `project-${projectId ?? "none"}-${projectLoaded ? "ready" : "loading"}`;
+export function getReactFlowKey({ projectLoaded }: { projectLoaded: boolean }) {
+  return `project-${projectLoaded ? "ready" : "loading"}`;
 }
 
 export function shouldVirtualizeCanvasNodes(phase: AppUiState["panelPhase"]) {
@@ -323,20 +318,18 @@ export function shouldVirtualizeCanvasNodes(phase: AppUiState["panelPhase"]) {
 }
 
 export function positionRequirementWorkbenchNodes(
-  nodes: Node<StartNodeData>[],
-): Node<StartNodeData>[] {
-  return nodes
-    .filter((node) => node.id !== "token-usage")
-    .map((node) => {
-      if (node.parentId) return node;
-      return {
-        ...node,
-        position: {
-          x: node.id === "requirements" ? 0 : node.position.x - 960,
-          y: node.id === "requirements" ? 20 : node.position.y,
-        },
-      };
-    });
+  nodes: Node<RequirementNodeData>[],
+): Node<RequirementNodeData>[] {
+  return nodes.map((node) => {
+    if (node.parentId) return node;
+    return {
+      ...node,
+      position: {
+        x: node.id === "requirements" ? 0 : node.position.x - 960,
+        y: node.id === "requirements" ? 20 : node.position.y,
+      },
+    };
+  });
 }
 
 export default function App() {
@@ -359,10 +352,8 @@ function AppCanvas() {
     }
   }, []);
   const current = useCurrentProject();
-  const selectedProjectId = current.project?.id ?? null;
-  const project = useProjectCanvas(selectedProjectId, current.setError);
+  const project = useProjectCanvas(current.setError);
   const requirement = useRequirementFlow(
-    selectedProjectId,
     project.activeRequirementId,
     project.observedRequirementId,
     project.setProjectCanvas,
@@ -370,7 +361,7 @@ function AppCanvas() {
     project.setSelectedWorkflowRequirementId,
     project.allProjectRequirements,
   );
-  const projectChat = useProjectChat(selectedProjectId);
+  const projectChat = useProjectChat();
   const models = useModelSettings(current.applyTheme, current.loadCurrent);
   const terminalHost = models.basicSettings?.effective_host;
   const terminalAccessRequired = terminalHost === "0.0.0.0";
@@ -384,14 +375,12 @@ function AppCanvas() {
     return undefined;
   }, [terminalAccessRequired]);
   const terminals = useProjectTerminals(
-    selectedProjectId,
     terminalBlockedReason,
     terminalAccessRequired,
   );
-  const git = useProjectGit(selectedProjectId);
+  const git = useProjectGit();
   const openPanel = useAppUiState((state) => state.openPanel);
   const panelPhase = useAppUiState((state) => state.panelPhase);
-  const tokenUsageExpanded = useAppUiState((state) => state.tokenUsageExpanded);
   const storeActions = useAppStoreActions();
   const viewportPanel = panelPhase === "closing" ? null : openPanel;
   const [, startPanelTransition] = useTransition();
@@ -437,11 +426,9 @@ function AppCanvas() {
         selectedWorkflowRequirementId: project.selectedWorkflowRequirementId,
         requirementActionBusyId: project.requirementActionBusyId,
         requirementActionError: project.requirementActionError,
-        tokenUsageExpanded,
         closeWorkflow: project.closeWorkflow,
         selectWorkflowRequirement: project.selectWorkflowRequirement,
         planRequirement: project.planRequirement,
-        onToggleTokenUsageExpanded: storeActions.toggleTokenUsageExpanded,
       }),
     [
       current.project,
@@ -453,7 +440,6 @@ function AppCanvas() {
       project.selectWorkflowRequirement,
       project.selectedWorkflowRequirement,
       project.selectedWorkflowRequirementId,
-      tokenUsageExpanded,
     ],
   );
 
@@ -532,98 +518,44 @@ function AppCanvas() {
   const terminalDisabled = terminals.terminalDisabled;
   const terminalDisabledReason = terminals.terminalDisabledReason;
 
-  const projectSettingsNode = useMemo(
-    () =>
-      buildProjectSettingsNode({
-        projectCanvas: project.projectCanvas,
-        project: current.project,
-        expanded: models.settingsExpanded,
-        page: models.settingsPage,
-        basicSettings: models.basicSettings,
-        basicError: models.basicSettingsError,
-        savingBasic: models.savingBasicSettings,
-        savingTheme: models.savingTheme,
-        modelSettings: models.draftModelSettings,
-        models: models.models,
-        modelRpcStatus: models.modelRpcStatus,
-        modelError: models.modelError,
-        savingModels: models.savingModels,
-        terminalDisabled,
-        terminalAccessRequired: terminals.terminalAccessRequired,
-        terminalAccessAuthorized: terminals.terminalAccessAuthorized,
-        terminalAccessBusy: terminals.terminalAccessBusy,
-        terminalAccessError: terminals.terminalAccessError,
-        piLoginSession: terminals.piLoginSession,
-        piLoginBusy: terminals.piLoginBusy,
-        piLoginError: terminals.piLoginError,
-        needsModelOnboarding: models.needsModelOnboarding,
-        modelDraftComplete: models.modelDraftComplete,
-        modelSavedComplete: models.modelSavedComplete,
-        onToggleExpanded: () => {
-          if (models.settingsExpanded) {
-            void terminals.closePiLoginTerminal();
-          }
-          models.toggleSettings();
-        },
-        onOpenBasic: models.openBasicSettings,
-        onOpenModels: models.openModelSettings,
-        onBasicChange: models.updateBasicSettings,
-        onThemeChange: models.changeTheme,
-        onSaveBasic: models.saveBasicSettings,
-        onModelChange: models.updateModelTier,
-        onSaveModels: models.saveModelSettings,
-        onReloadModels: models.reloadModelSettings,
-        onAuthorizeTerminalAccess: terminals.authorizeTerminalAccess,
-        onStartPiLogin: terminals.startPiLoginTerminal,
-        onClosePiLogin: terminals.closePiLoginTerminal,
-      }),
-    [
-      current.project,
-      models.basicSettings,
-      models.basicSettingsError,
-      models.changeTheme,
-      models.draftModelSettings,
-      models.modelDraftComplete,
-      models.modelError,
-      models.modelRpcStatus,
-      models.modelSavedComplete,
-      models.models,
-      models.needsModelOnboarding,
-      models.openBasicSettings,
-      models.openModelSettings,
-      models.reloadModelSettings,
-      models.saveBasicSettings,
-      models.saveModelSettings,
-      models.savingBasicSettings,
-      models.savingModels,
-      models.savingTheme,
-      models.settingsExpanded,
-      models.settingsPage,
-      models.toggleSettings,
-      models.updateBasicSettings,
-      models.updateModelTier,
-      project.projectCanvas,
-      project.selectWorkflowRequirement,
-      terminalDisabled,
-      terminals.authorizeTerminalAccess,
-      terminals.closePiLoginTerminal,
-      terminals.terminalAccessAuthorized,
-      terminals.terminalAccessBusy,
-      terminals.terminalAccessError,
-      terminals.terminalAccessRequired,
-      terminals.piLoginBusy,
-      terminals.piLoginError,
-      terminals.piLoginSession,
-      terminals.startPiLoginTerminal,
-    ],
-  );
+  const settingsViewModel: SettingsWorkbenchModel = {
+    page: models.settingsPage,
+    basicSettings: models.basicSettings,
+    basicError: models.basicSettingsError,
+    savingBasic: models.savingBasicSettings,
+    savingTheme: models.savingTheme,
+    modelSettings: models.draftModelSettings,
+    models: models.models,
+    modelRpcStatus: models.modelRpcStatus,
+    modelError: models.modelError,
+    savingModels: models.savingModels,
+    terminalDisabled,
+    terminalAccessRequired: terminals.terminalAccessRequired,
+    terminalAccessAuthorized: terminals.terminalAccessAuthorized,
+    terminalAccessBusy: terminals.terminalAccessBusy,
+    terminalAccessError: terminals.terminalAccessError,
+    piLoginSession: terminals.piLoginSession,
+    piLoginBusy: terminals.piLoginBusy,
+    piLoginError: terminals.piLoginError,
+    needsModelOnboarding: models.needsModelOnboarding,
+    modelDraftComplete: models.modelDraftComplete,
+    modelSavedComplete: models.modelSavedComplete,
+    onOpenBasic: models.openBasicSettings,
+    onOpenModels: models.openModelSettings,
+    onBasicChange: models.updateBasicSettings,
+    onThemeChange: models.changeTheme,
+    onSaveBasic: models.saveBasicSettings,
+    onModelChange: models.updateModelTier,
+    onSaveModels: models.saveModelSettings,
+    onReloadModels: models.reloadModelSettings,
+    onAuthorizeTerminalAccess: terminals.authorizeTerminalAccess,
+    onStartPiLogin: terminals.startPiLoginTerminal,
+    onClosePiLogin: terminals.closePiLoginTerminal,
+  };
 
-  const projectTerminalNode = useMemo(
-    () =>
-      buildProjectTerminalNode({
-        projectCanvas: project.projectCanvas,
+  const terminalViewModel: TerminalWorkbenchModel | null = current.project
+    ? {
         project: current.project,
-        collapsed: terminals.collapsed,
         sessions: terminals.sessions,
         activeSessionId: terminals.activeSessionId,
         commandProfiles: terminals.commandProfiles,
@@ -633,78 +565,25 @@ function AppCanvas() {
         terminalDisabledReason,
         terminalAccessRequired: terminals.terminalAccessRequired,
         terminalAccessAuthorized: terminals.terminalAccessAuthorized,
-        terminalAccessExpiresAt: terminals.terminalAccessExpiresAt,
         terminalAccessBusy: terminals.terminalAccessBusy,
         terminalAccessError: terminals.terminalAccessError,
-        onToggleCollapsed: terminals.toggleCollapsed,
         onAuthorizeTerminalAccess: terminals.authorizeTerminalAccess,
         onCreateTerminal: terminals.createTerminal,
         onCloseTerminal: terminals.closeTerminal,
         onSelectTerminal: terminals.selectTerminal,
-        onSaveCommandProfiles: terminals.saveCommandProfiles,
-      }),
-    [
-      current.project,
-      terminalDisabled,
-      terminalDisabledReason,
-      project.projectCanvas,
-      terminals.activeSessionId,
-      terminals.authorizeTerminalAccess,
-      terminals.busy,
-      terminals.closeTerminal,
-      terminals.collapsed,
-      terminals.commandProfiles,
-      terminals.createTerminal,
-      terminals.error,
-      terminals.saveCommandProfiles,
-      terminals.selectTerminal,
-      terminals.sessions,
-      terminals.terminalAccessAuthorized,
-      terminals.terminalAccessBusy,
-      terminals.terminalAccessError,
-      terminals.terminalAccessExpiresAt,
-      terminals.terminalAccessRequired,
-      terminals.toggleCollapsed,
-    ],
-  );
+      }
+    : null;
 
-  const projectGitNode = useMemo(
-    () =>
-      buildProjectGitNode({
-        projectCanvas: project.projectCanvas,
-        project: current.project,
-        phase: git.phase,
-        status: git.status,
-        diff: git.diff,
-        selectedPaths: git.selectedPaths,
-        selectedDiff: git.selectedDiff,
-        busy: git.busy,
-        error: git.error,
-        lastResult: git.lastResult,
-        onToggleExpanded: git.toggleExpanded,
-        onRefresh: git.load,
-        onTogglePath: git.togglePath,
-        onSelectDiff: git.selectDiff,
-        onAction: git.action,
-      }),
-    [
-      current.project,
-      git.action,
-      git.busy,
-      git.diff,
-      git.error,
-      git.lastResult,
-      git.load,
-      git.phase,
-      git.selectDiff,
-      git.selectedDiff,
-      git.selectedPaths,
-      git.status,
-      git.toggleExpanded,
-      git.togglePath,
-      project.projectCanvas,
-    ],
-  );
+  const gitViewModel: GitWorkbenchModel = {
+    status: git.status,
+    diff: git.diff,
+    busy: git.busy,
+    error: git.error,
+    lastResult: git.lastResult,
+    onRefresh: git.load,
+    onSelectDiff: git.selectDiff,
+    onAction: git.action,
+  };
 
   const requirementNodes = useMemo(
     () => positionRequirementWorkbenchNodes(projectStructureNodes),
@@ -743,7 +622,7 @@ function AppCanvas() {
       return null;
     }
     if (openPanel === "files") {
-      return <FilesWorkbench projectId={current.project.id} />;
+      return <FilesWorkbench />;
     }
     if (openPanel === "requirements") {
       return (
@@ -753,65 +632,31 @@ function AppCanvas() {
         />
       );
     }
-    if (openPanel === "settings" && projectSettingsNode) {
-      return (
-        <SettingsWorkbench
-          data={
-            projectSettingsNode.data as Extract<
-              StartNodeData,
-              { kind: "project-settings" }
-            >
-          }
-        />
-      );
+    if (openPanel === "settings") {
+      return <SettingsWorkbench data={settingsViewModel} />;
     }
-    if (openPanel === "terminal" && projectTerminalNode) {
-      return (
-        <TerminalWorkbench
-          data={
-            projectTerminalNode.data as Extract<
-              StartNodeData,
-              { kind: "project-terminal" }
-            >
-          }
-        />
-      );
+    if (openPanel === "terminal" && terminalViewModel) {
+      return <TerminalWorkbench data={terminalViewModel} />;
     }
-    if (openPanel === "git" && projectGitNode) {
-      return (
-        <GitWorkbench
-          data={
-            projectGitNode.data as Extract<
-              StartNodeData,
-              { kind: "project-git" }
-            >
-          }
-        />
-      );
+    if (openPanel === "git") {
+      return <GitWorkbench data={gitViewModel} />;
     }
     if (openPanel === "tokens") {
-      const tokenNode = projectStructureNodes.find(
-        (node) => node.id === "token-usage",
+      return (
+        <TokenWorkbench
+          data={{ usage: project.projectCanvas?.token_usage ?? null }}
+        />
       );
-      if (tokenNode) {
-        return (
-          <TokenWorkbench
-            data={
-              tokenNode.data as Extract<StartNodeData, { kind: "token-usage" }>
-            }
-          />
-        );
-      }
     }
     return null;
   }, [
     current.project,
     openPanel,
     panelPhase,
-    projectGitNode,
-    projectSettingsNode,
     projectStructureNodes,
-    projectTerminalNode,
+    settingsViewModel,
+    terminalViewModel,
+    gitViewModel,
     requirementEdges,
     requirementNodes,
     terminals.closePiLoginTerminal,
@@ -968,7 +813,6 @@ function AppCanvas() {
               <ReactFlow
                 className="main-project-flow"
                 key={getReactFlowKey({
-                  projectId: selectedProjectId,
                   projectLoaded: Boolean(project.projectCanvas),
                 })}
                 nodes={nodes}

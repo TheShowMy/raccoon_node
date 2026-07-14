@@ -26,7 +26,6 @@ vi.mock("../api/client", () => ({
 describe("useProjectTerminals", () => {
   const piSession = (id: string): TerminalSession => ({
     id,
-    project_id: "project-1",
     title: "Pi 登录",
     command: "pi --no-session --no-extensions --no-context-files",
     status: "running",
@@ -57,49 +56,19 @@ describe("useProjectTerminals", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it("always starts collapsed and does not persist toggles", async () => {
-    const { result } = renderHook(() =>
-      useProjectTerminals("project-1", undefined, false),
-    );
-
-    await waitFor(() => expect(getProjectTerminals).toHaveBeenCalled());
-    expect(result.current.collapsed).toBe(true);
-    act(() => result.current.toggleCollapsed());
-    expect(result.current.collapsed).toBe(false);
-    expect(localStorage.getItem).not.toHaveBeenCalled();
-    expect(localStorage.setItem).not.toHaveBeenCalled();
-  });
-
-  it("resets to collapsed when the project changes", async () => {
-    const { result, rerender } = renderHook(
-      ({ projectId }) => useProjectTerminals(projectId, undefined, false),
-      { initialProps: { projectId: "project-1" } },
-    );
-
-    await waitFor(() => expect(getProjectTerminals).toHaveBeenCalled());
-    act(() => result.current.toggleCollapsed());
-    expect(result.current.collapsed).toBe(false);
-
-    rerender({ projectId: "project-2" });
-    await waitFor(() => expect(result.current.collapsed).toBe(true));
-  });
-
   it("starts an independent Pi login session without opening the project terminal", async () => {
     vi.mocked(createProjectTerminal).mockResolvedValue(piSession("pi-1"));
-    const { result } = renderHook(() =>
-      useProjectTerminals("project-1", undefined, false),
-    );
+    const { result } = renderHook(() => useProjectTerminals(undefined, false));
     await waitFor(() => expect(getProjectTerminals).toHaveBeenCalled());
 
     await act(async () => result.current.startPiLoginTerminal());
 
-    expect(createProjectTerminal).toHaveBeenCalledWith("project-1", {
+    expect(createProjectTerminal).toHaveBeenCalledWith({
       command: "pi --no-session --no-extensions --no-context-files",
       title: "Pi 登录",
     });
     expect(result.current.piLoginSession?.id).toBe("pi-1");
     expect(result.current.sessions).toEqual([]);
-    expect(result.current.collapsed).toBe(true);
   });
 
   it("restarts and closes only the embedded Pi login session", async () => {
@@ -107,18 +76,16 @@ describe("useProjectTerminals", () => {
       .mockResolvedValueOnce(piSession("pi-1"))
       .mockResolvedValueOnce(piSession("pi-2"));
     vi.mocked(deleteProjectTerminal).mockResolvedValue([]);
-    const { result } = renderHook(() =>
-      useProjectTerminals("project-1", undefined, false),
-    );
+    const { result } = renderHook(() => useProjectTerminals(undefined, false));
     await waitFor(() => expect(getProjectTerminals).toHaveBeenCalled());
 
     await act(async () => result.current.startPiLoginTerminal());
     await act(async () => result.current.startPiLoginTerminal());
-    expect(deleteProjectTerminal).toHaveBeenCalledWith("project-1", "pi-1");
+    expect(deleteProjectTerminal).toHaveBeenCalledWith("pi-1");
     expect(result.current.piLoginSession?.id).toBe("pi-2");
 
     await act(async () => result.current.closePiLoginTerminal());
-    expect(deleteProjectTerminal).toHaveBeenLastCalledWith("project-1", "pi-2");
+    expect(deleteProjectTerminal).toHaveBeenLastCalledWith("pi-2");
     expect(result.current.piLoginSession).toBeNull();
     expect(result.current.sessions).toEqual([]);
   });
@@ -128,9 +95,7 @@ describe("useProjectTerminals", () => {
       .mockResolvedValueOnce(piSession("pi-1"))
       .mockRejectedValueOnce(new Error("Pi 启动失败"));
     vi.mocked(deleteProjectTerminal).mockResolvedValue([]);
-    const { result } = renderHook(() =>
-      useProjectTerminals("project-1", undefined, false),
-    );
+    const { result } = renderHook(() => useProjectTerminals(undefined, false));
     await waitFor(() => expect(getProjectTerminals).toHaveBeenCalled());
 
     await act(async () => result.current.startPiLoginTerminal());

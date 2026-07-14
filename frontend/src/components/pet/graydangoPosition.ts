@@ -1,8 +1,7 @@
 export type GrayDangoPosition = { x: number; y: number };
 export type GrayDangoDragDirection = "left" | "right";
 
-export const GRAYDANGO_POSITION_STORAGE_KEY =
-  "raccoon-node:graydango-position:v1";
+export const GRAYDANGO_POSITION_STORAGE_KEY = "raccoon-node:graydango-position";
 export const DEFAULT_GRAYDANGO_POSITION: GrayDangoPosition = { x: 1, y: 1 };
 export const GRAYDANGO_DIRECTION_DEADZONE = 2;
 

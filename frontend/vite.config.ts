@@ -32,14 +32,6 @@ export default defineConfig({
           ) {
             return "vendor-astryx";
           }
-          if (
-            path.includes("/react-markdown/") ||
-            path.includes("/remark-") ||
-            path.includes("/micromark") ||
-            path.includes("/unified/")
-          ) {
-            return "vendor-markdown";
-          }
           if (path.includes("/lucide-react/")) return "vendor-icons";
           return undefined;
         },

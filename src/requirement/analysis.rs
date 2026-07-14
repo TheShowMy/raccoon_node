@@ -245,13 +245,9 @@ pub fn parse_requirement_tool_analysis(
     };
     if !matches!(
         details.get("protocol").and_then(Value::as_str),
-        Some("raccoon:requirements:v3" | "raccoon:clarifications:v1")
+        Some("raccoon:requirements")
     ) {
-        return failed_tool_analysis(
-            "需求分析工具协议版本不匹配".to_owned(),
-            pi_session_file,
-            trace,
-        );
+        return failed_tool_analysis("需求分析工具协议不匹配".to_owned(), pi_session_file, trace);
     }
     let parsed = match serde_json::from_value::<RequirementToolDetails>(details.clone()) {
         Ok(parsed) => parsed,
@@ -384,7 +380,6 @@ pub fn build_pi_trace_metadata(events: &[Value]) -> Option<Value> {
 
     Some(json!({
         "type": "pi_trace",
-        "version": 2,
         "trace": {
             "blocks": blocks,
             "thinking": thinking,
@@ -808,12 +803,9 @@ mod tests {
         let now = Utc::now();
         let input = RequirementAnalysisInput {
             project: Project {
-                id: "p1".to_owned(),
                 name: "Demo".to_owned(),
                 git_url: "https://example.com/demo.git".to_owned(),
                 local_path: "/tmp/demo".to_owned(),
-                created_at: now,
-                updated_at: now,
             },
             messages: vec![
                 RequirementMessage {
@@ -876,12 +868,9 @@ mod tests {
         };
         let input = RequirementAnalysisInput {
             project: Project {
-                id: "current".to_owned(),
                 name: "Demo".to_owned(),
                 git_url: String::new(),
                 local_path: "/tmp/demo".to_owned(),
-                created_at: now,
-                updated_at: now,
             },
             messages: vec![
                 message(RequirementMessageRole::User, "修复 WebGL 不可用问题"),
@@ -913,12 +902,9 @@ mod tests {
         let now = Utc::now();
         let input = RequirementAnalysisInput {
             project: Project {
-                id: "p1".to_owned(),
                 name: "Demo".to_owned(),
                 git_url: String::new(),
                 local_path: "/tmp/demo".to_owned(),
-                created_at: now,
-                updated_at: now,
             },
             messages: vec![RequirementMessage {
                 role: RequirementMessageRole::User,
@@ -952,7 +938,7 @@ mod tests {
             "result": {
                 "content": [{"type": "text", "text": "pending"}],
                 "details": {
-                    "protocol": "raccoon:requirements:v3",
+                    "protocol": "raccoon:requirements",
                     "kind": "clarification_request",
                     "progress": "需要确认范围",
                     "message": "请确认范围",
@@ -996,7 +982,7 @@ mod tests {
             "result": {
                 "content": [{"type": "text", "text": "ok"}],
                 "details": {
-                    "protocol": "raccoon:requirements:v3",
+                    "protocol": "raccoon:requirements",
                     "kind": "change_spec",
                     "progress": "已检查仓库现状",
                     "message": "需求已明确",
@@ -1029,7 +1015,7 @@ mod tests {
             "isError": false,
             "result": {
                 "details": {
-                    "protocol": "raccoon:requirements:v3",
+                    "protocol": "raccoon:requirements",
                     "kind": "change_spec",
                     "progress": "done",
                     "message": "ok",
@@ -1088,7 +1074,7 @@ mod tests {
         ];
 
         let trace = build_pi_trace_metadata(&events).unwrap();
-        assert_eq!(trace["version"], json!(2));
+        assert!(trace.get("version").is_none());
         let output = trace
             .pointer("/trace/tools/0/output")
             .and_then(Value::as_str)

@@ -11,14 +11,9 @@ import { Text } from "@astryxdesign/core/Text";
 import { TextArea } from "@astryxdesign/core/TextArea";
 import { Toolbar } from "@astryxdesign/core/Toolbar";
 import { FileSearch, GitBranch, RefreshCw } from "lucide-react";
-import type {
-  GitAction,
-  GitDiffArea,
-  GitFileStatus,
-  StartNodeData,
-} from "../../types/api";
+import type { GitAction, GitDiffArea, GitFileStatus } from "../../types/api";
+import type { GitWorkbenchModel } from "../../types/viewModels";
 
-type GitData = Extract<StartNodeData, { kind: "project-git" }>;
 type Confirmation =
   | { kind: "commit"; action: GitAction; description: string }
   | { kind: "push"; action: GitAction; description: string }
@@ -103,7 +98,7 @@ function ChangeList({
   );
 }
 
-export default function GitWorkbench({ data }: { data: GitData }) {
+export default function GitWorkbench({ data }: { data: GitWorkbenchModel }) {
   const [stagedSelection, setStagedSelection] = useState<Set<string>>(
     new Set(),
   );

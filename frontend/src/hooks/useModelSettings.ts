@@ -24,7 +24,7 @@ function hasAllModelTiers(settings: ModelSettings) {
   );
 }
 
-export const MODEL_SETUP_GUIDE_KEY = "raccoon:model-setup-guide-dismissed:v1";
+export const MODEL_SETUP_GUIDE_KEY = "raccoon:model-setup-guide-dismissed";
 
 export function useModelSettings(
   onThemeChange?: (themePack: ThemePack, themeMode: ThemeMode) => void,

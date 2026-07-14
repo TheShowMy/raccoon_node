@@ -28,9 +28,7 @@ function createRequirement(
 ): Requirement {
   return {
     id: "requirement-1",
-    project_id: project.id,
     title,
-    original_message: "完成测试需求",
     origin: "standalone",
     status,
     messages: [],
@@ -56,7 +54,7 @@ const initialRequirement = createRequirement("failed");
 const initialCanvas = createCanvas(initialRequirement);
 
 function renderProjectCanvas(setError = vi.fn()) {
-  const result = renderHook(() => useProjectCanvas(project.id, setError));
+  const result = renderHook(() => useProjectCanvas(setError));
   return { ...result, setError };
 }
 
@@ -77,10 +75,7 @@ describe("useProjectCanvas workflow selection", () => {
     });
 
     await waitFor(() =>
-      expect(getProjectCanvas).toHaveBeenLastCalledWith(
-        project.id,
-        initialRequirement.id,
-      ),
+      expect(getProjectCanvas).toHaveBeenLastCalledWith(initialRequirement.id),
     );
   });
 
@@ -91,12 +86,12 @@ describe("useProjectCanvas workflow selection", () => {
       try {
         const queuedCanvas = createCanvas(createRequirement("queued"));
         const planningCanvas = createCanvas(createRequirement("planning"));
-        const planReadyCanvas = createCanvas(createRequirement("plan_ready"));
+        const runningCanvas = createCanvas(createRequirement("running"));
         const terminalCanvas = createCanvas(createRequirement(terminalStatus));
         vi.mocked(getProjectCanvas)
           .mockResolvedValueOnce(queuedCanvas)
           .mockResolvedValueOnce(planningCanvas)
-          .mockResolvedValueOnce(planReadyCanvas)
+          .mockResolvedValueOnce(runningCanvas)
           .mockResolvedValueOnce(terminalCanvas);
 
         const { result } = renderProjectCanvas();
@@ -119,7 +114,7 @@ describe("useProjectCanvas workflow selection", () => {
           await Promise.resolve();
         });
         expect(getProjectCanvas).toHaveBeenCalledTimes(3);
-        expect(result.current.projectCanvas).toBe(planReadyCanvas);
+        expect(result.current.projectCanvas).toBe(runningCanvas);
 
         await act(async () => {
           vi.advanceTimersByTime(15_000);
@@ -185,7 +180,7 @@ describe("useProjectCanvas workflow selection", () => {
       act(() => {
         vi.advanceTimersByTime(15_000);
       });
-      const duplicate = result.current.loadProjectCanvas(project.id);
+      const duplicate = result.current.loadProjectCanvas();
 
       expect(getProjectCanvas).toHaveBeenCalledTimes(2);
 
@@ -210,7 +205,7 @@ describe("useProjectCanvas workflow selection", () => {
       active_requirement: { ...initialRequirement },
     });
     await act(async () => {
-      await result.current.loadProjectCanvas(project.id);
+      await result.current.loadProjectCanvas();
     });
     expect(getProjectCanvas).toHaveBeenCalledTimes(2);
     expect(result.current.projectCanvas).toBe(initialCanvas);

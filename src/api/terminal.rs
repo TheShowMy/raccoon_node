@@ -128,21 +128,17 @@ impl TerminalManager {
         Self::default()
     }
 
-    pub fn list(&self, project_id: &str) -> Vec<TerminalSession> {
+    pub fn list(&self) -> Vec<TerminalSession> {
         self.sessions
             .lock()
             .expect("terminal session lock poisoned")
             .values()
-            .filter_map(|session| {
-                let metadata = session.metadata();
-                (metadata.project_id == project_id).then_some(metadata)
-            })
+            .map(|session| session.metadata())
             .collect()
     }
 
     pub fn spawn(
         &self,
-        project_id: &str,
         project_root: PathBuf,
         command: Option<String>,
         title: Option<String>,
@@ -172,10 +168,7 @@ impl TerminalManager {
             .sessions
             .lock()
             .expect("terminal session lock poisoned");
-        let active_count = sessions
-            .values()
-            .filter(|session| session.project_id == project_id)
-            .count();
+        let active_count = sessions.len();
         if active_count >= MAX_TERMINALS_PER_PROJECT {
             return Err(AppError::bad_request(format!(
                 "每个项目最多同时打开 {MAX_TERMINALS_PER_PROJECT} 个终端"
@@ -187,14 +180,8 @@ impl TerminalManager {
             Utc::now().timestamp_millis(),
             sessions.len() + 1
         );
-        let runtime = TerminalSessionRuntime::spawn(
-            id.clone(),
-            project_id.to_owned(),
-            title,
-            command,
-            project_root,
-            size,
-        )?;
+        let runtime =
+            TerminalSessionRuntime::spawn(id.clone(), title, command, project_root, size)?;
         let metadata = runtime.metadata();
         sessions.insert(id, runtime);
         Ok(metadata)
@@ -209,7 +196,7 @@ impl TerminalManager {
             .ok_or_else(|| AppError::not_found("终端不存在"))
     }
 
-    pub fn delete(&self, project_id: &str, terminal_id: &str) -> Result<(), AppError> {
+    pub fn delete(&self, terminal_id: &str) -> Result<(), AppError> {
         let mut sessions = self
             .sessions
             .lock()
@@ -217,9 +204,6 @@ impl TerminalManager {
         let Some(session) = sessions.get(terminal_id).cloned() else {
             return Err(AppError::not_found("终端不存在"));
         };
-        if session.project_id != project_id {
-            return Err(AppError::not_found("终端不存在"));
-        }
         sessions.remove(terminal_id);
         session.shutdown();
         Ok(())
@@ -245,7 +229,6 @@ impl Drop for TerminalManager {
 
 pub struct TerminalSessionRuntime {
     id: String,
-    project_id: String,
     title: String,
     command: Option<String>,
     created_at: chrono::DateTime<Utc>,
@@ -283,7 +266,6 @@ enum TerminalInput {
 impl TerminalSessionRuntime {
     fn spawn(
         id: String,
-        project_id: String,
         title: String,
         command: Option<String>,
         project_root: PathBuf,
@@ -316,7 +298,6 @@ impl TerminalSessionRuntime {
         let now = Utc::now();
         let runtime = Arc::new(Self {
             id,
-            project_id,
             title,
             command,
             created_at: now,
@@ -341,7 +322,6 @@ impl TerminalSessionRuntime {
         let state = self.state.lock().expect("terminal state lock poisoned");
         TerminalSession {
             id: self.id.clone(),
-            project_id: self.project_id.clone(),
             title: self.title.clone(),
             command: self.command.clone(),
             status: state.status,
@@ -577,14 +557,7 @@ mod tests {
             .canonicalize()
             .expect("repo root");
         let session = manager
-            .spawn(
-                "current",
-                root,
-                Some("echo hello".to_owned()),
-                None,
-                None,
-                None,
-            )
+            .spawn(root, Some("echo hello".to_owned()), None, None, None)
             .expect("spawn terminal");
 
         let runtime = manager.get(&session.id).expect("runtime");
@@ -634,7 +607,7 @@ mod tests {
             .canonicalize()
             .expect("repo root");
         let session = manager
-            .spawn("current", root, None, None, None, None)
+            .spawn(root, None, None, None, None)
             .expect("spawn terminal");
 
         let runtime = manager.get(&session.id).expect("runtime");

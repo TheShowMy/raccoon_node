@@ -22,7 +22,7 @@ describe("Astryx chat model", () => {
     });
   });
 
-  it("keeps legacy Pi traces without tools or blocks renderable", () => {
+  it("keeps minimal Pi traces without tools or blocks renderable", () => {
     const entries = projectMessageEntries([
       {
         role: "assistant",
@@ -30,7 +30,6 @@ describe("Astryx chat model", () => {
         created_at: "2026-07-10T00:00:00Z",
         metadata: {
           type: "pi_trace",
-          version: 1,
           trace: { thinking: "历史思考" },
         } as never,
       },
@@ -113,7 +112,6 @@ describe("Astryx chat model", () => {
       {
         type: "agent.event",
         payload: {
-          project_id: "current",
           pi_type: "message_update",
           event: {
             type: "message_update",
@@ -127,7 +125,6 @@ describe("Astryx chat model", () => {
       {
         type: "agent.event",
         payload: {
-          project_id: "current",
           pi_type: "message_update",
           event: {
             type: "message_update",
@@ -138,7 +135,6 @@ describe("Astryx chat model", () => {
       {
         type: "agent.event",
         payload: {
-          project_id: "current",
           pi_type: "tool_execution_end",
           event: {
             type: "tool_execution_end",

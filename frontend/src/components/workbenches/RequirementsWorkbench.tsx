@@ -7,14 +7,14 @@ import {
 } from "@xyflow/react";
 import type { Edge, Node } from "@xyflow/react";
 import { useEffect, useMemo } from "react";
-import StartNode from "../nodes/StartNode";
-import type { StartNodeData } from "../../types/api";
+import RequirementNode from "../nodes/RequirementNode";
+import type { RequirementNodeData } from "../../types/api";
 
 export default function RequirementsWorkbench({
   nodes,
   edges,
 }: {
-  nodes: Node<StartNodeData>[];
+  nodes: Node<RequirementNodeData>[];
   edges: Edge[];
 }) {
   const layoutSignature = useMemo(
@@ -41,12 +41,13 @@ export default function RequirementsWorkbench({
         className="requirements-inner-flow"
         nodes={nodes}
         edges={edges}
-        nodeTypes={{ startNode: StartNode }}
+        nodeTypes={{ startNode: RequirementNode }}
         minZoom={0.2}
         maxZoom={1.4}
         nodesConnectable={false}
         nodesDraggable={false}
         panOnScroll
+        noWheelClassName="nowheel"
         zIndexMode="auto"
         defaultEdgeOptions={{
           type: "smoothstep",

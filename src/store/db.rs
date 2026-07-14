@@ -1,8 +1,4 @@
-use std::{
-    collections::HashSet,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashSet, path::Path};
 
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, Transaction, params};
@@ -11,13 +7,9 @@ use serde_json::{Map, Value};
 
 use crate::error::AppError;
 use crate::models::{
-    AppData, ModelSettings, Project, ProjectChat, Requirement, RequirementFailureStage,
-    RequirementStatus, SummaryNode, TerminalCommandProfile,
+    ModelSettings, ProjectChat, Requirement, RequirementFailureStage, RequirementStatus,
+    StoreState, SummaryNode, TerminalCommandProfile,
 };
-
-const SCHEMA_VERSION: i64 = 8;
-const MIGRATABLE_SCHEMA_VERSIONS: &[i64] = &[5, 6, 7];
-const ARCHIVED_SCHEMA_VERSION: i64 = 4;
 
 pub struct Database {
     conn: std::sync::Mutex<Connection>,
@@ -25,7 +17,6 @@ pub struct Database {
 
 impl Database {
     pub fn open(path: &Path) -> Result<Self, AppError> {
-        archive_legacy_database(path)?;
         let conn = Connection::open(path)?;
         conn.busy_handler(Some(retry_busy_database_operation))?;
         conn.execute_batch(
@@ -36,355 +27,34 @@ impl Database {
         let db = Self {
             conn: std::sync::Mutex::new(conn),
         };
-        db.migrate()?;
+        db.initialize_schema()?;
         Ok(db)
     }
 
-    fn migrate(&self) -> Result<(), AppError> {
+    fn initialize_schema(&self) -> Result<(), AppError> {
         let mut conn = self.conn.lock().expect("db lock poisoned");
         let tx = conn.transaction()?;
-        tx.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS schema_version (
-                version INTEGER NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS projects (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                git_url TEXT NOT NULL,
-                local_path TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS requirements (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                original_message TEXT NOT NULL,
-                status TEXT NOT NULL,
-                messages TEXT NOT NULL DEFAULT '[]',
-                clarification_round INTEGER NOT NULL DEFAULT 0,
-                clarifications TEXT NOT NULL DEFAULT '[]',
-                draft TEXT,
-                analysis_revision INTEGER NOT NULL DEFAULT 0,
-                active_prompt TEXT,
-                clarification_history TEXT NOT NULL DEFAULT '[]',
-                pi_session_file TEXT,
-                error TEXT,
-                failure_stage TEXT,
-                failure_code TEXT,
-                queued_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                origin TEXT NOT NULL DEFAULT 'standalone'
-            );
-
-            CREATE TABLE IF NOT EXISTS requirement_sessions (
-                requirement_id TEXT NOT NULL,
-                session_file TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                PRIMARY KEY (requirement_id, session_file),
-                FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS project_chats (
-                project_id TEXT PRIMARY KEY,
-                messages TEXT NOT NULL DEFAULT '[]',
-                running INTEGER NOT NULL DEFAULT 0,
-                error TEXT,
-                pi_session_file TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS workflow_runs (
-                id TEXT PRIMARY KEY,
-                requirement_id TEXT NOT NULL,
-                project_id TEXT NOT NULL,
-                status TEXT NOT NULL,
-                change_spec TEXT NOT NULL,
-                design_notes TEXT NOT NULL DEFAULT '[]',
-                plan_summary TEXT NOT NULL,
-                source_revision INTEGER NOT NULL,
-                base_head TEXT,
-                integration_branch TEXT,
-                integration_worktree TEXT,
-                final_commit TEXT,
-                rescue_used INTEGER NOT NULL DEFAULT 0,
-                rescue_attempt_id TEXT,
-                blocked_reason TEXT,
-                paused_operation TEXT,
-                replaces_run_id TEXT,
-                version INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                completed_at TEXT,
-                FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE RESTRICT,
-                FOREIGN KEY (replaces_run_id) REFERENCES workflow_runs(id) ON DELETE RESTRICT
-            );
-
-            CREATE INDEX IF NOT EXISTS workflow_runs_requirement_created
-                ON workflow_runs(requirement_id, created_at DESC);
-            CREATE INDEX IF NOT EXISTS workflow_runs_status
-                ON workflow_runs(status, updated_at);
-            CREATE TABLE IF NOT EXISTS workflow_work_items (
-                id TEXT PRIMARY KEY,
-                run_id TEXT NOT NULL,
-                position INTEGER NOT NULL,
-                objective TEXT NOT NULL,
-                scenario_refs TEXT NOT NULL,
-                group_name TEXT,
-                scope_hints TEXT NOT NULL DEFAULT '[]',
-                verification_goals TEXT NOT NULL DEFAULT '[]',
-                status TEXT NOT NULL,
-                attempt_count INTEGER NOT NULL DEFAULT 0,
-                accepted_attempt_id TEXT,
-                lease_owner TEXT,
-                lease_expires_at TEXT,
-                version INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE (run_id, position),
-                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS workflow_work_items_runnable
-                ON workflow_work_items(run_id, status, position);
-
-            CREATE TABLE IF NOT EXISTS workflow_dependencies (
-                work_item_id TEXT NOT NULL,
-                depends_on_id TEXT NOT NULL,
-                PRIMARY KEY (work_item_id, depends_on_id),
-                CHECK (work_item_id != depends_on_id),
-                FOREIGN KEY (work_item_id) REFERENCES workflow_work_items(id) ON DELETE CASCADE,
-                FOREIGN KEY (depends_on_id) REFERENCES workflow_work_items(id) ON DELETE RESTRICT
-            );
-
-            CREATE TABLE IF NOT EXISTS workflow_attempts (
-                id TEXT PRIMARY KEY,
-                run_id TEXT NOT NULL,
-                work_item_id TEXT,
-                kind TEXT NOT NULL,
-                ordinal INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                model_tier TEXT NOT NULL,
-                pi_session_file TEXT,
-                worktree_fingerprint TEXT,
-                result_summary TEXT,
-                failure_class TEXT,
-                failure_message TEXT,
-                usage TEXT,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
-                UNIQUE (run_id, work_item_id, kind, ordinal),
-                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE,
-                FOREIGN KEY (work_item_id) REFERENCES workflow_work_items(id) ON DELETE SET NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS workflow_attempts_run_started
-                ON workflow_attempts(run_id, started_at);
-
-            CREATE TABLE IF NOT EXISTS workflow_checkpoints (
-                id TEXT PRIMARY KEY,
-                run_id TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                revision INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                snapshot_sha TEXT NOT NULL,
-                required_angles TEXT NOT NULL,
-                summary TEXT,
-                review_details TEXT,
-                usage TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                completed_at TEXT,
-                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS workflow_checkpoints_run_created
-                ON workflow_checkpoints(run_id, created_at);
-
-            CREATE TABLE IF NOT EXISTS workflow_validations (
-                id TEXT PRIMARY KEY,
-                run_id TEXT NOT NULL,
-                attempt_id TEXT,
-                checkpoint_id TEXT,
-                command TEXT NOT NULL,
-                source TEXT NOT NULL,
-                gating INTEGER NOT NULL DEFAULT 0,
-                baseline_status TEXT NOT NULL,
-                final_status TEXT NOT NULL,
-                baseline_exit_code INTEGER,
-                final_exit_code INTEGER,
-                output_summary TEXT,
-                worktree_fingerprint TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                completed_at TEXT,
-                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE,
-                FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id) ON DELETE SET NULL,
-                FOREIGN KEY (checkpoint_id) REFERENCES workflow_checkpoints(id) ON DELETE SET NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS workflow_validations_fingerprint
-                ON workflow_validations(run_id, command, worktree_fingerprint, final_status);
-
-            CREATE TABLE IF NOT EXISTS workflow_review_findings (
-                id TEXT PRIMARY KEY,
-                checkpoint_id TEXT NOT NULL,
-                angle TEXT NOT NULL,
-                priority TEXT NOT NULL,
-                status TEXT NOT NULL,
-                category TEXT NOT NULL,
-                path TEXT,
-                location TEXT,
-                summary TEXT NOT NULL,
-                evidence TEXT NOT NULL,
-                reproduction TEXT,
-                remediation TEXT,
-                scenario_ref TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE (checkpoint_id, angle, category, path, location),
-                FOREIGN KEY (checkpoint_id) REFERENCES workflow_checkpoints(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS workflow_events (
-                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id TEXT NOT NULL,
-                entity_type TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS workflow_events_run_sequence
-                ON workflow_events(run_id, sequence);
-
-            CREATE TABLE IF NOT EXISTS workflow_snapshots (
-                run_id TEXT PRIMARY KEY,
-                last_event_sequence INTEGER NOT NULL,
-                snapshot TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS workflow_publications (
-                run_id TEXT PRIMARY KEY,
-                mode TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                phase TEXT NOT NULL,
-                origin TEXT NOT NULL,
-                target_branch TEXT NOT NULL,
-                source_branch TEXT NOT NULL,
-                review_url TEXT,
-                head_commit TEXT,
-                merge_commit TEXT,
-                local_sync_status TEXT NOT NULL,
-                local_sync_message TEXT,
-                cleanup_status TEXT NOT NULL,
-                remote_ci_fix_used INTEGER NOT NULL DEFAULT 0,
-                last_error TEXT,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS workflow_item_workspaces (
-                work_item_id TEXT PRIMARY KEY,
-                run_id TEXT NOT NULL,
-                branch TEXT NOT NULL,
-                worktree_path TEXT NOT NULL,
-                base_commit TEXT NOT NULL,
-                result_commit TEXT,
-                status TEXT NOT NULL,
-                fallback_serial INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (work_item_id) REFERENCES workflow_work_items(id) ON DELETE CASCADE,
-                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS workflow_item_workspaces_run
-                ON workflow_item_workspaces(run_id, status);
-
-            CREATE TABLE IF NOT EXISTS workflow_failure_fuses (
-                run_id TEXT NOT NULL,
-                work_item_id TEXT NOT NULL,
-                failure_class TEXT NOT NULL,
-                integration_fingerprint TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                PRIMARY KEY (work_item_id, failure_class, integration_fingerprint),
-                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE,
-                FOREIGN KEY (work_item_id) REFERENCES workflow_work_items(id) ON DELETE CASCADE
-            );
-            ",
-        )?;
-        let versions = {
-            let mut statement = tx.prepare("SELECT version FROM schema_version")?;
-            statement
-                .query_map([], |row| row.get::<_, i64>(0))?
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        let unique_versions: HashSet<i64> = versions.iter().copied().collect();
-        match unique_versions.len() {
-            0 => {}
-            1 if unique_versions.contains(&SCHEMA_VERSION)
-                || unique_versions
-                    .iter()
-                    .all(|version| MIGRATABLE_SCHEMA_VERSIONS.contains(version)) => {}
-            1 => {
-                let version = unique_versions.iter().next().expect("one unique version");
-                return Err(AppError::internal(format!("不支持的数据库版本：{version}")));
-            }
-            _ => return Err(AppError::internal("数据库 schema_version 记录损坏")),
+        if has_application_schema(&tx)? {
+            validate_schema_fingerprint(&tx)?;
+            tx.commit()?;
+            return Ok(());
         }
-        if !table_has_column(&tx, "requirements", "failure_stage")? {
-            tx.execute("ALTER TABLE requirements ADD COLUMN failure_stage TEXT", [])?;
-        }
-        if !table_has_column(&tx, "requirements", "failure_code")? {
-            tx.execute("ALTER TABLE requirements ADD COLUMN failure_code TEXT", [])?;
-        }
-        if !table_has_column(&tx, "workflow_runs", "replaces_run_id")? {
-            tx.execute(
-                "ALTER TABLE workflow_runs ADD COLUMN replaces_run_id TEXT",
-                [],
-            )?;
-        }
+        tx.execute_batch(include_str!("schema.sql"))?;
+        let fingerprint = expected_schema_fingerprint()?;
         tx.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_replaces_unique
-             ON workflow_runs(replaces_run_id) WHERE replaces_run_id IS NOT NULL",
-            [],
-        )?;
-        tx.execute("DELETE FROM schema_version", [])?;
-        tx.execute(
-            "INSERT INTO schema_version (version) VALUES (?1)",
-            [SCHEMA_VERSION],
+            "INSERT INTO schema_meta (fingerprint) VALUES (?1)",
+            [&fingerprint],
         )?;
         tx.commit()?;
         Ok(())
     }
 
-    pub fn load(&self) -> Result<AppData, AppError> {
+    pub fn load(&self) -> Result<StoreState, AppError> {
         let conn = self.conn.lock().expect("db lock poisoned");
-        let version = conn
-            .query_row("SELECT MAX(version) FROM schema_version", [], |row| {
-                row.get::<_, Option<i64>>(0)
-            })?
-            .ok_or_else(|| AppError::internal("数据库缺少 schema version"))?;
-        if version != SCHEMA_VERSION {
-            return Err(AppError::internal(format!("不支持的数据库版本：{version}")));
-        }
+        validate_schema_fingerprint(&conn)?;
 
         let settings = load_settings(&conn)?;
-        Ok(AppData {
-            projects: load_projects(&conn)?,
+        Ok(StoreState {
             requirements: load_requirements(&conn)?,
             project_chats: load_project_chats(&conn)?,
             settings_summary: setting_or_default(
@@ -416,69 +86,103 @@ impl Database {
         })
     }
 
-    pub fn sync_changes(&self, previous: &AppData, next: &AppData) -> Result<(), AppError> {
+    pub fn save_state(&self, next: &StoreState) -> Result<(), AppError> {
         let mut conn = self.conn.lock().expect("db lock poisoned");
         let tx = conn.transaction()?;
 
-        sync_by_id(
+        replace_table(
             &tx,
-            &previous.projects,
-            &next.projects,
-            |project| project.id.as_str(),
-            "projects",
-            save_project,
-        )?;
-        sync_by_id(
-            &tx,
-            &previous.requirements,
             &next.requirements,
             |requirement| requirement.id.as_str(),
             "requirements",
             save_requirement,
         )?;
-        sync_by_id(
-            &tx,
-            &previous.project_chats,
-            &next.project_chats,
-            |chat| chat.project_id.as_str(),
-            "project_chats",
-            save_project_chat,
-        )?;
+        tx.execute("DELETE FROM project_chats", [])?;
+        for chat in &next.project_chats {
+            save_project_chat(&tx, chat)?;
+        }
 
-        if previous.settings_summary != next.settings_summary {
-            save_setting(&tx, "settings_summary", &next.settings_summary)?;
-        }
-        if previous.model_summary != next.model_summary {
-            save_setting(&tx, "model_summary", &next.model_summary)?;
-        }
-        if previous.model_settings != next.model_settings {
-            save_setting(&tx, "model_settings", &next.model_settings)?;
-        }
-        if previous.terminal_command_profiles != next.terminal_command_profiles {
-            save_setting(
-                &tx,
-                "terminal_command_profiles",
-                &next.terminal_command_profiles,
-            )?;
-        }
+        save_setting(&tx, "settings_summary", &next.settings_summary)?;
+        save_setting(&tx, "model_summary", &next.model_summary)?;
+        save_setting(&tx, "model_settings", &next.model_settings)?;
+        save_setting(
+            &tx,
+            "terminal_command_profiles",
+            &next.terminal_command_profiles,
+        )?;
 
         tx.commit()?;
         Ok(())
     }
 
-    pub fn requirement_sessions(&self, requirement_id: &str) -> Result<Vec<String>, AppError> {
-        let conn = self.conn.lock().expect("db lock poisoned");
-        let mut statement = conn.prepare(
-            "SELECT session_file FROM requirement_sessions
-             WHERE requirement_id = ?1 ORDER BY created_at",
-        )?;
-        let rows = statement.query_map([requirement_id], |row| row.get(0))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-    }
-
     pub(crate) fn lock_connection(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().expect("db lock poisoned")
     }
+}
+
+fn has_application_schema(conn: &Connection) -> Result<bool, AppError> {
+    let count = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE name NOT LIKE 'sqlite_%' AND type IN ('table', 'index')",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    Ok(count > 0)
+}
+
+fn validate_schema_fingerprint(conn: &Connection) -> Result<(), AppError> {
+    let stored = conn
+        .query_row("SELECT fingerprint FROM schema_meta", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|_| {
+            AppError::internal("数据库结构不属于当前构建，请删除项目的 .raccoon-node 后重新启动")
+        })?;
+    let actual = current_schema_fingerprint(conn)?;
+    let expected = expected_schema_fingerprint()?;
+    if stored != actual || stored != expected {
+        return Err(AppError::internal(
+            "数据库结构与当前构建不一致，请删除项目的 .raccoon-node 后重新启动",
+        ));
+    }
+    Ok(())
+}
+
+fn expected_schema_fingerprint() -> Result<String, AppError> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch(include_str!("schema.sql"))?;
+    current_schema_fingerprint(&conn)
+}
+
+fn current_schema_fingerprint(conn: &Connection) -> Result<String, AppError> {
+    let mut statement = conn.prepare(
+        "SELECT type, name, sql FROM sqlite_master
+         WHERE name NOT LIKE 'sqlite_%' AND name != 'schema_meta'
+         ORDER BY type, name",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+        ))
+    })?;
+    let mut hash = 0xcbf29ce484222325_u64;
+    for row in rows {
+        let (kind, name, sql) = row?;
+        for byte in kind
+            .bytes()
+            .chain([0])
+            .chain(name.bytes())
+            .chain([0])
+            .chain(sql.bytes())
+            .chain([0xff])
+        {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    Ok(format!("{hash:016x}"))
 }
 
 fn retry_busy_database_operation(previous_attempts: i32) -> bool {
@@ -491,126 +195,42 @@ fn retry_busy_database_operation(previous_attempts: i32) -> bool {
     true
 }
 
-fn archive_legacy_database(path: &Path) -> Result<(), AppError> {
-    if !path.exists() {
-        return Ok(());
-    }
-    let conn = Connection::open(path)?;
-    let has_schema_version = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version')",
-        [],
-        |row| row.get::<_, bool>(0),
-    )?;
-    if !has_schema_version {
-        return Ok(());
-    }
-    let version = conn.query_row("SELECT MAX(version) FROM schema_version", [], |row| {
-        row.get::<_, Option<i64>>(0)
-    })?;
-    if version != Some(ARCHIVED_SCHEMA_VERSION) {
-        return Ok(());
-    }
-    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
-    drop(conn);
-
-    let data_root = path
-        .parent()
-        .ok_or_else(|| AppError::internal("数据库路径缺少父目录"))?;
-    let archive_root = data_root.join("archive");
-    fs::create_dir_all(&archive_root)?;
-    let timestamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
-    let archive_dir = unique_archive_directory(&archive_root, &format!("workflow-v4-{timestamp}"));
-    fs::create_dir(&archive_dir)?;
-    fs::copy(path, archive_dir.join("data.db"))?;
-    let manifest = serde_json::json!({
-        "schema_version": ARCHIVED_SCHEMA_VERSION,
-        "archived_at": Utc::now(),
-        "source": "data.db",
-        "mode": "byte_archive_before_workflow_v5",
-    });
-    fs::write(
-        archive_dir.join("manifest.json"),
-        serde_json::to_vec_pretty(&manifest)?,
-    )?;
-    fs::remove_file(path)?;
-    for suffix in ["-wal", "-shm"] {
-        let mut sidecar = path.as_os_str().to_os_string();
-        sidecar.push(suffix);
-        let sidecar = PathBuf::from(sidecar);
-        if sidecar.exists() {
-            fs::remove_file(sidecar)?;
-        }
-    }
-    Ok(())
-}
-
-fn unique_archive_directory(root: &Path, stem: &str) -> PathBuf {
-    let initial = root.join(stem);
-    if !initial.exists() {
-        return initial;
-    }
-    (1..)
-        .map(|suffix| root.join(format!("{stem}-{suffix}")))
-        .find(|candidate| !candidate.exists())
-        .expect("archive suffix space exhausted")
-}
-
-fn sync_by_id<T, F, S>(
+fn replace_table<T, F, S>(
     tx: &Transaction<'_>,
-    previous: &[T],
     next: &[T],
     id: F,
     table: &str,
     save: S,
 ) -> Result<(), AppError>
 where
-    T: PartialEq,
     F: Fn(&T) -> &str,
     S: Fn(&Transaction<'_>, &T) -> Result<(), AppError>,
 {
+    let key = primary_key(table);
+    let existing_ids = {
+        let mut statement = tx.prepare(&format!("SELECT {key} FROM {table}"))?;
+        statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<HashSet<_>, _>>()?
+    };
     let next_ids = next.iter().map(&id).collect::<HashSet<_>>();
-    for old in previous {
-        if !next_ids.contains(id(old)) {
+    for existing_id in existing_ids {
+        if !next_ids.contains(existing_id.as_str()) {
             tx.execute(
-                &format!("DELETE FROM {table} WHERE {} = ?1", primary_key(table)),
-                [id(old)],
+                &format!("DELETE FROM {table} WHERE {key} = ?1"),
+                [existing_id],
             )?;
         }
     }
     for item in next {
-        if previous
-            .iter()
-            .find(|old| id(old) == id(item))
-            .is_none_or(|old| old != item)
-        {
-            save(tx, item)?;
-        }
+        save(tx, item)?;
     }
     Ok(())
 }
 
 fn primary_key(table: &str) -> &'static str {
-    match table {
-        "project_chats" => "project_id",
-        _ => "id",
-    }
-}
-
-fn save_project(tx: &Transaction<'_>, project: &Project) -> Result<(), AppError> {
-    tx.execute(
-        "INSERT OR REPLACE INTO projects
-         (id, name, git_url, local_path, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            project.id,
-            project.name,
-            project.git_url,
-            project.local_path,
-            project.created_at.to_rfc3339(),
-            project.updated_at.to_rfc3339(),
-        ],
-    )?;
-    Ok(())
+    debug_assert_eq!(table, "requirements");
+    "id"
 }
 
 fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(), AppError> {
@@ -623,15 +243,13 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
     }
     tx.execute(
         "INSERT INTO requirements
-         (id, project_id, title, original_message, status, messages,
+         (id, title, status, messages,
           clarification_round, clarifications, draft, analysis_revision, active_prompt,
           clarification_history, pi_session_file, error, failure_stage, failure_code,
           queued_at, created_at, updated_at, origin)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(id) DO UPDATE SET
-           project_id = excluded.project_id,
            title = excluded.title,
-           original_message = excluded.original_message,
            status = excluded.status,
            messages = excluded.messages,
            clarification_round = excluded.clarification_round,
@@ -650,9 +268,7 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
            origin = excluded.origin",
         params![
             persisted.id,
-            persisted.project_id,
             persisted.title,
-            persisted.original_message,
             status_text(persisted.status)?,
             serde_json::to_string(&persisted.messages)?,
             persisted.clarification_round,
@@ -674,17 +290,6 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
             serde_json::to_string(&persisted.origin)?.trim_matches('"'),
         ],
     )?;
-    if let Some(session_file) = requirement.pi_session_file.as_deref() {
-        tx.execute(
-            "INSERT OR IGNORE INTO requirement_sessions
-             (requirement_id, session_file, created_at) VALUES (?1, ?2, ?3)",
-            params![
-                requirement.id,
-                session_file,
-                requirement.updated_at.to_rfc3339()
-            ],
-        )?;
-    }
     Ok(())
 }
 
@@ -698,9 +303,7 @@ fn compact_trace(value: &Value) -> Option<Value> {
     }
     Some(serde_json::json!({
         "type": value.get("type").and_then(Value::as_str).unwrap_or("pi_trace"),
-        "version": value.get("version").and_then(Value::as_u64).unwrap_or(1),
         "trace": compact,
-        "compacted": true,
     }))
 }
 
@@ -714,10 +317,9 @@ fn save_project_chat(tx: &Transaction<'_>, chat: &ProjectChat) -> Result<(), App
     }
     tx.execute(
         "INSERT OR REPLACE INTO project_chats
-         (project_id, messages, running, error, pi_session_file, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         (singleton_key, messages, running, error, pi_session_file, created_at, updated_at)
+         VALUES ('chat', ?1, ?2, ?3, ?4, ?5, ?6)",
         params![
-            chat.project_id,
             serde_json::to_string(&messages)?,
             i64::from(chat.running),
             chat.error,
@@ -741,38 +343,10 @@ fn save_setting<T: serde::Serialize>(
     Ok(())
 }
 
-fn load_projects(conn: &Connection) -> Result<Vec<Project>, AppError> {
-    let mut statement =
-        conn.prepare("SELECT id, name, git_url, local_path, created_at, updated_at FROM projects")?;
-    let rows = statement.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, String>(5)?,
-        ))
-    })?;
-    let mut projects = Vec::new();
-    for row in rows {
-        let (id, name, git_url, local_path, created_at, updated_at) = row?;
-        projects.push(Project {
-            id,
-            name,
-            git_url,
-            local_path,
-            created_at: parse_date(&created_at, "projects.created_at")?,
-            updated_at: parse_date(&updated_at, "projects.updated_at")?,
-        });
-    }
-    Ok(projects)
-}
-
 #[allow(clippy::type_complexity)]
 fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
     let mut statement = conn.prepare(
-        "SELECT id, project_id, title, original_message, status, messages,
+        "SELECT id, title, status, messages,
                 clarification_round, clarifications, draft, analysis_revision, active_prompt,
                 clarification_history, pi_session_file, error, failure_stage, failure_code,
                 queued_at, created_at, updated_at, origin
@@ -784,31 +358,27 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
+            row.get::<_, u32>(4)?,
             row.get::<_, String>(5)?,
-            row.get::<_, u32>(6)?,
-            row.get::<_, String>(7)?,
+            row.get::<_, Option<String>>(6)?,
+            row.get::<_, u32>(7)?,
             row.get::<_, Option<String>>(8)?,
-            row.get::<_, u32>(9)?,
+            row.get::<_, String>(9)?,
             row.get::<_, Option<String>>(10)?,
-            row.get::<_, String>(11)?,
+            row.get::<_, Option<String>>(11)?,
             row.get::<_, Option<String>>(12)?,
             row.get::<_, Option<String>>(13)?,
             row.get::<_, Option<String>>(14)?,
-            row.get::<_, Option<String>>(15)?,
-            row.get::<_, Option<String>>(16)?,
+            row.get::<_, String>(15)?,
+            row.get::<_, String>(16)?,
             row.get::<_, String>(17)?,
-            row.get::<_, String>(18)?,
-            row.get::<_, String>(19)?,
         ))
     })?;
     let mut requirements = Vec::new();
     for row in rows {
         let (
             id,
-            project_id,
             title,
-            original_message,
             status,
             messages,
             clarification_round,
@@ -828,9 +398,7 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
         ) = row?;
         requirements.push(Requirement {
             id,
-            project_id,
             title,
-            original_message,
             origin: parse_json(&format!("\"{origin}\""), "requirements.origin")?,
             status: parse_json(&format!("\"{status}\""), "requirements.status")?,
             messages: parse_json(&messages, "requirements.messages")?,
@@ -861,25 +429,23 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
 
 fn load_project_chats(conn: &Connection) -> Result<Vec<ProjectChat>, AppError> {
     let mut statement = conn.prepare(
-        "SELECT project_id, messages, running, error, pi_session_file, created_at, updated_at
+        "SELECT messages, running, error, pi_session_file, created_at, updated_at
          FROM project_chats",
     )?;
     let rows = statement.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, Option<String>>(2)?,
             row.get::<_, Option<String>>(3)?,
-            row.get::<_, Option<String>>(4)?,
+            row.get::<_, String>(4)?,
             row.get::<_, String>(5)?,
-            row.get::<_, String>(6)?,
         ))
     })?;
     let mut chats = Vec::new();
     for row in rows {
-        let (project_id, messages, running, error, pi_session_file, created_at, updated_at) = row?;
+        let (messages, running, error, pi_session_file, created_at, updated_at) = row?;
         chats.push(ProjectChat {
-            project_id,
             messages: parse_json(&messages, "project_chats.messages")?,
             running: running != 0,
             error,
@@ -918,14 +484,6 @@ fn requirement_failure_stage_text(stage: RequirementFailureStage) -> Result<Stri
     Ok(serde_json::to_string(&stage)?.trim_matches('"').to_owned())
 }
 
-fn table_has_column(tx: &Transaction<'_>, table: &str, column: &str) -> Result<bool, AppError> {
-    let mut statement = tx.prepare(&format!("PRAGMA table_info({table})"))?;
-    let names = statement
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(names.iter().any(|name| name == column))
-}
-
 fn optional_json<T: serde::Serialize>(value: &Option<T>) -> Result<Option<String>, AppError> {
     value
         .as_ref()
@@ -957,120 +515,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v5_database_is_incrementally_migrated_to_v8() {
+    fn fresh_database_uses_a_stable_schema_fingerprint() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("data.db");
-        let connection = Connection::open(&path).unwrap();
-        connection
-            .execute_batch("CREATE TABLE schema_version (version INTEGER NOT NULL); INSERT INTO schema_version VALUES (5);")
-            .unwrap();
-        drop(connection);
-
         let database = Database::open(&path).unwrap();
         let connection = database.lock_connection();
-        let version: i64 = connection
-            .query_row("SELECT version FROM schema_version", [], |row| row.get(0))
+        let stored: String = connection
+            .query_row("SELECT fingerprint FROM schema_meta", [], |row| row.get(0))
             .unwrap();
-        let publication_table: bool = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workflow_publications')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let failure_stage_column: bool = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('requirements') WHERE name = 'failure_stage')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(version, 8);
-        assert!(publication_table);
-        assert!(failure_stage_column);
+        assert_eq!(stored, current_schema_fingerprint(&connection).unwrap());
     }
 
     #[test]
-    fn v6_requirements_gain_structured_failure_columns() {
+    fn existing_unidentified_schema_is_rejected_without_mutation() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("data.db");
         let connection = Connection::open(&path).unwrap();
         connection
-            .execute_batch(
-                "CREATE TABLE schema_version (version INTEGER NOT NULL);
-                 INSERT INTO schema_version VALUES (6);
-                 CREATE TABLE requirements (id TEXT PRIMARY KEY);",
-            )
+            .execute_batch("CREATE TABLE old_data (id TEXT PRIMARY KEY);")
             .unwrap();
         drop(connection);
-
-        let database = Database::open(&path).unwrap();
-        let connection = database.lock_connection();
-        let columns = ["failure_stage", "failure_code"];
-        for column in columns {
-            let exists: bool = connection
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('requirements') WHERE name = ?1)",
-                    [column],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert!(exists, "missing {column}");
-        }
-    }
-
-    #[test]
-    fn v7_workflow_runs_gain_clean_restart_link() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("data.db");
+        let error = Database::open(&path).err().expect("old schema must fail");
+        assert!(error.to_string().contains("删除项目的 .raccoon-node"));
         let connection = Connection::open(&path).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE schema_version (version INTEGER NOT NULL);
-                 INSERT INTO schema_version VALUES (7);
-                 CREATE TABLE workflow_runs (
-                    id TEXT PRIMARY KEY,
-                    requirement_id TEXT NOT NULL,
-                    project_id TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    change_spec TEXT NOT NULL,
-                    design_notes TEXT NOT NULL DEFAULT '[]',
-                    plan_summary TEXT NOT NULL,
-                    source_revision INTEGER NOT NULL,
-                    base_head TEXT,
-                    integration_branch TEXT,
-                    integration_worktree TEXT,
-                    final_commit TEXT,
-                    rescue_used INTEGER NOT NULL DEFAULT 0,
-                    rescue_attempt_id TEXT,
-                    blocked_reason TEXT,
-                    paused_operation TEXT,
-                    version INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    completed_at TEXT
-                 );",
-            )
-            .unwrap();
-        drop(connection);
-
-        let database = Database::open(&path).unwrap();
-        let connection = database.lock_connection();
-        let exists: bool = connection
+        let old_table: bool = connection
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('workflow_runs') WHERE name = 'replaces_run_id')",
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'old_data')",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(exists);
-        let fuse_table: bool = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workflow_failure_fuses')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(fuse_table);
+        assert!(old_table);
     }
 }

@@ -7,100 +7,33 @@ async fn unsupported_database_schema_is_rejected() {
     let db_path = temp_dir.path().join("data.db");
     let connection = rusqlite::Connection::open(db_path).unwrap();
     connection
-        .execute_batch(
-            "CREATE TABLE schema_version (version INTEGER NOT NULL);
-             INSERT INTO schema_version VALUES (99);",
-        )
+        .execute_batch("CREATE TABLE unknown_schema (id TEXT PRIMARY KEY);")
         .unwrap();
     drop(connection);
 
-    let error = JsonStore::open(temp_dir.path().to_path_buf())
+    let error = Store::open(temp_dir.path().to_path_buf())
         .await
         .err()
         .expect("future schema must fail");
-    assert!(error.to_string().contains("不支持的数据库版本"));
+    assert!(error.to_string().contains("删除项目的 .raccoon-node"));
 }
 
 #[tokio::test]
 async fn damaged_current_database_is_rejected_instead_of_repaired() {
     let temp_dir = tempfile::tempdir().unwrap();
     let data_root = temp_dir.path().to_path_buf();
-    drop(JsonStore::open(data_root.clone()).await.unwrap());
+    drop(Store::open(data_root.clone()).await.unwrap());
     let connection = rusqlite::Connection::open(data_root.join("data.db")).unwrap();
     connection
         .execute("ALTER TABLE project_chats DROP COLUMN pi_session_file", [])
         .unwrap();
     drop(connection);
 
-    let error = JsonStore::open(data_root.clone())
+    let error = Store::open(data_root.clone())
         .await
         .err()
-        .expect("damaged v4 schema must fail");
-    assert!(error.to_string().contains("pi_session_file"));
-}
-
-#[tokio::test]
-async fn old_non_v3_database_is_rejected_without_runtime_migration() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let data_root = temp_dir.path().to_path_buf();
-    drop(JsonStore::open(data_root.clone()).await.unwrap());
-    let connection = rusqlite::Connection::open(data_root.join("data.db")).unwrap();
-    connection
-        .execute_batch("UPDATE schema_version SET version = 2;")
-        .unwrap();
-    drop(connection);
-
-    let error = JsonStore::open(data_root)
-        .await
-        .err()
-        .expect("v2 database must not be migrated at runtime");
-    assert!(error.to_string().contains("不支持的数据库版本：2"));
-}
-
-#[tokio::test]
-async fn version_four_database_is_byte_archived_and_replaced() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let data_root = temp_dir.path().to_path_buf();
-    drop(JsonStore::open(data_root.clone()).await.unwrap());
-    let connection = rusqlite::Connection::open(data_root.join("data.db")).unwrap();
-    connection
-        .execute_batch(
-            "INSERT INTO requirements
-             (id, project_id, title, original_message, status, messages,
-              clarification_round, clarifications, analysis_revision,
-              clarification_history, created_at, updated_at, origin)
-             VALUES
-             ('req-v4', 'current', '归档需求', '只能存在于归档', 'failed', '[]',
-              0, '[]', 0, '[]', '2026-07-10T00:00:00Z',
-              '2026-07-10T00:00:00Z', 'standalone');
-             UPDATE schema_version SET version = 4;",
-        )
-        .unwrap();
-    drop(connection);
-
-    let store = JsonStore::open(data_root.clone()).await.unwrap();
-    assert!(store.data.requirements.is_empty());
-    let archive_root = data_root.join("archive");
-    let archive = std::fs::read_dir(&archive_root)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("workflow-v4-")
-        })
-        .expect("v4 archive must exist");
-    assert!(archive.join("manifest.json").exists());
-    let archived = rusqlite::Connection::open(archive.join("data.db")).unwrap();
-    let count = archived
-        .query_row(
-            "SELECT COUNT(*) FROM requirements WHERE id = 'req-v4'",
-            [],
-            |row| row.get::<_, u32>(0),
-        )
-        .unwrap();
-    assert_eq!(count, 1);
+        .expect("damaged schema must fail");
+    assert!(error.to_string().contains("数据库结构与当前构建不一致"));
 }
 use crate::error::AppError;
 use crate::models::{
@@ -109,31 +42,29 @@ use crate::models::{
     RequirementMessageRole, RequirementStatus,
 };
 
+fn test_project(root: &Path) -> Project {
+    Project {
+        name: "project".to_owned(),
+        git_url: "https://example.com/project.git".to_owned(),
+        local_path: root.to_string_lossy().into_owned(),
+    }
+}
+
 #[tokio::test]
 async fn project_scheduler_claims_confirmed_requirements_in_fifo_order() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
     let now = Utc::now();
-    store.data.projects.push(Project {
-        id: "project".to_owned(),
-        name: "project".to_owned(),
-        git_url: "https://example.com/project.git".to_owned(),
-        local_path: temp_dir.path().to_string_lossy().to_string(),
-        created_at: now,
-        updated_at: now,
-    });
+    store.project = test_project(temp_dir.path());
     let mut second = queued_requirement("second", now + chrono::Duration::seconds(2));
     second.updated_at = now - chrono::Duration::days(1);
     let first = queued_requirement("first", now + chrono::Duration::seconds(1));
     store.data.requirements = vec![second, first];
+    store.persist().await.unwrap();
 
-    let action = store
-        .prepare_next_project_action("project")
-        .await
-        .unwrap()
-        .unwrap();
+    let action = store.prepare_next_project_action().await.unwrap().unwrap();
 
     assert!(matches!(
         action,
@@ -163,18 +94,11 @@ async fn project_scheduler_claims_confirmed_requirements_in_fifo_order() {
 #[tokio::test]
 async fn failed_requirement_pauses_project_queue() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
     let now = Utc::now();
-    store.data.projects.push(Project {
-        id: "project".to_owned(),
-        name: "project".to_owned(),
-        git_url: "https://example.com/project.git".to_owned(),
-        local_path: temp_dir.path().to_string_lossy().to_string(),
-        created_at: now,
-        updated_at: now,
-    });
+    store.project = test_project(temp_dir.path());
     let mut failed = queued_requirement("failed", now);
     failed.status = RequirementStatus::Failed;
     failed.error = Some("规划失败".to_owned());
@@ -182,32 +106,20 @@ async fn failed_requirement_pauses_project_queue() {
         failed,
         queued_requirement("waiting", now + chrono::Duration::seconds(1)),
     ];
+    store.persist().await.unwrap();
 
-    assert!(
-        store
-            .prepare_next_project_action("project")
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(store.prepare_next_project_action().await.unwrap().is_none());
     assert_eq!(store.data.requirements[1].status, RequirementStatus::Queued);
 }
 
 #[tokio::test]
 async fn invalid_failed_change_spec_routes_to_repair_before_planning() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
     let now = Utc::now();
-    store.data.projects.push(Project {
-        id: "project".to_owned(),
-        name: "project".to_owned(),
-        git_url: "https://example.com/project.git".to_owned(),
-        local_path: temp_dir.path().to_string_lossy().to_string(),
-        created_at: now,
-        updated_at: now,
-    });
+    store.project = test_project(temp_dir.path());
     let message = |role, content: &str| RequirementMessage {
         role,
         content: content.to_owned(),
@@ -246,6 +158,7 @@ async fn invalid_failed_change_spec_routes_to_repair_before_planning() {
         non_goals: Vec::new(),
     });
     store.data.requirements.push(failed);
+    store.persist().await.unwrap();
 
     let action = store.requeue_failed_planning("webgl").await.unwrap();
     let super::FailedRequirementWorkflowAction::RepairChangeSpec { input, .. } = action else {
@@ -262,12 +175,12 @@ async fn invalid_failed_change_spec_routes_to_repair_before_planning() {
 #[tokio::test]
 async fn confirmation_rejects_invalid_constraint_evidence_before_queueing() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
     let mut draft = requirement("invalid-confirmation");
     draft.status = RequirementStatus::DraftReady;
-    draft.draft = Some(ChangeSpec {
+    let invalid_spec = ChangeSpec {
         intent: "修复启动".to_owned(),
         acceptance_scenarios: vec![AcceptanceScenario {
             id: "start".to_owned(),
@@ -282,12 +195,19 @@ async fn confirmation_rejects_invalid_constraint_evidence_before_queueing() {
             source_quote: "浏览器".to_owned(),
         }],
         non_goals: Vec::new(),
+    };
+    draft.draft = Some(invalid_spec.clone());
+    draft.active_prompt = Some(crate::models::RequirementPromptState::Confirmation {
+        prompt_id: "prompt-1".to_owned(),
+        revision: 1,
+        draft: invalid_spec,
     });
     store.data.requirements.push(draft);
+    store.persist().await.unwrap();
 
     assert!(
         store
-            .confirm_requirement("invalid-confirmation", None, None)
+            .confirm_requirement("invalid-confirmation", "prompt-1".to_owned(), 1)
             .await
             .is_err()
     );
@@ -303,18 +223,11 @@ async fn confirmation_rejects_invalid_constraint_evidence_before_queueing() {
 #[tokio::test]
 async fn planning_preflight_rejects_invalid_spec_before_creating_an_action() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
     let now = Utc::now();
-    store.data.projects.push(Project {
-        id: "project".to_owned(),
-        name: "project".to_owned(),
-        git_url: String::new(),
-        local_path: temp_dir.path().to_string_lossy().to_string(),
-        created_at: now,
-        updated_at: now,
-    });
+    store.project = test_project(temp_dir.path());
     let mut queued = queued_requirement("invalid-preflight", now);
     queued.draft.as_mut().unwrap().explicit_constraints = vec![ExplicitConstraint {
         id: "runtime".to_owned(),
@@ -323,6 +236,7 @@ async fn planning_preflight_rejects_invalid_spec_before_creating_an_action() {
         source_quote: "浏览器".to_owned(),
     }];
     store.data.requirements.push(queued);
+    store.persist().await.unwrap();
 
     assert!(
         store
@@ -341,7 +255,7 @@ async fn planning_preflight_rejects_invalid_spec_before_creating_an_action() {
 #[tokio::test]
 async fn evidence_only_repair_auto_queues_but_semantic_changes_require_confirmation() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
     let mut repaired = requirement("webgl");
@@ -368,24 +282,24 @@ async fn evidence_only_repair_auto_queues_but_semantic_changes_require_confirmat
     fixed.explicit_constraints[0].source_quote = "强制 WebGL 并优化检测".to_owned();
     repaired.draft = Some(fixed);
     store.data.requirements.push(repaired);
+    store.persist().await.unwrap();
 
-    assert_eq!(
-        store
-            .auto_queue_repaired_requirement("webgl", &baseline)
-            .await
-            .unwrap(),
-        Some("project".to_owned())
-    );
-    assert_eq!(store.data.requirements[0].status, RequirementStatus::Queued);
-
-    store.data.requirements[0].status = RequirementStatus::DraftReady;
-    store.data.requirements[0].draft.as_mut().unwrap().intent = "改变后的目标".to_owned();
     assert!(
         store
             .auto_queue_repaired_requirement("webgl", &baseline)
             .await
             .unwrap()
-            .is_none()
+    );
+    assert_eq!(store.data.requirements[0].status, RequirementStatus::Queued);
+
+    store.data.requirements[0].status = RequirementStatus::DraftReady;
+    store.data.requirements[0].draft.as_mut().unwrap().intent = "改变后的目标".to_owned();
+    store.persist().await.unwrap();
+    assert!(
+        !store
+            .auto_queue_repaired_requirement("webgl", &baseline)
+            .await
+            .unwrap()
     );
     assert_eq!(
         store.data.requirements[0].status,
@@ -394,90 +308,28 @@ async fn evidence_only_repair_auto_queues_but_semantic_changes_require_confirmat
 }
 
 #[tokio::test]
-async fn running_requirement_only_blocks_its_own_project() {
+async fn running_requirement_without_workflow_is_failed_before_queue_advances() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
     let now = Utc::now();
-    for id in ["project-a", "project-b"] {
-        store.data.projects.push(Project {
-            id: id.to_owned(),
-            name: id.to_owned(),
-            git_url: format!("https://example.com/{id}.git"),
-            local_path: temp_dir.path().join(id).to_string_lossy().to_string(),
-            created_at: now,
-            updated_at: now,
-        });
-    }
-    let mut running = requirement("running");
-    running.project_id = "project-a".to_owned();
-    let mut waiting = queued_requirement("waiting", now);
-    waiting.project_id = "project-b".to_owned();
+    store.project = test_project(temp_dir.path());
+    let running = requirement("running");
+    let waiting = queued_requirement("waiting", now);
     store.data.requirements = vec![running, waiting];
+    store.persist().await.unwrap();
 
-    let action = store
-        .prepare_next_project_action("project-b")
-        .await
-        .unwrap()
-        .unwrap();
-
-    assert!(matches!(
-        action,
-        super::ProjectScheduleAction::Plan {
-            requirement_id,
-            ..
-        } if requirement_id == "waiting"
-    ));
+    assert!(store.prepare_next_project_action().await.unwrap().is_none());
+    assert_eq!(store.data.requirements[0].status, RequirementStatus::Failed);
     assert_eq!(
-        store.data.requirements[0].status,
-        RequirementStatus::Running
+        store.data.requirements[0].failure_code.as_deref(),
+        Some("workflow_missing")
     );
 }
 
 #[tokio::test]
-async fn requirement_session_keeps_retry_history_and_paginates() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
-        .await
-        .unwrap();
-    let session_dir = store.data_root.join("sessions");
-    tokio::fs::create_dir_all(&session_dir).await.unwrap();
-    for (name, id, timestamp) in [
-        ("analysis-1.jsonl", "m1", "2026-07-01T00:00:00Z"),
-        ("analysis-2.jsonl", "m2", "2026-07-01T00:01:00Z"),
-    ] {
-        tokio::fs::write(
-            session_dir.join(name),
-            format!(
-                r#"{{"type":"message","id":"{id}","timestamp":"{timestamp}","message":{{"role":"assistant","content":"reply"}}}}"#
-            ),
-        )
-        .await
-        .unwrap();
-    }
-
-    let mut active = requirement("req-1");
-    active.pi_session_file = Some("analysis-1.jsonl".to_owned());
-    store.data.requirements.push(active);
-    store.persist().await.unwrap();
-    store.data.requirements[0].pi_session_file = Some("analysis-2.jsonl".to_owned());
-    store.persist().await.unwrap();
-
-    let page = store.requirement_session("req-1", None, 1).unwrap();
-    assert_eq!(page.entries.len(), 1);
-    assert_eq!(page.entries[0].source, "需求分析 2");
-    assert_eq!(page.next_before, Some(1));
-
-    let earlier = store
-        .requirement_session("req-1", page.next_before, 1)
-        .unwrap();
-    assert_eq!(earlier.entries[0].source, "需求分析 1");
-    assert_eq!(earlier.next_before, None);
-}
-
-#[tokio::test]
-async fn project_store_uses_flat_data_directories_and_current_project() {
+async fn project_store_uses_flat_data_directories_and_runtime_context() {
     let temp_dir = tempfile::tempdir().unwrap();
     assert!(
         std::process::Command::new("git")
@@ -488,14 +340,12 @@ async fn project_store_uses_flat_data_directories_and_current_project() {
             .success()
     );
     let data_root = temp_dir.path().join(".raccoon-node");
-    let store = JsonStore::open_project(temp_dir.path().to_path_buf())
+    let store = Store::open_project(temp_dir.path().to_path_buf())
         .await
         .unwrap();
 
-    assert_eq!(store.data.projects.len(), 1);
-    assert_eq!(store.data.projects[0].id, super::CURRENT_PROJECT_ID);
     assert_eq!(
-        Path::new(&store.data.projects[0].local_path),
+        Path::new(&store.project.local_path),
         crate::utils::normalize_local_path(&std::fs::canonicalize(temp_dir.path()).unwrap())
             .unwrap()
     );
@@ -521,7 +371,7 @@ async fn project_store_rejects_data_directory_symlink_escape() {
     std::os::unix::fs::symlink(outside.path(), project.path().join(".raccoon-node")).unwrap();
 
     assert!(
-        JsonStore::open_project(project.path().to_path_buf())
+        Store::open_project(project.path().to_path_buf())
             .await
             .is_err()
     );
@@ -531,23 +381,12 @@ async fn project_store_rejects_data_directory_symlink_escape() {
 #[tokio::test]
 async fn resetting_project_chat_clears_context_and_rejects_running_chat() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
     let now = Utc::now();
-    store.data.projects.push(Project {
-        id: "project".to_owned(),
-        name: "project".to_owned(),
-        git_url: "https://example.com/project.git".to_owned(),
-        local_path: store
-            .data_root
-            .join("projects/project/repo")
-            .to_string_lossy()
-            .to_string(),
-        created_at: now,
-        updated_at: now,
-    });
-    store.project_chat_response("project").await.unwrap();
+    store.project = test_project(temp_dir.path());
+    store.project_chat_response().await.unwrap();
     let chat = &mut store.data.project_chats[0];
     chat.messages.push(ProjectChatMessage {
         role: ProjectChatMessageRole::User,
@@ -559,34 +398,29 @@ async fn resetting_project_chat_clears_context_and_rejects_running_chat() {
     });
     chat.error = Some("旧错误".to_owned());
     chat.pi_session_file = Some("old.jsonl".to_owned());
-    let response = store.reset_project_chat("project").await.unwrap();
+    store.persist().await.unwrap();
+    let response = store.reset_project_chat().await.unwrap();
     assert!(response.messages.is_empty());
     assert!(response.error.is_none());
     assert!(store.data.project_chats[0].pi_session_file.is_none());
 
     store.data.project_chats[0].running = true;
-    assert!(store.reset_project_chat("project").await.is_err());
+    store.persist().await.unwrap();
+    assert!(store.reset_project_chat().await.is_err());
 }
 
 #[tokio::test]
 async fn requirement_branch_input_distinguishes_fresh_clone_and_running_chat() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
     let now = Utc::now();
-    store.data.projects.push(Project {
-        id: "project".to_owned(),
-        name: "project".to_owned(),
-        git_url: String::new(),
-        local_path: temp_dir.path().to_string_lossy().to_string(),
-        created_at: now,
-        updated_at: now,
-    });
+    store.project = test_project(temp_dir.path());
 
     assert!(
         store
-            .start_project_chat_requirement_branch("project")
+            .start_project_chat_requirement_branch()
             .await
             .unwrap()
             .is_none()
@@ -610,21 +444,21 @@ async fn requirement_branch_input_distinguishes_fresh_clone_and_running_chat() {
         metadata: None,
         created_at: now,
     });
+    store.persist().await.unwrap();
     let input = store
-        .start_project_chat_requirement_branch("project")
+        .start_project_chat_requirement_branch()
         .await
         .unwrap()
         .unwrap();
     assert_eq!(input.pi_session_file.as_deref(), Some("main.jsonl"));
     assert_eq!(input.messages.len(), 2);
     store
-        .finish_project_chat_requirement_branch("project")
+        .finish_project_chat_requirement_branch()
         .await
         .unwrap();
 
     store
         .create_requirement_with_session(
-            "project",
             "使用分支上下文生成需求".to_owned(),
             Vec::new(),
             Vec::new(),
@@ -646,30 +480,19 @@ async fn requirement_branch_input_distinguishes_fresh_clone_and_running_chat() {
     );
 
     store.data.project_chats[0].running = true;
-    assert!(
-        store
-            .start_project_chat_requirement_branch("project")
-            .await
-            .is_err()
-    );
+    store.persist().await.unwrap();
+    assert!(store.start_project_chat_requirement_branch().await.is_err());
 }
 
 #[tokio::test]
 async fn complete_chat_without_parent_session_does_not_fall_back_to_standalone() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
     let now = Utc::now();
-    store.data.projects.push(Project {
-        id: "project".to_owned(),
-        name: "project".to_owned(),
-        git_url: String::new(),
-        local_path: temp_dir.path().to_string_lossy().to_string(),
-        created_at: now,
-        updated_at: now,
-    });
-    store.project_chat_response("project").await.unwrap();
+    store.project = test_project(temp_dir.path());
+    store.project_chat_response().await.unwrap();
     for (role, content) in [
         (ProjectChatMessageRole::User, "问题"),
         (ProjectChatMessageRole::Assistant, "回答"),
@@ -685,8 +508,9 @@ async fn complete_chat_without_parent_session_does_not_fall_back_to_standalone()
                 created_at: now,
             });
     }
+    store.persist().await.unwrap();
     let error = store
-        .start_project_chat_requirement_branch("project")
+        .start_project_chat_requirement_branch()
         .await
         .unwrap_err();
     assert!(error.to_string().contains("session 已丢失"));
@@ -697,40 +521,30 @@ async fn complete_chat_without_parent_session_does_not_fall_back_to_standalone()
 #[tokio::test]
 async fn active_requirement_blocks_project_chat_send_and_reset() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
-    let now = Utc::now();
-    store.data.projects.push(Project {
-        id: "project".to_owned(),
-        name: "project".to_owned(),
-        git_url: String::new(),
-        local_path: temp_dir.path().to_string_lossy().to_string(),
-        created_at: now,
-        updated_at: now,
-    });
-    store.project_chat_response("project").await.unwrap();
+    store.project = test_project(temp_dir.path());
+    store.project_chat_response().await.unwrap();
     let mut active = requirement("active");
     active.status = RequirementStatus::Clarifying;
-    active.project_id = "project".to_owned();
     store.data.requirements.push(active);
+    store.persist().await.unwrap();
 
     assert!(
         store
-            .start_project_chat_message("project", "继续".to_owned(), Vec::new(), Vec::new())
+            .start_project_chat_message("继续".to_owned(), Vec::new(), Vec::new())
             .await
             .is_err()
     );
-    assert!(store.reset_project_chat("project").await.is_err());
+    assert!(store.reset_project_chat().await.is_err());
 }
 
 fn requirement(id: &str) -> Requirement {
     let now = Utc::now();
     Requirement {
         id: id.to_owned(),
-        project_id: "project".to_owned(),
         title: id.to_owned(),
-        original_message: id.to_owned(),
         origin: crate::models::RequirementOrigin::Standalone,
         status: RequirementStatus::Running,
         messages: vec![RequirementMessage {
@@ -775,10 +589,9 @@ fn queued_requirement(id: &str, queued_at: chrono::DateTime<Utc>) -> Requirement
     requirement
 }
 
-fn project_chat_with_usage(project_id: &str, usage: serde_json::Value) -> ProjectChat {
+fn project_chat_with_usage(usage: serde_json::Value) -> ProjectChat {
     let now = Utc::now();
     ProjectChat {
-        project_id: project_id.to_owned(),
         messages: vec![ProjectChatMessage {
             role: ProjectChatMessageRole::Assistant,
             content: "回答".to_owned(),
@@ -786,7 +599,6 @@ fn project_chat_with_usage(project_id: &str, usage: serde_json::Value) -> Projec
             images: Vec::new(),
             metadata: Some(serde_json::json!({
                 "type": "pi_trace",
-                "version": 1,
                 "trace": { "usage": usage }
             })),
             created_at: now,
@@ -802,16 +614,16 @@ fn project_chat_with_usage(project_id: &str, usage: serde_json::Value) -> Projec
 #[tokio::test]
 async fn failed_project_chat_operation_trace_is_persisted_and_aggregated() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+    let mut store = Store::open(temp_dir.path().join(".raccoon-node"))
         .await
         .unwrap();
-    let mut chat = project_chat_with_usage("project", serde_json::json!({}));
+    let mut chat = project_chat_with_usage(serde_json::json!({}));
     chat.messages.clear();
     chat.running = true;
     store.data.project_chats.push(chat);
+    store.persist().await.unwrap();
     let trace = serde_json::json!({
         "type": "pi_trace",
-        "version": 2,
         "trace": {
             "operationId": "chat-failure",
             "usage": {
@@ -825,14 +637,11 @@ async fn failed_project_chat_operation_trace_is_persisted_and_aggregated() {
     });
 
     store
-        .apply_project_chat_result(
-            "project",
-            Err(AppError::task_execution_with_trace(
-                "timeout",
-                Some("chat.jsonl".to_owned()),
-                Some(trace.clone()),
-            )),
-        )
+        .apply_project_chat_result(Err(AppError::task_execution_with_trace(
+            "timeout",
+            Some("chat.jsonl".to_owned()),
+            Some(trace.clone()),
+        )))
         .await
         .unwrap();
 
@@ -853,16 +662,13 @@ async fn failed_project_chat_operation_trace_is_persisted_and_aggregated() {
 
 #[test]
 fn aggregate_token_usage_includes_compaction_estimates_without_billing_them() {
-    let mut chat = project_chat_with_usage(
-        "project",
-        serde_json::json!({
-            "scope": "operation",
-            "input": 100,
-            "output": 10,
-            "cacheRead": 0,
-            "cacheWrite": 0,
-        }),
-    );
+    let mut chat = project_chat_with_usage(serde_json::json!({
+        "scope": "operation",
+        "input": 100,
+        "output": 10,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+    }));
     chat.messages[0].metadata.as_mut().unwrap()["trace"]["compaction"] = serde_json::json!({
         "usageKnown": false,
         "count": 2,
@@ -888,128 +694,4 @@ fn aggregate_token_usage_includes_compaction_estimates_without_billing_them() {
     assert_eq!(compaction.overflow_retries, 1);
     assert_eq!(compaction.estimated_tokens_saved, 7_500);
     assert!(!compaction.usage_known);
-}
-
-#[test]
-fn session_transcript_normalizes_compaction_without_copying_summary_into_blocks() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let session = temp_dir.path().join("session.jsonl");
-    std::fs::write(
-        &session,
-        serde_json::json!({
-            "type": "compaction",
-            "id": "compact-1",
-            "timestamp": "2026-07-01T00:00:00Z",
-            "summary": "sensitive compacted context",
-            "firstKeptEntryId": "message-42",
-            "tokensBefore": 12_000,
-            "details": {
-                "readFiles": ["src/main.rs", "src/pi/mod.rs"],
-                "modifiedFiles": ["src/pi/mod.rs"]
-            },
-            "fromHook": false
-        })
-        .to_string(),
-    )
-    .unwrap();
-
-    let page = read_session_transcript(&[("测试会话".to_owned(), session)], None, 50).unwrap();
-    assert_eq!(page.entries.len(), 1);
-    assert_eq!(page.entries[0].kind, "compaction");
-    assert_eq!(page.entries[0].blocks.len(), 1);
-    match &page.entries[0].blocks[0] {
-        SessionContentBlock::Compaction {
-            reason,
-            status,
-            tokens_before,
-            estimated_tokens_after,
-            estimated_tokens_saved,
-            first_kept_entry_id,
-            from_hook,
-            read_file_count,
-            modified_file_count,
-            will_retry,
-            usage_known,
-            ..
-        } => {
-            assert_eq!(reason, &None);
-            assert_eq!(status, "completed");
-            assert_eq!(*tokens_before, Some(12_000));
-            assert_eq!(*estimated_tokens_after, None);
-            assert_eq!(*estimated_tokens_saved, None);
-            assert_eq!(first_kept_entry_id.as_deref(), Some("message-42"));
-            assert!(!from_hook);
-            assert_eq!(*read_file_count, 2);
-            assert_eq!(*modified_file_count, 1);
-            assert!(!will_retry);
-            assert!(!usage_known);
-        }
-        block => panic!("expected compaction block, got {block:?}"),
-    }
-    assert!(!format!("{:?}", page.entries[0].blocks).contains("sensitive compacted context"));
-    assert!(page.entries[0].raw.get("summary").is_none());
-}
-
-#[test]
-fn parallel_review_session_accepts_camel_case_usage() {
-    let blocks = parse_session_blocks(&serde_json::json!({
-        "role": "toolResult",
-        "toolCallId": "review-1",
-        "toolName": "run_parallel_code_review",
-        "content": [{"type": "text", "text": "done"}],
-        "details": {
-            "selection": {
-                "classification": "source",
-                "angles": ["正确性", "代码质量与测试"],
-                "skippedAngles": ["边界与安全"],
-                "reasons": ["普通源码"]
-            },
-            "reviews": [{
-                "angle": "正确性",
-                "transport_status": "completed",
-                "error": null,
-                "result": {
-                    "findings": [{
-                        "priority": "P2",
-                        "category": "maintainability",
-                        "path": "src/main.rs",
-                        "location": "main",
-                        "summary": "建议",
-                        "evidence": "证据"
-                    }]
-                },
-                "usage": {
-                    "input": 11,
-                    "output": 12,
-                    "cacheRead": 13,
-                    "cacheWrite": 14
-                },
-                "events": [
-                    {"type": "tool_execution_start", "toolName": "read_staged_diff"},
-                    {"type": "agent_end"}
-                ]
-            }]
-        },
-        "isError": false
-    }));
-
-    let SessionContentBlock::Subagents { reviews, selection } = &blocks[1] else {
-        panic!("expected parsed subagents block");
-    };
-    let usage = reviews[0].usage.as_ref().unwrap();
-    assert_eq!(usage.cache_read, 13);
-    assert_eq!(usage.cache_write, 14);
-    assert_eq!(reviews[0].events.len(), 2);
-    assert_eq!(reviews[0].events[0]["toolName"], "read_staged_diff");
-    assert_eq!(
-        selection
-            .as_ref()
-            .and_then(|value| value.get("classification"))
-            .and_then(serde_json::Value::as_str),
-        Some("source")
-    );
-    assert_eq!(reviews[0].result.as_ref().unwrap().findings.len(), 1);
-    let serialized = serde_json::to_value(usage).unwrap();
-    assert_eq!(serialized["cacheRead"], 13);
-    assert_eq!(serialized["cacheWrite"], 14);
 }

@@ -13,7 +13,7 @@ import type {
 } from "../types/api";
 import { readError } from "../utils/format";
 
-export function useProjectGit(projectId: string | null) {
+export function useProjectGit() {
   const [phase, setPhase] = useState<GitExpansionPhase>("collapsed");
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [diff, setDiff] = useState<GitDiff | null>(null);
@@ -38,20 +38,16 @@ export function useProjectGit(projectId: string | null) {
   }, []);
 
   const load = useCallback(async () => {
-    if (!projectId) {
-      setStatus(null);
-      return;
-    }
     const request = ++statusRequest.current;
     try {
-      const next = await getProjectGitStatus(projectId);
+      const next = await getProjectGitStatus();
       if (request !== statusRequest.current) return;
       applyStatus(next);
       setError(null);
     } catch (reason) {
       setError(readError(reason));
     }
-  }, [applyStatus, projectId]);
+  }, [applyStatus]);
 
   useEffect(() => {
     setPhase("collapsed");
@@ -59,10 +55,9 @@ export function useProjectGit(projectId: string | null) {
     setSelectedDiff(null);
     setSelectedPaths(new Set());
     void load();
-  }, [load, projectId]);
+  }, [load]);
 
   useEffect(() => {
-    if (!projectId) return;
     const timer = window.setInterval(() => void load(), 15_000);
     const onFocus = () => void load();
     window.addEventListener("focus", onFocus);
@@ -70,7 +65,7 @@ export function useProjectGit(projectId: string | null) {
       window.clearInterval(timer);
       window.removeEventListener("focus", onFocus);
     };
-  }, [load, projectId]);
+  }, [load]);
 
   const toggleExpanded = useCallback(() => {
     setPhase((current) => (current === "collapsed" ? "expanded" : "collapsed"));
@@ -91,30 +86,26 @@ export function useProjectGit(projectId: string | null) {
     });
   }, []);
 
-  const selectDiff = useCallback(
-    async (path: string, area: GitDiffArea) => {
-      if (!projectId) return;
-      setSelectedDiff({ path, area });
-      try {
-        setDiff(await getProjectGitDiff(projectId, path, area));
-        setError(null);
-      } catch (reason) {
-        setDiff(null);
-        setError(readError(reason));
-      }
-    },
-    [projectId],
-  );
+  const selectDiff = useCallback(async (path: string, area: GitDiffArea) => {
+    setSelectedDiff({ path, area });
+    try {
+      setDiff(await getProjectGitDiff(path, area));
+      setError(null);
+    } catch (reason) {
+      setDiff(null);
+      setError(readError(reason));
+    }
+  }, []);
 
   const action = useCallback(
     async (next: GitAction, result: string) => {
-      if (!projectId || busyRef.current) return false;
+      if (busyRef.current) return false;
       busyRef.current = true;
       setBusy(true);
       setError(null);
       const request = ++statusRequest.current;
       try {
-        const nextStatus = await executeProjectGitAction(projectId, next);
+        const nextStatus = await executeProjectGitAction(next);
         if (request !== statusRequest.current) return false;
         applyStatus(nextStatus);
         setLastResult(result);
@@ -129,7 +120,7 @@ export function useProjectGit(projectId: string | null) {
         setBusy(false);
       }
     },
-    [applyStatus, projectId],
+    [applyStatus],
   );
 
   return useMemo(

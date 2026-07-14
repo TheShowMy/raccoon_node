@@ -10,7 +10,7 @@ type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 function chatData(overrides: Partial<ChatData> = {}): ChatData {
   return {
     kind: "requirement-chat",
-    project: { id: "current", name: "repo" } as ChatData["project"],
+    project: { name: "repo", git_url: "", local_path: "/repo" },
     requirement: null,
     conversation: null,
     requirementTimeline: [],

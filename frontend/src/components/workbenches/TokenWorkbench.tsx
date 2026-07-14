@@ -5,10 +5,9 @@ import { HStack } from "@astryxdesign/core/HStack";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { GitBranch, Hammer, MessageCircle } from "lucide-react";
-import type { StartNodeData, TokenUsageCategory } from "../../types/api";
+import type { TokenUsageCategory } from "../../types/api";
+import type { TokenWorkbenchModel } from "../../types/viewModels";
 import { formatCompactNumber } from "../../utils/format";
-
-type TokenData = Extract<StartNodeData, { kind: "token-usage" }>;
 
 function categoryTotal(category: TokenUsageCategory): number {
   return (
@@ -19,7 +18,7 @@ function categoryTotal(category: TokenUsageCategory): number {
   );
 }
 
-function totalTokens(usage: NonNullable<TokenData["usage"]>): number {
+function totalTokens(usage: NonNullable<TokenWorkbenchModel["usage"]>): number {
   return categoryTotal(usage.total);
 }
 
@@ -83,7 +82,11 @@ function CategoryCard({
   );
 }
 
-export default function TokenWorkbench({ data }: { data: TokenData }) {
+export default function TokenWorkbench({
+  data,
+}: {
+  data: TokenWorkbenchModel;
+}) {
   const usage = data.usage;
   if (!usage) return <EmptyState title="暂无 Token 统计" isCompact />;
 

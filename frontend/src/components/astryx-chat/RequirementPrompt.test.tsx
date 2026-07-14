@@ -29,12 +29,9 @@ function data(overrides: Partial<ChatData> = {}): ChatData {
   return {
     kind: "requirement-chat",
     project: {
-      id: "current",
       name: "demo",
       git_url: "",
       local_path: "D:\\demo",
-      created_at: "2026-07-10T00:00:00Z",
-      updated_at: "2026-07-10T00:00:00Z",
     },
     requirement: null,
     conversation: null,
@@ -46,7 +43,6 @@ function data(overrides: Partial<ChatData> = {}): ChatData {
     error: null,
     streamEvents: [],
     projectChat: {
-      project_id: "current",
       messages: [],
       running: false,
       error: null,
@@ -103,9 +99,7 @@ describe("RequirementPrompt", () => {
   it("renders confirmation prompt unchanged", () => {
     const requirement = {
       id: "requirement-1",
-      project_id: "current",
       title: "登录改造",
-      original_message: "改造登录",
       origin: "standalone" as const,
       status: "draft_ready" as const,
       messages: [],
@@ -118,7 +112,6 @@ describe("RequirementPrompt", () => {
     };
     const conversation = {
       id: requirement.id,
-      project_id: "current",
       title: requirement.title,
       status: "draft_ready" as const,
       running: false,
@@ -145,9 +138,7 @@ describe("RequirementPrompt", () => {
   it("shows only the first clarification question initially", () => {
     const requirement = {
       id: "requirement-1",
-      project_id: "current",
       title: "登录改造",
-      original_message: "改造登录",
       origin: "standalone" as const,
       status: "clarifying" as const,
       messages: [],
@@ -163,7 +154,6 @@ describe("RequirementPrompt", () => {
     };
     const conversation = {
       id: requirement.id,
-      project_id: "current",
       title: requirement.title,
       status: "clarifying" as const,
       running: false,
@@ -194,9 +184,7 @@ describe("RequirementPrompt", () => {
   it("advances to next step after answering and allows going back", () => {
     const requirement = {
       id: "requirement-1",
-      project_id: "current",
       title: "登录改造",
-      original_message: "改造登录",
       origin: "standalone" as const,
       status: "clarifying" as const,
       messages: [],
@@ -212,7 +200,6 @@ describe("RequirementPrompt", () => {
     };
     const conversation = {
       id: requirement.id,
-      project_id: "current",
       title: requirement.title,
       status: "clarifying" as const,
       running: false,
@@ -251,9 +238,7 @@ describe("RequirementPrompt", () => {
     >(async () => true);
     const requirement = {
       id: "requirement-1",
-      project_id: "current",
       title: "登录改造",
-      original_message: "改造登录",
       origin: "standalone" as const,
       status: "clarifying" as const,
       messages: [],
@@ -269,7 +254,6 @@ describe("RequirementPrompt", () => {
     };
     const conversation = {
       id: requirement.id,
-      project_id: "current",
       title: requirement.title,
       status: "clarifying" as const,
       running: false,
@@ -314,9 +298,7 @@ describe("RequirementPrompt", () => {
     >(async () => true);
     const requirement = {
       id: "requirement-1",
-      project_id: "current",
       title: "登录改造",
-      original_message: "改造登录",
       origin: "standalone" as const,
       status: "clarifying" as const,
       messages: [],
@@ -337,7 +319,6 @@ describe("RequirementPrompt", () => {
     };
     const conversation = {
       id: requirement.id,
-      project_id: "current",
       title: requirement.title,
       status: "clarifying" as const,
       running: false,

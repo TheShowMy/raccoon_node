@@ -13,11 +13,9 @@ import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
 import { Toolbar } from "@astryxdesign/core/Toolbar";
 import { Lock, Plus, Shield, Terminal, X } from "lucide-react";
-import type { StartNodeData } from "../../types/api";
+import type { TerminalWorkbenchModel } from "../../types/viewModels";
 import TerminalAccessForm from "../terminal/TerminalAccessForm";
 import TerminalSessionView from "../terminal/TerminalSessionView";
-
-type TerminalData = Extract<StartNodeData, { kind: "project-terminal" }>;
 
 function TerminalStatusCard({
   icon,
@@ -42,7 +40,11 @@ function TerminalStatusCard({
   );
 }
 
-export default function TerminalWorkbench({ data }: { data: TerminalData }) {
+export default function TerminalWorkbench({
+  data,
+}: {
+  data: TerminalWorkbenchModel;
+}) {
   const [accessKey, setAccessKey] = useState("");
   const activeSession = useMemo(
     () =>
@@ -191,12 +193,7 @@ export default function TerminalWorkbench({ data }: { data: TerminalData }) {
     }
 
     if (activeSession) {
-      return (
-        <TerminalSessionView
-          projectId={data.project.id}
-          session={activeSession}
-        />
-      );
+      return <TerminalSessionView session={activeSession} />;
     }
 
     return (

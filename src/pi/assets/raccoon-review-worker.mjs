@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export const REVIEW_PROTOCOL = "raccoon:parallel-review:v5";
+export const REVIEW_PROTOCOL = "raccoon:parallel-review";
 
 const DEFAULT_PAGE_BYTES = 64 * 1024;
 const MAX_PAGE_BYTES = 64 * 1024;

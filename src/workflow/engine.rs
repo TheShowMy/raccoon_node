@@ -7,7 +7,6 @@ use super::{
     WorkflowReviewFinding, WorkflowSnapshot,
 };
 
-pub const WORK_ITEM_LEASE_SECONDS: i64 = 15 * 60;
 pub const MAX_NORMAL_ATTEMPTS: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,9 +190,6 @@ mod tests {
             attempt_count,
             actual_attempt_count: attempt_count,
             accepted_attempt_id: None,
-            lease_owner: None,
-            lease_expires_at: None,
-            version: 0,
             created_at: now,
             updated_at: now,
         }

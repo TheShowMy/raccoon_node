@@ -49,7 +49,7 @@ describe("App", () => {
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
         const url = String(input);
-        if (url.includes("/project/current")) {
+        if (url.endsWith("/api/project")) {
           return Promise.resolve(
             jsonResponse({
               project: canvasResponse.project,
@@ -68,7 +68,6 @@ describe("App", () => {
         if (url.includes("/chat")) {
           return Promise.resolve(
             jsonResponse({
-              project_id: "current",
               messages: [],
               running: false,
               error: null,

@@ -15,21 +15,16 @@ const now = new Date(0).toISOString();
 
 function project(): Project {
   return {
-    id: "current",
     name: "Project",
     git_url: "https://example.com/repo.git",
     local_path: "/tmp/repo",
-    created_at: now,
-    updated_at: now,
   };
 }
 
 function requirement(): Requirement {
   return {
     id: "requirement-1",
-    project_id: "current",
     title: "WorkflowRun",
-    original_message: "refactor",
     origin: "standalone",
     status: "running",
     messages: [],
@@ -47,7 +42,6 @@ function workflow(itemCount = 2): WorkflowSnapshot {
     run: {
       id: "run-1",
       requirement_id: "requirement-1",
-      project_id: "current",
       status: "running",
       change_spec: {
         intent: "WorkflowRun",
@@ -61,7 +55,6 @@ function workflow(itemCount = 2): WorkflowSnapshot {
       plan_summary: "真实工作计划",
       source_revision: 1,
       rescue_used: false,
-      version: 0,
       created_at: now,
       updated_at: now,
     },
@@ -77,7 +70,6 @@ function workflow(itemCount = 2): WorkflowSnapshot {
       status: index === 0 ? "running" : "pending",
       attempt_count: index === 0 ? 1 : 0,
       actual_attempt_count: index === 0 ? 1 : 0,
-      version: 0,
       created_at: now,
       updated_at: now,
     })),
@@ -105,11 +97,9 @@ function params(canvas: ProjectCanvasData): BuildProjectNodesParams {
     selectedWorkflowRequirementId: selected?.id ?? null,
     requirementActionBusyId: null,
     requirementActionError: null,
-    tokenUsageExpanded: false,
     closeWorkflow: () => {},
     selectWorkflowRequirement: () => {},
     planRequirement: async () => {},
-    onToggleTokenUsageExpanded: () => {},
   };
 }
 
@@ -149,7 +139,7 @@ describe("buildProjectNodes WorkflowRun", () => {
     }
   });
 
-  it("still renders requirements and token usage before a plan exists", () => {
+  it("renders the requirement list before a plan exists", () => {
     const canvas: ProjectCanvasData = {
       project: project(),
       active_requirement: null,
@@ -159,6 +149,6 @@ describe("buildProjectNodes WorkflowRun", () => {
     };
     const nodes = buildProjectNodes(params(canvas));
     expect(nodes.some((node) => node.id === "requirements")).toBe(true);
-    expect(nodes.some((node) => node.id === "token-usage")).toBe(true);
+    expect(nodes).toHaveLength(1);
   });
 });

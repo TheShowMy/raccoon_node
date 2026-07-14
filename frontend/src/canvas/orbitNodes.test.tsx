@@ -54,7 +54,7 @@ describe("workspacePanelPosition", () => {
     }
   });
 
-  it("keeps the legacy right-side position until an orbit node is available", () => {
+  it("keeps the fallback right-side position until an orbit node is available", () => {
     expect(workspacePanelPosition(null)).toEqual({ x: 1540, y: 0 });
   });
 

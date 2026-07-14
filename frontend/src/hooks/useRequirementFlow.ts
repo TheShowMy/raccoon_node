@@ -36,12 +36,10 @@ function isStreamEvent(value: unknown): value is StreamEvent {
 }
 
 export function useRequirementFlow(
-  selectedProjectId: string | null,
   activeRequirementId: string | null,
   observedRequirementId: string | null,
   setProjectCanvas: (data: ProjectCanvasData) => void,
   loadProjectCanvas: (
-    projectId: string,
     workflowRequirementId?: string | null,
   ) => Promise<ProjectCanvasData>,
   observeRequirement: (requirementId: string) => void,
@@ -144,20 +142,6 @@ export function useRequirementFlow(
       setOpeningRequirementCreatedAt(null);
     }
   }, [allRequirements, openingRequirementId]);
-
-  useEffect(() => {
-    if (!selectedProjectId) {
-      setRequirementError(null);
-      setOpeningRequirementId(null);
-      setOpeningRequirementCreatedAt(null);
-      setRequirementStreamEvents([]);
-      setRequirementConversations({});
-      setConversationErrors({});
-      setConversationLoading({});
-      requestedConversationsRef.current.clear();
-      setDismissedPromptRequirementId(null);
-    }
-  }, [selectedProjectId]);
 
   useEffect(() => {
     const retainedIds = new Set(allRequirements.map(({ id }) => id));
@@ -266,13 +250,12 @@ export function useRequirementFlow(
         images: ImageAttachment[];
       },
     ): Promise<boolean> => {
-      if (!selectedProjectId) return false;
       const message = description.trim() || "基于上文整理需求";
 
       setRequirementBusy(true);
       setRequirementError(null);
       try {
-        const accepted = await createRequirementBranch(selectedProjectId, {
+        const accepted = await createRequirementBranch({
           message,
           references: attachments.references,
           images: attachments.images,
@@ -283,7 +266,7 @@ export function useRequirementFlow(
         setDismissedPromptRequirementId(null);
 
         try {
-          const data = await loadProjectCanvas(selectedProjectId);
+          const data = await loadProjectCanvas();
           setProjectCanvas(data);
         } catch (reason) {
           setRequirementError(readError(reason));
@@ -296,13 +279,13 @@ export function useRequirementFlow(
         setRequirementBusy(false);
       }
     },
-    [loadProjectCanvas, selectedProjectId, setProjectCanvas],
+    [loadProjectCanvas, setProjectCanvas],
   );
 
   const sendRequirementMessage = useCallback(
     async (payload: ChatSubmission) => {
       const message = payload.message.trim();
-      if (!message || !selectedProjectId || !activeRequirementId) {
+      if (!message || !activeRequirementId) {
         return false;
       }
 
@@ -316,7 +299,7 @@ export function useRequirementFlow(
         });
         setRequirementStreamEvents([]);
         setDismissedPromptRequirementId(null);
-        const data = await loadProjectCanvas(selectedProjectId);
+        const data = await loadProjectCanvas();
         setProjectCanvas(data);
         const nextRequirementId =
           data.active_requirement?.id ?? accepted.requirement_id;
@@ -335,7 +318,6 @@ export function useRequirementFlow(
       activeRequirementId,
       loadRequirementConversation,
       loadProjectCanvas,
-      selectedProjectId,
       setProjectCanvas,
     ],
   );
@@ -418,10 +400,10 @@ export function useRequirementFlow(
       setRequirementError(null);
       try {
         const currentConversation = requirementConversationRef.current;
-        const prompt =
-          currentConversation?.prompt?.type === "clarification"
-            ? currentConversation.prompt
-            : undefined;
+        const prompt = currentConversation?.prompt;
+        if (!prompt || prompt.type !== "clarification") {
+          throw new Error("当前需求没有可提交的澄清提示");
+        }
         // 使用 prompt.questions（用户实际看到的问题）作为答案来源，避免
         // requirement.clarifications 与 conversation snapshot 不同步导致首次
         // 提交空数组。
@@ -467,10 +449,10 @@ export function useRequirementFlow(
       setRequirementError(null);
       try {
         const currentConversation = requirementConversationRef.current;
-        const prompt =
-          currentConversation?.prompt?.type === "confirmation"
-            ? currentConversation.prompt
-            : undefined;
+        const prompt = currentConversation?.prompt;
+        if (!prompt || prompt.type !== "confirmation") {
+          throw new Error("当前需求没有可确认的规格提示");
+        }
         const data = await confirmRequirement(requirement.id, prompt);
         setDismissedPromptRequirementId(null);
         setProjectCanvas(data);
@@ -517,7 +499,6 @@ export function useRequirementFlow(
   useEffect(() => {
     if (
       !observedRequirementId ||
-      !selectedProjectId ||
       observedRequirementId === activeRequirementId
     ) {
       requirementEventBufferRef.current = [];
@@ -560,7 +541,6 @@ export function useRequirementFlow(
       requirementEventBufferRef.current = [];
       if (batch.some((event) => canvasRefreshEvents.has(event.event))) {
         void loadProjectCanvas(
-          selectedProjectId,
           workflowSummaryMode ? observedRequirementId : null,
         ).catch((reason) => setRequirementError(readError(reason)));
       }
@@ -643,12 +623,7 @@ export function useRequirementFlow(
       requirementEventBufferRef.current = [];
       source.close();
     };
-  }, [
-    activeRequirementId,
-    loadProjectCanvas,
-    observedRequirementId,
-    selectedProjectId,
-  ]);
+  }, [activeRequirementId, loadProjectCanvas, observedRequirementId]);
 
   const requirementTimeline = useMemo<RequirementTimelineBranch[]>(() => {
     const requirementsById = new Map(

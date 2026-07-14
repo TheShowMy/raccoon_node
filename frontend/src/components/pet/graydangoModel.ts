@@ -116,8 +116,6 @@ export function deriveGrayDangoPresentation(
       return presentation("waiting", "需要你补充信息", "warning");
     case "draft_ready":
       return presentation("waiting", "草案准备好了，等你确认", "warning");
-    case "plan_ready":
-      return presentation("waiting", "执行计划准备好了", "warning");
     case "queued":
       return presentation("waiting", "已加入执行队列", "warning");
     case "completed":

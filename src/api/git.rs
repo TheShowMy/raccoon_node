@@ -7,14 +7,13 @@ use std::{
 
 use axum::{
     Json,
-    extract::{Path as AxumPath, Query, State},
+    extract::{Query, State},
 };
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncReadExt, process::Command};
 
 use crate::api::AppState;
 use crate::error::AppError;
-use crate::store::CURRENT_PROJECT_ID;
 use crate::utils::normalize_local_path;
 
 const MAX_DIFF_BYTES: usize = 1024 * 1024;
@@ -91,20 +90,16 @@ pub enum GitActionRequest {
 
 pub async fn get_git_status(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
 ) -> Result<Json<GitStatusResponse>, AppError> {
-    ensure_current_project(&state, &project_id).await?;
-    Ok(Json(read_status(&state, &project_id).await?))
+    Ok(Json(read_status(&state).await?))
 }
 
 pub async fn get_git_diff(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
     Query(query): Query<GitDiffQuery>,
 ) -> Result<Json<GitDiffResponse>, AppError> {
-    ensure_current_project(&state, &project_id).await?;
     validate_repo_path(&query.path)?;
-    let status = read_status(&state, &project_id).await?;
+    let status = read_status(&state).await?;
     let file = status
         .files
         .iter()
@@ -113,7 +108,7 @@ pub async fn get_git_diff(
 
     let bytes =
         if query.area == GitDiffArea::Unstaged && file.unstaged == Some(GitChangeKind::Untracked) {
-            read_untracked_file(&state.project_root, &query.path).await?
+            read_untracked_file(&state.project.root, &query.path).await?
         } else {
             let mut args = vec![OsString::from("diff")];
             if query.area == GitDiffArea::Staged {
@@ -124,7 +119,7 @@ pub async fn get_git_diff(
                 OsString::from("--"),
                 OsString::from(&query.path),
             ]);
-            run_git_bytes_limited(&state.project_root, args).await?
+            run_git_bytes_limited(&state.project.root, args).await?
         };
     let binary = std::str::from_utf8(&bytes).is_err() || bytes.contains(&0);
     let truncated = bytes.len() > MAX_DIFF_BYTES;
@@ -145,27 +140,25 @@ pub async fn get_git_diff(
 
 pub async fn execute_git_action(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
     Json(action): Json<GitActionRequest>,
 ) -> Result<Json<GitStatusResponse>, AppError> {
-    ensure_current_project(&state, &project_id).await?;
-    let lock = scheduler_lock(&state, &project_id);
+    let lock = scheduler_lock(&state);
     let _guard = lock
         .try_lock()
         .map_err(|_| AppError::conflict("任务调度正在使用仓库，Git 写操作已禁用"))?;
-    ensure_writes_allowed(&state, &project_id).await?;
+    ensure_writes_allowed(&state).await?;
 
     match action {
         GitActionRequest::Stage { paths } => {
             let paths = validate_paths(paths)?;
             let mut args = vec![OsString::from("add"), OsString::from("--")];
             args.extend(paths.into_iter().map(OsString::from));
-            run_git(&state.project_root, args, "暂存失败").await?;
+            run_git(&state.project.root, args, "暂存失败").await?;
         }
         GitActionRequest::Unstage { paths } => {
             let paths = validate_paths(paths)?;
             let has_head =
-                git_success(&state.project_root, ["rev-parse", "--verify", "HEAD"]).await;
+                git_success(&state.project.root, ["rev-parse", "--verify", "HEAD"]).await;
             let mut args = if has_head {
                 vec![
                     OsString::from("restore"),
@@ -180,7 +173,7 @@ pub async fn execute_git_action(
                 ]
             };
             args.extend(paths.into_iter().map(OsString::from));
-            run_git(&state.project_root, args, "取消暂存失败").await?;
+            run_git(&state.project.root, args, "取消暂存失败").await?;
         }
         GitActionRequest::Commit { message, confirmed } => {
             if !confirmed {
@@ -190,25 +183,25 @@ pub async fn execute_git_action(
             if message.is_empty() {
                 return Err(AppError::bad_request("提交信息不能为空"));
             }
-            let status = read_status(&state, &project_id).await?;
+            let status = read_status(&state).await?;
             if !status.files.iter().any(|file| file.staged.is_some()) {
                 return Err(AppError::conflict("没有已暂存的变更"));
             }
             run_git(
-                &state.project_root,
+                &state.project.root,
                 ["commit", "-m", message],
                 "提交失败，请检查 Git 用户配置或提交钩子",
             )
             .await?;
         }
         GitActionRequest::Fetch => {
-            ensure_remote(&state.project_root).await?;
-            run_git(&state.project_root, ["fetch", "origin"], "获取远端更新失败").await?;
+            ensure_remote(&state.project.root).await?;
+            run_git(&state.project.root, ["fetch", "origin"], "获取远端更新失败").await?;
         }
         GitActionRequest::Pull => {
-            ensure_clean(&state, &project_id).await?;
+            ensure_clean(&state).await?;
             run_git(
-                &state.project_root,
+                &state.project.root,
                 ["pull", "--ff-only"],
                 "拉取失败，请检查 upstream、网络或认证配置",
             )
@@ -218,18 +211,18 @@ pub async fn execute_git_action(
             if !confirmed {
                 return Err(AppError::bad_request("推送前必须明确确认"));
             }
-            ensure_remote(&state.project_root).await?;
-            let status = read_status(&state, &project_id).await?;
+            ensure_remote(&state.project.root).await?;
+            let status = read_status(&state).await?;
             if status.upstream.is_some() {
                 run_git(
-                    &state.project_root,
+                    &state.project.root,
                     ["push"],
                     "推送失败，请检查远端权限或分支规则",
                 )
                 .await?;
             } else {
                 run_git(
-                    &state.project_root,
+                    &state.project.root,
                     ["push", "-u", "origin", "HEAD"],
                     "首次推送失败，请检查远端权限或分支规则",
                 )
@@ -237,51 +230,51 @@ pub async fn execute_git_action(
             }
         }
         GitActionRequest::SwitchBranch { branch } => {
-            ensure_clean(&state, &project_id).await?;
+            ensure_clean(&state).await?;
             let branch = validate_branch(branch)?;
-            let status = read_status(&state, &project_id).await?;
+            let status = read_status(&state).await?;
             if !status.branches.iter().any(|candidate| candidate == &branch) {
                 return Err(AppError::bad_request("本地分支不存在"));
             }
             run_git(
-                &state.project_root,
+                &state.project.root,
                 ["switch", branch.as_str()],
                 "切换分支失败",
             )
             .await?;
         }
         GitActionRequest::CreateBranch { branch } => {
-            ensure_clean(&state, &project_id).await?;
+            ensure_clean(&state).await?;
             let branch = validate_branch(branch)?;
             run_git(
-                &state.project_root,
+                &state.project.root,
                 ["switch", "-c", branch.as_str()],
                 "创建分支失败",
             )
             .await?;
         }
     }
-    Ok(Json(read_status(&state, &project_id).await?))
+    Ok(Json(read_status(&state).await?))
 }
 
-async fn read_status(state: &AppState, project_id: &str) -> Result<GitStatusResponse, AppError> {
+async fn read_status(state: &AppState) -> Result<GitStatusResponse, AppError> {
     let output = run_git_bytes(
-        &state.project_root,
+        &state.project.root,
         ["status", "--porcelain=v2", "-z", "--branch"],
     )
     .await?;
     let mut status = parse_status(&output)?;
     status.branches = git_lines(
-        &state.project_root,
+        &state.project.root,
         ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
     )
     .await?;
     status.remote_configured = git_success(
-        &state.project_root,
+        &state.project.root,
         ["config", "--get", "remote.origin.url"],
     )
     .await;
-    status.write_blocked = writes_blocked(state, project_id).await?;
+    status.write_blocked = writes_blocked(state).await?;
     status.blocked_reason = status
         .write_blocked
         .then(|| "存在待执行、执行中或失败待恢复的需求，Git 写操作已禁用".to_owned());
@@ -403,37 +396,22 @@ fn change_kind(value: char, conflicted: bool) -> Option<GitChangeKind> {
     }
 }
 
-async fn ensure_current_project(state: &AppState, project_id: &str) -> Result<(), AppError> {
-    if project_id != CURRENT_PROJECT_ID {
-        return Err(AppError::not_found("项目不存在"));
-    }
-    state.store.read().await.project_canvas(project_id)?;
-    Ok(())
+fn scheduler_lock(state: &AppState) -> Arc<tokio::sync::Mutex<()>> {
+    state.project_scheduler_lock.clone()
 }
 
-fn scheduler_lock(state: &AppState, project_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-    let mut locks = state
-        .project_scheduler_locks
-        .lock()
-        .expect("project scheduler lock poisoned");
-    locks
-        .entry(project_id.to_owned())
-        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-        .clone()
-}
-
-async fn writes_blocked(state: &AppState, project_id: &str) -> Result<bool, AppError> {
+async fn writes_blocked(state: &AppState) -> Result<bool, AppError> {
     Ok(!state
         .store
         .read()
         .await
-        .project_canvas(project_id)?
+        .project_canvas()?
         .queued_requirements
         .is_empty())
 }
 
-async fn ensure_writes_allowed(state: &AppState, project_id: &str) -> Result<(), AppError> {
-    if writes_blocked(state, project_id).await? {
+async fn ensure_writes_allowed(state: &AppState) -> Result<(), AppError> {
+    if writes_blocked(state).await? {
         return Err(AppError::conflict(
             "存在待执行、执行中或失败待恢复的需求，Git 写操作已禁用",
         ));
@@ -441,8 +419,8 @@ async fn ensure_writes_allowed(state: &AppState, project_id: &str) -> Result<(),
     Ok(())
 }
 
-async fn ensure_clean(state: &AppState, project_id: &str) -> Result<(), AppError> {
-    if !read_status(state, project_id).await?.files.is_empty() {
+async fn ensure_clean(state: &AppState) -> Result<(), AppError> {
+    if !read_status(state).await?.files.is_empty() {
         return Err(AppError::conflict("工作区存在未提交变更，无法执行此操作"));
     }
     Ok(())

@@ -62,7 +62,7 @@ fn workflow_payload_requires_exactly_one_valid_managed_submission() {
         "toolName": "submit_work_plan",
         "result": {
             "details": {
-                "protocol": "raccoon:workflow-output:v3",
+                "protocol": "raccoon:workflow-output",
                 "kind": "work_plan",
                 "payload": {
                     "summary": "plan",
@@ -99,12 +99,12 @@ fn workflow_payload_requires_exactly_one_valid_managed_submission() {
     );
 
     let mut invalid_protocol = valid.clone();
-    invalid_protocol["result"]["details"]["protocol"] = serde_json::json!("legacy");
+    invalid_protocol["result"]["details"]["protocol"] = serde_json::json!("unsupported");
     assert!(
         parse_workflow_payload(&[invalid_protocol], "submit_work_plan", "work_plan",)
             .unwrap_err()
             .to_string()
-            .contains("协议版本不兼容")
+            .contains("输出协议不匹配")
     );
 
     let mut invalid_kind = valid;
@@ -254,7 +254,6 @@ fn event_activity_ignores_response_and_empty_deltas() {
 fn runtime_observation_records_non_enforcing_budget_warning() {
     let trace = Some(serde_json::json!({
         "type": "pi_trace",
-        "version": 2,
         "trace": {}
     }));
     let mut observation = OperationRuntimeObservation::new(
@@ -279,7 +278,6 @@ fn runtime_observation_records_non_enforcing_budget_warning() {
 fn session_stats_are_normalized_into_trace_usage() {
     let trace = Some(serde_json::json!({
         "type": "pi_trace",
-        "version": 1,
         "trace": {
             "thinking": "",
             "output": "",

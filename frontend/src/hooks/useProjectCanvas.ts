@@ -36,8 +36,7 @@ function hasSameProjectCanvasRevision(
   next: ProjectCanvasData | null,
 ) {
   return (
-    current?.project.id === next?.project.id &&
-    current?.project.updated_at === next?.project.updated_at &&
+    current?.project.local_path === next?.project.local_path &&
     hasSameRequirementRevision(
       current?.active_requirement ?? null,
       next?.active_requirement ?? null,
@@ -68,7 +67,7 @@ function hasSameWorkflowRevisions(
       return (
         candidate !== undefined &&
         workflow.run.id === candidate.run.id &&
-        workflow.run.version === candidate.run.version &&
+        workflow.run.updated_at === candidate.run.updated_at &&
         workflow.run.status === candidate.run.status &&
         workflow.last_event_sequence === candidate.last_event_sequence
       );
@@ -76,10 +75,7 @@ function hasSameWorkflowRevisions(
   );
 }
 
-export function useProjectCanvas(
-  selectedProjectId: string | null,
-  setError: (error: string | null) => void,
-) {
+export function useProjectCanvas(setError: (error: string | null) => void) {
   const [projectCanvas, setProjectCanvasState] =
     useState<ProjectCanvasData | null>(null);
   const setProjectCanvas = useCallback(
@@ -98,22 +94,20 @@ export function useProjectCanvas(
     string | null
   >(null);
   const projectCanvasRequest = useRef<{
-    projectId: string;
     workflowRequirementId: string | null;
     promise: Promise<ProjectCanvasData>;
   } | null>(null);
 
   const loadProjectCanvas = useCallback(
-    (projectId: string, workflowRequirementId: string | null = null) => {
+    (workflowRequirementId: string | null = null) => {
       if (
-        projectCanvasRequest.current?.projectId === projectId &&
-        projectCanvasRequest.current.workflowRequirementId ===
-          workflowRequirementId
+        projectCanvasRequest.current?.workflowRequirementId ===
+        workflowRequirementId
       ) {
         return projectCanvasRequest.current.promise;
       }
 
-      const promise = getProjectCanvas(projectId, workflowRequirementId)
+      const promise = getProjectCanvas(workflowRequirementId)
         .then((data) => {
           if (projectCanvasRequest.current?.promise === promise) {
             setProjectCanvas(data);
@@ -126,7 +120,6 @@ export function useProjectCanvas(
           }
         });
       projectCanvasRequest.current = {
-        projectId,
         workflowRequirementId,
         promise,
       };
@@ -136,18 +129,10 @@ export function useProjectCanvas(
   );
 
   useEffect(() => {
-    if (!selectedProjectId) {
-      setProjectCanvas(null);
-      setSelectedWorkflowRequirementId(null);
-      setRequirementActionBusyId(null);
-      setRequirementActionError(null);
-      return;
-    }
-
     let cancelled = false;
     setProjectCanvas(null);
 
-    loadProjectCanvas(selectedProjectId)
+    loadProjectCanvas()
       .then(() => {
         if (!cancelled) {
           setError(null);
@@ -161,7 +146,7 @@ export function useProjectCanvas(
     return () => {
       cancelled = true;
     };
-  }, [loadProjectCanvas, selectedProjectId, setError]);
+  }, [loadProjectCanvas, setError]);
 
   const allProjectRequirements = useMemo(() => {
     const requirements = [
@@ -190,27 +175,23 @@ export function useProjectCanvas(
   const shouldPollProjectCanvas =
     !planningBlocked &&
     allProjectRequirements.some((requirement) =>
-      ["queued", "planning", "plan_ready", "running"].includes(
-        requirement.status,
-      ),
+      ["queued", "planning", "running"].includes(requirement.status),
     );
 
   useEffect(() => {
-    if (!selectedProjectId || !shouldPollProjectCanvas) {
+    if (!shouldPollProjectCanvas) {
       return;
     }
 
     const timer = window.setInterval(() => {
-      void loadProjectCanvas(
-        selectedProjectId,
-        selectedWorkflowRequirementId,
-      ).catch((reason) => setError(readError(reason)));
+      void loadProjectCanvas(selectedWorkflowRequirementId).catch((reason) =>
+        setError(readError(reason)),
+      );
     }, 15_000);
     return () => window.clearInterval(timer);
   }, [
     loadProjectCanvas,
     selectedWorkflowRequirementId,
-    selectedProjectId,
     setError,
     shouldPollProjectCanvas,
   ]);
@@ -231,24 +212,20 @@ export function useProjectCanvas(
     (requirement: Requirement) => {
       setRequirementActionError(null);
       setSelectedWorkflowRequirementId(requirement.id);
-      if (selectedProjectId) {
-        void loadProjectCanvas(selectedProjectId, requirement.id).catch(
-          (reason) => setRequirementActionError(readError(reason)),
-        );
-      }
+      void loadProjectCanvas(requirement.id).catch((reason) =>
+        setRequirementActionError(readError(reason)),
+      );
     },
-    [loadProjectCanvas, selectedProjectId],
+    [loadProjectCanvas],
   );
 
   const closeWorkflow = useCallback(() => {
     setRequirementActionError(null);
     setSelectedWorkflowRequirementId(null);
-    if (selectedProjectId) {
-      void loadProjectCanvas(selectedProjectId).catch((reason) =>
-        setRequirementActionError(readError(reason)),
-      );
-    }
-  }, [loadProjectCanvas, selectedProjectId]);
+    void loadProjectCanvas().catch((reason) =>
+      setRequirementActionError(readError(reason)),
+    );
+  }, [loadProjectCanvas]);
 
   const planRequirement = useCallback(
     async (requirement: Requirement) => {
@@ -257,16 +234,14 @@ export function useProjectCanvas(
       try {
         const data = await startRequirementWorkflow(requirement.id);
         setProjectCanvas(data);
-        if (selectedProjectId) {
-          await loadProjectCanvas(selectedProjectId, requirement.id);
-        }
+        await loadProjectCanvas(requirement.id);
       } catch (reason) {
         setError(readError(reason));
       } finally {
         setRequirementActionBusyId(null);
       }
     },
-    [loadProjectCanvas, selectedProjectId, setError],
+    [loadProjectCanvas, setError],
   );
 
   const cancelRequirementAnalysis = useCallback(

@@ -6,7 +6,6 @@ import TerminalSessionView from "./TerminalSessionView";
 
 const session = {
   id: "term-1",
-  project_id: "current",
   title: "dev",
   command: "npm run dev",
   status: "running" as const,
@@ -117,7 +116,7 @@ beforeEach(() => {
 
 describe("TerminalSessionView", () => {
   it("updates the xterm theme without reconnecting", async () => {
-    render(<TerminalSessionView projectId="current" session={session} />);
+    render(<TerminalSessionView session={session} />);
     await waitFor(() => expect(terminalOptions).not.toBeNull());
 
     expect(terminalOptions?.theme).toMatchObject({
@@ -149,9 +148,7 @@ describe("TerminalSessionView", () => {
   });
 
   it("keeps the embedded Pi terminal on a high-contrast dark palette", async () => {
-    render(
-      <TerminalSessionView projectId="current" session={session} fixedDark />,
-    );
+    render(<TerminalSessionView session={session} fixedDark />);
     await waitFor(() => expect(terminalOptions).not.toBeNull());
 
     expect(terminalOptions?.theme).toMatchObject({
@@ -186,7 +183,7 @@ describe("TerminalSessionView", () => {
   });
 
   it("shows connecting status until socket opens", async () => {
-    render(<TerminalSessionView projectId="current" session={session} />);
+    render(<TerminalSessionView session={session} />);
     expect(screen.getByText("正在连接终端…")).toBeInTheDocument();
 
     await waitFor(() => expect(MockWebSocket.last).not.toBeNull());
@@ -199,7 +196,7 @@ describe("TerminalSessionView", () => {
   });
 
   it("forwards typed input to the websocket as JSON input messages", async () => {
-    render(<TerminalSessionView projectId="current" session={session} />);
+    render(<TerminalSessionView session={session} />);
     await waitFor(() => expect(dataCallback).not.toBeNull());
 
     act(() => {
@@ -215,7 +212,7 @@ describe("TerminalSessionView", () => {
   });
 
   it("writes output messages to the terminal", async () => {
-    render(<TerminalSessionView projectId="current" session={session} />);
+    render(<TerminalSessionView session={session} />);
     await waitFor(() => expect(MockWebSocket.last).not.toBeNull());
 
     act(() => {
@@ -231,7 +228,7 @@ describe("TerminalSessionView", () => {
   });
 
   it("shows an error overlay when the server reports an error", async () => {
-    render(<TerminalSessionView projectId="current" session={session} />);
+    render(<TerminalSessionView session={session} />);
     await waitFor(() => expect(MockWebSocket.last).not.toBeNull());
 
     act(() => {
@@ -247,7 +244,7 @@ describe("TerminalSessionView", () => {
   });
 
   it("writes an exit message when the process exits", async () => {
-    render(<TerminalSessionView projectId="current" session={session} />);
+    render(<TerminalSessionView session={session} />);
     await waitFor(() => expect(MockWebSocket.last).not.toBeNull());
 
     act(() => {
@@ -265,7 +262,7 @@ describe("TerminalSessionView", () => {
   });
 
   it("sends a resize message after the socket opens", async () => {
-    render(<TerminalSessionView projectId="current" session={session} />);
+    render(<TerminalSessionView session={session} />);
     await waitFor(() => expect(MockWebSocket.last).not.toBeNull());
 
     act(() => {

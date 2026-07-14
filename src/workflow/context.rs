@@ -30,18 +30,14 @@ pub fn build_workflow_plan_prompt(input: &WorkflowPlanInput) -> RenderedPrompt {
   使用相同的非空 group 表示可并行；同层其他组合必须增加明确串行依赖。
 - 完成后只调用 submit_work_plan。"#;
 
-    PromptRenderer::new("workflow_planner_v5")
+    PromptRenderer::new("workflow_planner")
         .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT)
         .add_source(
             PromptSourceKind::Skill,
             "execution_planner",
             strip_markdown_frontmatter(include_str!("../../prompts/skills/execution_planner.md")),
         )
-        .add_source(
-            PromptSourceKind::InlinePolicy,
-            "work_plan_v5_policy",
-            policy,
-        )
+        .add_source(PromptSourceKind::InlinePolicy, "work_plan_policy", policy)
         .add_source(
             PromptSourceKind::RequirementContext,
             "change_spec",
@@ -187,11 +183,11 @@ pub fn build_workflow_attempt_prompt(input: &WorkflowAgentInput) -> RenderedProm
     };
 
     PromptRenderer::new(if is_rescue {
-        "workflow_rescue_v5"
+        "workflow_rescue"
     } else if is_fix {
-        "workflow_fix_v5"
+        "workflow_fix"
     } else {
-        "workflow_attempt_v5"
+        "workflow_attempt"
     })
     .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT)
     .add_source(PromptSourceKind::InlinePolicy, "attempt_policy", policy)
@@ -270,7 +266,7 @@ pub fn build_workflow_review_prompt(input: &WorkflowReviewInput) -> RenderedProm
     )
     .expect("review snapshot section is valid");
 
-    PromptRenderer::new("workflow_final_review_v5")
+    PromptRenderer::new("workflow_final_review")
         .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT)
         .add_source(PromptSourceKind::Skill, "code_reviewer", policy)
         .add_source(PromptSourceKind::TaskContext, "review_contract", contract)
@@ -384,9 +380,7 @@ mod tests {
     fn planner_prompt_forbids_stage_and_command_gates() {
         let requirement = Requirement {
             id: "r1".to_owned(),
-            project_id: "current".to_owned(),
             title: "需求".to_owned(),
-            original_message: "美化主页面".to_owned(),
             origin: RequirementOrigin::Standalone,
             status: RequirementStatus::Planning,
             messages: Vec::new(),
@@ -416,12 +410,9 @@ mod tests {
         };
         let prompt = build_workflow_plan_prompt(&WorkflowPlanInput {
             project: crate::models::Project {
-                id: "current".to_owned(),
                 name: "repo".to_owned(),
                 git_url: String::new(),
                 local_path: "/repo".to_owned(),
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
             },
             requirement,
             model_settings: crate::models::ModelSettings::default(),

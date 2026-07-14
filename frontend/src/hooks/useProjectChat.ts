@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   abortProjectChat,
   getProjectChat,
@@ -14,9 +14,7 @@ import type {
 import { readError } from "../utils/format";
 import { useConversationSocket } from "./useConversationSocket";
 
-export function useProjectChat(projectId: string | null) {
-  const projectIdRef = useRef(projectId);
-  projectIdRef.current = projectId;
+export function useProjectChat() {
   const [projectChat, setProjectChat] = useState<ProjectChatResponse | null>(
     null,
   );
@@ -26,33 +24,17 @@ export function useProjectChat(projectId: string | null) {
     ConversationEvent[]
   >([]);
 
-  useEffect(() => {
-    setProjectChat(null);
-    setProjectChatBusy(false);
-    setProjectChatError(null);
-    setProjectChatEvents([]);
-  }, [projectId]);
-
   const loadProjectChat = useCallback(async () => {
-    if (!projectId) throw new Error("项目未加载");
-    return getProjectChat(projectId);
-  }, [projectId]);
+    return getProjectChat();
+  }, []);
 
   const applySnapshot = useCallback((snapshot: ProjectChatResponse) => {
-    if (projectIdRef.current !== snapshot.project_id) return;
     setProjectChat(snapshot);
     setProjectChatError(snapshot.error);
     setProjectChatEvents((current) => (snapshot.running ? current : []));
   }, []);
 
   const handleEvent = useCallback((event: ConversationEvent) => {
-    const eventProjectId = event.payload.project_id;
-    if (
-      typeof eventProjectId === "string" &&
-      eventProjectId !== projectIdRef.current
-    ) {
-      return;
-    }
     if (event.type === "session.error") {
       setProjectChatError(
         typeof event.payload.message === "string"
@@ -64,10 +46,7 @@ export function useProjectChat(projectId: string | null) {
   }, []);
 
   useConversationSocket({
-    url: useMemo(
-      () => (projectId ? projectChatWebSocketUrl(projectId) : null),
-      [projectId],
-    ),
+    url: useMemo(() => projectChatWebSocketUrl(), []),
     loadSnapshot: loadProjectChat,
     onSnapshot: applySnapshot,
     onEvent: handleEvent,
@@ -76,7 +55,7 @@ export function useProjectChat(projectId: string | null) {
 
   const run = useCallback(
     async (operation: () => Promise<unknown>): Promise<boolean> => {
-      if (!projectId || projectChatBusy || projectChat?.running) return false;
+      if (projectChatBusy || projectChat?.running) return false;
       setProjectChatBusy(true);
       setProjectChatError(null);
       try {
@@ -92,39 +71,37 @@ export function useProjectChat(projectId: string | null) {
         setProjectChatBusy(false);
       }
     },
-    [projectChat?.running, projectChatBusy, projectId],
+    [projectChat?.running, projectChatBusy],
   );
 
   const sendProjectChat = useCallback(
     async (payload: ChatSubmission): Promise<boolean> => {
       const message = payload.message.trim();
-      if (!projectId || !message) return false;
-      return run(() =>
-        sendProjectChatMessage(projectId, { ...payload, message }),
-      );
+      if (!message) return false;
+      return run(() => sendProjectChatMessage({ ...payload, message }));
     },
-    [projectId, run],
+    [run],
   );
 
   const abort = useCallback(async () => {
-    if (!projectId || projectChatBusy || !projectChat?.running) return;
+    if (projectChatBusy || !projectChat?.running) return;
     setProjectChatBusy(true);
     setProjectChatError(null);
     try {
-      await abortProjectChat(projectId);
+      await abortProjectChat();
     } catch (reason) {
       setProjectChatError(readError(reason));
     } finally {
       setProjectChatBusy(false);
     }
-  }, [applySnapshot, projectChat?.running, projectChatBusy, projectId]);
+  }, [projectChat?.running, projectChatBusy]);
 
   const closeProjectChat = useCallback(async (): Promise<boolean> => {
-    if (!projectId || projectChatBusy || projectChat?.running) return false;
+    if (projectChatBusy || projectChat?.running) return false;
     setProjectChatBusy(true);
     setProjectChatError(null);
     try {
-      applySnapshot(await resetProjectChat(projectId));
+      applySnapshot(await resetProjectChat());
       return true;
     } catch (reason) {
       setProjectChatError(readError(reason));
@@ -132,7 +109,7 @@ export function useProjectChat(projectId: string | null) {
     } finally {
       setProjectChatBusy(false);
     }
-  }, [applySnapshot, projectChat?.running, projectChatBusy, projectId]);
+  }, [applySnapshot, projectChat?.running, projectChatBusy]);
 
   return {
     projectChat,

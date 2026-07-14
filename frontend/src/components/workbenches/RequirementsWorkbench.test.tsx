@@ -21,7 +21,7 @@ vi.mock("@xyflow/react", () => ({
   },
 }));
 
-vi.mock("../nodes/StartNode", () => ({ default: () => null }));
+vi.mock("../nodes/RequirementNode", () => ({ default: () => null }));
 
 describe("RequirementsWorkbench", () => {
   beforeEach(() => {
@@ -43,6 +43,7 @@ describe("RequirementsWorkbench", () => {
       expect.objectContaining({
         className: "requirements-inner-flow",
         panOnScroll: true,
+        noWheelClassName: "nowheel",
         minZoom: 0.2,
         maxZoom: 1.4,
         nodesDraggable: false,

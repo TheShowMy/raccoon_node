@@ -1,19 +1,15 @@
 import React from "react";
 import { Card } from "@astryxdesign/core/Card";
-import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
-import type { StartNodeData } from "../../types/api";
-import { renderNodeContent } from "../../nodes/renderNodeContent";
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import type { RequirementNodeData } from "../../types/api";
+import RequirementListNode from "./RequirementListNode";
+import WorkflowItemNode from "./WorkflowItemNode";
+import WorkflowRunNode from "./WorkflowRunNode";
 
-type StartNodeKind = StartNodeData["kind"];
-
-const HANDLES_BY_KIND: Record<
-  StartNodeKind,
+const HANDLES: Record<
+  RequirementNodeData["kind"],
   Array<{ id: string; position: Position; type: "source" | "target" }>
 > = {
-  "requirement-chat": [
-    { id: "requirement-chat-left", position: Position.Left, type: "target" },
-    { id: "requirement-chat-right", position: Position.Right, type: "source" },
-  ],
   "requirement-list": [
     { id: "requirement-list-left", position: Position.Left, type: "target" },
     { id: "requirement-list-right", position: Position.Right, type: "source" },
@@ -25,15 +21,20 @@ const HANDLES_BY_KIND: Record<
     { id: "workflow-item-left", position: Position.Left, type: "target" },
     { id: "workflow-item-right", position: Position.Right, type: "source" },
   ],
-  "project-settings": [],
-  "project-terminal": [],
-  "project-git": [],
-  "token-usage": [],
 };
 
-function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
-  const handles = HANDLES_BY_KIND[data.kind];
+function content(data: RequirementNodeData) {
+  switch (data.kind) {
+    case "requirement-list":
+      return <RequirementListNode data={data} />;
+    case "workflow-run":
+      return <WorkflowRunNode data={data} />;
+    case "workflow-item":
+      return <WorkflowItemNode data={data} />;
+  }
+}
 
+function RequirementNode({ data }: NodeProps<Node<RequirementNodeData>>) {
   return (
     <Card
       width="100%"
@@ -41,7 +42,7 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
       padding={0}
       className={`node-card node-card--${data.kind}`}
     >
-      {handles.map((handle) => (
+      {HANDLES[data.kind].map((handle) => (
         <Handle
           key={handle.id}
           id={handle.id}
@@ -50,9 +51,9 @@ function StartNode({ data }: NodeProps<Node<StartNodeData>>) {
           className="node-link-handle node-link-handle--requirement"
         />
       ))}
-      {renderNodeContent(data)}
+      {content(data)}
     </Card>
   );
 }
 
-export default React.memo(StartNode);
+export default React.memo(RequirementNode);

@@ -779,7 +779,7 @@ export async function runReviewAgent({
     if (
       !Array.isArray(result.findings)
     ) {
-      throw new Error(`${angle}审核结论缺少 v5 findings`);
+      throw new Error(`${angle}审核结论缺少 findings`);
     }
     return {
       angle,
@@ -944,8 +944,8 @@ export default function (pi) {
   pi.on("before_agent_start", (event) => {
     latestPrompt = event.prompt;
   });
-  pi.registerCommand("raccoon-parallel-review-v5", {
-    description: "Raccoon Codex 式隔离审核协议 v5",
+  pi.registerCommand("raccoon-parallel-review", {
+    description: "Raccoon Codex 式隔离审核协议",
     handler: async () => {},
   });
   pi.registerTool({

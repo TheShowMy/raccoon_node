@@ -29,7 +29,7 @@ describe("FilesWorkbench", () => {
       }),
     );
 
-    render(<FilesWorkbench projectId="current" />);
+    render(<FilesWorkbench />);
 
     await waitFor(() => {
       expect(screen.getByText("src")).toBeInTheDocument();
@@ -61,7 +61,7 @@ describe("FilesWorkbench", () => {
       }),
     );
 
-    render(<FilesWorkbench projectId="current" />);
+    render(<FilesWorkbench />);
 
     await waitFor(() => {
       expect(screen.getByText("src")).toBeInTheDocument();
@@ -99,7 +99,7 @@ describe("FilesWorkbench", () => {
       }),
     );
 
-    render(<FilesWorkbench projectId="current" />);
+    render(<FilesWorkbench />);
 
     await waitFor(() => {
       expect(screen.getByText("README.md")).toBeInTheDocument();
@@ -143,7 +143,7 @@ describe("FilesWorkbench", () => {
       }),
     );
 
-    render(<FilesWorkbench projectId="current" />);
+    render(<FilesWorkbench />);
 
     await waitFor(() => {
       expect(screen.getByText("big.log")).toBeInTheDocument();
@@ -171,7 +171,7 @@ describe("FilesWorkbench", () => {
       }),
     );
 
-    render(<FilesWorkbench projectId="current" />);
+    render(<FilesWorkbench />);
 
     const search = await waitFor(() => {
       return screen.getByPlaceholderText("搜索仓库文件");

@@ -7,7 +7,9 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "build:ci": "vite build",
-    "check": "tsc -b --noEmit && npm run format:check",
+    "check": "tsc -b --noEmit && npm run knip && npm run knip:production && npm run format:check",
+    "knip": "knip --no-config-hints",
+    "knip:production": "knip --production --no-config-hints",
     "test": "vitest",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\""
@@ -28,9 +30,7 @@
     "@xyflow/react": "^12.10.0",
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "react-dom": "^19.2.3"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.4.0",
@@ -40,6 +40,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
     "jsdom": "^24.0.0",
+    "knip": "^5.82.1",
     "prettier": "^3.3.3",
     "typescript": "^5.9.3",
     "vite": "^7.2.7",

@@ -11,13 +11,11 @@ import type { MainPanelKind } from "../canvas/orbitNodes";
 export interface AppUiState {
   openPanel: MainPanelKind | null;
   panelPhase: "shell" | "focusing" | "content" | "closing";
-  tokenUsageExpanded: boolean;
 }
 
 const INITIAL_UI_STATE: AppUiState = {
   openPanel: null,
   panelPhase: "shell",
-  tokenUsageExpanded: false,
 };
 
 class Store {
@@ -45,8 +43,7 @@ class Store {
     const next = { ...this.state, ...partial };
     if (
       next.openPanel === this.state.openPanel &&
-      next.panelPhase === this.state.panelPhase &&
-      next.tokenUsageExpanded === this.state.tokenUsageExpanded
+      next.panelPhase === this.state.panelPhase
     ) {
       return;
     }
@@ -74,10 +71,6 @@ class Store {
     if (this.state.openPanel && this.state.panelPhase === "closing") {
       this.setState({ openPanel: null, panelPhase: "shell" });
     }
-  }
-
-  toggleTokenUsageExpanded() {
-    this.setState({ tokenUsageExpanded: !this.state.tokenUsageExpanded });
   }
 }
 
@@ -141,11 +134,7 @@ export function useAppUiState<Selected>(
 
 export function useAppStoreActions(): Pick<
   Store,
-  | "openPanel"
-  | "closePanel"
-  | "closePanelComplete"
-  | "focusPanelComplete"
-  | "toggleTokenUsageExpanded"
+  "openPanel" | "closePanel" | "closePanelComplete" | "focusPanelComplete"
 > {
   const store = useContext(AppStoreContext);
   return useMemo(
@@ -154,7 +143,6 @@ export function useAppStoreActions(): Pick<
       closePanel: store.closePanel.bind(store),
       closePanelComplete: store.closePanelComplete.bind(store),
       focusPanelComplete: store.focusPanelComplete.bind(store),
-      toggleTokenUsageExpanded: store.toggleTokenUsageExpanded.bind(store),
     }),
     [store],
   );

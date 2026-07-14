@@ -29,11 +29,7 @@ function requirementStatusColor(
     return "purple";
   }
   if (status === "running") return "orange";
-  if (
-    status === "draft_ready" ||
-    status === "plan_ready" ||
-    status === "queued"
-  ) {
+  if (status === "draft_ready" || status === "queued") {
     return "blue";
   }
   return "default";

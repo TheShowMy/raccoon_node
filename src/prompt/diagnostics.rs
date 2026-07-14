@@ -48,7 +48,6 @@ pub(crate) fn attach_prompt_diagnostics(
     let mut root = trace.unwrap_or_else(|| {
         json!({
             "type": "pi_trace",
-            "version": 1,
             "trace": {}
         })
     });

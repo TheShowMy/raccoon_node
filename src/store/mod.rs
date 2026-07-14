@@ -1,12 +1,11 @@
 use std::{
     collections::HashSet,
-    io::BufRead,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime},
 };
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde_json::Value;
 
 pub mod db;
@@ -14,16 +13,16 @@ pub mod db;
 use crate::error::AppError;
 use crate::file_refs::{build_prompt_images, build_reference_context};
 use crate::models::{
-    AppData, ChangeSpec, ClarificationAnswer, FileReference, ImageAttachment, ModelSettings,
-    PiModel, Project, ProjectCanvasResponse, ProjectChat, ProjectChatInput, ProjectChatMessage,
+    ChangeSpec, ClarificationAnswer, FileReference, ImageAttachment, ModelSettings, PiModel,
+    Project, ProjectCanvasResponse, ProjectChat, ProjectChatInput, ProjectChatMessage,
     ProjectChatMessageRole, ProjectChatOutput, ProjectChatResponse, ProjectTokenUsage,
     PromptSourceUsage, Requirement, RequirementAnalysisInput, RequirementAnalysisOutput,
     RequirementClarificationRound, RequirementConversationItem, RequirementConversationPrompt,
     RequirementConversationResponse, RequirementFailureStage, RequirementMessage,
     RequirementMessageRole, RequirementNoticeLevel, RequirementProcessStatus,
-    RequirementPromptState, RequirementStatus, SessionContentBlock, SessionEntry,
-    SessionTranscriptPage, SubagentReview, TerminalCommandProfile, TerminalCommandProfileUpdate,
-    TokenCompactionUsage, TokenUsageCategory, TokenUsageHotspot, TokenUsageRole,
+    RequirementPromptState, RequirementStatus, StoreState, TerminalCommandProfile,
+    TerminalCommandProfileUpdate, TokenCompactionUsage, TokenUsageCategory, TokenUsageHotspot,
+    TokenUsageRole,
 };
 use crate::requirement::change_spec_semantics_equal;
 use crate::utils::{
@@ -36,7 +35,6 @@ use crate::workflow::{
     compile_work_plan,
 };
 
-pub const CURRENT_PROJECT_ID: &str = "current";
 const MAX_TERMINAL_COMMAND_PROFILES: usize = 20;
 const MAX_TERMINAL_COMMAND_NAME_LEN: usize = 64;
 const MAX_TERMINAL_COMMAND_LEN: usize = 4096;
@@ -129,22 +127,20 @@ pub enum ProjectScheduleAction {
 }
 
 pub enum FailedRequirementWorkflowAction {
-    Plan {
-        project_id: String,
-    },
+    Plan,
     RepairChangeSpec {
         input: Box<RequirementAnalysisInput>,
     },
 }
 
-pub struct JsonStore {
+pub struct Store {
     pub data_root: PathBuf,
-    pub data: AppData,
-    persisted: AppData,
+    pub project: Project,
+    pub data: StoreState,
     pub db: crate::store::db::Database,
 }
 
-impl JsonStore {
+impl Store {
     pub async fn open_project(project_root: PathBuf) -> Result<Self, AppError> {
         let project_root = resolve_git_root(Some(&project_root), &project_root)?;
         let data_root = project_root.join(".raccoon-node");
@@ -167,16 +163,7 @@ impl JsonStore {
             tokio::fs::create_dir_all(directory).await?;
         }
         let mut store = Self::open(data_root).await?;
-        let now = Utc::now();
-        let created_at = store
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == CURRENT_PROJECT_ID)
-            .map(|project| project.created_at)
-            .unwrap_or(now);
-        let project = Project {
-            id: CURRENT_PROJECT_ID.to_owned(),
+        store.project = Project {
             name: project_root
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -184,17 +171,7 @@ impl JsonStore {
                 .unwrap_or_else(|| "repository".to_owned()),
             git_url: git_remote_origin(&project_root),
             local_path: project_root.to_string_lossy().into_owned(),
-            created_at,
-            updated_at: now,
         };
-        store.data.projects = vec![project];
-        for requirement in &mut store.data.requirements {
-            requirement.project_id = CURRENT_PROJECT_ID.to_owned();
-        }
-        for chat in &mut store.data.project_chats {
-            chat.project_id = CURRENT_PROJECT_ID.to_owned();
-        }
-        store.write_persist().await?;
         Ok(store)
     }
 
@@ -205,18 +182,30 @@ impl JsonStore {
         db.recover_interrupted_workflows()?;
 
         let data = db.load()?;
-        let persisted = data.clone();
+        let project_root = data_root.parent().unwrap_or(&data_root).to_path_buf();
         Ok(Self {
             data_root,
+            project: Project {
+                name: project_root
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| "repository".to_owned()),
+                git_url: git_remote_origin(&project_root),
+                local_path: project_root.to_string_lossy().into_owned(),
+            },
             data,
-            persisted,
             db,
         })
     }
 
     async fn write_persist(&mut self) -> Result<(), AppError> {
-        self.db.sync_changes(&self.persisted, &self.data)?;
-        self.persisted = self.data.clone();
+        self.db.save_state(&self.data)?;
+        Ok(())
+    }
+
+    fn refresh(&mut self) -> Result<(), AppError> {
+        self.data = self.db.load()?;
         Ok(())
     }
 
@@ -224,10 +213,47 @@ impl JsonStore {
         self.write_persist().await
     }
 
+    pub fn model_settings(&self) -> Result<ModelSettings, AppError> {
+        Ok(self.db.load()?.model_settings)
+    }
+
+    pub fn requirement_failure_stage(
+        &self,
+        requirement_id: &str,
+    ) -> Result<Option<RequirementFailureStage>, AppError> {
+        Ok(self
+            .db
+            .load()?
+            .requirements
+            .into_iter()
+            .find(|requirement| requirement.id == requirement_id)
+            .and_then(|requirement| requirement.failure_stage))
+    }
+
+    pub fn conversation_busy(&self) -> Result<bool, AppError> {
+        let state = self.db.load()?;
+        Ok(state.project_chats.iter().any(|chat| chat.running)
+            || state.requirements.iter().any(|requirement| {
+                matches!(
+                    requirement.status,
+                    RequirementStatus::Analyzing
+                        | RequirementStatus::Clarifying
+                        | RequirementStatus::DraftReady
+                        | RequirementStatus::Queued
+                        | RequirementStatus::Planning
+                        | RequirementStatus::Running
+                )
+            }))
+    }
+
     pub async fn delete_requirement(&mut self, requirement_id: &str) -> Result<String, AppError> {
+        self.refresh()?;
         let index = self.requirement_index(requirement_id)?;
-        let project_id = self.data.requirements[index].project_id.clone();
-        let session_files = self.db.requirement_sessions(requirement_id)?;
+        let session_files = self.data.requirements[index]
+            .pi_session_file
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>();
         self.data.requirements.remove(index);
         self.write_persist().await?;
         for session_file in session_files {
@@ -235,7 +261,7 @@ impl JsonStore {
                 let _ = tokio::fs::remove_file(path).await;
             }
         }
-        Ok(project_id)
+        Ok(String::new())
     }
 
     fn resolve_managed_session_path(&self, session_file: &str) -> Result<PathBuf, AppError> {
@@ -254,6 +280,7 @@ impl JsonStore {
         settings: ModelSettings,
         models: &[PiModel],
     ) -> Result<(), AppError> {
+        self.refresh()?;
         validate_model_settings(&settings, models)?;
         self.data.model_settings = settings;
         self.data.model_summary.description =
@@ -262,34 +289,15 @@ impl JsonStore {
         Ok(())
     }
 
-    pub fn terminal_command_profiles(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<TerminalCommandProfile>, AppError> {
-        if !self
-            .data
-            .projects
-            .iter()
-            .any(|project| project.id == project_id)
-        {
-            return Err(AppError::not_found("项目不存在"));
-        }
-        Ok(self.data.terminal_command_profiles.clone())
+    pub fn terminal_command_profiles(&self) -> Result<Vec<TerminalCommandProfile>, AppError> {
+        Ok(self.db.load()?.terminal_command_profiles)
     }
 
     pub async fn replace_terminal_command_profiles(
         &mut self,
-        project_id: &str,
         profiles: Vec<TerminalCommandProfileUpdate>,
     ) -> Result<Vec<TerminalCommandProfile>, AppError> {
-        if !self
-            .data
-            .projects
-            .iter()
-            .any(|project| project.id == project_id)
-        {
-            return Err(AppError::not_found("项目不存在"));
-        }
+        self.refresh()?;
         if profiles.len() > MAX_TERMINAL_COMMAND_PROFILES {
             return Err(AppError::bad_request(format!(
                 "终端启动命令最多只能保存 {MAX_TERMINAL_COMMAND_PROFILES} 条"
@@ -342,73 +350,55 @@ impl JsonStore {
         Ok(self.data.terminal_command_profiles.clone())
     }
 
-    pub fn project_canvas(&self, project_id: &str) -> Result<ProjectCanvasResponse, AppError> {
-        let project = self
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+    pub fn project_canvas(&self) -> Result<ProjectCanvasResponse, AppError> {
+        let project = self.project.clone();
+        let data = self.db.load()?;
 
-        let mut active = self
-            .data
+        let mut active = data
             .requirements
             .iter()
             .filter(|requirement| {
-                requirement.project_id == project_id
-                    && matches!(
-                        requirement.status,
-                        RequirementStatus::Analyzing
-                            | RequirementStatus::Clarifying
-                            | RequirementStatus::DraftReady
-                            | RequirementStatus::Failed
-                    )
-                    && (requirement.status != RequirementStatus::Failed
-                        || requirement.draft.is_none())
+                matches!(
+                    requirement.status,
+                    RequirementStatus::Analyzing
+                        | RequirementStatus::Clarifying
+                        | RequirementStatus::DraftReady
+                        | RequirementStatus::Failed
+                ) && (requirement.status != RequirementStatus::Failed
+                    || requirement.draft.is_none())
             })
             .cloned()
             .collect::<Vec<_>>();
         sort_requirements_desc(&mut active);
 
-        let mut queued_requirements = self
-            .data
+        let mut queued_requirements = data
             .requirements
             .iter()
             .filter(|requirement| {
-                requirement.project_id == project_id
-                    && matches!(
-                        requirement.status,
-                        RequirementStatus::Queued
-                            | RequirementStatus::Planning
-                            | RequirementStatus::PlanReady
-                            | RequirementStatus::Running
-                            | RequirementStatus::Failed
-                    )
-                    && (requirement.status != RequirementStatus::Failed
-                        || requirement.draft.is_some())
+                matches!(
+                    requirement.status,
+                    RequirementStatus::Queued
+                        | RequirementStatus::Planning
+                        | RequirementStatus::Running
+                        | RequirementStatus::Failed
+                ) && (requirement.status != RequirementStatus::Failed
+                    || requirement.draft.is_some())
             })
             .cloned()
             .collect::<Vec<_>>();
         sort_requirements_desc(&mut queued_requirements);
 
-        let mut completed_requirements = self
-            .data
+        let mut completed_requirements = data
             .requirements
             .iter()
-            .filter(|requirement| {
-                requirement.project_id == project_id
-                    && requirement.status == RequirementStatus::Completed
-            })
+            .filter(|requirement| requirement.status == RequirementStatus::Completed)
             .cloned()
             .collect::<Vec<_>>();
         sort_requirements_desc(&mut completed_requirements);
 
-        let workflow_runs = self
-            .data
+        let workflow_runs = data
             .requirements
             .iter()
-            .filter(|requirement| requirement.project_id == project_id)
             .map(|requirement| self.db.active_workflow_for_requirement(&requirement.id))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
@@ -416,14 +406,8 @@ impl JsonStore {
             .collect::<Vec<_>>();
 
         let token_usage = aggregate_project_token_usage(
-            self.data
-                .project_chats
-                .iter()
-                .filter(|chat| chat.project_id == project_id),
-            self.data
-                .requirements
-                .iter()
-                .filter(|requirement| requirement.project_id == project_id),
+            data.project_chats.iter(),
+            data.requirements.iter(),
             workflow_runs.iter(),
         );
 
@@ -447,10 +431,9 @@ impl JsonStore {
 
     pub fn project_canvas_for_view(
         &self,
-        project_id: &str,
         workflow_requirement_id: Option<&str>,
     ) -> Result<ProjectCanvasResponse, AppError> {
-        let canvas = self.project_canvas(project_id)?;
+        let canvas = self.project_canvas()?;
         let selected_found = workflow_requirement_id.is_none()
             || canvas
                 .active_requirement
@@ -464,143 +447,46 @@ impl JsonStore {
         Ok(canvas)
     }
 
-    pub fn workflow_attempt_session_sources(
-        &self,
-        run_id: &str,
-        attempt_id: &str,
-    ) -> Result<Vec<(String, PathBuf)>, AppError> {
-        let snapshot = self.db.workflow_snapshot(run_id)?;
-        let attempt = snapshot
-            .attempts
-            .iter()
-            .find(|attempt| attempt.id == attempt_id)
-            .ok_or_else(|| AppError::not_found("Workflow attempt 不存在"))?;
-        let Some(session_file) = attempt.pi_session_file.as_deref() else {
-            return Ok(Vec::new());
-        };
-        Ok(vec![(
-            format!("{:?} · 尝试 {}", attempt.kind, attempt.ordinal),
-            self.resolve_managed_session_path(session_file)?,
-        )])
-    }
-
-    pub fn requirement_session(
-        &self,
-        requirement_id: &str,
-        before: Option<usize>,
-        limit: usize,
-    ) -> Result<SessionTranscriptPage, AppError> {
-        read_session_transcript(
-            &self.requirement_session_sources(requirement_id)?,
-            before,
-            limit,
-        )
-    }
-
-    pub fn requirement_session_sources(
-        &self,
-        requirement_id: &str,
-    ) -> Result<Vec<(String, PathBuf)>, AppError> {
-        self.requirement_index(requirement_id)?;
-        let sources = self
-            .db
-            .requirement_sessions(requirement_id)?
-            .into_iter()
-            .enumerate()
-            .map(|(index, session_file)| {
-                Ok((
-                    format!("需求分析 {}", index + 1),
-                    self.resolve_managed_session_path(&session_file)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, AppError>>()?;
-        if sources.is_empty() {
-            return Err(AppError::not_found("需求没有会话记录"));
-        }
-        Ok(sources)
-    }
-
-    pub fn project_chat_session(
-        &self,
-        project_id: &str,
-        before: Option<usize>,
-        limit: usize,
-    ) -> Result<SessionTranscriptPage, AppError> {
-        read_session_transcript(
-            &self.project_chat_session_sources(project_id)?,
-            before,
-            limit,
-        )
-    }
-
-    pub fn project_chat_session_sources(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<(String, PathBuf)>, AppError> {
-        let chat = self
-            .data
-            .project_chats
-            .iter()
-            .find(|chat| chat.project_id == project_id)
-            .ok_or_else(|| AppError::not_found("项目问答不存在"))?;
-        let session_file = chat
-            .pi_session_file
-            .as_deref()
-            .ok_or_else(|| AppError::not_found("项目问答没有会话记录"))?;
-        Ok(vec![(
-            "项目问答".to_owned(),
-            self.resolve_managed_session_path(session_file)?,
-        )])
-    }
-
     pub fn requirement_conversation(
         &self,
         requirement_id: &str,
     ) -> Result<RequirementConversationResponse, AppError> {
         let requirement = self
-            .data
+            .db
+            .load()?
             .requirements
-            .iter()
+            .into_iter()
             .find(|requirement| requirement.id == requirement_id)
-            .cloned()
             .ok_or_else(|| AppError::not_found("需求不存在"))?;
 
         Ok(build_requirement_conversation(requirement))
     }
 
-    pub async fn project_chat_response(
-        &mut self,
-        project_id: &str,
-    ) -> Result<ProjectChatResponse, AppError> {
-        self.ensure_project_chat(project_id).await?;
-        self.project_chat_response_inner(project_id)
+    pub async fn project_chat_response(&mut self) -> Result<ProjectChatResponse, AppError> {
+        self.refresh()?;
+        self.ensure_project_chat().await?;
+        self.project_chat_response_inner()
     }
 
     pub async fn start_project_chat_message(
         &mut self,
-        project_id: &str,
         message: String,
         references: Vec<FileReference>,
         images: Vec<ImageAttachment>,
     ) -> Result<(ProjectChatInput, ProjectChatResponse), AppError> {
-        self.ensure_project_chat(project_id).await?;
-        let project = self
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
-        let index = self.project_chat_index(project_id)?;
+        self.refresh()?;
+        self.ensure_project_chat().await?;
+        let project = self.project.clone();
+        let index = self.project_chat_index()?;
         if self.data.project_chats[index].running {
             return Err(AppError::bad_request("项目问答正在回答，请稍后再发送"));
         }
-        if self.has_active_requirement(project_id) {
+        if self.has_active_requirement() {
             return Err(AppError::conflict(
                 "需求分支尚未确认或放弃，暂时无法继续普通会话",
             ));
         }
-        let project_dir = self.project_dir(project_id)?;
+        let project_dir = self.project_dir();
         let reference_context =
             build_reference_context(Path::new(&project.local_path), &references, &images).await?;
         let prompt_images = build_prompt_images(&project_dir, &images).await?;
@@ -634,10 +520,10 @@ impl JsonStore {
 
     pub async fn apply_project_chat_result(
         &mut self,
-        project_id: &str,
         output: Result<ProjectChatOutput, AppError>,
     ) -> Result<ProjectChatResponse, AppError> {
-        let index = self.project_chat_index(project_id)?;
+        self.refresh()?;
+        let index = self.project_chat_index()?;
         let now = Utc::now();
         let chat = &mut self.data.project_chats[index];
         chat.running = false;
@@ -677,16 +563,14 @@ impl JsonStore {
         Ok(response)
     }
 
-    pub async fn reset_project_chat(
-        &mut self,
-        project_id: &str,
-    ) -> Result<ProjectChatResponse, AppError> {
-        self.ensure_project_chat(project_id).await?;
-        let index = self.project_chat_index(project_id)?;
+    pub async fn reset_project_chat(&mut self) -> Result<ProjectChatResponse, AppError> {
+        self.refresh()?;
+        self.ensure_project_chat().await?;
+        let index = self.project_chat_index()?;
         if self.data.project_chats[index].running {
             return Err(AppError::bad_request("项目问答正在回答，暂时无法关闭会话"));
         }
-        if self.has_active_requirement(project_id) {
+        if self.has_active_requirement() {
             return Err(AppError::conflict(
                 "需求分支尚未确认或放弃，暂时无法新建普通会话",
             ));
@@ -703,15 +587,15 @@ impl JsonStore {
 
     pub async fn start_project_chat_requirement_branch(
         &mut self,
-        project_id: &str,
     ) -> Result<Option<ProjectChatInput>, AppError> {
-        self.ensure_project_chat(project_id).await?;
-        let index = self.project_chat_index(project_id)?;
+        self.refresh()?;
+        self.ensure_project_chat().await?;
+        let index = self.project_chat_index()?;
         let chat = &self.data.project_chats[index];
         if chat.running {
             return Err(AppError::conflict("项目问答正在运行，暂时无法创建需求分支"));
         }
-        if self.has_active_requirement(project_id) {
+        if self.has_active_requirement() {
             return Err(AppError::conflict("已有尚未确认的需求分支"));
         }
         let has_user = chat
@@ -730,13 +614,7 @@ impl JsonStore {
                 "普通会话已有完整上下文，但 Pi session 已丢失，无法创建需求分支",
             ));
         }
-        let project = self
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+        let project = self.project.clone();
         let input = ProjectChatInput {
             project,
             messages: chat.messages.clone(),
@@ -753,52 +631,34 @@ impl JsonStore {
         Ok(Some(input))
     }
 
-    pub async fn finish_project_chat_requirement_branch(
-        &mut self,
-        project_id: &str,
-    ) -> Result<(), AppError> {
-        let index = self.project_chat_index(project_id)?;
+    pub async fn finish_project_chat_requirement_branch(&mut self) -> Result<(), AppError> {
+        self.refresh()?;
+        let index = self.project_chat_index()?;
         let chat = &mut self.data.project_chats[index];
         chat.running = false;
         chat.updated_at = Utc::now();
         self.write_persist().await
     }
 
-    fn has_active_requirement(&self, project_id: &str) -> bool {
+    fn has_active_requirement(&self) -> bool {
         self.data.requirements.iter().any(|requirement| {
-            requirement.project_id == project_id
-                && matches!(
-                    requirement.status,
-                    RequirementStatus::Analyzing
-                        | RequirementStatus::Clarifying
-                        | RequirementStatus::DraftReady
-                        | RequirementStatus::Failed
-                )
-                && (requirement.status != RequirementStatus::Failed || requirement.draft.is_none())
+            matches!(
+                requirement.status,
+                RequirementStatus::Analyzing
+                    | RequirementStatus::Clarifying
+                    | RequirementStatus::DraftReady
+                    | RequirementStatus::Failed
+            ) && (requirement.status != RequirementStatus::Failed || requirement.draft.is_none())
         })
     }
 
-    async fn ensure_project_chat(&mut self, project_id: &str) -> Result<(), AppError> {
-        if !self
-            .data
-            .projects
-            .iter()
-            .any(|project| project.id == project_id)
-        {
-            return Err(AppError::not_found("项目不存在"));
-        }
-        if self
-            .data
-            .project_chats
-            .iter()
-            .any(|chat| chat.project_id == project_id)
-        {
+    async fn ensure_project_chat(&mut self) -> Result<(), AppError> {
+        if !self.data.project_chats.is_empty() {
             return Ok(());
         }
 
         let now = Utc::now();
         self.data.project_chats.push(ProjectChat {
-            project_id: project_id.to_owned(),
             messages: Vec::new(),
             running: false,
             error: None,
@@ -809,54 +669,42 @@ impl JsonStore {
         self.write_persist().await
     }
 
-    fn project_chat_index(&self, project_id: &str) -> Result<usize, AppError> {
-        self.data
-            .project_chats
-            .iter()
-            .position(|chat| chat.project_id == project_id)
+    fn project_chat_index(&self) -> Result<usize, AppError> {
+        (!self.data.project_chats.is_empty())
+            .then_some(0)
             .ok_or_else(|| AppError::not_found("项目问答不存在"))
     }
 
-    fn project_chat_response_inner(
-        &self,
-        project_id: &str,
-    ) -> Result<ProjectChatResponse, AppError> {
-        let index = self.project_chat_index(project_id)?;
+    fn project_chat_response_inner(&self) -> Result<ProjectChatResponse, AppError> {
+        let index = self.project_chat_index()?;
         Ok(project_chat_response_from(&self.data.project_chats[index]))
     }
 
     pub async fn create_requirement(
         &mut self,
-        project_id: &str,
         message: String,
         references: Vec<FileReference>,
         images: Vec<ImageAttachment>,
     ) -> Result<(String, RequirementAnalysisInput), AppError> {
-        self.create_requirement_with_session(project_id, message, references, images, None)
+        self.create_requirement_with_session(message, references, images, None)
             .await
     }
 
     pub async fn create_requirement_with_session(
         &mut self,
-        project_id: &str,
         message: String,
         references: Vec<FileReference>,
         images: Vec<ImageAttachment>,
         pi_session_file: Option<String>,
     ) -> Result<(String, RequirementAnalysisInput), AppError> {
+        self.refresh()?;
         let origin = if pi_session_file.is_some() {
             crate::models::RequirementOrigin::ProjectChatBranch
         } else {
             crate::models::RequirementOrigin::Standalone
         };
-        let project = self
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
-        let project_dir = self.project_dir(project_id)?;
+        let project = self.project.clone();
+        let project_dir = self.project_dir();
         let reference_context =
             build_reference_context(Path::new(&project.local_path), &references, &images).await?;
         let prompt_images = build_prompt_images(&project_dir, &images).await?;
@@ -869,9 +717,7 @@ impl JsonStore {
         );
         let requirement = Requirement {
             id: id.clone(),
-            project_id: project_id.to_owned(),
             title: derive_requirement_title(&message),
-            original_message: message.clone(),
             origin,
             status: RequirementStatus::Analyzing,
             messages: vec![RequirementMessage {
@@ -920,6 +766,7 @@ impl JsonStore {
         references: Vec<FileReference>,
         images: Vec<ImageAttachment>,
     ) -> Result<(String, RequirementAnalysisInput), AppError> {
+        self.refresh()?;
         let index = self.requirement_index(requirement_id)?;
         if self.data.requirements[index].status == RequirementStatus::Analyzing {
             return Err(AppError::conflict("需求正在分析，请等待本轮完成"));
@@ -934,15 +781,8 @@ impl JsonStore {
             return Err(AppError::bad_request("当前需求状态不允许继续补充"));
         }
 
-        let project_id = self.data.requirements[index].project_id.clone();
-        let project = self
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
-        let project_dir = self.project_dir(&project_id)?;
+        let project = self.project.clone();
+        let project_dir = self.project_dir();
         let reference_context =
             build_reference_context(Path::new(&project.local_path), &references, &images).await?;
         let prompt_images = build_prompt_images(&project_dir, &images).await?;
@@ -972,7 +812,7 @@ impl JsonStore {
         let requirement = self.data.requirements[index].clone();
         self.write_persist().await?;
         Ok((
-            project_id,
+            String::new(),
             RequirementAnalysisInput {
                 project,
                 messages: requirement.messages,
@@ -990,10 +830,11 @@ impl JsonStore {
     pub async fn submit_requirement_clarifications(
         &mut self,
         requirement_id: &str,
-        prompt_id: Option<String>,
-        revision: Option<u32>,
+        prompt_id: String,
+        revision: u32,
         answers: Vec<crate::models::ClarificationAnswerRequest>,
     ) -> Result<(String, RequirementAnalysisInput), AppError> {
+        self.refresh()?;
         if answers.is_empty() {
             return Err(AppError::bad_request("请先回答澄清问题"));
         }
@@ -1002,32 +843,22 @@ impl JsonStore {
         if self.data.requirements[index].status != RequirementStatus::Clarifying {
             return Err(AppError::bad_request("当前需求不在澄清状态"));
         }
-        let active_prompt = self.data.requirements[index].active_prompt.clone();
-        if let Some(RequirementPromptState::Clarification {
+        let Some(RequirementPromptState::Clarification {
             prompt_id: active_prompt_id,
             revision: active_revision,
             ..
-        }) = active_prompt
-        {
-            if prompt_id
-                .as_deref()
-                .is_some_and(|value| value != active_prompt_id)
-            {
-                return Err(AppError::conflict("澄清问题已更新，请刷新后重试"));
-            }
-            if revision.is_some_and(|value| value != active_revision) {
-                return Err(AppError::conflict("澄清问题版本已更新，请刷新后重试"));
-            }
+        }) = self.data.requirements[index].active_prompt.clone()
+        else {
+            return Err(AppError::conflict("当前澄清问题已失效，请刷新后重试"));
+        };
+        if prompt_id != active_prompt_id {
+            return Err(AppError::conflict("澄清问题已更新，请刷新后重试"));
+        }
+        if revision != active_revision {
+            return Err(AppError::conflict("澄清问题版本已更新，请刷新后重试"));
         }
 
-        let project_id = self.data.requirements[index].project_id.clone();
-        let project = self
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+        let project = self.project.clone();
 
         let mut clarifications = self.data.requirements[index].clarifications.clone();
         for request in answers {
@@ -1086,7 +917,7 @@ impl JsonStore {
         let requirement = self.data.requirements[index].clone();
         self.write_persist().await?;
         Ok((
-            project_id,
+            String::new(),
             RequirementAnalysisInput {
                 project,
                 messages: requirement.messages,
@@ -1106,6 +937,7 @@ impl JsonStore {
         requirement_id: &str,
         session_file: String,
     ) -> Result<(), AppError> {
+        self.refresh()?;
         self.resolve_managed_session_path(&session_file)?;
         let index = self.requirement_index(requirement_id)?;
         self.data.requirements[index].pi_session_file = Some(session_file);
@@ -1118,6 +950,7 @@ impl JsonStore {
         requirement_id: &str,
         clarifications: Vec<crate::models::RequirementClarification>,
     ) -> Result<(), AppError> {
+        self.refresh()?;
         if clarifications.is_empty() {
             return Err(AppError::bad_request("澄清问题不能为空"));
         }
@@ -1152,19 +985,13 @@ impl JsonStore {
         &mut self,
         requirement_id: &str,
     ) -> Result<(String, RequirementAnalysisInput), AppError> {
+        self.refresh()?;
         let index = self.requirement_index(requirement_id)?;
         let requirement = &self.data.requirements[index];
         if requirement.status != RequirementStatus::Failed || requirement.draft.is_some() {
             return Err(AppError::bad_request("只有失败的需求分析才能重试"));
         }
-        let project_id = requirement.project_id.clone();
-        let project = self
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+        let project = self.project.clone();
         let now = Utc::now();
         let requirement = &mut self.data.requirements[index];
         requirement.status = RequirementStatus::Analyzing;
@@ -1184,7 +1011,7 @@ impl JsonStore {
         let requirement = requirement.clone();
         self.write_persist().await?;
         Ok((
-            project_id,
+            String::new(),
             RequirementAnalysisInput {
                 project,
                 messages: requirement.messages,
@@ -1204,6 +1031,7 @@ impl JsonStore {
         requirement_id: &str,
         output: Result<RequirementAnalysisOutput, AppError>,
     ) -> Result<(), AppError> {
+        self.refresh()?;
         let index = self.requirement_index(requirement_id)?;
         let now = Utc::now();
         let requirement = &mut self.data.requirements[index];
@@ -1325,9 +1153,10 @@ impl JsonStore {
     pub async fn confirm_requirement(
         &mut self,
         requirement_id: &str,
-        prompt_id: Option<String>,
-        revision: Option<u32>,
+        prompt_id: String,
+        revision: u32,
     ) -> Result<String, AppError> {
+        self.refresh()?;
         let index = self.requirement_index(requirement_id)?;
         if self.data.requirements[index].status != RequirementStatus::DraftReady {
             return Err(AppError::bad_request("只有已生成确认卡片的需求才能确认"));
@@ -1345,24 +1174,21 @@ impl JsonStore {
                 "需求规格引用无效，已转入自动修复入口",
             ));
         }
-        if let Some(RequirementPromptState::Confirmation {
+        let Some(RequirementPromptState::Confirmation {
             prompt_id: active_prompt_id,
             revision: active_revision,
             ..
         }) = &self.data.requirements[index].active_prompt
-        {
-            if prompt_id
-                .as_deref()
-                .is_some_and(|value| value != active_prompt_id)
-            {
-                return Err(AppError::conflict("确认卡片已更新，请刷新后重试"));
-            }
-            if revision.is_some_and(|value| value != *active_revision) {
-                return Err(AppError::conflict("确认卡片版本已更新，请刷新后重试"));
-            }
+        else {
+            return Err(AppError::conflict("当前确认卡片已失效，请刷新后重试"));
+        };
+        if prompt_id != *active_prompt_id {
+            return Err(AppError::conflict("确认卡片已更新，请刷新后重试"));
+        }
+        if revision != *active_revision {
+            return Err(AppError::conflict("确认卡片版本已更新，请刷新后重试"));
         }
         let now = Utc::now();
-        let project_id = self.data.requirements[index].project_id.clone();
         let requirement = &mut self.data.requirements[index];
         requirement.status = RequirementStatus::Queued;
         requirement.error = None;
@@ -1372,13 +1198,14 @@ impl JsonStore {
         requirement.queued_at = Some(now);
         requirement.updated_at = now;
         self.write_persist().await?;
-        Ok(project_id)
+        Ok(String::new())
     }
 
     pub async fn requeue_failed_planning(
         &mut self,
         requirement_id: &str,
     ) -> Result<FailedRequirementWorkflowAction, AppError> {
+        self.refresh()?;
         let index = self.requirement_index(requirement_id)?;
         let has_workflow = self
             .db
@@ -1393,7 +1220,6 @@ impl JsonStore {
                 "只有尚未创建 WorkflowRun 的规划失败需求才能重新规划",
             ));
         }
-        let project_id = requirement.project_id.clone();
         match change_spec_from_requirement(&requirement) {
             Ok(_) => {
                 let requirement = &mut self.data.requirements[index];
@@ -1405,16 +1231,10 @@ impl JsonStore {
                 requirement.queued_at.get_or_insert(requirement.updated_at);
                 requirement.updated_at = Utc::now();
                 self.write_persist().await?;
-                Ok(FailedRequirementWorkflowAction::Plan { project_id })
+                Ok(FailedRequirementWorkflowAction::Plan)
             }
             Err(_) => {
-                let project = self
-                    .data
-                    .projects
-                    .iter()
-                    .find(|project| project.id == project_id)
-                    .cloned()
-                    .ok_or_else(|| AppError::not_found("项目不存在"))?;
+                let project = self.project.clone();
                 debug_assert!(requirement.draft.is_some());
                 let now = Utc::now();
                 let requirement = &mut self.data.requirements[index];
@@ -1457,15 +1277,16 @@ impl JsonStore {
         &mut self,
         requirement_id: &str,
         baseline: &ChangeSpec,
-    ) -> Result<Option<String>, AppError> {
+    ) -> Result<bool, AppError> {
+        self.refresh()?;
         let index = self.requirement_index(requirement_id)?;
         let requirement = &self.data.requirements[index];
         if requirement.status != RequirementStatus::DraftReady {
-            return Ok(None);
+            return Ok(false);
         }
         let repaired = change_spec_from_requirement(requirement)?;
         if !change_spec_semantics_equal(baseline, &repaired) {
-            return Ok(None);
+            return Ok(false);
         }
         let now = Utc::now();
         let requirement = &mut self.data.requirements[index];
@@ -1487,15 +1308,15 @@ impl JsonStore {
             })),
             created_at: now,
         });
-        let project_id = requirement.project_id.clone();
         self.write_persist().await?;
-        Ok(Some(project_id))
+        Ok(true)
     }
 
     pub async fn start_requirement_planning(
         &mut self,
         requirement_id: &str,
     ) -> Result<(String, WorkflowPlanInput), AppError> {
+        self.refresh()?;
         let index = self.requirement_index(requirement_id)?;
         if !matches!(
             self.data.requirements[index].status,
@@ -1517,14 +1338,7 @@ impl JsonStore {
             ));
         }
         let now = Utc::now();
-        let project_id = self.data.requirements[index].project_id.clone();
-        let project = self
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+        let project = self.project.clone();
         {
             let requirement = &mut self.data.requirements[index];
             requirement.status = RequirementStatus::Planning;
@@ -1540,7 +1354,7 @@ impl JsonStore {
             model_settings: self.data.model_settings.clone(),
         };
         self.write_persist().await?;
-        Ok((project_id, input))
+        Ok((String::new(), input))
     }
 
     pub async fn apply_workflow_plan(
@@ -1548,6 +1362,7 @@ impl JsonStore {
         requirement_id: &str,
         output: Result<WorkflowPlanOutput, AppError>,
     ) -> Result<Option<String>, AppError> {
+        self.refresh()?;
         let index = self.requirement_index(requirement_id)?;
         let now = Utc::now();
         match output {
@@ -1569,7 +1384,6 @@ impl JsonStore {
                 let trace = output.trace;
                 let compiled = match compile_work_plan(
                     &requirement.id,
-                    &requirement.project_id,
                     requirement.analysis_revision,
                     spec,
                     output.plan,
@@ -1663,6 +1477,7 @@ impl JsonStore {
         status: WorkflowRunStatus,
         message: Option<&str>,
     ) -> Result<RequirementStatus, AppError> {
+        self.refresh()?;
         let index = self.requirement_index(requirement_id)?;
         let now = Utc::now();
         let requirement = &mut self.data.requirements[index];
@@ -1703,20 +1518,10 @@ impl JsonStore {
 
     pub async fn prepare_next_project_action(
         &mut self,
-        project_id: &str,
     ) -> Result<Option<ProjectScheduleAction>, AppError> {
-        if !self
-            .data
-            .projects
-            .iter()
-            .any(|project| project.id == project_id)
-        {
-            return Err(AppError::not_found("项目不存在"));
-        }
+        self.refresh()?;
         if self.data.requirements.iter().any(|requirement| {
-            requirement.project_id == project_id
-                && requirement.status == RequirementStatus::Failed
-                && requirement.draft.is_some()
+            requirement.status == RequirementStatus::Failed && requirement.draft.is_some()
         }) {
             return Ok(None);
         }
@@ -1725,9 +1530,7 @@ impl JsonStore {
             self.data
                 .requirements
                 .iter()
-                .filter(|requirement| {
-                    requirement.project_id == project_id && requirement.status == status
-                })
+                .filter(|requirement| requirement.status == status)
                 .min_by_key(|requirement| {
                     (
                         requirement.queued_at.unwrap_or(requirement.updated_at),
@@ -1765,10 +1568,12 @@ impl JsonStore {
             self.write_persist().await?;
             return Ok(None);
         }
-        if self.data.requirements.iter().any(|requirement| {
-            requirement.project_id == project_id
-                && requirement.status == RequirementStatus::Planning
-        }) {
+        if self
+            .data
+            .requirements
+            .iter()
+            .any(|requirement| requirement.status == RequirementStatus::Planning)
+        {
             return Ok(None);
         }
         if let Some(requirement_id) = oldest(RequirementStatus::Queued) {
@@ -1781,7 +1586,8 @@ impl JsonStore {
         Ok(None)
     }
 
-    pub async fn recover_interrupted_requirements(&mut self) -> Result<Vec<String>, AppError> {
+    pub async fn recover_interrupted_requirements(&mut self) -> Result<bool, AppError> {
+        self.refresh()?;
         let workflow_states = self
             .data
             .requirements
@@ -1796,7 +1602,7 @@ impl JsonStore {
             .collect::<Result<Vec<_>, _>>()?;
         let now = Utc::now();
         let mut changed = false;
-        let mut project_ids = HashSet::new();
+        let mut should_resume = false;
 
         for (requirement, workflow_state) in self.data.requirements.iter_mut().zip(workflow_states)
         {
@@ -1817,7 +1623,7 @@ impl JsonStore {
                 requirement.failure_code = None;
                 requirement.queued_at.get_or_insert(requirement.updated_at);
                 requirement.updated_at = now;
-                project_ids.insert(requirement.project_id.clone());
+                should_resume = true;
                 changed = true;
             } else if let Some((status, blocked_reason)) = workflow_state {
                 let next_status = match status {
@@ -1837,7 +1643,7 @@ impl JsonStore {
                 requirement.failure_stage = None;
                 requirement.failure_code = None;
                 if next_status == RequirementStatus::Running {
-                    project_ids.insert(requirement.project_id.clone());
+                    should_resume = true;
                 }
             } else if requirement.status == RequirementStatus::Running {
                 requirement.status = RequirementStatus::Failed;
@@ -1847,34 +1653,20 @@ impl JsonStore {
                 requirement.updated_at = now;
                 changed = true;
             } else if requirement.status == RequirementStatus::Queued {
-                project_ids.insert(requirement.project_id.clone());
+                should_resume = true;
             }
         }
 
         if changed {
             self.write_persist().await?;
         }
-        let mut project_ids = project_ids.into_iter().collect::<Vec<_>>();
-        project_ids.sort();
-        Ok(project_ids)
+        Ok(should_resume)
     }
 
     pub async fn recover_interrupted_project_chats(&mut self) -> Result<(), AppError> {
+        self.refresh()?;
         let now = Utc::now();
-        let project_ids = self
-            .data
-            .projects
-            .iter()
-            .map(|project| project.id.as_str())
-            .collect::<HashSet<_>>();
         let mut changed = false;
-        self.data.project_chats.retain(|chat| {
-            let keep = project_ids.contains(chat.project_id.as_str());
-            if !keep {
-                changed = true;
-            }
-            keep
-        });
         for chat in &mut self.data.project_chats {
             if chat.running {
                 chat.running = false;
@@ -1986,32 +1778,30 @@ impl JsonStore {
     }
 
     pub fn requirement_status(&self, requirement_id: &str) -> Result<RequirementStatus, AppError> {
-        let index = self.requirement_index(requirement_id)?;
-        Ok(self.data.requirements[index].status)
+        self.db
+            .load()?
+            .requirements
+            .into_iter()
+            .find(|requirement| requirement.id == requirement_id)
+            .map(|requirement| requirement.status)
+            .ok_or_else(|| AppError::not_found("需求不存在"))
     }
 
     pub fn requirement_index(&self, requirement_id: &str) -> Result<usize, AppError> {
-        self.data
+        self.db
+            .load()?
             .requirements
             .iter()
             .position(|requirement| requirement.id == requirement_id)
             .ok_or_else(|| AppError::not_found("需求不存在"))
     }
 
-    pub fn project_dir(&self, id: &str) -> Result<PathBuf, AppError> {
-        if !self.data.projects.iter().any(|project| project.id == id) {
-            return Err(AppError::not_found("项目不存在"));
-        }
-        Ok(self.data_root.clone())
+    pub fn project_dir(&self) -> PathBuf {
+        self.data_root.clone()
     }
 
-    pub fn project_root(&self, id: &str) -> Result<PathBuf, AppError> {
-        self.data
-            .projects
-            .iter()
-            .find(|project| project.id == id)
-            .map(|project| PathBuf::from(&project.local_path))
-            .ok_or_else(|| AppError::not_found("项目不存在"))
+    pub fn project_root(&self) -> PathBuf {
+        PathBuf::from(&self.project.local_path)
     }
 }
 
@@ -2078,28 +1868,18 @@ fn aggregate_project_token_usage<'a>(
 
     for workflow in workflows {
         for attempt in &workflow.attempts {
-            if let Some(trace) = &attempt.usage
-                && add_trace_usage(&mut usage.task, trace)
-            {
+            if let Some(metrics) = &attempt.usage {
                 found = true;
-                collect_trace_insights(
-                    &mut usage,
-                    trace,
-                    &format!("工作项尝试：{}", attempt.id),
-                    None,
-                );
+                add_operation_metrics(&mut usage, metrics, &format!("工作项尝试：{}", attempt.id));
             }
         }
         for checkpoint in &workflow.checkpoints {
-            if let Some(trace) = &checkpoint.usage
-                && add_trace_usage(&mut usage.task, trace)
-            {
+            if let Some(metrics) = &checkpoint.usage {
                 found = true;
-                collect_trace_insights(
+                add_operation_metrics(
                     &mut usage,
-                    trace,
+                    metrics,
                     &format!("Checkpoint：{}", checkpoint.id),
-                    None,
                 );
             }
         }
@@ -2127,6 +1907,64 @@ fn aggregate_project_token_usage<'a>(
         .sort_by_key(|item| std::cmp::Reverse(item.usage.total()));
     usage.roles.truncate(5);
     Some(usage)
+}
+
+fn add_operation_metrics(
+    usage: &mut ProjectTokenUsage,
+    metrics: &crate::workflow::OperationMetrics,
+    label: &str,
+) {
+    usage.task.input += metrics.usage.input;
+    usage.task.output += metrics.usage.output;
+    usage.task.cache_read += metrics.usage.cache_read;
+    usage.task.cache_write += metrics.usage.cache_write;
+    usage.max_context_percent = usage.max_context_percent.max(metrics.context_percent);
+    let role = metrics.role.as_deref().unwrap_or("unknown");
+    usage.hotspots.push(TokenUsageHotspot {
+        label: label.to_owned(),
+        role: role.to_owned(),
+        usage: metrics.usage.clone(),
+        context_percent: metrics.context_percent,
+        budget_exceeded: metrics
+            .budget
+            .as_ref()
+            .is_some_and(|budget| budget.exceeded),
+    });
+    if let Some(existing) = usage.roles.iter_mut().find(|item| item.role == role) {
+        existing.usage.input += metrics.usage.input;
+        existing.usage.output += metrics.usage.output;
+        existing.usage.cache_read += metrics.usage.cache_read;
+        existing.usage.cache_write += metrics.usage.cache_write;
+    } else {
+        usage.roles.push(TokenUsageRole {
+            role: role.to_owned(),
+            usage: metrics.usage.clone(),
+        });
+    }
+    for source in &metrics.sources {
+        if let Some(existing) = usage
+            .sources
+            .iter_mut()
+            .find(|item| item.kind == source.kind && item.label == source.label)
+        {
+            existing.chars += source.chars;
+            existing.estimated_tokens += source.estimated_tokens;
+        } else {
+            usage.sources.push(source.clone());
+        }
+    }
+    if let Some(compaction) = &metrics.compaction {
+        let summary = usage
+            .compaction
+            .get_or_insert_with(TokenCompactionUsage::default);
+        summary.count += compaction.count;
+        summary.completed += compaction.completed;
+        summary.aborted += compaction.aborted;
+        summary.failed += compaction.failed;
+        summary.overflow_retries += compaction.overflow_retries;
+        summary.estimated_tokens_saved += compaction.estimated_tokens_saved;
+        summary.usage_known |= compaction.usage_known;
+    }
 }
 
 fn collect_trace_insights(
@@ -2334,271 +2172,6 @@ fn is_operation_trace(trace: &Value) -> bool {
         .and_then(|usage| usage.get("scope"))
         .and_then(Value::as_str)
         == Some("operation")
-}
-
-pub fn read_session_transcript(
-    sources: &[(String, PathBuf)],
-    before: Option<usize>,
-    limit: usize,
-) -> Result<SessionTranscriptPage, AppError> {
-    // ponytail: Pi context files are local and bounded; one pass keeps ordering
-    // correct across retry/review sources. Add an on-disk index only if profiling
-    // shows session parsing is a real bottleneck.
-    let mut entries = Vec::new();
-    let mut invalid_lines = 0usize;
-
-    for (source, path) in sources {
-        let file = std::fs::File::open(path)
-            .map_err(|_| AppError::not_found("会话记录不存在或无法读取"))?;
-        for (line_index, line) in std::io::BufReader::new(file).lines().enumerate() {
-            let line = match line {
-                Ok(line) => line,
-                Err(_) => {
-                    invalid_lines += 1;
-                    continue;
-                }
-            };
-            if line.trim().is_empty() {
-                continue;
-            }
-            let raw: Value = match serde_json::from_str(&line) {
-                Ok(value) => value,
-                Err(_) => {
-                    invalid_lines += 1;
-                    continue;
-                }
-            };
-            let kind = raw
-                .get("type")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_owned();
-            let message = (kind == "message").then(|| raw.get("message")).flatten();
-            let public_raw = redact_session_entry(&raw, &kind);
-            entries.push(SessionEntry {
-                cursor: 0,
-                source: source.clone(),
-                line: line_index + 1,
-                kind: kind.clone(),
-                id: raw.get("id").and_then(Value::as_str).map(ToOwned::to_owned),
-                role: message
-                    .and_then(|value| value.get("role"))
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-                timestamp: raw
-                    .get("timestamp")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-                blocks: if kind == "compaction" {
-                    vec![parse_session_compaction(&raw)]
-                } else {
-                    message.map(parse_session_blocks).unwrap_or_default()
-                },
-                raw: public_raw,
-            });
-        }
-    }
-
-    entries.sort_by(|left, right| {
-        let timestamp = |entry: &SessionEntry| {
-            entry
-                .timestamp
-                .as_deref()
-                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        };
-        timestamp(left)
-            .cmp(&timestamp(right))
-            .then_with(|| left.source.cmp(&right.source))
-            .then_with(|| left.line.cmp(&right.line))
-    });
-    for (cursor, entry) in entries.iter_mut().enumerate() {
-        entry.cursor = cursor;
-    }
-
-    let end = before.unwrap_or(entries.len()).min(entries.len());
-    let start = end.saturating_sub(limit.clamp(1, 200));
-    let page = entries.drain(start..end).collect();
-    Ok(SessionTranscriptPage {
-        entries: page,
-        next_before: (start > 0).then_some(start),
-        invalid_lines,
-    })
-}
-
-fn redact_session_entry(entry: &Value, kind: &str) -> Value {
-    if kind != "compaction" {
-        return entry.clone();
-    }
-    let mut public = entry.clone();
-    if let Some(object) = public.as_object_mut() {
-        object.remove("summary");
-    }
-    public
-}
-
-fn parse_session_compaction(entry: &Value) -> SessionContentBlock {
-    let tokens_before = entry.get("tokensBefore").and_then(Value::as_u64);
-    let estimated_tokens_after = entry.get("estimatedTokensAfter").and_then(Value::as_u64);
-    let estimated_tokens_saved = tokens_before
-        .zip(estimated_tokens_after)
-        .map(|(before, after)| before.saturating_sub(after));
-    SessionContentBlock::Compaction {
-        reason: entry
-            .get("reason")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
-        status: entry
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("completed")
-            .to_owned(),
-        tokens_before,
-        estimated_tokens_after,
-        estimated_tokens_saved,
-        first_kept_entry_id: entry
-            .get("firstKeptEntryId")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
-        from_hook: entry
-            .get("fromHook")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        read_file_count: entry
-            .pointer("/details/readFiles")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len),
-        modified_file_count: entry
-            .pointer("/details/modifiedFiles")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len),
-        will_retry: entry
-            .get("willRetry")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        error: entry
-            .get("errorMessage")
-            .or_else(|| entry.get("error"))
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
-        usage_known: false,
-    }
-}
-
-fn parse_session_blocks(message: &Value) -> Vec<SessionContentBlock> {
-    if message.get("role").and_then(Value::as_str) == Some("toolResult") {
-        let content = message.get("content");
-        let output = match content {
-            Some(Value::String(text)) => text.clone(),
-            Some(Value::Array(content)) => content
-                .iter()
-                .filter_map(|block| block.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            _ => String::new(),
-        };
-        let mut blocks = vec![SessionContentBlock::ToolResult {
-            tool_call_id: message
-                .get("toolCallId")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
-            name: message
-                .get("toolName")
-                .and_then(Value::as_str)
-                .unwrap_or("未知工具")
-                .to_owned(),
-            output,
-            diff: message
-                .get("details")
-                .and_then(|details| details.get("diff"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned),
-            is_error: message
-                .get("isError")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        }];
-        if let Some(Value::Array(content)) = content {
-            blocks.extend(
-                content
-                    .iter()
-                    .filter(|block| block.get("type").and_then(Value::as_str) != Some("text"))
-                    .map(|block| SessionContentBlock::Unknown {
-                        block_type: block
-                            .get("type")
-                            .and_then(Value::as_str)
-                            .unwrap_or("unknown")
-                            .to_owned(),
-                        raw: block.clone(),
-                    }),
-            );
-        }
-        if message.get("toolName").and_then(Value::as_str) == Some("run_parallel_code_review")
-            && let Some(reviews) = message.pointer("/details/reviews")
-        {
-            match serde_json::from_value::<Vec<SubagentReview>>(reviews.clone()) {
-                Ok(reviews) => blocks.push(SessionContentBlock::Subagents {
-                    reviews,
-                    selection: message.pointer("/details/selection").cloned(),
-                }),
-                Err(_) => blocks.push(SessionContentBlock::Unknown {
-                    block_type: "subagents".to_owned(),
-                    raw: reviews.clone(),
-                }),
-            }
-        }
-        return blocks;
-    }
-
-    match message.get("content") {
-        Some(Value::String(text)) => vec![SessionContentBlock::Text { text: text.clone() }],
-        Some(Value::Array(content)) => content.iter().map(parse_session_block).collect(),
-        Some(raw) => vec![SessionContentBlock::Unknown {
-            block_type: "content".to_owned(),
-            raw: raw.clone(),
-        }],
-        None => Vec::new(),
-    }
-}
-
-fn parse_session_block(block: &Value) -> SessionContentBlock {
-    match block.get("type").and_then(Value::as_str) {
-        Some("text") => SessionContentBlock::Text {
-            text: block
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
-        },
-        Some("thinking") => SessionContentBlock::Thinking {
-            text: block
-                .get("thinking")
-                .or_else(|| block.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
-        },
-        Some("toolCall" | "tool_call") => SessionContentBlock::ToolCall {
-            id: block
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
-            name: block
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("未知工具")
-                .to_owned(),
-            arguments: block
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({})),
-        },
-        block_type => SessionContentBlock::Unknown {
-            block_type: block_type.unwrap_or("unknown").to_owned(),
-            raw: block.clone(),
-        },
-    }
 }
 
 fn trace_usage(trace: &Value) -> Option<&Value> {

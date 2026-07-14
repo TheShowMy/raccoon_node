@@ -1,4 +1,4 @@
-fn referenced_pi_session_paths(data: &AppData, session_dir: &Path) -> HashSet<PathBuf> {
+fn referenced_pi_session_paths(data: &StoreState, session_dir: &Path) -> HashSet<PathBuf> {
     data.requirements
         .iter()
         .filter_map(|requirement| requirement.pi_session_file.as_ref())
@@ -24,7 +24,6 @@ fn referenced_pi_session_paths(data: &AppData, session_dir: &Path) -> HashSet<Pa
 
 fn project_chat_response_from(chat: &ProjectChat) -> ProjectChatResponse {
     ProjectChatResponse {
-        project_id: chat.project_id.clone(),
         messages: chat.messages.clone(),
         running: chat.running,
         error: chat.error.clone(),
@@ -80,8 +79,8 @@ fn build_requirement_conversation(requirement: Requirement) -> RequirementConver
         }) => Some(RequirementConversationPrompt::Clarification {
             round: *round,
             questions: questions.clone(),
-            prompt_id: Some(prompt_id.clone()),
-            revision: Some(*revision),
+            prompt_id: prompt_id.clone(),
+            revision: *revision,
         }),
         Some(RequirementPromptState::Confirmation {
             prompt_id,
@@ -89,27 +88,10 @@ fn build_requirement_conversation(requirement: Requirement) -> RequirementConver
             draft,
         }) => Some(RequirementConversationPrompt::Confirmation {
             draft: draft.clone(),
-            prompt_id: Some(prompt_id.clone()),
-            revision: Some(*revision),
+            prompt_id: prompt_id.clone(),
+            revision: *revision,
         }),
-        None => match requirement.status {
-            RequirementStatus::Clarifying if !requirement.clarifications.is_empty() => {
-                Some(RequirementConversationPrompt::Clarification {
-                    round: requirement.clarification_round,
-                    questions: requirement.clarifications.clone(),
-                    prompt_id: None,
-                    revision: None,
-                })
-            }
-            RequirementStatus::DraftReady => requirement.draft.clone().map(|draft| {
-                RequirementConversationPrompt::Confirmation {
-                    draft,
-                    prompt_id: None,
-                    revision: None,
-                }
-            }),
-            _ => None,
-        },
+        None => None,
     };
 
     let running = matches!(
@@ -140,7 +122,6 @@ fn build_requirement_conversation(requirement: Requirement) -> RequirementConver
 
     RequirementConversationResponse {
         id: requirement.id,
-        project_id: requirement.project_id,
         title: requirement.title,
         status: requirement.status,
         running,

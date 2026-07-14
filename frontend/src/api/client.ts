@@ -3,7 +3,6 @@ import {
   type ProjectCanvasData,
   type ModelSettings,
   type ModelSettingsResponse,
-  type Requirement,
   type RequirementConversation,
   type DraftClarificationAnswer,
   type RequirementClarification,
@@ -14,13 +13,11 @@ import {
   type BasicSettings,
   type BasicSettingsUpdate,
   type RestartResponse,
-  type SessionTranscriptPage,
   type ProjectFileContent,
   type ProjectFileTreeEntry,
   type PublicationReadiness,
   type TerminalAccessStatus,
   type TerminalCommandProfile,
-  type TerminalCommandProfileDraft,
   type TerminalSession,
   type GitAction,
   type GitDiff,
@@ -40,7 +37,7 @@ export async function getCurrentProject(): Promise<{
   theme_mode: ThemeMode;
   publication_readiness: PublicationReadiness;
 }> {
-  const response = await fetch("/api/project/current");
+  const response = await fetch("/api/project");
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -80,35 +77,17 @@ function isThemePack(value: unknown): value is ThemePack {
 }
 
 export async function getProjectCanvas(
-  projectId: string,
   workflowRequirementId?: string | null,
 ): Promise<ProjectCanvasData> {
   const query = workflowRequirementId
     ? `?workflow_requirement_id=${encodeURIComponent(workflowRequirementId)}`
     : "";
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/canvas${query}`,
-  );
+  const response = await fetch(`/api/canvas${query}`);
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
     } | null;
     throw new Error(body?.message ?? "读取项目画布失败");
-  }
-  return response.json();
-}
-
-export async function getRequirementWorkflowRun(
-  requirementId: string,
-): Promise<WorkflowSnapshot> {
-  const response = await fetch(
-    `/api/requirements/${encodeURIComponent(requirementId)}/workflow-run`,
-  );
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    throw new Error(body?.message ?? "读取 WorkflowRun 失败");
   }
   return response.json();
 }
@@ -162,79 +141,8 @@ export async function restartWorkflowRunClean(
   return response.json();
 }
 
-export async function getWorkflowAttemptSession(
-  runId: string,
-  attemptId: string,
-  before?: number | null,
-): Promise<SessionTranscriptPage> {
-  const query = before == null ? "" : `?before=${before}`;
-  return sessionResponse(
-    await fetch(
-      `/api/workflow-runs/${encodeURIComponent(runId)}/attempts/${encodeURIComponent(attemptId)}/session${query}`,
-    ),
-  );
-}
-
-export async function getTaskSession(
-  requirementId: string,
-  taskId: string,
-  before?: number | null,
-): Promise<SessionTranscriptPage> {
-  const query = before == null ? "" : `?before=${before}`;
-  const response = await fetch(
-    `/api/requirements/${encodeURIComponent(requirementId)}/tasks/${encodeURIComponent(taskId)}/session${query}`,
-  );
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    throw new Error(body?.message ?? "读取任务会话失败");
-  }
-  return response.json();
-}
-
-export async function getRequirementSession(
-  requirementId: string,
-  before?: number | null,
-): Promise<SessionTranscriptPage> {
-  const query = before == null ? "" : `?before=${before}`;
-  return sessionResponse(
-    await fetch(
-      `/api/requirements/${encodeURIComponent(requirementId)}/session${query}`,
-    ),
-  );
-}
-
-export async function getProjectChatSession(
-  projectId: string,
-  before?: number | null,
-): Promise<SessionTranscriptPage> {
-  const query = before == null ? "" : `?before=${before}`;
-  return sessionResponse(
-    await fetch(
-      `/api/projects/${encodeURIComponent(projectId)}/chat/session${query}`,
-    ),
-  );
-}
-
-async function sessionResponse(
-  response: Response,
-): Promise<SessionTranscriptPage> {
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    throw new Error(body?.message ?? "读取会话记录失败");
-  }
-  return response.json();
-}
-
-export async function getProjectTerminals(
-  projectId: string,
-): Promise<TerminalSession[]> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/terminals`,
-  );
+export async function getProjectTerminals(): Promise<TerminalSession[]> {
+  const response = await fetch("/api/terminals");
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -244,12 +152,8 @@ export async function getProjectTerminals(
   return response.json();
 }
 
-export async function getTerminalAccessStatus(
-  projectId: string,
-): Promise<TerminalAccessStatus> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/terminal-access`,
-  );
+export async function getTerminalAccessStatus(): Promise<TerminalAccessStatus> {
+  const response = await fetch("/api/terminal-access");
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -260,17 +164,13 @@ export async function getTerminalAccessStatus(
 }
 
 export async function unlockTerminalAccess(
-  projectId: string,
   key: string,
 ): Promise<TerminalAccessStatus> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/terminal-access`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key }),
-    },
-  );
+  const response = await fetch("/api/terminal-access", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key }),
+  });
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -293,35 +193,23 @@ async function gitResponse<T>(
   return response.json();
 }
 
-export async function getProjectGitStatus(
-  projectId: string,
-): Promise<GitStatus> {
-  return gitResponse(
-    await fetch(`/api/projects/${encodeURIComponent(projectId)}/git/status`),
-    "读取 Git 状态失败",
-  );
+export async function getProjectGitStatus(): Promise<GitStatus> {
+  return gitResponse(await fetch("/api/git/status"), "读取 Git 状态失败");
 }
 
 export async function getProjectGitDiff(
-  projectId: string,
   path: string,
   area: GitDiffArea,
 ): Promise<GitDiff> {
   const query = new URLSearchParams({ path, area });
-  return gitResponse(
-    await fetch(
-      `/api/projects/${encodeURIComponent(projectId)}/git/diff?${query}`,
-    ),
-    "读取文件差异失败",
-  );
+  return gitResponse(await fetch(`/api/git/diff?${query}`), "读取文件差异失败");
 }
 
 export async function executeProjectGitAction(
-  projectId: string,
   action: GitAction,
 ): Promise<GitStatus> {
   return gitResponse(
-    await fetch(`/api/projects/${encodeURIComponent(projectId)}/git/actions`, {
+    await fetch("/api/git/actions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(action),
@@ -330,18 +218,15 @@ export async function executeProjectGitAction(
   );
 }
 
-export async function createProjectTerminal(
-  projectId: string,
-  payload: { command?: string | null; title?: string | null },
-): Promise<TerminalSession> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/terminals`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
+export async function createProjectTerminal(payload: {
+  command?: string | null;
+  title?: string | null;
+}): Promise<TerminalSession> {
+  const response = await fetch("/api/terminals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -352,11 +237,10 @@ export async function createProjectTerminal(
 }
 
 export async function deleteProjectTerminal(
-  projectId: string,
   terminalId: string,
 ): Promise<TerminalSession[]> {
   const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/terminals/${encodeURIComponent(terminalId)}`,
+    `/api/terminals/${encodeURIComponent(terminalId)}`,
     { method: "DELETE" },
   );
   if (!response.ok) {
@@ -368,12 +252,10 @@ export async function deleteProjectTerminal(
   return response.json();
 }
 
-export async function getTerminalCommandProfiles(
-  projectId: string,
-): Promise<TerminalCommandProfile[]> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/terminal-commands`,
-  );
+export async function getTerminalCommandProfiles(): Promise<
+  TerminalCommandProfile[]
+> {
+  const response = await fetch("/api/terminal-commands");
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -383,30 +265,9 @@ export async function getTerminalCommandProfiles(
   return response.json();
 }
 
-export async function putTerminalCommandProfiles(
-  projectId: string,
-  profiles: TerminalCommandProfileDraft[],
-): Promise<TerminalCommandProfile[]> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/terminal-commands`,
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ profiles }),
-    },
-  );
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    throw new Error(body?.message ?? "保存终端启动命令失败");
-  }
-  return response.json();
-}
-
-export function terminalWebSocketUrl(projectId: string, terminalId: string) {
+export function terminalWebSocketUrl(terminalId: string) {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/api/projects/${encodeURIComponent(projectId)}/terminals/${encodeURIComponent(terminalId)}/ws`;
+  return `${protocol}//${window.location.host}/api/terminals/${encodeURIComponent(terminalId)}/ws`;
 }
 
 function webSocketUrl(path: string) {
@@ -414,10 +275,8 @@ function webSocketUrl(path: string) {
   return `${protocol}//${window.location.host}${path}`;
 }
 
-export function projectChatWebSocketUrl(projectId: string) {
-  return webSocketUrl(
-    `/api/projects/${encodeURIComponent(projectId)}/chat/events`,
-  );
+export function projectChatWebSocketUrl() {
+  return webSocketUrl("/api/chat/events");
 }
 
 export function requirementConversationWebSocketUrl(requirementId: string) {
@@ -426,12 +285,8 @@ export function requirementConversationWebSocketUrl(requirementId: string) {
   );
 }
 
-export async function getProjectChat(
-  projectId: string,
-): Promise<ProjectChatResponse> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/chat`,
-  );
+export async function getProjectChat(): Promise<ProjectChatResponse> {
+  const response = await fetch("/api/chat");
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -441,13 +296,8 @@ export async function getProjectChat(
   return response.json();
 }
 
-export async function resetProjectChat(
-  projectId: string,
-): Promise<ProjectChatResponse> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/chat`,
-    { method: "DELETE" },
-  );
+export async function resetProjectChat(): Promise<ProjectChatResponse> {
+  const response = await fetch("/api/chat", { method: "DELETE" });
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -458,12 +308,11 @@ export async function resetProjectChat(
 }
 
 export async function getProjectFiles(
-  projectId: string,
   search: string,
   signal?: AbortSignal,
 ): Promise<FileReference[]> {
   const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/files?search=${encodeURIComponent(search)}`,
+    `/api/files?search=${encodeURIComponent(search)}`,
     { signal },
   );
   if (!response.ok) {
@@ -476,11 +325,10 @@ export async function getProjectFiles(
 }
 
 export async function getProjectFileContent(
-  projectId: string,
   path: string,
 ): Promise<ProjectFileContent> {
   const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/files/content?path=${encodeURIComponent(path)}`,
+    `/api/files/content?path=${encodeURIComponent(path)}`,
   );
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
@@ -492,12 +340,11 @@ export async function getProjectFileContent(
 }
 
 export async function getProjectFileTree(
-  projectId: string,
   path: string,
   signal?: AbortSignal,
 ): Promise<ProjectFileTreeEntry[]> {
   const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/files/tree?path=${encodeURIComponent(path)}`,
+    `/api/files/tree?path=${encodeURIComponent(path)}`,
     { signal },
   );
   if (!response.ok) {
@@ -510,22 +357,18 @@ export async function getProjectFileTree(
 }
 
 export async function uploadProjectAttachment(
-  projectId: string,
   file: File,
 ): Promise<ImageAttachment> {
   const dataBase64 = await readFileAsDataUrl(file);
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/attachments`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: file.name || "image",
-        mime_type: file.type,
-        data_base64: dataBase64,
-      }),
-    },
-  );
+  const response = await fetch("/api/attachments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: file.name || "image",
+      mime_type: file.type,
+      data_base64: dataBase64,
+    }),
+  });
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -535,22 +378,16 @@ export async function uploadProjectAttachment(
   return response.json();
 }
 
-export async function sendProjectChatMessage(
-  projectId: string,
-  payload: {
-    message: string;
-    references: FileReference[];
-    images: ImageAttachment[];
-  },
-): Promise<ChatAccepted> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/chat/messages`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
+export async function sendProjectChatMessage(payload: {
+  message: string;
+  references: FileReference[];
+  images: ImageAttachment[];
+}): Promise<ChatAccepted> {
+  const response = await fetch("/api/chat/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -560,13 +397,8 @@ export async function sendProjectChatMessage(
   return response.json();
 }
 
-export async function abortProjectChat(
-  projectId: string,
-): Promise<AcceptedOperation> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/chat/abort`,
-    { method: "POST" },
-  );
+export async function abortProjectChat(): Promise<AcceptedOperation> {
+  const response = await fetch("/api/chat/abort", { method: "POST" });
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -576,47 +408,16 @@ export async function abortProjectChat(
   return response.json();
 }
 
-export async function createRequirement(
-  projectId: string,
-  payload: {
-    message: string;
-    references: FileReference[];
-    images: ImageAttachment[];
-  },
-): Promise<RequirementAccepted> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/requirements`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    throw new Error(body?.message ?? "提交需求失败");
-  }
-  return response.json();
-}
-
-export async function createRequirementBranch(
-  projectId: string,
-  payload: {
-    message: string;
-    references: FileReference[];
-    images: ImageAttachment[];
-  },
-): Promise<RequirementAccepted> {
-  const response = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/chat/commands/requirement-branch`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
+export async function createRequirementBranch(payload: {
+  message: string;
+  references: FileReference[];
+  images: ImageAttachment[];
+}): Promise<RequirementAccepted> {
+  const response = await fetch("/api/chat/requirements", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
@@ -669,18 +470,18 @@ export async function getRequirementConversation(
 export async function submitRequirementClarifications(
   requirementId: string,
   answers: ReturnType<typeof buildClarificationAnswerPayload>[],
-  prompt?: { prompt_id?: string; revision?: number },
+  prompt: { prompt_id: string; revision: number },
 ): Promise<ProjectCanvasData> {
-  const body =
-    prompt?.prompt_id || prompt?.revision
-      ? { prompt_id: prompt.prompt_id, revision: prompt.revision, answers }
-      : answers;
   const response = await fetch(
     `/api/requirements/${encodeURIComponent(requirementId)}/clarifications`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        prompt_id: prompt.prompt_id,
+        revision: prompt.revision,
+        answers,
+      }),
     },
   );
   if (!response.ok) {
@@ -710,14 +511,14 @@ export async function retryRequirementAnalysis(
 
 export async function confirmRequirement(
   requirementId: string,
-  prompt?: { prompt_id?: string; revision?: number },
+  prompt: { prompt_id: string; revision: number },
 ): Promise<ProjectCanvasData> {
   const response = await fetch(
     `/api/requirements/${encodeURIComponent(requirementId)}/confirm`,
     {
       method: "POST",
-      headers: prompt ? { "Content-Type": "application/json" } : undefined,
-      body: prompt ? JSON.stringify(prompt) : undefined,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(prompt),
     },
   );
   if (!response.ok) {

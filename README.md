@@ -1,84 +1,41 @@
 # raccoon_node
 
-面向本地 Git 仓库的节点画布。后端使用 Rust、Axum 与 Tokio，前端使用 React、
-Vite 与 React Flow；所有 LLM 和模型能力均通过持久 Pi Agent RPC 子进程提供。
+面向单个本地 Git 仓库的自动化 Agent 工作台。Rust/Axum 后端管理 SQLite、Git worktree、Pi Agent RPC
+与发布流程；React Flow + Astryx 前端提供项目聊天、需求、文件、Git、终端、设置和 Token 六个工作台。
 
-## 功能
+## 核心流程
 
-- 当前 Git 仓库即项目，启动后直接进入项目画布
-- 椭圆画布：中心项目聊天与设置、终端、Git、Token、需求、文件六个固定外围工作台
-- 项目聊天：基于当前仓库维护连续的只读 Pi 会话，显示回答、思考、工具与流式状态
-- 需求分支：`/需求生成` 从主 Pi session clone 上下文（空会话则新建），独立完成澄清与确认
-- 规格证据：显式技术约束只引用真实用户消息；引用错误在原需求 session 内修正后再启动 Planner
-- 自动执行：确认后按 FIFO 创建 WorkflowRun，只执行真实工作项，并通过确定性验证与
-  隔离并行审核 checkpoint 收敛
-- 一次高级恢复：常规实现与修复全部失败后，以全新高档 Pi session 总览整个 run 并只尝试
-  一次 Rescue；再次失败永久阻塞，避免无限修复循环
-- 会话查看：安全渲染 GFM、预览引用文档，并按需查看需求、问答和任务的原始 JSONL
-- Web 设置中心：配置基础运行参数、低/中/高三档模型和思考等级
-- 极简 TUI：自动打开网页，按钮下方实时显示后端日志；开发模式还会并列显示 Vite 日志
+1. 项目聊天维护一个连续只读 Pi session。
+2. `/需求生成` 克隆聊天上下文并形成行为型 ChangeSpec。
+3. Planner 生成可执行 WorkPlan；合法同层切片使用最多三个隔离 worktree 并行实现。
+4. 调度器运行仓库原生验证，并对完整 diff 运行风险自适应隔离审核。
+5. 语义修复仍失败时最多使用一次高级 Rescue；技术故障暂停并保留恢复点。
+6. 审核通过后本地 fast-forward，或创建并自动合并 GitHub PR/GitLab MR；成功后清理受管资源。
+
+Agent 的 Git 写操作与工作区越界由受管 Pi extension 拦截，不依赖 Prompt。Token 阈值只告警；持续有
+有效活动的任务不会因总时长或轮次被中断，Pi 原生 compaction 保持用户配置。
 
 ## 安装
 
-运行时需要系统已安装 Git 和 Pi Agent。首次启动检测不到 Pi Agent 时，交互式向导可
-确认执行官方 npm 安装命令。
-
-### npm
-
-需要 Node.js 22 或更高版本。
+运行时需要 Git、Pi Agent，以及以下任一分发方式：
 
 ```sh
 npm install --global raccoon-node
-```
-
-### GitHub Release
-
-也可从 [GitHub Releases](https://github.com/TheShowMy/raccoon_node/releases) 下载
-对应平台压缩包并校验 SHA256。当前提供：
-
-- macOS Apple Silicon（darwin-arm64）
-- Linux x64 GNU（linux-x64）
-- Windows x64（win32-x64）
-
-### crates.io
-
-也可通过 Cargo 安装根 crate；发布包携带预构建前端资源，安装时不需要 Node/npm：
-
-```sh
+# 或
 cargo install raccoon-node --locked
 ```
 
-npm、crates.io 与 GitHub Release 三种安装方式提供相同命令：`raccoon`。
-
-## 更新
-
-### npm
-
-```sh
-npm install --global raccoon-node@latest
-```
-
-### crates.io
-
-```sh
-cargo install raccoon-node --locked --force
-```
-
-### GitHub Release
-
-从 [GitHub Releases](https://github.com/TheShowMy/raccoon_node/releases) 下载
-最新对应平台压缩包，覆盖现有二进制即可。
+GitHub Releases 提供 macOS Apple Silicon、Linux x64 GNU 与 Windows x64 包。
 
 ## 使用
 
-在 Git 仓库根目录或任意子目录运行：
+在 Git 仓库内运行：
 
 ```sh
 raccoon
 ```
 
-程序向上定位最近的 Git 根目录；非 Git 目录会直接报错，且不会创建运行数据。
-也可显式指定根目录，但该路径必须直接指向 Git 根：
+也可明确指定 Git 根：
 
 ```sh
 raccoon --project-root /path/to/repository
@@ -87,118 +44,45 @@ raccoon --project-root /path/to/repository
 常用选项：
 
 ```text
---port <PORT>           本次运行监听端口
---host <HOST>           127.0.0.1 或 0.0.0.0
---no-open               不自动打开浏览器
---no-tui                使用纯文本日志
---project-root <PATH>   直接指定 Git 根目录
+--port <PORT>
+--host <127.0.0.1|0.0.0.0>
+--no-open
+--no-tui
+--project-root <PATH>
 ```
 
-默认监听 `127.0.0.1:3001`。TTY 环境默认启动 TUI 并打开浏览器；非 TTY 或
-`--no-tui` 不输出终端控制码，也不会自动打开浏览器。监听 `0.0.0.0` 没有 API
-鉴权，交互式设置会要求二次确认，CLI 显式传入时会输出风险警告；此时 TUI 顶部会显示
-每次启动随机生成的 Web 终端密钥，前端启用项目终端或 Pi 登录终端前需要输入密钥，
-验证通过后 12 小时内有效。
-
-每次启动都会检查发布方式。仓库未配置 `origin` 时直接使用本地合并；配置
-`origin` 后，程序会检查 Git 远程访问、GitHub CLI 登录、仓库写入权限、默认分支和
-Merge commit 设置。检查失败会在画布左上角的“PR 发布”节点显示处理方式，并阻止
-任务执行；处理完成后需重启应用重新检查。仓库规则仍可能在实际推送或合并时执行
-额外校验。
-
-TUI 顶部仅显示“打开网页”按钮，支持鼠标直接点击；按钮下方显示日志面板。发布构建
-显示单一后端日志面板，`npm run dev` 开发模式则左右平分为“后端日志”和“Vite 日志”。
-以下按键作为不展示的兜底：
-
-- `Enter` / `o`：打开浏览器
-- `q` / `Ctrl+C`：优雅退出
-
-配置优先级为 CLI 参数 > `.raccoon-node/config.toml` > 默认值。如果本次启动带有
-`--host` 或 `--port`，Web 设置中心会同时显示保存值、CLI 覆盖值和实际生效值。
-
-点击项目画布左上角的“设置”节点会向左上展开大尺寸设置工作台。基础页完整展示
-双栏设置，无需内部滚动；主题点击后立即切换并持久化，提交模式、监听地址和端口
-使用显式保存，监听变更会通过 Web 重启服务。选择 `0.0.0.0` 时必须在节点内确认
-无鉴权 API 暴露风险。
-
-模型页在配置区右侧内嵌固定暗色的 Pi 登录终端，不会展开普通项目终端。用户手动
-输入 `/login` 后再重载 Pi RPC 模型列表；Raccoon 不读写 Pi 的认证文件或
-`models.json`。模型列表为空或任一低/中/高档未保存时，画布会通过两步聚光引导
-用户依次点击“设置”和“模型设置”；用户可永久跳过。进入模型页后继续按
-“启动终端、登录、重载、配置、保存”显示配置引导。
-
-中心项目聊天输入 `/` 只显示“需求生成”和“新建会话”，也可直接输入
-`/需求生成`。该命令先进入可取消的准备态，要求补充本次要落地的具体内容；主聊天
-已有完整问答和 Pi session 时，后端通过 Pi RPC `clone` 创建独立 child session，
-否则创建独立需求。需求分支保留自己的消息、附件、思考、工具、停止和错误状态，
-活动期间不能发送或重置普通会话。
-
-确认需求后，需求进入 FIFO WorkflowRun。ChangeSpec 只保存用户可观察的 Given/When/Then
-场景和带原文出处的用户显式约束；Planner 只生成行为切片、依赖和可修订 DesignNotes。
-执行器在受管 integration worktree 中完成全部切片；合法的 2–3 项同层并行组会使用各自
-独立的分支、worktree 和 Pi session 真并发，结果按计划顺序汇入 integration，冲突则自动
-降级为串行重跑且不计语义失败。随后对仓库原生验证做基线/最终对比，
-再对完整 diff 启动 1–3 个上下文隔离的并行审核子 Agent。常规低档实现、低档修复、高档修复
-和唯一一次高档集成修复仍不能收敛时，只允许一个全新高档 Rescue session；技术故障只暂停
-并保留恢复点，不消耗 Rescue。审核通过后，`local` 模式安全快进本地主分支；
-`pull_request` 模式推送受管分支并在 GitHub/GitLab 远端自动合并 PR/MR，远端合并成功后即使
-本地主分支因用户改动无法同步也只告警。成功 Run 在完成前清理全部受管 worktree 和分支，
-暂停、阻塞或取消则保留现场。中心节点随后返回未被修改的父聊天；
-需求分支的消息和确认草案不会合并或写回父 Pi session，父、子会话独立演进。
+配置优先级为 CLI > `.raccoon-node/config.toml` > 默认值。监听 `0.0.0.0` 时普通 API 没有鉴权，
+终端功能额外要求本次启动密钥。
 
 ## 项目数据
 
-Raccoon 不复制或删除用户仓库。运行数据固定保存在 Git 根目录：
+Raccoon 不复制或删除用户仓库。所有运行数据位于：
 
 ```text
-<git_root>/
-├── .git/ 或 .git
-└── .raccoon-node/
-    ├── config.toml
-    ├── data.db
-    ├── sessions/
-    ├── logs/
-    ├── extensions/
-    ├── worktrees/
-    └── attachments/
+<git_root>/.raccoon-node/
+├── config.toml
+├── data.db
+├── sessions/
+├── logs/
+├── extensions/
+├── worktrees/
+└── attachments/
 ```
 
-`data.db` 是唯一业务主存储，包含项目问答、需求说明、需求对话快照、FIFO，以及规范化的
-WorkflowRun、工作项、attempt、验证、checkpoint、finding 和只追加事件；Pi session 只保存
-完整模型上下文。对话 WebSocket 仅推送实时增量，
-断线重连后以 SQLite 快照重新对账。日志按日滚动并保留最近 7 个文件，
-`extensions/` 仅存放程序内置的受管 Pi extension。
+`data.db` 使用当前构建的 schema 指纹，不执行历史迁移。结构不匹配时应用拒绝启动并要求用户手动删除
+`.raccoon-node`；不会自动归档、删除或改写旧数据。
 
-首次初始化会幂等地将 `.raccoon-node/` 追加到仓库 `.gitignore`。
+## 开发
 
-Pi Agent 的工作目录只能是当前 Git 根目录或 `.raccoon-node/worktrees/` 内的受管
-worktree；会话首行记录的 `cwd` 必须与预期目录一致。
-
-## 从源码开发
-
-需要 Node.js 22、Rust 1.96、Git 和 Pi Agent。
-
-`Cargo.toml` 中的 `rust-version` 声明项目承诺支持的最低 Rust 版本；
-`rust-toolchain.toml` 固定在本目录实际使用的工具链。两者当前均为 1.96。
+需要 Node.js 22、Rust 1.96、Git 和 Pi Agent：
 
 ```sh
 npm ci
 npm --prefix frontend ci
-```
-
-### 启动开发服务
-
-开发模式下前端启用 Vite HMR 热更新，修改前端代码即时生效，无需重新构建。
-
-**在当前仓库测试（项目源码自身作为测试仓库）：**
-
-```sh
 npm run dev
 ```
 
-**指定外部仓库测试（--project-root 指向要测试的 Git 仓库）：**
-
-macOS / Linux：
+指定外部测试仓库：
 
 ```sh
 RACCOON_PROJECT_ROOT=/path/to/test-repo npm run dev
@@ -211,38 +95,23 @@ $env:RACCOON_PROJECT_ROOT = "C:\path\to\test-repo"
 npm run dev
 ```
 
-启动后浏览器自动打开 `http://localhost:5173`，前端 HMR 生效，API 请求自动代理到
-后端 `http://127.0.0.1:3001`。如果不设 `RACCOON_PROJECT_ROOT`，默认使用当前项目
-根目录。开发模式默认启动极简 TUI，后端管理 Vite dev server。退出 TUI 会同时关闭
-Vite；从 Web 修改端口并重启后，后端和 Vite 会一起重启，Vite proxy 会指向新的
-后端端口。完整日志继续写入 `.raccoon-node/logs/`。
-
-### 生产构建
+生产构建：
 
 ```sh
 npm run build
 ./build/bin/raccoon
 ```
 
-Windows PowerShell：
+验证：
 
-```powershell
-npm run build
-.\build\bin\raccoon.exe
+```sh
+npm run check
+pre-commit run --all-files
 ```
 
-构建结果是嵌入前端静态资源的单二进制，不需要外置 `public` 或数据目录。
-
-## 验证
-
-- 基础检查：`npm run check`
-- 完整检查：`pre-commit run --all-files`
-
-## API
-
-后端 API 前缀为 `/api`，固定项目 ID 为 `current`。详见
+架构约束见 [docs/spec/TECH_STACK.md](docs/spec/TECH_STACK.md)，API 见
 [docs/api/README.md](docs/api/README.md)。
 
-## 许可证
+## License
 
 [MIT](LICENSE)

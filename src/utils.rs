@@ -3,11 +3,9 @@ use std::{
     process::Command,
 };
 
-use chrono::Utc;
-
 use crate::error::AppError;
 use crate::models::{
-    AppData, ClarificationAnswer, ClarificationQuestionType, ModelSettings, PiModel, Requirement,
+    ClarificationAnswer, ClarificationQuestionType, ModelSettings, PiModel, Requirement,
     RequirementClarification,
 };
 
@@ -260,27 +258,6 @@ pub fn clarification_has_answer(
                     .is_some_and(|text| !text.trim().is_empty())
         }
     }
-}
-
-pub async fn write_json(path: &Path, data: &AppData) -> Result<(), AppError> {
-    let mut content = serde_json::to_vec(data)?;
-    content.push(b'\n');
-    let parent = path
-        .parent()
-        .ok_or_else(|| AppError::internal(format!("无法获取 {} 的父目录", path.display())))?;
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("app.json");
-    let temp_name = format!(".{file_name}.{}.tmp", Utc::now().timestamp_millis());
-    let temp_path = parent.join(temp_name);
-
-    tokio::fs::write(&temp_path, content).await?;
-    if let Err(error) = tokio::fs::rename(&temp_path, path).await {
-        let _ = tokio::fs::remove_file(&temp_path).await;
-        return Err(error.into());
-    }
-    Ok(())
 }
 
 pub fn build_clarification_answer_summary(clarifications: &[RequirementClarification]) -> String {

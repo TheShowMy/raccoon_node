@@ -225,11 +225,7 @@ export default function ModelSettingsPanel({
               ) : null}
               <StackItem size="fill">
                 {piLoginSession ? (
-                  <TerminalSessionView
-                    projectId={piLoginSession.project_id}
-                    session={piLoginSession}
-                    fixedDark
-                  />
+                  <TerminalSessionView session={piLoginSession} fixedDark />
                 ) : (
                   <EmptyState
                     title="连接 Pi 账号"

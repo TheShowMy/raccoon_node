@@ -11,7 +11,8 @@ use crate::store::db::Database;
 
 use super::{
     CheckpointKind, CheckpointStatus, CompiledWorkflow, CompletedWorkflowWorkspace, FailureClass,
-    FindingStatus, ReviewAngle, WorkItem, WorkItemDependency, WorkflowAttempt, WorkflowAttemptKind,
+    FindingStatus, OperationMetrics, PausedOperation, ReviewAngle, ReviewReport,
+    ReviewTransportStatus, WorkItem, WorkItemDependency, WorkflowAttempt, WorkflowAttemptKind,
     WorkflowAttemptStatus, WorkflowCheckpoint, WorkflowEvent, WorkflowEventPage,
     WorkflowItemWorkspace, WorkflowPublication, WorkflowReviewFinding, WorkflowRun,
     WorkflowRunStatus, WorkflowSnapshot, WorkflowValidation, new_workflow_id,
@@ -59,7 +60,6 @@ impl Database {
         let mut conn = self.lock_connection();
         let tx = conn.transaction()?;
         append_event_tx(&tx, run_id, "run", run_id, event_type, payload)?;
-        save_snapshot_tx(&tx, run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -108,8 +108,8 @@ impl Database {
         let mut conn = self.lock_connection();
         let tx = conn.transaction()?;
         tx.execute(
-            "UPDATE workflow_runs SET integration_worktree = NULL, updated_at = ?2,
-                 version = version + 1 WHERE id = ?1 AND status = 'completed'",
+            "UPDATE workflow_runs SET integration_worktree = NULL, updated_at = ?2
+             WHERE id = ?1 AND status = 'completed'",
             params![run_id, Utc::now().to_rfc3339()],
         )?;
         append_event_tx(
@@ -117,10 +117,9 @@ impl Database {
             run_id,
             "run",
             run_id,
-            "run.legacy_workspace_cleaned",
+            "run.completed_workspace_cleaned",
             &json!({}),
         )?;
-        save_snapshot_tx(&tx, run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -185,16 +184,15 @@ impl Database {
             )?;
             tx.execute(
                 "UPDATE workflow_work_items
-                 SET status = CASE WHEN status IN ('leased','running') THEN 'pending' ELSE status END,
-                     lease_owner = NULL, lease_expires_at = NULL, updated_at = ?2
+                 SET status = CASE WHEN status = 'running' THEN 'pending' ELSE status END,
+                     updated_at = ?2
                  WHERE run_id = ?1",
                 params![run_id, now],
             )?;
             tx.execute(
                 "UPDATE workflow_runs
                  SET status = 'paused_technical', paused_operation = 'process_restart',
-                     blocked_reason = '进程重启中断了活动 operation', updated_at = ?2,
-                     version = version + 1
+                     blocked_reason = '进程重启中断了活动 operation', updated_at = ?2
                  WHERE id = ?1 AND status NOT IN ('completed','blocked','cancelled')",
                 params![run_id, now],
             )?;
@@ -206,7 +204,6 @@ impl Database {
                 "run.paused_technical",
                 &json!({"operation": "process_restart", "reason": "进程重启中断了活动 operation"}),
             )?;
-            save_snapshot_tx(&tx, run_id)?;
         }
         tx.commit()?;
         Ok(run_ids)
@@ -236,7 +233,6 @@ impl Database {
                 "scenario_count": workflow.run.change_spec.acceptance_scenarios.len(),
             }),
         )?;
-        save_snapshot_tx(&tx, &workflow.run.id)?;
         tx.commit()?;
         Ok(())
     }
@@ -307,8 +303,7 @@ impl Database {
         tx.execute(
             "UPDATE workflow_runs SET status = 'cancelled',
                  blocked_reason = '已从干净工作区创建 replacement WorkflowRun',
-                 paused_operation = NULL, completed_at = ?2, updated_at = ?2,
-                 version = version + 1 WHERE id = ?1",
+                 paused_operation = NULL, completed_at = ?2, updated_at = ?2 WHERE id = ?1",
             params![old_run_id, now],
         )?;
         append_event_tx(
@@ -319,7 +314,6 @@ impl Database {
             "run.discarded",
             &json!({"replacement_run_id": workflow.run.id}),
         )?;
-        save_snapshot_tx(&tx, old_run_id)?;
 
         insert_run(&tx, &workflow.run)?;
         for item in &workflow.work_items {
@@ -339,7 +333,6 @@ impl Database {
             "run.restarted_clean",
             &json!({"replaces_run_id": old_run_id}),
         )?;
-        save_snapshot_tx(&tx, &workflow.run.id)?;
         tx.commit()?;
         Ok(workflow.run.id.clone())
     }
@@ -419,7 +412,7 @@ impl Database {
         let tx = conn.transaction()?;
         let changed = tx.execute(
             "UPDATE workflow_runs SET base_head = ?2, integration_branch = ?3,
-                 integration_worktree = ?4, updated_at = ?5, version = version + 1
+                 integration_worktree = ?4, updated_at = ?5
              WHERE id = ?1 AND status = 'running'
                AND (integration_worktree IS NULL OR integration_worktree = ?4)",
             params![run_id, base_head, branch, worktree, Utc::now().to_rfc3339()],
@@ -437,7 +430,6 @@ impl Database {
             "run.workspace_attached",
             &json!({"base_head": base_head, "branch": branch}),
         )?;
-        save_snapshot_tx(&tx, run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -490,7 +482,6 @@ impl Database {
                 }),
             )?;
         }
-        save_snapshot_tx(&tx, &publication.run_id)?;
         tx.commit()?;
         Ok(stored)
     }
@@ -534,7 +525,6 @@ impl Database {
             event_type,
             event_payload,
         )?;
-        save_snapshot_tx(&tx, &publication.run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -582,22 +572,18 @@ impl Database {
                 "fallback_serial": workspace.fallback_serial,
             }),
         )?;
-        save_snapshot_tx(&tx, &workspace.run_id)?;
         tx.commit()?;
         Ok(())
     }
 
-    pub fn claim_runnable_work_items(
+    pub fn runnable_work_items(
         &self,
         run_id: &str,
-        worker_id: &str,
-        lease_until: DateTime<Utc>,
         limit: usize,
     ) -> Result<Vec<WorkItem>, AppError> {
-        let mut conn = self.lock_connection();
-        let tx = conn.transaction()?;
+        let conn = self.lock_connection();
         let ids = {
-            let mut statement = tx.prepare(
+            let mut statement = conn.prepare(
                 "SELECT wi.id, COALESCE(ws.fallback_serial, 0) FROM workflow_work_items wi
                  JOIN workflow_runs wr ON wr.id = wi.run_id
                  LEFT JOIN workflow_item_workspaces ws ON ws.work_item_id = wi.id
@@ -621,44 +607,11 @@ impl Database {
                 candidates.into_iter().map(|(id, _)| id).collect()
             }
         };
-        for id in &ids {
-            tx.execute(
-                "UPDATE workflow_work_items SET status = 'leased', lease_owner = ?2,
-                     lease_expires_at = ?3, version = version + 1, updated_at = ?4
-                 WHERE id = ?1 AND status = 'pending'",
-                params![
-                    id,
-                    worker_id,
-                    lease_until.to_rfc3339(),
-                    Utc::now().to_rfc3339()
-                ],
-            )?;
-            append_event_tx(
-                &tx,
-                run_id,
-                "work_item",
-                id,
-                "work_item.leased",
-                &json!({"worker_id": worker_id}),
-            )?;
-        }
-        save_snapshot_tx(&tx, run_id)?;
         let items = ids
             .iter()
-            .map(|id| load_work_item(&tx, id))
+            .map(|id| load_work_item(&conn, id))
             .collect::<Result<Vec<_>, _>>()?;
-        tx.commit()?;
         Ok(items)
-    }
-
-    pub fn release_expired_work_item_leases(&self, now: DateTime<Utc>) -> Result<usize, AppError> {
-        let conn = self.lock_connection();
-        Ok(conn.execute(
-            "UPDATE workflow_work_items SET status = 'pending', lease_owner = NULL,
-                 lease_expires_at = NULL, version = version + 1, updated_at = ?1
-             WHERE status = 'leased' AND lease_expires_at < ?1",
-            [now.to_rfc3339()],
-        )?)
     }
 
     pub fn start_workflow_attempt(
@@ -667,19 +620,17 @@ impl Database {
         work_item_id: Option<&str>,
         kind: WorkflowAttemptKind,
         model_tier: &str,
-        worker_id: &str,
     ) -> Result<WorkflowAttempt, AppError> {
         let mut conn = self.lock_connection();
         let tx = conn.transaction()?;
         if let Some(item_id) = work_item_id {
             let changed = tx.execute(
                 "UPDATE workflow_work_items SET status = 'running', attempt_count = attempt_count + 1,
-                     lease_expires_at = NULL, version = version + 1, updated_at = ?3
-                 WHERE id = ?1 AND status = 'leased' AND lease_owner = ?2",
-                params![item_id, worker_id, Utc::now().to_rfc3339()],
+                     updated_at = ?2 WHERE id = ?1 AND status = 'pending'",
+                params![item_id, Utc::now().to_rfc3339()],
             )?;
             if changed != 1 {
-                return Err(AppError::conflict("工作项租约已失效或不属于当前执行器"));
+                return Err(AppError::conflict("工作项不再处于可执行状态"));
             }
         }
         let ordinal = tx.query_row(
@@ -714,7 +665,6 @@ impl Database {
             "attempt.started",
             &json!({"kind": kind, "work_item_id": work_item_id, "ordinal": ordinal}),
         )?;
-        save_snapshot_tx(&tx, run_id)?;
         tx.commit()?;
         Ok(attempt)
     }
@@ -731,6 +681,7 @@ impl Database {
         failure_message: Option<&str>,
         usage: Option<&Value>,
     ) -> Result<(), AppError> {
+        let usage = usage.and_then(OperationMetrics::from_trace);
         let mut conn = self.lock_connection();
         let tx = conn.transaction()?;
         let (run_id, work_item_id, kind) = tx.query_row(
@@ -759,7 +710,7 @@ impl Database {
                     .map(|value| to_json_string(&value))
                     .transpose()?,
                 failure_message,
-                usage.map(serde_json::to_string).transpose()?,
+                usage.as_ref().map(serde_json::to_string).transpose()?,
                 Utc::now().to_rfc3339(),
             ],
         )?;
@@ -772,7 +723,7 @@ impl Database {
                 "UPDATE workflow_work_items SET status = ?2,
                      attempt_count = CASE WHEN ?3 THEN MAX(attempt_count - 1, 0) ELSE attempt_count END,
                      accepted_attempt_id = CASE WHEN ?4 THEN ?5 ELSE accepted_attempt_id END,
-                     lease_owner = NULL, lease_expires_at = NULL, version = version + 1, updated_at = ?6
+                     updated_at = ?6
                  WHERE id = ?1 AND status = 'running'",
                 params![
                     item_id,
@@ -802,7 +753,7 @@ impl Database {
             if completed_rescue_turns == 0 {
                 tx.execute(
                     "UPDATE workflow_runs SET rescue_used = 0, rescue_attempt_id = NULL,
-                         updated_at = ?2, version = version + 1
+                         updated_at = ?2
                      WHERE id = ?1 AND status = 'rescuing'",
                     params![run_id, Utc::now().to_rfc3339()],
                 )?;
@@ -813,7 +764,7 @@ impl Database {
         {
             tx.execute(
                 "UPDATE workflow_runs SET status = 'blocked', blocked_reason = ?2,
-                     updated_at = ?3, completed_at = ?3, version = version + 1
+                     updated_at = ?3, completed_at = ?3
                  WHERE id = ?1 AND status = 'rescuing'",
                 params![run_id, failure_message, Utc::now().to_rfc3339()],
             )?;
@@ -830,7 +781,6 @@ impl Database {
             },
             &json!({"failure_class": failure_class, "failure_message": failure_message}),
         )?;
-        save_snapshot_tx(&tx, &run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -843,6 +793,7 @@ impl Database {
         result_summary: Option<&str>,
         usage: Option<&Value>,
     ) -> Result<(), AppError> {
+        let usage = usage.and_then(OperationMetrics::from_trace);
         let mut conn = self.lock_connection();
         let tx = conn.transaction()?;
         let run_id = tx
@@ -863,7 +814,7 @@ impl Database {
                 session_file,
                 worktree_fingerprint,
                 result_summary,
-                usage.map(serde_json::to_string).transpose()?,
+                usage.as_ref().map(serde_json::to_string).transpose()?,
             ],
         )?;
         append_event_tx(
@@ -874,7 +825,6 @@ impl Database {
             "attempt.usage_persisted",
             &json!({"usage_known": usage.is_some()}),
         )?;
-        save_snapshot_tx(&tx, &run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -888,6 +838,7 @@ impl Database {
         result_summary: Option<&str>,
         usage: Option<&Value>,
     ) -> Result<(), AppError> {
+        let usage = usage.and_then(OperationMetrics::from_trace);
         let mut conn = self.lock_connection();
         let tx = conn.transaction()?;
         let (run_id, work_item_id) = tx.query_row(
@@ -909,7 +860,7 @@ impl Database {
                 session_file,
                 worktree_fingerprint,
                 result_summary,
-                usage.map(serde_json::to_string).transpose()?,
+                usage.as_ref().map(serde_json::to_string).transpose()?,
                 now
             ],
         )?;
@@ -919,8 +870,7 @@ impl Database {
         tx.execute(
             "UPDATE workflow_work_items SET status = 'pending',
                  attempt_count = MAX(attempt_count - 1, 0), accepted_attempt_id = NULL,
-                 lease_owner = NULL, lease_expires_at = NULL,
-                 version = version + 1, updated_at = ?2 WHERE id = ?1",
+                 updated_at = ?2 WHERE id = ?1",
             params![work_item_id, now],
         )?;
         tx.execute(
@@ -948,7 +898,6 @@ impl Database {
             "parallel_batch.serial_fallback",
             &json!({"work_item_id": work_item_id, "reason": reason}),
         )?;
-        save_snapshot_tx(&tx, &run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -963,15 +912,14 @@ impl Database {
         )?;
         let changed = tx.execute(
             "UPDATE workflow_work_items SET status = 'pending', accepted_attempt_id = NULL,
-                 lease_owner = NULL, lease_expires_at = NULL, version = version + 1, updated_at = ?2
-             WHERE id = ?1 AND status IN ('ready','blocked','accepted')",
+                 updated_at = ?2 WHERE id = ?1 AND status IN ('blocked','accepted')",
             params![work_item_id, Utc::now().to_rfc3339()],
         )?;
         if changed != 1 {
             return Err(AppError::conflict("工作项当前不能进入 Fix 阶段"));
         }
         tx.execute(
-            "UPDATE workflow_runs SET status = 'fixing', updated_at = ?2, version = version + 1
+            "UPDATE workflow_runs SET status = 'fixing', updated_at = ?2
              WHERE id = ?1 AND status NOT IN ('completed','blocked','cancelled')",
             params![run_id, Utc::now().to_rfc3339()],
         )?;
@@ -983,7 +931,6 @@ impl Database {
             "work_item.fix_requested",
             &json!({}),
         )?;
-        save_snapshot_tx(&tx, &run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -1045,7 +992,6 @@ impl Database {
                 "fingerprint": validation.worktree_fingerprint,
             }),
         )?;
-        save_snapshot_tx(&tx, &validation.run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -1085,7 +1031,7 @@ impl Database {
         };
         insert_checkpoint(&tx, &checkpoint)?;
         tx.execute(
-            "UPDATE workflow_runs SET status = 'reviewing', updated_at = ?2, version = version + 1
+            "UPDATE workflow_runs SET status = 'reviewing', updated_at = ?2
              WHERE id = ?1 AND status NOT IN ('completed','blocked','cancelled')",
             params![run_id, now.to_rfc3339()],
         )?;
@@ -1097,7 +1043,6 @@ impl Database {
             "checkpoint.started",
             &json!({"kind": kind, "required_angles": required_angles}),
         )?;
-        save_snapshot_tx(&tx, run_id)?;
         tx.commit()?;
         Ok(checkpoint)
     }
@@ -1230,7 +1175,6 @@ impl Database {
                 "resolved": resolved,
             }),
         )?;
-        save_snapshot_tx(&tx, &run_id)?;
         tx.commit()?;
         Ok(findings)
     }
@@ -1238,17 +1182,17 @@ impl Database {
     pub fn record_checkpoint_review_observation(
         &self,
         checkpoint_id: &str,
-        details: Option<&Value>,
+        details: Option<&ReviewReport>,
         usage: Option<&Value>,
     ) -> Result<(), AppError> {
+        let usage = usage.and_then(OperationMetrics::from_trace);
         let transport_status = if details
-            .and_then(|value| value.get("reviews"))
-            .and_then(Value::as_array)
+            .map(|details| &details.reviews)
             .is_some_and(|reviews| {
                 !reviews.is_empty()
-                    && reviews.iter().all(|review| {
-                        review.get("transport_status").and_then(Value::as_str) == Some("completed")
-                    })
+                    && reviews
+                        .iter()
+                        .all(|review| review.transport_status == ReviewTransportStatus::Completed)
             }) {
             "completed"
         } else {
@@ -1266,7 +1210,7 @@ impl Database {
             params![
                 checkpoint_id,
                 details.map(serde_json::to_string).transpose()?,
-                usage.map(serde_json::to_string).transpose()?,
+                usage.as_ref().map(serde_json::to_string).transpose()?,
                 Utc::now().to_rfc3339(),
             ],
         )?;
@@ -1278,7 +1222,6 @@ impl Database {
             "checkpoint.review_observed",
             &json!({"transport_status": transport_status, "usage_known": usage.is_some()}),
         )?;
-        save_snapshot_tx(&tx, &run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -1328,7 +1271,6 @@ impl Database {
             },
             &json!({"summary": summary}),
         )?;
-        save_snapshot_tx(&tx, &run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -1355,8 +1297,8 @@ impl Database {
         )?;
         if accept_all_work_items {
             tx.execute(
-                "UPDATE workflow_work_items SET status = 'accepted', lease_owner = NULL,
-                     lease_expires_at = NULL, updated_at = ?2 WHERE run_id = ?1 AND status != 'cancelled'",
+                "UPDATE workflow_work_items SET status = 'accepted', updated_at = ?2
+                 WHERE run_id = ?1 AND status != 'cancelled'",
                 params![run_id, now],
             )?;
         }
@@ -1372,7 +1314,7 @@ impl Database {
         }
         tx.execute(
             "UPDATE workflow_runs SET status = 'completed', final_commit = ?2,
-                 blocked_reason = NULL, paused_operation = NULL, version = version + 1,
+                 blocked_reason = NULL, paused_operation = NULL,
                  updated_at = ?3, completed_at = ?3 WHERE id = ?1",
             params![run_id, final_commit, now],
         )?;
@@ -1384,7 +1326,6 @@ impl Database {
             "run.completed",
             &json!({"final_commit": final_commit}),
         )?;
-        save_snapshot_tx(&tx, &run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -1410,8 +1351,7 @@ impl Database {
         )?;
         tx.execute(
             "UPDATE workflow_runs SET status = 'publishing', final_commit = NULL,
-                 blocked_reason = NULL, paused_operation = NULL,
-                 version = version + 1, updated_at = ?2
+                 blocked_reason = NULL, paused_operation = NULL, updated_at = ?2
              WHERE id = ?1 AND status NOT IN ('completed','blocked','cancelled')",
             params![run_id, now],
         )?;
@@ -1423,7 +1363,6 @@ impl Database {
             "run.publishing",
             &json!({"integration_commit": integration_commit}),
         )?;
-        save_snapshot_tx(&tx, &run_id)?;
         tx.commit()?;
         Ok(run_id)
     }
@@ -1437,7 +1376,7 @@ impl Database {
         let tx = conn.transaction()?;
         let changed = tx.execute(
             "UPDATE workflow_runs SET status = 'rescuing', rescue_used = 1,
-                 blocked_reason = NULL, paused_operation = NULL, version = version + 1,
+                 blocked_reason = NULL, paused_operation = NULL,
                  updated_at = ?2 WHERE id = ?1 AND rescue_used = 0
                  AND status NOT IN ('completed','cancelled','paused_technical')",
             params![run_id, Utc::now().to_rfc3339()],
@@ -1480,7 +1419,6 @@ impl Database {
             "run.rescue_started",
             &json!({"attempt_id": attempt.id, "trigger": trigger}),
         )?;
-        save_snapshot_tx(&tx, run_id)?;
         tx.commit()?;
         Ok(attempt)
     }
@@ -1491,6 +1429,9 @@ impl Database {
         operation: &str,
         reason: &str,
     ) -> Result<(), AppError> {
+        let operation = operation
+            .parse::<PausedOperation>()
+            .map_err(|()| AppError::bad_request(format!("未知的可恢复 operation：{operation}")))?;
         let mut conn = self.lock_connection();
         let tx = conn.transaction()?;
         let now = Utc::now().to_rfc3339();
@@ -1517,8 +1458,8 @@ impl Database {
         )?;
         tx.execute(
             "UPDATE workflow_work_items
-             SET status = CASE WHEN status IN ('leased','running') THEN 'pending' ELSE status END,
-                 lease_owner = NULL, lease_expires_at = NULL, updated_at = ?2 WHERE run_id = ?1",
+             SET status = CASE WHEN status = 'running' THEN 'pending' ELSE status END,
+                 updated_at = ?2 WHERE run_id = ?1",
             params![run_id, now],
         )?;
         tx.execute(
@@ -1531,9 +1472,9 @@ impl Database {
         )?;
         let changed = tx.execute(
             "UPDATE workflow_runs SET status = 'paused_technical', paused_operation = ?2,
-                 blocked_reason = ?3, version = version + 1, updated_at = ?4
+                 blocked_reason = ?3, updated_at = ?4
              WHERE id = ?1 AND status NOT IN ('completed','blocked','cancelled')",
-            params![run_id, operation, reason, now],
+            params![run_id, operation.as_str(), reason, now],
         )?;
         if changed != 1 {
             return Err(AppError::conflict("WorkflowRun 已结束或不存在"));
@@ -1546,24 +1487,23 @@ impl Database {
             "run.paused_technical",
             &json!({"operation": operation, "reason": reason}),
         )?;
-        save_snapshot_tx(&tx, run_id)?;
         tx.commit()?;
         Ok(())
     }
 
-    pub fn resume_workflow_run(&self, run_id: &str) -> Result<String, AppError> {
+    pub fn resume_workflow_run(&self, run_id: &str) -> Result<PausedOperation, AppError> {
         let mut conn = self.lock_connection();
         let tx = conn.transaction()?;
         let operation = tx
             .query_row(
                 "SELECT paused_operation FROM workflow_runs WHERE id = ?1 AND status = 'paused_technical'",
                 [run_id],
-                |row| row.get::<_, Option<String>>(0),
+                |row| parse_optional_json_column::<PausedOperation>(row, 0),
             )
             .optional()?
             .flatten()
             .ok_or_else(|| AppError::conflict("只有 paused_technical WorkflowRun 可以恢复"))?;
-        let requires_clean_restart = operation == "workspace_violation"
+        let requires_clean_restart = operation == PausedOperation::WorkspaceViolation
             || tx.query_row(
                 "SELECT EXISTS(
                     SELECT 1 FROM workflow_attempts
@@ -1583,7 +1523,7 @@ impl Database {
         }
         tx.execute(
             "UPDATE workflow_runs SET status = 'running',
-                 blocked_reason = NULL, version = version + 1, updated_at = ?2 WHERE id = ?1",
+                 blocked_reason = NULL, updated_at = ?2 WHERE id = ?1",
             params![run_id, Utc::now().to_rfc3339()],
         )?;
         append_event_tx(
@@ -1594,7 +1534,6 @@ impl Database {
             "run.resumed",
             &json!({"operation": operation}),
         )?;
-        save_snapshot_tx(&tx, run_id)?;
         tx.commit()?;
         Ok(operation)
     }
@@ -1611,7 +1550,7 @@ impl Database {
         let changed = tx.execute(
             "UPDATE workflow_runs SET status = ?2, blocked_reason = ?3,
                  paused_operation = CASE WHEN ?2 = 'paused_technical' THEN paused_operation ELSE NULL END,
-                 version = version + 1, updated_at = ?4,
+                 updated_at = ?4,
                  completed_at = CASE WHEN ?5 THEN ?4 ELSE NULL END
              WHERE id = ?1 AND status NOT IN ('completed','cancelled')",
             params![run_id, to_json_string(&status)?, reason, now, status.is_terminal()],
@@ -1627,7 +1566,6 @@ impl Database {
             &format!("run.{}", to_json_string(&status)?),
             &json!({"reason": reason}),
         )?;
-        save_snapshot_tx(&tx, run_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -1640,15 +1578,14 @@ impl Database {
 fn insert_run(tx: &rusqlite::Transaction<'_>, run: &WorkflowRun) -> Result<(), AppError> {
     tx.execute(
         "INSERT INTO workflow_runs (
-            id, requirement_id, project_id, status, change_spec, design_notes, plan_summary,
+            id, requirement_id, status, change_spec, design_notes, plan_summary,
             source_revision, base_head, integration_branch, integration_worktree, final_commit,
             rescue_used, rescue_attempt_id, blocked_reason, paused_operation, replaces_run_id,
-            version, created_at, updated_at, completed_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+            created_at, updated_at, completed_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             run.id,
             run.requirement_id,
-            run.project_id,
             to_json_string(&run.status)?,
             serde_json::to_string(&run.change_spec)?,
             serde_json::to_string(&run.design_notes)?,
@@ -1661,9 +1598,8 @@ fn insert_run(tx: &rusqlite::Transaction<'_>, run: &WorkflowRun) -> Result<(), A
             run.rescue_used,
             run.rescue_attempt_id,
             run.blocked_reason,
-            run.paused_operation,
+            run.paused_operation.map(|value| to_json_string(&value)).transpose()?,
             run.replaces_run_id,
-            run.version,
             run.created_at.to_rfc3339(),
             run.updated_at.to_rfc3339(),
             run.completed_at.map(|value| value.to_rfc3339()),
@@ -1676,9 +1612,8 @@ fn insert_work_item(tx: &rusqlite::Transaction<'_>, item: &WorkItem) -> Result<(
     tx.execute(
         "INSERT INTO workflow_work_items (
             id, run_id, position, objective, scenario_refs, group_name, scope_hints,
-            verification_goals, status, attempt_count, accepted_attempt_id, lease_owner,
-            lease_expires_at, version, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            verification_goals, status, attempt_count, accepted_attempt_id, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             item.id,
             item.run_id,
@@ -1691,9 +1626,6 @@ fn insert_work_item(tx: &rusqlite::Transaction<'_>, item: &WorkItem) -> Result<(
             to_json_string(&item.status)?,
             item.attempt_count,
             item.accepted_attempt_id,
-            item.lease_owner,
-            item.lease_expires_at.map(|value| value.to_rfc3339()),
-            item.version,
             item.created_at.to_rfc3339(),
             item.updated_at.to_rfc3339(),
         ],
@@ -1799,30 +1731,13 @@ fn append_event_tx<T: Serialize>(
     Ok(())
 }
 
-fn save_snapshot_tx(tx: &rusqlite::Transaction<'_>, run_id: &str) -> Result<(), AppError> {
-    let snapshot = load_snapshot(tx, run_id)?;
-    tx.execute(
-        "INSERT INTO workflow_snapshots (run_id, last_event_sequence, snapshot, updated_at)
-         VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(run_id) DO UPDATE SET last_event_sequence = excluded.last_event_sequence,
-           snapshot = excluded.snapshot, updated_at = excluded.updated_at",
-        params![
-            run_id,
-            snapshot.last_event_sequence,
-            serde_json::to_string(&snapshot)?,
-            Utc::now().to_rfc3339(),
-        ],
-    )?;
-    Ok(())
-}
-
 fn load_snapshot(conn: &rusqlite::Connection, run_id: &str) -> Result<WorkflowSnapshot, AppError> {
     let run = conn
         .query_row(
-            "SELECT id, requirement_id, project_id, status, change_spec, design_notes,
+            "SELECT id, requirement_id, status, change_spec, design_notes,
                     plan_summary, source_revision, base_head, integration_branch,
                     integration_worktree, final_commit, rescue_used, rescue_attempt_id,
-                    blocked_reason, paused_operation, replaces_run_id, version, created_at,
+                    blocked_reason, paused_operation, replaces_run_id, created_at,
                     updated_at, completed_at
              FROM workflow_runs WHERE id = ?1",
             [run_id],
@@ -1833,8 +1748,7 @@ fn load_snapshot(conn: &rusqlite::Connection, run_id: &str) -> Result<WorkflowSn
     let mut work_items = query_rows(
         conn,
         "SELECT id, run_id, position, objective, scenario_refs, group_name, scope_hints,
-                verification_goals, status, attempt_count, accepted_attempt_id, lease_owner,
-                lease_expires_at, version, created_at, updated_at
+                verification_goals, status, attempt_count, accepted_attempt_id, created_at, updated_at
          FROM workflow_work_items WHERE run_id = ?1 ORDER BY position",
         run_id,
         read_work_item,
@@ -1952,8 +1866,7 @@ fn query_rows<T>(
 fn load_work_item(conn: &rusqlite::Connection, id: &str) -> Result<WorkItem, AppError> {
     Ok(conn.query_row(
         "SELECT id, run_id, position, objective, scenario_refs, group_name, scope_hints,
-                verification_goals, status, attempt_count, accepted_attempt_id, lease_owner,
-                lease_expires_at, version, created_at, updated_at
+                verification_goals, status, attempt_count, accepted_attempt_id, created_at, updated_at
          FROM workflow_work_items WHERE id = ?1",
         [id],
         read_work_item,
@@ -1964,25 +1877,23 @@ fn read_run(row: &Row<'_>) -> rusqlite::Result<WorkflowRun> {
     Ok(WorkflowRun {
         id: row.get(0)?,
         requirement_id: row.get(1)?,
-        project_id: row.get(2)?,
-        status: parse_json_column(row, 3)?,
-        change_spec: parse_json_column(row, 4)?,
-        design_notes: parse_json_column(row, 5)?,
-        plan_summary: row.get(6)?,
-        source_revision: row.get(7)?,
-        base_head: row.get(8)?,
-        integration_branch: row.get(9)?,
-        integration_worktree: row.get(10)?,
-        final_commit: row.get(11)?,
-        rescue_used: row.get(12)?,
-        rescue_attempt_id: row.get(13)?,
-        blocked_reason: row.get(14)?,
-        paused_operation: row.get(15)?,
-        replaces_run_id: row.get(16)?,
-        version: row.get(17)?,
-        created_at: parse_datetime_column(row, 18)?,
-        updated_at: parse_datetime_column(row, 19)?,
-        completed_at: parse_optional_datetime_column(row, 20)?,
+        status: parse_json_column(row, 2)?,
+        change_spec: parse_json_column(row, 3)?,
+        design_notes: parse_json_column(row, 4)?,
+        plan_summary: row.get(5)?,
+        source_revision: row.get(6)?,
+        base_head: row.get(7)?,
+        integration_branch: row.get(8)?,
+        integration_worktree: row.get(9)?,
+        final_commit: row.get(10)?,
+        rescue_used: row.get(11)?,
+        rescue_attempt_id: row.get(12)?,
+        blocked_reason: row.get(13)?,
+        paused_operation: parse_optional_json_column(row, 14)?,
+        replaces_run_id: row.get(15)?,
+        created_at: parse_datetime_column(row, 16)?,
+        updated_at: parse_datetime_column(row, 17)?,
+        completed_at: parse_optional_datetime_column(row, 18)?,
     })
 }
 
@@ -2000,11 +1911,8 @@ fn read_work_item(row: &Row<'_>) -> rusqlite::Result<WorkItem> {
         attempt_count: row.get(9)?,
         actual_attempt_count: 0,
         accepted_attempt_id: row.get(10)?,
-        lease_owner: row.get(11)?,
-        lease_expires_at: parse_optional_datetime_column(row, 12)?,
-        version: row.get(13)?,
-        created_at: parse_datetime_column(row, 14)?,
-        updated_at: parse_datetime_column(row, 15)?,
+        created_at: parse_datetime_column(row, 11)?,
+        updated_at: parse_datetime_column(row, 12)?,
     })
 }
 
@@ -2218,7 +2126,6 @@ mod tests {
     fn compiled_workflow() -> CompiledWorkflow {
         compile_work_plan(
             "requirement-1",
-            "current",
             1,
             ChangeSpec {
                 intent: "完成行为".to_owned(),
@@ -2255,10 +2162,10 @@ mod tests {
             .lock_connection()
             .execute(
                 "INSERT INTO requirements
-                 (id, project_id, title, original_message, status, messages,
+                 (id, title, status, messages,
                   clarification_round, clarifications, analysis_revision,
                   clarification_history, created_at, updated_at, origin)
-                 VALUES ('requirement-1','current','test','test','running','[]',0,'[]',1,'[]',?1,?1,'standalone')",
+                 VALUES ('requirement-1','test','running','[]',0,'[]',1,'[]',?1,?1,'standalone')",
                 [Utc::now().to_rfc3339()],
             )
             .unwrap();
@@ -2428,12 +2335,7 @@ mod tests {
     fn technical_work_item_failure_does_not_consume_semantic_attempt() {
         let (_directory, database, workflow) = workflow_database();
         let item = database
-            .claim_runnable_work_items(
-                &workflow.run.id,
-                "worker",
-                Utc::now() + chrono::Duration::minutes(5),
-                1,
-            )
+            .runnable_work_items(&workflow.run.id, 1)
             .unwrap()
             .remove(0);
         let attempt = database
@@ -2442,7 +2344,6 @@ mod tests {
                 Some(&item.id),
                 WorkflowAttemptKind::Implementation,
                 "low",
-                "worker",
             )
             .unwrap();
         database
@@ -2471,12 +2372,7 @@ mod tests {
     fn superseded_attempt_preserves_usage_and_actual_call_count() {
         let (_directory, database, workflow) = workflow_database();
         let item = database
-            .claim_runnable_work_items(
-                &workflow.run.id,
-                "worker",
-                Utc::now() + chrono::Duration::minutes(5),
-                1,
-            )
+            .runnable_work_items(&workflow.run.id, 1)
             .unwrap()
             .remove(0);
         let attempt = database
@@ -2485,10 +2381,13 @@ mod tests {
                 Some(&item.id),
                 WorkflowAttemptKind::Implementation,
                 "low",
-                "worker",
             )
             .unwrap();
-        let usage = json!({"input": 750000, "output": 1000});
+        let usage = json!({
+            "trace": {
+                "usage": {"scope": "operation", "input": 750000, "output": 1000}
+            }
+        });
         database
             .supersede_workflow_attempt(
                 &attempt.id,
@@ -2505,7 +2404,13 @@ mod tests {
             snapshot.attempts[0].status,
             WorkflowAttemptStatus::Superseded
         );
-        assert_eq!(snapshot.attempts[0].usage.as_ref(), Some(&usage));
+        assert_eq!(
+            snapshot.attempts[0]
+                .usage
+                .as_ref()
+                .map(|metrics| metrics.usage.input),
+            Some(750_000)
+        );
         assert_eq!(snapshot.work_items[0].attempt_count, 0);
         assert_eq!(snapshot.work_items[0].actual_attempt_count, 1);
     }
@@ -2540,7 +2445,11 @@ mod tests {
     fn clean_restart_is_idempotent_and_preserves_the_discarded_run() {
         let (_directory, database, workflow) = workflow_database();
         database
-            .pause_workflow_run(&workflow.run.id, "workspace_violation", "dirty integration")
+            .pause_workflow_run(
+                &workflow.run.id,
+                PausedOperation::WorkspaceViolation.as_str(),
+                "dirty integration",
+            )
             .unwrap();
         assert!(database.resume_workflow_run(&workflow.run.id).is_err());
         let original = database.workflow_snapshot(&workflow.run.id).unwrap();
@@ -2576,12 +2485,7 @@ mod tests {
     fn technical_pause_normalizes_an_unfinished_attempt_for_resume() {
         let (_directory, database, workflow) = workflow_database();
         let item = database
-            .claim_runnable_work_items(
-                &workflow.run.id,
-                "worker",
-                Utc::now() + chrono::Duration::minutes(5),
-                1,
-            )
+            .runnable_work_items(&workflow.run.id, 1)
             .unwrap()
             .remove(0);
         database
@@ -2590,12 +2494,15 @@ mod tests {
                 Some(&item.id),
                 WorkflowAttemptKind::Implementation,
                 "low",
-                "worker",
             )
             .unwrap();
 
         database
-            .pause_workflow_run(&workflow.run.id, "persist_attempt", "database busy")
+            .pause_workflow_run(
+                &workflow.run.id,
+                PausedOperation::PersistAttempt.as_str(),
+                "database busy",
+            )
             .unwrap();
 
         let snapshot = database.workflow_snapshot(&workflow.run.id).unwrap();
@@ -2654,13 +2561,7 @@ mod tests {
             )
             .unwrap();
         let feedback = database
-            .start_workflow_attempt(
-                &workflow.run.id,
-                None,
-                WorkflowAttemptKind::Rescue,
-                "high",
-                "rescue-feedback",
-            )
+            .start_workflow_attempt(&workflow.run.id, None, WorkflowAttemptKind::Rescue, "high")
             .unwrap();
         database
             .finish_workflow_attempt(
@@ -2703,7 +2604,11 @@ mod tests {
         let (_directory, database, workflow) = workflow_database();
         assert!(database.resume_workflow_run(&workflow.run.id).is_err());
         database
-            .pause_workflow_run(&workflow.run.id, "review", "protocol error")
+            .pause_workflow_run(
+                &workflow.run.id,
+                PausedOperation::Review.as_str(),
+                "protocol error",
+            )
             .unwrap();
 
         let first = database
@@ -2718,7 +2623,7 @@ mod tests {
 
         assert_eq!(
             database.resume_workflow_run(&workflow.run.id).unwrap(),
-            "review"
+            PausedOperation::Review
         );
         assert_eq!(
             database
@@ -2733,9 +2638,8 @@ mod tests {
                 .workflow_snapshot(&workflow.run.id)
                 .unwrap()
                 .run
-                .paused_operation
-                .as_deref(),
-            Some("review")
+                .paused_operation,
+            Some(PausedOperation::Review)
         );
     }
 }

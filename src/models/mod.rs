@@ -10,8 +10,7 @@ use crate::error::AppError;
 pub static PI_RPC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct AppData {
-    pub projects: Vec<Project>,
+pub struct StoreState {
     #[serde(default)]
     pub requirements: Vec<Requirement>,
     #[serde(default)]
@@ -24,10 +23,9 @@ pub struct AppData {
     pub terminal_command_profiles: Vec<TerminalCommandProfile>,
 }
 
-impl Default for AppData {
+impl Default for StoreState {
     fn default() -> Self {
         Self {
-            projects: Vec::new(),
             requirements: Vec::new(),
             project_chats: Vec::new(),
             settings_summary: SummaryNode {
@@ -46,7 +44,6 @@ impl Default for AppData {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectChat {
-    pub project_id: String,
     #[serde(default)]
     pub messages: Vec<ProjectChatMessage>,
     #[serde(default)]
@@ -81,7 +78,6 @@ pub enum ProjectChatMessageRole {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ProjectChatResponse {
-    pub project_id: String,
     pub messages: Vec<ProjectChatMessage>,
     pub running: bool,
     pub error: Option<String>,
@@ -90,12 +86,9 @@ pub struct ProjectChatResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Project {
-    pub id: String,
     pub name: String,
     pub git_url: String,
     pub local_path: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -199,9 +192,7 @@ pub struct BasicSettingsUpdate {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Requirement {
     pub id: String,
-    pub project_id: String,
     pub title: String,
-    pub original_message: String,
     #[serde(default)]
     pub origin: RequirementOrigin,
     pub status: RequirementStatus,
@@ -245,7 +236,6 @@ pub enum RequirementStatus {
     Clarifying,
     DraftReady,
     Planning,
-    PlanReady,
     Queued,
     Running,
     Completed,
@@ -422,152 +412,6 @@ pub struct ProjectCanvasResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionTranscriptPage {
-    pub entries: Vec<SessionEntry>,
-    pub next_before: Option<usize>,
-    pub invalid_lines: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionEntry {
-    pub cursor: usize,
-    pub source: String,
-    pub line: usize,
-    pub kind: String,
-    pub id: Option<String>,
-    pub role: Option<String>,
-    pub timestamp: Option<String>,
-    pub blocks: Vec<SessionContentBlock>,
-    pub raw: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubagentReviewResult {
-    #[serde(default)]
-    pub findings: Vec<SubagentReviewFinding>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubagentReviewFinding {
-    pub priority: String,
-    #[serde(default)]
-    pub category: String,
-    #[serde(default)]
-    pub path: String,
-    #[serde(default)]
-    pub location: String,
-    #[serde(default)]
-    pub summary: String,
-    pub evidence: String,
-    #[serde(default)]
-    pub reproduction: Option<String>,
-    #[serde(default)]
-    pub remediation: Option<String>,
-    #[serde(default)]
-    pub scenario_ref: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubagentReviewUsage {
-    #[serde(default)]
-    pub input: u64,
-    #[serde(default)]
-    pub output: u64,
-    #[serde(default, alias = "cache_read")]
-    pub cache_read: u64,
-    #[serde(default, alias = "cache_write")]
-    pub cache_write: u64,
-    #[serde(default)]
-    pub context: Option<SubagentReviewContext>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubagentReviewContext {
-    pub tokens: u64,
-    pub window: u64,
-    pub percent: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubagentReview {
-    pub angle: String,
-    pub transport_status: String,
-    #[serde(default)]
-    pub error: Option<String>,
-    pub result: Option<SubagentReviewResult>,
-    pub usage: Option<SubagentReviewUsage>,
-    #[serde(default)]
-    pub events: Vec<Value>,
-    #[serde(default)]
-    pub turns: u32,
-    #[serde(default)]
-    pub retry_count: u32,
-    #[serde(default)]
-    pub submission_correction_count: u32,
-    #[serde(default)]
-    pub duration_ms: u64,
-    #[serde(default)]
-    pub runtime: Option<Value>,
-    #[serde(default, alias = "contextMode")]
-    pub context_mode: Option<String>,
-    #[serde(default, alias = "contextHash")]
-    pub context_hash: Option<String>,
-    #[serde(default, alias = "contextBytes")]
-    pub context_bytes: Option<u64>,
-    #[serde(default)]
-    pub session_persisted: bool,
-    #[serde(default, alias = "eventsTruncated")]
-    pub events_truncated: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum SessionContentBlock {
-    Text {
-        text: String,
-    },
-    Thinking {
-        text: String,
-    },
-    ToolCall {
-        id: String,
-        name: String,
-        arguments: Value,
-    },
-    ToolResult {
-        tool_call_id: String,
-        name: String,
-        output: String,
-        diff: Option<String>,
-        is_error: bool,
-    },
-    Subagents {
-        reviews: Vec<SubagentReview>,
-        #[serde(default)]
-        selection: Option<Value>,
-    },
-    Compaction {
-        reason: Option<String>,
-        status: String,
-        tokens_before: Option<u64>,
-        estimated_tokens_after: Option<u64>,
-        estimated_tokens_saved: Option<u64>,
-        first_kept_entry_id: Option<String>,
-        from_hook: bool,
-        read_file_count: usize,
-        modified_file_count: usize,
-        will_retry: bool,
-        error: Option<String>,
-        usage_known: bool,
-    },
-    Unknown {
-        block_type: String,
-        raw: Value,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectFileContent {
     pub path: String,
     pub content: String,
@@ -609,7 +453,6 @@ pub enum TerminalSessionStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TerminalSession {
     pub id: String,
-    pub project_id: String,
     pub title: String,
     pub command: Option<String>,
     pub status: TerminalSessionStatus,
@@ -743,7 +586,6 @@ pub struct PromptSourceUsage {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct RequirementConversationResponse {
     pub id: String,
-    pub project_id: String,
     pub title: String,
     pub status: RequirementStatus,
     pub running: bool,
@@ -804,17 +646,13 @@ pub enum RequirementConversationPrompt {
     Clarification {
         round: u32,
         questions: Vec<RequirementClarification>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        prompt_id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        revision: Option<u32>,
+        prompt_id: String,
+        revision: u32,
     },
     Confirmation {
         draft: ChangeSpec,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        prompt_id: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        revision: Option<u32>,
+        prompt_id: String,
+        revision: u32,
     },
 }
 
@@ -966,22 +804,21 @@ pub trait ModelProvider: Send + Sync {
     ) -> ProjectChatBranchFuture<'_> {
         Box::pin(async { Ok(None) })
     }
-    fn begin_project_chat(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
+    fn begin_project_chat(&self) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })
     }
-    fn cancel_project_chat(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
+    fn cancel_project_chat(&self) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })
     }
-    fn release_project(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
+    fn release_project(&self) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })
     }
     /// Cancel a running requirement analysis for the given project.
-    fn cancel_requirement_analysis(&self, _project_id: &str) -> ModelProviderActionFuture<'_> {
+    fn cancel_requirement_analysis(&self) -> ModelProviderActionFuture<'_> {
         Box::pin(async { Ok(()) })
     }
     fn respond_requirement_interaction(
         &self,
-        _project_id: &str,
         _request_id: &str,
         _response: Value,
     ) -> ModelProviderActionFuture<'_> {
@@ -1057,7 +894,6 @@ pub struct RequirementEvent {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectChatEvent {
-    pub project_id: String,
     pub event: String,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1068,14 +904,12 @@ pub struct ProjectChatEvent {
 
 #[derive(Debug, Clone)]
 pub struct ProjectChatEventEmitter {
-    pub project_id: String,
     pub bus: broadcast::Sender<ProjectChatEvent>,
 }
 
 impl ProjectChatEventEmitter {
     pub fn emit(&self, event: &str, message: &str) {
         let _ = self.bus.send(ProjectChatEvent {
-            project_id: self.project_id.clone(),
             event: event.to_owned(),
             message: message.to_owned(),
             pi_type: None,
@@ -1091,7 +925,6 @@ impl ProjectChatEventEmitter {
             .to_owned();
         let message = crate::pi_event::summarize_pi_event(&pi_type, &payload);
         let _ = self.bus.send(ProjectChatEvent {
-            project_id: self.project_id.clone(),
             event: "pi_event".to_owned(),
             message,
             pi_type: Some(pi_type),
@@ -1171,33 +1004,16 @@ pub struct ClarificationAnswerRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum ClarificationAnswerPayload {
-    Legacy(Vec<ClarificationAnswerRequest>),
-    Versioned {
-        prompt_id: Option<String>,
-        revision: Option<u32>,
-        answers: Vec<ClarificationAnswerRequest>,
-    },
+pub struct ClarificationAnswerPayload {
+    pub prompt_id: String,
+    pub revision: u32,
+    pub answers: Vec<ClarificationAnswerRequest>,
 }
 
-impl ClarificationAnswerPayload {
-    pub fn into_parts(self) -> (Option<String>, Option<u32>, Vec<ClarificationAnswerRequest>) {
-        match self {
-            Self::Legacy(answers) => (None, None, answers),
-            Self::Versioned {
-                prompt_id,
-                revision,
-                answers,
-            } => (prompt_id, revision, answers),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RequirementConfirmRequest {
-    pub prompt_id: Option<String>,
-    pub revision: Option<u32>,
+    pub prompt_id: String,
+    pub revision: u32,
 }
 
 #[cfg(test)]
@@ -1206,17 +1022,13 @@ mod tests {
 
     #[test]
     fn project_serializes_to_expected_fields() {
-        let now = Utc::now();
         let project = Project {
-            id: "p1".to_owned(),
             name: "Project".to_owned(),
             git_url: "https://example.com/repo.git".to_owned(),
             local_path: "/home/user/projects/p1/repo".to_owned(),
-            created_at: now,
-            updated_at: now,
         };
         let json = serde_json::to_value(&project).unwrap();
-        assert_eq!(json["id"], "p1");
+        assert!(json.get("id").is_none());
         assert_eq!(json["name"], "Project");
         assert_eq!(json["git_url"], "https://example.com/repo.git");
         assert_eq!(json["local_path"], "/home/user/projects/p1/repo");
@@ -1227,9 +1039,7 @@ mod tests {
         let now = Utc::now();
         let requirement = Requirement {
             id: "r1".to_owned(),
-            project_id: "p1".to_owned(),
             title: "Title".to_owned(),
-            original_message: "message".to_owned(),
             origin: RequirementOrigin::Standalone,
             status: RequirementStatus::Clarifying,
             messages: Vec::new(),

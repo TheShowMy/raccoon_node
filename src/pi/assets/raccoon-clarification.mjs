@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 
-const PROTOCOL = "raccoon:requirements:v3";
+const PROTOCOL = "raccoon:requirements";
 const QuestionType = Type.Union([
   Type.Literal("single_choice"),
   Type.Literal("multi_choice"),
@@ -66,17 +66,10 @@ function validateChangeSpec(changeSpec) {
 }
 
 export default function (pi) {
-  pi.registerCommand("raccoon-requirements-v3", {
-    description: "Raccoon OpenSpec 需求确认协议 v3（能力标记）",
+  pi.registerCommand("raccoon-requirements", {
+    description: "Raccoon OpenSpec 需求确认协议（能力标记）",
     handler: async (_args, ctx) => {
-      ctx.ui.notify("Raccoon 需求确认协议 v3 已启用", "info");
-    },
-  });
-
-  pi.registerCommand("raccoon-clarifications-v1", {
-    description: "Raccoon 受管需求澄清协议 v1（兼容能力标记）",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify("Raccoon 需求澄清协议 v1 兼容模式已启用", "info");
+      ctx.ui.notify("Raccoon 需求确认协议已启用", "info");
     },
   });
 

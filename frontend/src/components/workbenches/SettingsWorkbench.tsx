@@ -2,13 +2,12 @@ import { useCallback, useState } from "react";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Banner } from "@astryxdesign/core/Banner";
 import { restartApplication } from "../../api/client";
-import type { SettingsPage, StartNodeData } from "../../types/api";
+import type { SettingsPage } from "../../types/api";
+import type { SettingsWorkbenchModel } from "../../types/viewModels";
 import { readError } from "../../utils/format";
 import BasicSettingsPanel from "../settings/BasicSettingsPanel";
 import ModelSettingsPanel from "../settings/ModelSettingsPanel";
 import SettingsLayout from "../settings/SettingsLayout";
-
-type SettingsData = Extract<StartNodeData, { kind: "project-settings" }>;
 
 async function waitForService(nextUrl: string) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -22,7 +21,11 @@ async function waitForService(nextUrl: string) {
   throw new Error("服务未在预期时间内恢复");
 }
 
-export default function SettingsWorkbench({ data }: { data: SettingsData }) {
+export default function SettingsWorkbench({
+  data,
+}: {
+  data: SettingsWorkbenchModel;
+}) {
   const [confirmExternal, setConfirmExternal] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);

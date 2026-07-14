@@ -160,7 +160,6 @@ function AstryxChatSurface({ data }: { data: ChatData }) {
             effectiveStreaming ||
             projectActivity.notices.length ? (
               <AstryxMessages
-                projectId={data.project.id}
                 timeline={timeline}
                 projectActivity={projectActivity}
                 projectRunning={projectRunning}

@@ -29,12 +29,12 @@ use crate::models::{
     AttachmentUploadRequest, BasicSettings, BasicSettingsUpdate, ClarificationAnswerPayload,
     CurrentProjectResponse, FileReference, ImageAttachment, ModelSettings, ModelSettingsResponse,
     ProjectCanvasResponse, ProjectChatEventEmitter, ProjectChatMessageRequest, ProjectChatResponse,
-    ProjectFileContent, ProjectFileTreeEntry, RequirementAnalysisInput, RequirementClarification,
-    RequirementConfirmRequest, RequirementConversationResponse, RequirementEvent,
-    RequirementEventEmitter, RequirementFailureStage, RequirementMessageRequest, RequirementOrigin,
-    RequirementStatus, RpcStatus, SessionTranscriptPage, TerminalAccessRequest,
-    TerminalAccessStatus, TerminalClientMessage, TerminalCommandProfile,
-    TerminalCommandProfilesUpdate, TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
+    ProjectFileContent, ProjectFileTreeEntry, RequirementAnalysisInput, RequirementConfirmRequest,
+    RequirementConversationResponse, RequirementEvent, RequirementEventEmitter,
+    RequirementFailureStage, RequirementMessageRequest, RequirementOrigin, RequirementStatus,
+    RpcStatus, TerminalAccessRequest, TerminalAccessStatus, TerminalClientMessage,
+    TerminalCommandProfile, TerminalCommandProfilesUpdate, TerminalLaunchRequest,
+    TerminalServerMessage, TerminalSession,
 };
 use crate::store::{FailedRequirementWorkflowAction, ProjectScheduleAction};
 use crate::workflow::{clean_project_base, clone_workflow_for_clean_restart};
@@ -95,31 +95,33 @@ impl ExecutionGuard {
 }
 
 struct RequirementAnalysisGuard {
-    project_id: String,
-    active: Arc<Mutex<HashSet<String>>>,
+    active: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl RequirementAnalysisGuard {
-    fn acquire(state: &AppState, project_id: &str) -> Result<Self, AppError> {
-        let mut active = state
-            .active_requirement_analyses
-            .lock()
-            .expect("requirement analysis lock poisoned");
-        if !active.insert(project_id.to_owned()) {
+    fn acquire(state: &AppState) -> Result<Self, AppError> {
+        if state
+            .requirement_analysis_active
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .is_err()
+        {
             return Err(AppError::conflict("当前项目已有需求正在分析"));
         }
         Ok(Self {
-            project_id: project_id.to_owned(),
-            active: state.active_requirement_analyses.clone(),
+            active: state.requirement_analysis_active.clone(),
         })
     }
 }
 
 impl Drop for RequirementAnalysisGuard {
     fn drop(&mut self) {
-        if let Ok(mut active) = self.active.lock() {
-            active.remove(&self.project_id);
-        }
+        self.active
+            .store(false, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -137,16 +139,8 @@ impl Drop for ExecutionGuard {
 pub async fn get_current_project(
     State(state): State<AppState>,
 ) -> Result<Json<CurrentProjectResponse>, AppError> {
-    let store = state.store.read().await;
-    let project = store
-        .data
-        .projects
-        .iter()
-        .find(|project| project.id == crate::store::CURRENT_PROJECT_ID)
-        .cloned()
-        .ok_or_else(|| AppError::not_found("项目不存在"))?;
     Ok(Json(CurrentProjectResponse {
-        project,
+        project: state.project.metadata.clone(),
         theme_pack: state.config.read().await.theme_pack.clone(),
         theme_mode: state.config.read().await.theme_mode,
         publication_readiness: state.publication_readiness.read().await.clone(),
@@ -190,8 +184,8 @@ pub async fn put_basic_settings(
     {
         let checked_mode = payload.commit_mode.unwrap_or(current.commit_mode);
         let readiness = crate::api::publication::check(
-            &state.project_root,
-            &crate::utils::git_remote_origin(&state.project_root),
+            &state.project.root,
+            &crate::utils::git_remote_origin(&state.project.root),
             checked_mode,
         )
         .await;
@@ -269,12 +263,10 @@ fn basic_settings_response(state: &AppState, config: &crate::config::AppConfig) 
 
 pub async fn get_project_canvas(
     State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
     Query(query): Query<ProjectCanvasQuery>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
     let store = state.store.read().await;
     Ok(Json(store.project_canvas_for_view(
-        &id,
         query.workflow_requirement_id.as_deref(),
     )?))
 }
@@ -328,13 +320,12 @@ pub async fn resume_workflow_run(
     State(state): State<AppState>,
     AxumPath(run_id): AxumPath<String>,
 ) -> Result<Json<crate::workflow::WorkflowSnapshot>, AppError> {
-    let project_id = {
+    {
         let store = state.store.read().await;
-        let snapshot = store.db.workflow_snapshot(&run_id)?;
+        store.db.workflow_snapshot(&run_id)?;
         store.db.resume_workflow_run(&run_id)?;
-        snapshot.run.project_id
-    };
-    spawn_project_scheduler(state.clone(), project_id);
+    }
+    spawn_project_scheduler(state.clone());
     let store = state.store.read().await;
     Ok(Json(store.db.workflow_snapshot(&run_id)?))
 }
@@ -343,20 +334,12 @@ pub async fn restart_workflow_run_clean(
     State(state): State<AppState>,
     AxumPath(run_id): AxumPath<String>,
 ) -> Result<Json<crate::workflow::WorkflowSnapshot>, AppError> {
-    let (snapshot, project) = {
+    let snapshot = {
         let store = state.store.read().await;
         if let Some(replacement) = store.db.replacement_workflow_for(&run_id)? {
             return Ok(Json(replacement));
         }
-        let snapshot = store.db.workflow_snapshot(&run_id)?;
-        let project = store
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == snapshot.run.project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
-        (snapshot, project)
+        store.db.workflow_snapshot(&run_id)?
     };
     if snapshot.run.status != crate::workflow::WorkflowRunStatus::PausedTechnical {
         return Err(AppError::conflict(
@@ -375,82 +358,23 @@ pub async fn restart_workflow_run_clean(
     }
     let commit_mode = state.config.read().await.commit_mode;
     let readiness = crate::api::publication::check(
-        &state.project_root,
-        &crate::utils::git_remote_origin(&state.project_root),
+        &state.project.root,
+        &crate::utils::git_remote_origin(&state.project.root),
         commit_mode,
     )
     .await;
     ensure_publication_ready(&readiness)?;
     *state.publication_readiness.write().await = readiness;
-    clean_project_base(&project.local_path).await?;
+    clean_project_base(&state.project.metadata.local_path).await?;
 
     let workflow = clone_workflow_for_clean_restart(&snapshot);
     let replacement_id = {
         let store = state.store.read().await;
         store.db.restart_workflow_clean(&run_id, &workflow)?
     };
-    spawn_project_scheduler(state.clone(), project.id);
+    spawn_project_scheduler(state.clone());
     let store = state.store.read().await;
     Ok(Json(store.db.workflow_snapshot(&replacement_id)?))
-}
-
-pub async fn get_workflow_attempt_session(
-    State(state): State<AppState>,
-    AxumPath((run_id, attempt_id)): AxumPath<(String, String)>,
-    Query(query): Query<SessionPageQuery>,
-) -> Result<Json<SessionTranscriptPage>, AppError> {
-    let sources = {
-        let store = state.store.read().await;
-        store.workflow_attempt_session_sources(&run_id, &attempt_id)?
-    };
-    read_session_page(sources, query).await
-}
-
-pub async fn get_requirement_session(
-    State(state): State<AppState>,
-    AxumPath(requirement_id): AxumPath<String>,
-    Query(query): Query<SessionPageQuery>,
-) -> Result<Json<SessionTranscriptPage>, AppError> {
-    let sources = {
-        let store = state.store.read().await;
-        store.requirement_session_sources(&requirement_id)?
-    };
-    read_session_page(sources, query).await
-}
-
-pub async fn get_project_chat_session(
-    State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
-    Query(query): Query<SessionPageQuery>,
-) -> Result<Json<SessionTranscriptPage>, AppError> {
-    let sources = {
-        let store = state.store.read().await;
-        store.project_chat_session_sources(&project_id)?
-    };
-    read_session_page(sources, query).await
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SessionPageQuery {
-    before: Option<usize>,
-    #[serde(default = "default_session_page_size")]
-    limit: usize,
-}
-
-fn default_session_page_size() -> usize {
-    100
-}
-
-async fn read_session_page(
-    sources: Vec<(String, std::path::PathBuf)>,
-    query: SessionPageQuery,
-) -> Result<Json<SessionTranscriptPage>, AppError> {
-    let response = tokio::task::spawn_blocking(move || {
-        crate::store::read_session_transcript(&sources, query.before, query.limit)
-    })
-    .await
-    .map_err(|_| AppError::internal("读取会话记录失败"))??;
-    Ok(Json(response))
 }
 
 #[derive(Debug, Deserialize)]
@@ -472,65 +396,28 @@ pub struct ProjectFileTreeQuery {
 
 pub async fn get_project_files(
     State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
     Query(query): Query<ProjectFilesQuery>,
 ) -> Result<Json<Vec<FileReference>>, AppError> {
-    let project = {
-        let store = state.store.read().await;
-        store
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?
-    };
     Ok(Json(
-        list_repo_files(std::path::Path::new(&project.local_path), &query.search).await?,
+        list_repo_files(&state.project.root, &query.search).await?,
     ))
 }
 
 pub async fn get_project_file_tree(
     State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
     Query(query): Query<ProjectFileTreeQuery>,
 ) -> Result<Json<Vec<ProjectFileTreeEntry>>, AppError> {
-    let project = {
-        let store = state.store.read().await;
-        store
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?
-    };
     Ok(Json(
-        list_repo_tree(std::path::Path::new(&project.local_path), &query.path).await?,
+        list_repo_tree(&state.project.root, &query.path).await?,
     ))
 }
 
 pub async fn get_project_file_content(
     State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
     Query(query): Query<ProjectFileContentQuery>,
 ) -> Result<Json<ProjectFileContent>, AppError> {
-    let project = {
-        let store = state.store.read().await;
-        store
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?
-    };
-    let (content, truncated) = preview_repo_file(
-        std::path::Path::new(&project.local_path),
-        &query.path,
-        MAX_PREVIEW_BYTES,
-    )
-    .await?;
+    let (content, truncated) =
+        preview_repo_file(&state.project.root, &query.path, MAX_PREVIEW_BYTES).await?;
     Ok(Json(ProjectFileContent {
         path: query.path.clone(),
         content,
@@ -540,31 +427,17 @@ pub async fn get_project_file_content(
 
 pub async fn upload_project_attachment(
     State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
     Json(payload): Json<AttachmentUploadRequest>,
 ) -> Result<Json<ImageAttachment>, AppError> {
-    let project_dir = {
-        let store = state.store.read().await;
-        if !store.data.projects.iter().any(|project| project.id == id) {
-            return Err(AppError::not_found("项目不存在"));
-        }
-        store.project_dir(&id)?
-    };
-    Ok(Json(save_attachment(&project_dir, payload).await?))
+    Ok(Json(save_attachment(&state.project.root, payload).await?))
 }
 
 pub async fn get_project_attachment(
     State(state): State<AppState>,
-    AxumPath((id, file)): AxumPath<(String, String)>,
+    AxumPath(file): AxumPath<String>,
 ) -> Result<Response<Body>, AppError> {
-    let project_dir = {
-        let store = state.store.read().await;
-        if !store.data.projects.iter().any(|project| project.id == id) {
-            return Err(AppError::not_found("项目不存在"));
-        }
-        store.project_dir(&id)?
-    };
-    let (bytes, mime_type) = read_attachment(&project_dir, &format!("attachments/{file}")).await?;
+    let (bytes, mime_type) =
+        read_attachment(&state.project.root, &format!("attachments/{file}")).await?;
     let mut response = Response::new(Body::from(bytes));
     response
         .headers_mut()
@@ -574,23 +447,20 @@ pub async fn get_project_attachment(
 
 pub async fn get_project_chat(
     State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
 ) -> Result<Json<ProjectChatResponse>, AppError> {
     let mut store = state.store.write().await;
-    Ok(Json(store.project_chat_response(&id).await?))
+    Ok(Json(store.project_chat_response().await?))
 }
 
 pub async fn reset_project_chat(
     State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
 ) -> Result<Json<ProjectChatResponse>, AppError> {
     let mut store = state.store.write().await;
-    Ok(Json(store.reset_project_chat(&id).await?))
+    Ok(Json(store.reset_project_chat().await?))
 }
 
 pub async fn send_project_chat_message(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
     Json(payload): Json<ProjectChatMessageRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let message = payload.message.trim().to_owned();
@@ -601,25 +471,24 @@ pub async fn send_project_chat_message(
     let input = {
         let mut store = state.store.write().await;
         let (input, _) = store
-            .start_project_chat_message(&project_id, message, payload.references, payload.images)
+            .start_project_chat_message(message, payload.references, payload.images)
             .await?;
         input
     };
     ProjectChatEventEmitter {
-        project_id: project_id.clone(),
         bus: state.project_chat_events.clone(),
     }
     .emit("message_append", "用户消息已接受。");
-    if let Err(error) = state.model_provider.begin_project_chat(&project_id).await {
+    if let Err(error) = state.model_provider.begin_project_chat().await {
         state
             .store
             .write()
             .await
-            .apply_project_chat_result(&project_id, Err(AppError::conflict(error.to_string())))
+            .apply_project_chat_result(Err(AppError::conflict(error.to_string())))
             .await?;
         return Err(error);
     }
-    spawn_project_chat_response(state, project_id, input);
+    spawn_project_chat_response(state, input);
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedTurn {
@@ -631,24 +500,19 @@ pub async fn send_project_chat_message(
 
 pub async fn abort_project_chat(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
 ) -> Result<impl IntoResponse, AppError> {
     {
         let store = state.store.read().await;
         let chat = store
             .data
             .project_chats
-            .iter()
-            .find(|chat| chat.project_id == project_id)
+            .first()
             .ok_or_else(|| AppError::not_found("项目问答不存在"))?;
         if !chat.running {
             return Err(AppError::conflict("项目问答当前未运行"));
         }
     }
-    state
-        .model_provider
-        .cancel_project_chat(&project_id)
-        .await?;
+    state.model_provider.cancel_project_chat().await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(AcceptedOperation { accepted: true }),
@@ -663,53 +527,17 @@ pub async fn get_requirement_conversation(
     Ok(Json(store.requirement_conversation(&id)?))
 }
 
-pub async fn create_requirement(
-    State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
-    Json(payload): Json<RequirementMessageRequest>,
-) -> Result<impl IntoResponse, AppError> {
-    let message = payload.message.trim().to_owned();
-    if message.is_empty() {
-        return Err(AppError::bad_request("需求内容不能为空"));
-    }
-    let analysis_guard = RequirementAnalysisGuard::acquire(&state, &project_id)?;
-
-    let (requirement_id, input) = {
-        let mut store = state.store.write().await;
-        store
-            .create_requirement(&project_id, message, payload.references, payload.images)
-            .await?
-    };
-
-    RequirementEventEmitter {
-        requirement_id: requirement_id.clone(),
-        task_id: None,
-        bus: state.requirement_events.clone(),
-    }
-    .emit("message_append", "需求消息已接受。");
-    spawn_requirement_analysis(state, requirement_id.clone(), input, analysis_guard);
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(AcceptedRequirement {
-            accepted: true,
-            requirement_id,
-            origin: RequirementOrigin::Standalone,
-        }),
-    ))
-}
-
 pub async fn create_requirement_branch(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
     Json(payload): Json<RequirementMessageRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let message = payload.message.trim().to_owned();
-    let analysis_guard = RequirementAnalysisGuard::acquire(&state, &project_id)?;
+    let analysis_guard = RequirementAnalysisGuard::acquire(&state)?;
     let branch_input = state
         .store
         .write()
         .await
-        .start_project_chat_requirement_branch(&project_id)
+        .start_project_chat_requirement_branch()
         .await?;
     let branch_session = match branch_input {
         Some(input) => match state
@@ -723,7 +551,7 @@ pub async fn create_requirement_branch(
                     .store
                     .write()
                     .await
-                    .finish_project_chat_requirement_branch(&project_id)
+                    .finish_project_chat_requirement_branch()
                     .await?;
                 return Err(AppError::internal("Pi clone 未返回 child session"));
             }
@@ -732,7 +560,7 @@ pub async fn create_requirement_branch(
                     .store
                     .write()
                     .await
-                    .finish_project_chat_requirement_branch(&project_id)
+                    .finish_project_chat_requirement_branch()
                     .await?;
                 return Err(error);
             }
@@ -749,7 +577,6 @@ pub async fn create_requirement_branch(
         .write()
         .await
         .create_requirement_with_session(
-            &project_id,
             message,
             payload.references,
             payload.images,
@@ -761,7 +588,7 @@ pub async fn create_requirement_branch(
             .store
             .write()
             .await
-            .finish_project_chat_requirement_branch(&project_id)
+            .finish_project_chat_requirement_branch()
             .await?;
     }
     let (requirement_id, input) = created?;
@@ -791,14 +618,14 @@ pub async fn append_requirement_message(
     if message.is_empty() {
         return Err(AppError::bad_request("补充说明不能为空"));
     }
-    let project_id = {
-        let store = state.store.read().await;
-        let index = store.requirement_index(&requirement_id)?;
-        store.data.requirements[index].project_id.clone()
-    };
-    let analysis_guard = RequirementAnalysisGuard::acquire(&state, &project_id)?;
+    state
+        .store
+        .read()
+        .await
+        .requirement_index(&requirement_id)?;
+    let analysis_guard = RequirementAnalysisGuard::acquire(&state)?;
 
-    let (_project_id, input) = {
+    let (_scope, input) = {
         let mut store = state.store.write().await;
         store
             .append_requirement_message(
@@ -832,27 +659,26 @@ pub async fn submit_requirement_clarifications(
     AxumPath(requirement_id): AxumPath<String>,
     Json(payload): Json<ClarificationAnswerPayload>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    let project_id = {
-        let store = state.store.read().await;
-        let index = store.requirement_index(&requirement_id)?;
-        store.data.requirements[index].project_id.clone()
-    };
-    let analysis_guard = RequirementAnalysisGuard::acquire(&state, &project_id)?;
-    let (prompt_id, revision, answers) = payload.into_parts();
-    let (project_id, input) = {
+    state
+        .store
+        .read()
+        .await
+        .requirement_index(&requirement_id)?;
+    let analysis_guard = RequirementAnalysisGuard::acquire(&state)?;
+    let ClarificationAnswerPayload {
+        prompt_id,
+        revision,
+        answers,
+    } = payload;
+    let (_scope, input) = {
         let mut store = state.store.write().await;
         store
             .submit_requirement_clarifications(&requirement_id, prompt_id, revision, answers)
             .await?
     };
-    state
-        .pending_requirement_interactions
-        .lock()
-        .await
-        .remove(&requirement_id);
     spawn_requirement_analysis(state.clone(), requirement_id, input, analysis_guard);
     let store = state.store.read().await;
-    Ok(Json(store.project_canvas(&project_id)?))
+    Ok(Json(store.project_canvas()?))
 }
 
 pub async fn retry_requirement_analysis(
@@ -860,23 +686,18 @@ pub async fn retry_requirement_analysis(
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
     state
-        .pending_requirement_interactions
-        .lock()
+        .store
+        .read()
         .await
-        .remove(&requirement_id);
-    let project_id = {
-        let store = state.store.read().await;
-        let index = store.requirement_index(&requirement_id)?;
-        store.data.requirements[index].project_id.clone()
-    };
-    let analysis_guard = RequirementAnalysisGuard::acquire(&state, &project_id)?;
-    let (project_id, input) = {
+        .requirement_index(&requirement_id)?;
+    let analysis_guard = RequirementAnalysisGuard::acquire(&state)?;
+    let (_scope, input) = {
         let mut store = state.store.write().await;
         store.retry_requirement_analysis(&requirement_id).await?
     };
     spawn_requirement_analysis(state.clone(), requirement_id, input, analysis_guard);
     let store = state.store.read().await;
-    Ok(Json(store.project_canvas(&project_id)?))
+    Ok(Json(store.project_canvas()?))
 }
 
 pub async fn requirement_events(
@@ -936,24 +757,14 @@ fn requirement_event_matches(
 
 pub async fn list_project_terminals(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
 ) -> Result<Json<Vec<TerminalSession>>, AppError> {
     ensure_terminal_allowed(&state).await?;
-    {
-        let store = state.store.read().await;
-        store.project_root(&project_id)?;
-    }
-    Ok(Json(state.terminal_manager.list(&project_id)))
+    Ok(Json(state.terminal_manager.list()))
 }
 
 pub async fn get_terminal_access_status(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
 ) -> Result<Json<TerminalAccessStatus>, AppError> {
-    {
-        let store = state.store.read().await;
-        store.project_root(&project_id)?;
-    }
     Ok(Json(
         state
             .terminal_access
@@ -963,13 +774,8 @@ pub async fn get_terminal_access_status(
 
 pub async fn unlock_terminal_access(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
     Json(payload): Json<TerminalAccessRequest>,
 ) -> Result<Json<TerminalAccessStatus>, AppError> {
-    {
-        let store = state.store.read().await;
-        store.project_root(&project_id)?;
-    }
     if !terminal_access_required(&state).await {
         return Ok(Json(state.terminal_access.status(false)));
     }
@@ -978,17 +784,15 @@ pub async fn unlock_terminal_access(
 
 pub async fn create_project_terminal(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
     Json(payload): Json<TerminalLaunchRequest>,
 ) -> Result<Json<TerminalSession>, AppError> {
     ensure_terminal_allowed(&state).await?;
     let project_root = {
         let store = state.store.read().await;
-        store.project_root(&project_id)?
+        store.project_root()
     };
     state.terminal_manager.cleanup_exited();
     Ok(Json(state.terminal_manager.spawn(
-        &project_id,
         project_root,
         payload.command,
         payload.title,
@@ -999,50 +803,41 @@ pub async fn create_project_terminal(
 
 pub async fn delete_project_terminal(
     State(state): State<AppState>,
-    AxumPath((project_id, terminal_id)): AxumPath<(String, String)>,
+    AxumPath(terminal_id): AxumPath<String>,
 ) -> Result<Json<Vec<TerminalSession>>, AppError> {
     ensure_terminal_allowed(&state).await?;
-    state.terminal_manager.delete(&project_id, &terminal_id)?;
-    Ok(Json(state.terminal_manager.list(&project_id)))
+    state.terminal_manager.delete(&terminal_id)?;
+    Ok(Json(state.terminal_manager.list()))
 }
 
 pub async fn get_terminal_command_profiles(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
 ) -> Result<Json<Vec<TerminalCommandProfile>>, AppError> {
     ensure_terminal_allowed(&state).await?;
     let store = state.store.read().await;
-    Ok(Json(store.terminal_command_profiles(&project_id)?))
+    Ok(Json(store.terminal_command_profiles()?))
 }
 
 pub async fn put_terminal_command_profiles(
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
     Json(payload): Json<TerminalCommandProfilesUpdate>,
 ) -> Result<Json<Vec<TerminalCommandProfile>>, AppError> {
     ensure_terminal_allowed(&state).await?;
     let mut store = state.store.write().await;
     Ok(Json(
         store
-            .replace_terminal_command_profiles(&project_id, payload.profiles)
+            .replace_terminal_command_profiles(payload.profiles)
             .await?,
     ))
 }
 
 pub async fn terminal_websocket(
     State(state): State<AppState>,
-    AxumPath((project_id, terminal_id)): AxumPath<(String, String)>,
+    AxumPath(terminal_id): AxumPath<String>,
     websocket: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, AppError> {
     ensure_terminal_allowed(&state).await?;
-    {
-        let store = state.store.read().await;
-        store.project_root(&project_id)?;
-    }
     let session = state.terminal_manager.get(&terminal_id)?;
-    if session.metadata().project_id != project_id {
-        return Err(AppError::not_found("终端不存在"));
-    }
     let terminal_access = state.terminal_access.clone();
     let authorization_required = terminal_access_required(&state).await;
     Ok(websocket.on_upgrade(move |socket| {
@@ -1158,23 +953,11 @@ async fn terminal_access_required(state: &AppState) -> bool {
 pub async fn project_chat_events(
     websocket: WebSocketUpgrade,
     State(state): State<AppState>,
-    AxumPath(project_id): AxumPath<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    {
-        let store = state.store.read().await;
-        if !store
-            .data
-            .projects
-            .iter()
-            .any(|project| project.id == project_id)
-        {
-            return Err(AppError::not_found("项目不存在"));
-        }
-    }
-    Ok(websocket.on_upgrade(move |socket| project_chat_websocket(socket, state, project_id)))
+    Ok(websocket.on_upgrade(move |socket| project_chat_websocket(socket, state)))
 }
 
-async fn project_chat_websocket(mut socket: WebSocket, state: AppState, project_id: String) {
+async fn project_chat_websocket(mut socket: WebSocket, state: AppState) {
     let mut events = state.project_chat_events.subscribe();
     loop {
         tokio::select! {
@@ -1183,22 +966,21 @@ async fn project_chat_websocket(mut socket: WebSocket, state: AppState, project_
                 _ => {}
             },
             event = events.recv() => match event {
-                Ok(event) if event.project_id == project_id => {
+                Ok(event) => {
                     if let Some(frame) = conversation_event_frame(
                         &event.event,
                         &event.message,
                         event.pi_type.as_deref(),
                         event.payload,
-                        serde_json::json!({"project_id": project_id}),
+                        serde_json::json!({}),
                     ) && socket.send(Message::Text(frame.to_string().into())).await.is_err() {
                         break;
                     }
                 }
-                Ok(_) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     let frame = serde_json::json!({
                         "type": "snapshot.changed",
-                        "payload": {"project_id": project_id}
+                        "payload": {}
                     });
                     if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
                         break;
@@ -1310,28 +1092,27 @@ fn conversation_event_frame(
 pub async fn confirm_requirement(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
-    payload: Option<Json<RequirementConfirmRequest>>,
+    Json(payload): Json<RequirementConfirmRequest>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
     {
         let readiness = state.publication_readiness.read().await;
         ensure_publication_ready(&readiness)?;
     }
-    let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
     let confirm_result = {
         let mut store = state.store.write().await;
         store
             .confirm_requirement(&requirement_id, payload.prompt_id, payload.revision)
             .await
     };
-    let project_id = match confirm_result {
-        Ok(project_id) => project_id,
+    match confirm_result {
+        Ok(_) => {}
         Err(error) => {
             let is_change_spec_failure = {
                 let store = state.store.read().await;
                 store
-                    .requirement_index(&requirement_id)
+                    .requirement_failure_stage(&requirement_id)
                     .ok()
-                    .and_then(|index| store.data.requirements[index].failure_stage)
+                    .flatten()
                     == Some(RequirementFailureStage::ChangeSpecValidation)
             };
             if is_change_spec_failure {
@@ -1347,10 +1128,10 @@ pub async fn confirm_requirement(
             }
             return Err(error);
         }
-    };
-    spawn_project_scheduler(state.clone(), project_id.clone());
+    }
+    spawn_project_scheduler(state.clone());
     let store = state.store.read().await;
-    Ok(Json(store.project_canvas(&project_id)?))
+    Ok(Json(store.project_canvas()?))
 }
 
 pub async fn start_requirement_workflow(
@@ -1361,20 +1142,20 @@ pub async fn start_requirement_workflow(
         let readiness = state.publication_readiness.read().await;
         ensure_publication_ready(&readiness)?;
     }
-    let project_id = {
-        let store = state.store.read().await;
-        let index = store.requirement_index(&requirement_id)?;
-        store.data.requirements[index].project_id.clone()
-    };
-    let analysis_guard = RequirementAnalysisGuard::acquire(&state, &project_id)?;
+    state
+        .store
+        .read()
+        .await
+        .requirement_index(&requirement_id)?;
+    let analysis_guard = RequirementAnalysisGuard::acquire(&state)?;
     let action = {
         let mut store = state.store.write().await;
         store.requeue_failed_planning(&requirement_id).await?
     };
     match action {
-        FailedRequirementWorkflowAction::Plan { project_id } => {
+        FailedRequirementWorkflowAction::Plan => {
             drop(analysis_guard);
-            spawn_project_scheduler(state.clone(), project_id);
+            spawn_project_scheduler(state.clone());
         }
         FailedRequirementWorkflowAction::RepairChangeSpec { input } => {
             let emitter = RequirementEventEmitter {
@@ -1390,7 +1171,7 @@ pub async fn start_requirement_workflow(
         }
     }
     let store = state.store.read().await;
-    Ok(Json(store.project_canvas(&project_id)?))
+    Ok(Json(store.project_canvas()?))
 }
 
 pub async fn get_model_settings(
@@ -1398,7 +1179,7 @@ pub async fn get_model_settings(
 ) -> Result<Json<ModelSettingsResponse>, AppError> {
     let settings = {
         let store = state.store.read().await;
-        store.data.model_settings.clone()
+        store.model_settings()?
     };
 
     let response = match state.model_provider.available_models().await {
@@ -1432,7 +1213,7 @@ pub async fn put_model_settings(
     let store = state.store.read().await;
     Ok(Json(ModelSettingsResponse {
         models,
-        settings: store.data.model_settings.clone(),
+        settings: store.model_settings()?,
         rpc_status: RpcStatus::Ready,
         rpc_error: None,
     }))
@@ -1482,16 +1263,7 @@ pub async fn restart_system(State(state): State<AppState>) -> Result<impl IntoRe
 
 pub async fn ensure_runtime_idle(state: &AppState) -> Result<(), AppError> {
     let store = state.store.read().await;
-    let busy = store.data.project_chats.iter().any(|chat| chat.running)
-        || store.data.requirements.iter().any(|requirement| {
-            matches!(
-                requirement.status,
-                RequirementStatus::Analyzing
-                    | RequirementStatus::Planning
-                    | RequirementStatus::Queued
-                    | RequirementStatus::Running
-            )
-        });
+    let busy = store.conversation_busy()?;
     if busy {
         Err(AppError::conflict(
             "存在运行中的问答、需求分析或执行任务，当前操作已阻止",
@@ -1505,53 +1277,34 @@ pub async fn cancel_requirement_analysis(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Result<Json<crate::models::ProjectCanvasResponse>, AppError> {
-    // Find the project_id for this requirement.
-    let project_id = {
+    {
         let store = state.store.read().await;
-        let index = store
+        store
             .requirement_index(&requirement_id)
             .map_err(|_| AppError::not_found("需求不存在"))?;
-        store.data.requirements[index].project_id.clone()
-    };
-    state
-        .model_provider
-        .cancel_requirement_analysis(&project_id)
-        .await?;
-    state
-        .pending_requirement_interactions
-        .lock()
-        .await
-        .remove(&requirement_id);
+    }
+    state.model_provider.cancel_requirement_analysis().await?;
     let store = state.store.read().await;
-    Ok(Json(store.project_canvas(&project_id)?))
+    Ok(Json(store.project_canvas()?))
 }
 
 pub async fn delete_requirement(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Result<Json<crate::models::ProjectCanvasResponse>, AppError> {
-    let project_id = {
+    {
         let store = state.store.read().await;
-        let index = store
+        store
             .requirement_index(&requirement_id)
             .map_err(|_| AppError::not_found("需求不存在"))?;
-        store.data.requirements[index].project_id.clone()
-    };
-    state
-        .model_provider
-        .cancel_requirement_analysis(&project_id)
-        .await?;
-    state
-        .pending_requirement_interactions
-        .lock()
-        .await
-        .remove(&requirement_id);
+    }
+    state.model_provider.cancel_requirement_analysis().await?;
     {
         let mut store = state.store.write().await;
         store.delete_requirement(&requirement_id).await?;
     }
     let store = state.store.read().await;
-    Ok(Json(store.project_canvas(&project_id)?))
+    Ok(Json(store.project_canvas()?))
 }
 
 fn spawn_requirement_analysis(
@@ -1587,7 +1340,6 @@ fn spawn_requirement_analysis(
                     {
                         handle_requirement_interaction_event(
                             &state,
-                            &emitter,
                             &requirement_id,
                             event,
                         ).await;
@@ -1634,12 +1386,7 @@ fn spawn_requirement_analysis(
             }
         };
 
-        state
-            .pending_requirement_interactions
-            .lock()
-            .await
-            .remove(&requirement_id);
-        let auto_resume_project = {
+        let auto_resume = {
             let mut store = state.store.write().await;
             if let Err(error) = store
                 .apply_requirement_analysis(&requirement_id, output)
@@ -1653,7 +1400,7 @@ fn spawn_requirement_analysis(
                     .auto_queue_repaired_requirement(&requirement_id, baseline)
                     .await
                 {
-                    Ok(project_id) => project_id,
+                    Ok(scope) => scope,
                     Err(error) => {
                         emitter.emit(
                             "change_spec_repair_failed",
@@ -1663,16 +1410,16 @@ fn spawn_requirement_analysis(
                     }
                 }
             } else {
-                None
+                false
             }
         };
 
-        if let Some(project_id) = auto_resume_project {
+        if auto_resume {
             emitter.emit(
                 "change_spec_repair_completed",
                 "ChangeSpec 仅修正证据引用，已自动继续生成 WorkPlan。",
             );
-            spawn_project_scheduler(state.clone(), project_id);
+            spawn_project_scheduler(state.clone());
         } else {
             emitter.emit(event.0, event.1);
         }
@@ -1681,7 +1428,6 @@ fn spawn_requirement_analysis(
 
 async fn handle_requirement_interaction_event(
     state: &AppState,
-    emitter: &RequirementEventEmitter,
     requirement_id: &str,
     event: RequirementEvent,
 ) {
@@ -1691,81 +1437,29 @@ async fn handle_requirement_interaction_event(
     let Some(payload) = event.payload else {
         return;
     };
-    match payload.get("type").and_then(serde_json::Value::as_str) {
-        Some("raccoon_session_bound") => {
-            let Some(session_file) = payload
-                .get("sessionFile")
-                .and_then(serde_json::Value::as_str)
-            else {
-                return;
-            };
-            if let Err(error) = state
-                .store
-                .write()
-                .await
-                .bind_requirement_session(requirement_id, session_file.to_owned())
-                .await
-            {
-                tracing::error!(requirement_id, %error, "failed to persist Pi session binding");
-            }
-        }
-        Some("extension_ui_request")
-            if payload.get("method").and_then(serde_json::Value::as_str) == Some("editor")
-                && payload.get("title").and_then(serde_json::Value::as_str)
-                    == Some("raccoon:clarifications:v1") =>
-        {
-            let Some(request_id) = payload.get("id").and_then(serde_json::Value::as_str) else {
-                return;
-            };
-            let Some(prefill) = payload.get("prefill").and_then(serde_json::Value::as_str) else {
-                return;
-            };
-            let clarifications = serde_json::from_str::<serde_json::Value>(prefill)
-                .ok()
-                .and_then(|value| value.get("questions").cloned())
-                .and_then(|value| {
-                    serde_json::from_value::<Vec<RequirementClarification>>(value).ok()
-                });
-            let Some(clarifications) = clarifications else {
-                tracing::error!(requirement_id, "invalid clarification plugin payload");
-                return;
-            };
-            let project_id = {
-                let mut store = state.store.write().await;
-                let project_id = store
-                    .requirement_index(requirement_id)
-                    .ok()
-                    .map(|index| store.data.requirements[index].project_id.clone());
-                if let Err(error) = store
-                    .apply_requirement_clarification_request(requirement_id, clarifications)
-                    .await
-                {
-                    tracing::error!(requirement_id, %error, "failed to persist clarifications");
-                    return;
-                }
-                project_id
-            };
-            let Some(project_id) = project_id else {
-                return;
-            };
-            state.pending_requirement_interactions.lock().await.insert(
-                requirement_id.to_owned(),
-                (project_id, request_id.to_owned()),
-            );
-            emitter.emit("clarifications_ready", "新的澄清问题已生成。");
-        }
-        _ => {}
+    if payload.get("type").and_then(serde_json::Value::as_str) != Some("raccoon_session_bound") {
+        return;
+    }
+    let Some(session_file) = payload
+        .get("sessionFile")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return;
+    };
+    if let Err(error) = state
+        .store
+        .write()
+        .await
+        .bind_requirement_session(requirement_id, session_file.to_owned())
+        .await
+    {
+        tracing::error!(requirement_id, %error, "failed to persist Pi session binding");
     }
 }
 
-fn spawn_project_chat_response(
-    state: AppState,
-    project_id: String,
-    input: crate::models::ProjectChatInput,
-) {
+fn spawn_project_chat_response(state: AppState, input: crate::models::ProjectChatInput) {
     tokio::spawn(async move {
         let emitter = ProjectChatEventEmitter {
-            project_id: project_id.clone(),
             bus: state.project_chat_events.clone(),
         };
         emitter.emit("project_chat_started", "Pi Agent 开始回答项目问题。");
@@ -1779,7 +1473,7 @@ fn spawn_project_chat_response(
 
         let saved = {
             let mut store = state.store.write().await;
-            store.apply_project_chat_result(&project_id, output).await
+            store.apply_project_chat_result(output).await
         };
         if let Err(error) = saved {
             emitter.emit(
@@ -1805,12 +1499,11 @@ pub fn spawn_startup_requirement_scheduler(state: AppState) {
         // ponytail: startup recovery resumes persisted requirements automatically.
         // Publication readiness is enforced at the user action boundary, not here,
         // so stale remote credentials do not freeze an interrupted WorkflowRun.
-        let project_ids = {
-            let mut pending = state.pending_startup_requirement_ids.lock().await;
-            std::mem::take(&mut *pending)
-        };
-        for project_id in project_ids {
-            spawn_project_scheduler(state.clone(), project_id);
+        if state
+            .resume_workflow_on_startup
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            spawn_project_scheduler(state.clone());
         }
     });
 }
@@ -1828,32 +1521,22 @@ fn ensure_publication_ready(
     )))
 }
 
-fn spawn_project_scheduler(state: AppState, project_id: String) {
-    let lock = {
-        // ponytail: projects are few and app lifetime bounds this lock map.
-        let mut locks = state
-            .project_scheduler_locks
-            .lock()
-            .expect("project scheduler lock poisoned");
-        locks
-            .entry(project_id.clone())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
-    };
+fn spawn_project_scheduler(state: AppState) {
+    let lock = state.project_scheduler_lock.clone();
     tokio::spawn(async move {
         let _guard = lock.lock().await;
-        run_project_scheduler(state, project_id).await;
+        run_project_scheduler(state).await;
     });
 }
 
-async fn run_project_scheduler(state: AppState, project_id: String) {
+async fn run_project_scheduler(state: AppState) {
     loop {
         let action = {
             let mut store = state.store.write().await;
-            match store.prepare_next_project_action(&project_id).await {
+            match store.prepare_next_project_action().await {
                 Ok(action) => action,
                 Err(error) => {
-                    tracing::error!(project_id, %error, "project scheduler failed");
+                    tracing::error!(%error, "project scheduler failed");
                     return;
                 }
             }
@@ -1892,9 +1575,9 @@ async fn run_project_scheduler(state: AppState, project_id: String) {
                     let failure_stage = {
                         let store = state.store.read().await;
                         store
-                            .requirement_index(&requirement_id)
+                            .requirement_failure_stage(&requirement_id)
                             .ok()
-                            .and_then(|index| store.data.requirements[index].failure_stage)
+                            .flatten()
                     };
                     if failure_stage == Some(RequirementFailureStage::ChangeSpecValidation) {
                         emitter.emit(
@@ -1931,7 +1614,7 @@ async fn run_workflow_execution(
         return current_requirement_status(&state, &requirement_id).await;
     };
     let _execution_guard = execution_guard;
-    super::workflow_runtime::run_workflow_execution_v5(state, requirement_id, run_id).await
+    super::workflow_runtime::run_workflow_execution(state, requirement_id, run_id).await
 }
 
 async fn current_requirement_status(state: &AppState, requirement_id: &str) -> RequirementStatus {
@@ -1998,7 +1681,7 @@ mod event_filter_tests {
             Some(serde_json::json!({
                 "assistantMessageEvent": {"type": "text_delta", "delta": "你好"}
             })),
-            serde_json::json!({"project_id": "current"}),
+            serde_json::json!({}),
         )
         .unwrap();
         assert_eq!(delta["type"], "agent.event");

@@ -43,10 +43,10 @@ repos:
         pass_filenames: false
 
       - id: tsc
-        name: TypeScript 类型检查
+        name: TypeScript 与生产入口检查
         entry: npm --prefix frontend run check
         language: system
-        files: ^frontend/.*\.(ts|tsx)$
+        files: ^frontend/(src/.*\.(ts|tsx)|package(-lock)?\.json|knip\.json|tsconfig.*\.json|vite\.config\.ts)$
         pass_filenames: false
 
       - id: cargo-fmt

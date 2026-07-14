@@ -92,12 +92,9 @@ mod tests {
     fn project_chat_prompt_is_read_only() {
         let input = ProjectChatInput {
             project: Project {
-                id: "p1".to_owned(),
                 name: "Demo".to_owned(),
                 git_url: "https://example.com/demo.git".to_owned(),
                 local_path: "/tmp/demo".to_owned(),
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
             },
             messages: vec![ProjectChatMessage {
                 role: ProjectChatMessageRole::User,
