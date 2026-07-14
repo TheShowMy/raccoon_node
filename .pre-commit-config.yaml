@@ -49,13 +49,6 @@ repos:
         files: ^frontend/.*\.(ts|tsx)$
         pass_filenames: false
 
-      - id: frontend-build
-        name: 前端生产构建检查
-        entry: npm --prefix frontend run build:ci
-        language: system
-        files: ^frontend/.*\.(ts|tsx|css|html)$
-        pass_filenames: false
-
       - id: cargo-fmt
         name: 使用 rustfmt 格式化检查 Rust 文件
         entry: cargo fmt -- --check
@@ -84,3 +77,10 @@ repos:
         files: \.rs$
         pass_filenames: false
         verbose: true
+
+      - id: frontend-build
+        name: 前端生产构建检查
+        entry: npm --prefix frontend run build:ci
+        language: system
+        files: ^frontend/.*\.(ts|tsx|css|html)$
+        pass_filenames: false

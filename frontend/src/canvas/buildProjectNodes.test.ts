@@ -76,6 +76,7 @@ function workflow(itemCount = 2): WorkflowSnapshot {
       verification_goals: ["行为生效"],
       status: index === 0 ? "running" : "pending",
       attempt_count: index === 0 ? 1 : 0,
+      actual_attempt_count: index === 0 ? 1 : 0,
       version: 0,
       created_at: now,
       updated_at: now,

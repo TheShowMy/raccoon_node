@@ -25,7 +25,11 @@ import type {
 
 const COMMIT_MODES: [CommitMode, string, string][] = [
   ["local", "本地提交", "完成任务后直接合并到当前分支"],
-  ["pull_request", "PR / MR 合并", "通过远端平台创建合并请求"],
+  [
+    "pull_request",
+    "PR / MR 自动合并",
+    "推送受管分支，在远端创建并自动合并；不会先移动本地主分支",
+  ],
 ];
 
 export default function BasicSettingsPanel({

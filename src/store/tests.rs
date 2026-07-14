@@ -104,9 +104,9 @@ async fn version_four_database_is_byte_archived_and_replaced() {
 }
 use crate::error::AppError;
 use crate::models::{
-    AcceptanceScenario, ChangeSpec, Project, ProjectChat, ProjectChatMessage,
-    ProjectChatMessageRole, Requirement, RequirementMessage, RequirementMessageRole,
-    RequirementStatus,
+    AcceptanceScenario, ChangeSpec, ExplicitConstraint, Project, ProjectChat, ProjectChatMessage,
+    ProjectChatMessageRole, Requirement, RequirementFailureStage, RequirementMessage,
+    RequirementMessageRole, RequirementStatus,
 };
 
 #[tokio::test]
@@ -191,6 +191,206 @@ async fn failed_requirement_pauses_project_queue() {
             .is_none()
     );
     assert_eq!(store.data.requirements[1].status, RequirementStatus::Queued);
+}
+
+#[tokio::test]
+async fn invalid_failed_change_spec_routes_to_repair_before_planning() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+        .await
+        .unwrap();
+    let now = Utc::now();
+    store.data.projects.push(Project {
+        id: "project".to_owned(),
+        name: "project".to_owned(),
+        git_url: "https://example.com/project.git".to_owned(),
+        local_path: temp_dir.path().to_string_lossy().to_string(),
+        created_at: now,
+        updated_at: now,
+    });
+    let message = |role, content: &str| RequirementMessage {
+        role,
+        content: content.to_owned(),
+        references: Vec::new(),
+        images: Vec::new(),
+        metadata: None,
+        created_at: now,
+    };
+    let mut failed = requirement("webgl");
+    failed.status = RequirementStatus::Failed;
+    failed.failure_stage = Some(RequirementFailureStage::ChangeSpecValidation);
+    failed.pi_session_file = Some("requirement.jsonl".to_owned());
+    failed.messages = vec![
+        message(RequirementMessageRole::User, "修复 WebGL 不可用问题"),
+        message(RequirementMessageRole::Assistant, "需要澄清"),
+        message(RequirementMessageRole::Trace, "trace"),
+        message(
+            RequirementMessageRole::User,
+            "期望的修复策略是什么？：强制 WebGL 并优化检测",
+        ),
+    ];
+    failed.draft = Some(ChangeSpec {
+        intent: "修复 WebGL 不可用问题".to_owned(),
+        acceptance_scenarios: vec![AcceptanceScenario {
+            id: "start".to_owned(),
+            given: "浏览器支持三维渲染".to_owned(),
+            when: "用户进入游戏".to_owned(),
+            then: "游戏正常启动".to_owned(),
+        }],
+        explicit_constraints: vec![ExplicitConstraint {
+            id: "strategy".to_owned(),
+            statement: "强制 WebGL 并优化检测".to_owned(),
+            source_message_id: "clarification_answer".to_owned(),
+            source_quote: "策略：强制 WebGL 并优化检测".to_owned(),
+        }],
+        non_goals: Vec::new(),
+    });
+    store.data.requirements.push(failed);
+
+    let action = store.requeue_failed_planning("webgl").await.unwrap();
+    let super::FailedRequirementWorkflowAction::RepairChangeSpec { input, .. } = action else {
+        panic!("invalid ChangeSpec must not start Planner");
+    };
+    assert!(input.repair_change_spec_only);
+    assert_eq!(input.pi_session_file.as_deref(), Some("requirement.jsonl"));
+    assert_eq!(
+        store.data.requirements[0].status,
+        RequirementStatus::Analyzing
+    );
+}
+
+#[tokio::test]
+async fn confirmation_rejects_invalid_constraint_evidence_before_queueing() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+        .await
+        .unwrap();
+    let mut draft = requirement("invalid-confirmation");
+    draft.status = RequirementStatus::DraftReady;
+    draft.draft = Some(ChangeSpec {
+        intent: "修复启动".to_owned(),
+        acceptance_scenarios: vec![AcceptanceScenario {
+            id: "start".to_owned(),
+            given: "环境正常".to_owned(),
+            when: "用户启动应用".to_owned(),
+            then: "应用正常运行".to_owned(),
+        }],
+        explicit_constraints: vec![ExplicitConstraint {
+            id: "runtime".to_owned(),
+            statement: "使用浏览器".to_owned(),
+            source_message_id: "initial_request".to_owned(),
+            source_quote: "浏览器".to_owned(),
+        }],
+        non_goals: Vec::new(),
+    });
+    store.data.requirements.push(draft);
+
+    assert!(
+        store
+            .confirm_requirement("invalid-confirmation", None, None)
+            .await
+            .is_err()
+    );
+    let requirement = &store.data.requirements[0];
+    assert_eq!(requirement.status, RequirementStatus::Failed);
+    assert_eq!(
+        requirement.failure_stage,
+        Some(RequirementFailureStage::ChangeSpecValidation)
+    );
+    assert!(requirement.queued_at.is_none());
+}
+
+#[tokio::test]
+async fn planning_preflight_rejects_invalid_spec_before_creating_an_action() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+        .await
+        .unwrap();
+    let now = Utc::now();
+    store.data.projects.push(Project {
+        id: "project".to_owned(),
+        name: "project".to_owned(),
+        git_url: String::new(),
+        local_path: temp_dir.path().to_string_lossy().to_string(),
+        created_at: now,
+        updated_at: now,
+    });
+    let mut queued = queued_requirement("invalid-preflight", now);
+    queued.draft.as_mut().unwrap().explicit_constraints = vec![ExplicitConstraint {
+        id: "runtime".to_owned(),
+        statement: "使用浏览器".to_owned(),
+        source_message_id: "initial_request".to_owned(),
+        source_quote: "浏览器".to_owned(),
+    }];
+    store.data.requirements.push(queued);
+
+    assert!(
+        store
+            .start_requirement_planning("invalid-preflight")
+            .await
+            .is_err()
+    );
+    let requirement = &store.data.requirements[0];
+    assert_eq!(requirement.status, RequirementStatus::Failed);
+    assert_eq!(
+        requirement.failure_code.as_deref(),
+        Some("planning_preflight_failed")
+    );
+}
+
+#[tokio::test]
+async fn evidence_only_repair_auto_queues_but_semantic_changes_require_confirmation() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut store = JsonStore::open(temp_dir.path().join(".raccoon-node"))
+        .await
+        .unwrap();
+    let mut repaired = requirement("webgl");
+    repaired.status = RequirementStatus::DraftReady;
+    repaired.messages[0].content = "强制 WebGL 并优化检测".to_owned();
+    let baseline = ChangeSpec {
+        intent: "修复游戏启动".to_owned(),
+        acceptance_scenarios: vec![AcceptanceScenario {
+            id: "start".to_owned(),
+            given: "浏览器支持三维渲染".to_owned(),
+            when: "用户进入游戏".to_owned(),
+            then: "游戏正常启动".to_owned(),
+        }],
+        explicit_constraints: vec![ExplicitConstraint {
+            id: "strategy".to_owned(),
+            statement: "强制 WebGL 并优化检测".to_owned(),
+            source_message_id: "invalid".to_owned(),
+            source_quote: "invalid".to_owned(),
+        }],
+        non_goals: Vec::new(),
+    };
+    let mut fixed = baseline.clone();
+    fixed.explicit_constraints[0].source_message_id = "message-1".to_owned();
+    fixed.explicit_constraints[0].source_quote = "强制 WebGL 并优化检测".to_owned();
+    repaired.draft = Some(fixed);
+    store.data.requirements.push(repaired);
+
+    assert_eq!(
+        store
+            .auto_queue_repaired_requirement("webgl", &baseline)
+            .await
+            .unwrap(),
+        Some("project".to_owned())
+    );
+    assert_eq!(store.data.requirements[0].status, RequirementStatus::Queued);
+
+    store.data.requirements[0].status = RequirementStatus::DraftReady;
+    store.data.requirements[0].draft.as_mut().unwrap().intent = "改变后的目标".to_owned();
+    assert!(
+        store
+            .auto_queue_repaired_requirement("webgl", &baseline)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        store.data.requirements[0].status,
+        RequirementStatus::DraftReady
+    );
 }
 
 #[tokio::test]
@@ -549,6 +749,8 @@ fn requirement(id: &str) -> Requirement {
         clarification_history: Vec::new(),
         pi_session_file: None,
         error: None,
+        failure_stage: None,
+        failure_code: None,
         queued_at: None,
         created_at: now,
         updated_at: now,

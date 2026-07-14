@@ -1,6 +1,6 @@
 # Token 消耗优化调研报告
 
-> **实施状态（2026-07-13）**：本报告只保留为历史调研，不再描述当前执行架构。当前主线是 `ChangeSpec -> WorkPlan -> WorkflowRun v5`：ChangeSpec 只保存行为规格；WorkPlan 只包含行为切片和可修订 DesignNotes；全部实现完成后才运行仓库原生基线/最终验证与完整 diff 审核；质量与安全使用需求隔离的盲审子 Agent；技术失败进入可恢复暂停且不消耗唯一 Rescue。结构化输出协议为 `raccoon:workflow-output:v3`，Git 写限制由 `raccoon:task-runtime:v3` extension 承担，审核协议为 `raccoon:parallel-review:v5`，token 预算只告警，Pi compaction 保持用户设置。以下旧问题与建议不得作为当前接口或节点设计依据。
+> **实施状态（2026-07-14）**：本报告只保留为历史调研，不再描述当前执行架构。当前主线是 `ChangeSpec -> WorkPlan -> WorkflowRun v5.2`：ChangeSpec 只保存行为规格；WorkPlan 只包含行为切片和可修订 DesignNotes；合法同层任务使用隔离 worktree 真并发，全部实现完成后才运行仓库原生基线/最终验证与完整 diff 审核；质量与安全使用需求隔离的盲审子 Agent；技术失败进入可恢复暂停且不消耗唯一 Rescue。审核通过后按冻结设置本地集成或远端 PR/MR 自动合并，成功完成前清理受管资源。结构化输出协议为 `raccoon:workflow-output:v3`，Git 写与工作区边界由 `raccoon:task-runtime:v4` extension 承担，审核协议为 `raccoon:parallel-review:v5`，token 预算只告警，Pi compaction 保持用户设置；integration 越界会零重试熔断，所有 superseded/technical usage 均计入汇总。以下旧问题与建议不得作为当前接口或节点设计依据。
 
 > 调研范围：`raccoon_node` 后端提示词组装、Pi Agent RPC 调用、需求/任务/聊天流程。
 > 目标：定位当前不合理的 token 消耗点，参考社区实践，给出可落地的优化建议。本报告不修改代码。

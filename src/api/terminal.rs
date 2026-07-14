@@ -588,11 +588,19 @@ mod tests {
             .expect("spawn terminal");
 
         let runtime = manager.get(&session.id).expect("runtime");
+        let initial_output: String = runtime
+            .output_history()
+            .into_iter()
+            .filter_map(|message| match message {
+                TerminalServerMessage::Output { data } => Some(data),
+                _ => None,
+            })
+            .collect();
         let mut receiver = runtime.subscribe();
         let (output_tx, output_rx) = mpsc::channel::<String>();
 
         thread::spawn(move || {
-            let mut output = String::new();
+            let mut output = initial_output;
             while let Ok(message) = receiver.blocking_recv() {
                 match message {
                     TerminalServerMessage::Output { data } => output.push_str(&data),

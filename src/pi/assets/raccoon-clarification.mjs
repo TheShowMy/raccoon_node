@@ -113,7 +113,8 @@ export default function (pi) {
   pi.registerTool({
     name: "submit_change_spec",
     label: "提交 ChangeSpec",
-    description: "需求足够明确后，提交只描述用户可观察行为的 ChangeSpec。",
+    description:
+      "需求足够明确后提交 ChangeSpec。普通目标和行为事实放入 intent/acceptance_scenarios；只有用户明确指定的技术限制才进入 explicit_constraints，并从 RequirementEvidenceIndex 复制真实消息 ID 与连续原文。",
     parameters: Type.Object({
       progress: Type.String(),
       message: Type.String(),

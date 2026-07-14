@@ -357,6 +357,8 @@ mod tests {
                 draft: None,
                 pi_session_file: Some("session.json".to_owned()),
                 error: None,
+                failure_stage: None,
+                failure_code: None,
                 trace: None,
             }),
             project_chat: Ok(test_project_chat_output()),
@@ -389,6 +391,8 @@ mod tests {
                 draft: Some(test_change_spec("分支需求")),
                 pi_session_file: Some("requirement-branch.jsonl".to_owned()),
                 error: None,
+                failure_stage: None,
+                failure_code: None,
                 trace: None,
             }),
             project_chat: Ok(test_project_chat_output()),
@@ -1633,6 +1637,8 @@ mod tests {
                     draft: None,
                     pi_session_file: Some("session.json".to_owned()),
                     error: None,
+                    failure_stage: None,
+                    failure_code: None,
                     trace: Some(json!({
                         "type": "pi_trace",
                         "version": 1,
@@ -1729,6 +1735,7 @@ mod tests {
             draft: None,
             model_settings: ModelSettings::default(),
             pi_session_file: None,
+            repair_change_spec_only: false,
         };
         let prompt = build_requirement_prompt(&input, false).markdown;
         assert!(prompt.contains("### BEGIN USER INPUT ###"));
@@ -1786,6 +1793,8 @@ mod tests {
             clarification_history: Vec::new(),
             pi_session_file: None,
             error: None,
+            failure_stage: None,
+            failure_code: None,
             queued_at: None,
             created_at: now,
             updated_at: now,

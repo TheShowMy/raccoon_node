@@ -39,9 +39,20 @@
   文件、函数、API、组件、CSS 和命令只能在用户明确指定并带原消息 ID、原文摘录时进入
   `explicit_constraints`。Planner 的 `DesignNotes` 是带仓库证据的可修订技术设计，不参与
   机械验收。
-- WorkflowRun v5：WorkPlan 只包含行为切片、场景引用、依赖、非约束范围线索和验证目标，
-  不存在 Stage、Review、Fix、Merge 或 Recovery 伪任务。执行器在单个 integration worktree
-  上默认串行完成低档实现、低档修复和高档修复；全部切片完成后才执行最终验证和审核。
+- ChangeSpec 证据：需求 Prompt 每轮都携带由持久消息顺序生成的精简
+  `RequirementEvidenceIndex`。`explicit_constraints` 只能引用其中真实的 `message-N` 和连续
+  原文；工具提交后立即校验，失败只在同一需求 session 中修正一次。非法 ChangeSpec 不得
+  进入 Planner，旧规划失败记录恢复时先修正证据，只有行为语义未变才自动续跑。
+- WorkflowRun v5.2：WorkPlan 只包含行为切片、场景引用、依赖、非约束范围线索和验证目标，
+  不存在 Stage、Review、Fix、Merge 或 Recovery 伪任务。同一可运行层只有在 2–3 项拥有相同
+  非空 group 且 scope_hints 两两不重叠时才能并行；每项使用独立分支、worktree 和 Pi session，
+  完成后按 position 确定性 cherry-pick 到 integration。只有真实并行路径重叠可无损降级一次；
+  单项冲突、二次重叠或 integration 污染直接技术暂停。全部切片完成后才执行最终验证和审核。
+- 发布与清理：Run 启动时冻结 local 或 pull_request 发布配置。local 只做安全 ff-only；
+  pull_request 将唯一 workflow 分支推送到 origin，通过 GitHub CLI 或 GitLab REST 创建并自动
+  合并 PR/MR，远端 merge commit 是权威 final_commit。本地主分支只在仍处于原基线、干净且
+  可快进时同步，否则仅告警。成功完成前必须清理 item/integration worktree、本地受管分支和
+  远端源分支；技术暂停、阻塞和取消保留现场。发布状态与 item workspace 由 SQLite v8 持久化。
 - 仓库原生验证：启动时确定性生成 `RepositoryValidationCatalog` 并在 base HEAD 建立基线；
   最终只把“基线通过、最终失败”视为硬回归。命令缺失或无法建立基线标记为 unverified，
   既有失败未恶化只展示。Agent 自创 grep、字符串计数等只属于 observation，不能成为 gate。
@@ -58,10 +69,12 @@
   全新高档 Rescue。Rescue 只接收 ChangeSpec、最终 diff、未关闭 P0/P1、验证差异和精简失败链；
   原生 gate 首次失败时只向同一 Rescue session 反馈一次短证据。数据库、协议、Pi 进程、审核
   持久化等技术失败暂停并可恢复，不消耗 Rescue。
-- 受管任务运行时：含 `bash` 的角色加载 `raccoon:task-runtime:v3` extension。模型仍可
+- 受管任务运行时：含 `bash` 的角色加载 `raccoon:task-runtime:v4` extension。模型仍可
   直接执行 `git status`、`git diff`、`git log` 等只读命令；extension 在 `tool_call`
-  阶段拦截 Git 写操作并返回明确错误。实现类任务在模型运行前后额外核对当前 worktree
-  的 HEAD、分支 ref 和 staged diff 指纹，异常变化按技术失败处理。规划、任务与恢复结果
+  阶段拦截 Git 写操作并返回明确错误，同时将文件工具与 shell 写入/切换限制在当前 session
+  cwd。实现批次在模型运行前后额外核对 integration 的 HEAD、分支、索引、未暂存、未跟踪
+  和进行中 Git operation；异常变化立即按 `workspace_violation` 暂停且不重试模型。验证摘要
+  进入 Prompt 前删除 ANSI 与绝对受管路径。规划、任务与恢复结果
   通过 `raccoon:workflow-output:v3` 结构化工具提交，不再依赖文本 JSON repair。
 - Pi 原生 compaction：不修改 `autoCompactionEnabled`。项目聊天、需求分析、任务和 Review
   父会话记录压缩原因、结果与估算节省量；压缩事件刷新空闲计时。估算值标记
@@ -98,10 +111,15 @@
   不匹配均作为技术失败，不回退文本 JSON。Git 写限制由受管 extension 和状态复核实现，
   不写入任务 Prompt。Planner 和工作项结果结构不合法时，只在原 session 中发送一次短
   schema 纠正；仍不合法才形成技术失败。
-- 业务状态只以 SQLite v5 为准；`workflow_runs`、`workflow_work_items`、attempt、validation、
+- 业务状态只以 SQLite v8 为准；`requirements.failure_stage/failure_code` 区分需求分析、规格证据、
+  Planner、计划校验和持久化失败；`workflow_runs`、`workflow_work_items`、attempt、validation、
   checkpoint、finding 和只追加 event 是执行事实，不再存在 `workflow_stages`。Pi session 只
   保存完整模型历史，不承担 FIFO、租约、worktree 或恢复状态。检测到 v4 数据库时先按字节
   归档再创建全新 v5；运行时不保留旧 Workflow 执行器或协议兼容分支。
+- 技术熔断与干净重建：实际调用数由 attempts 计算，`superseded` 和技术失败 usage 不丢弃；
+  相同工作项和 integration 指纹的确定性故障在下一次模型调用前熔断。工作区越界 Run 只能通过
+  `/restart-clean` 从当前干净 HEAD 创建带 `replaces_run_id` 的唯一 replacement；旧 Run、session、
+  usage 和污染 worktree 保留为诊断现场。
 - 项目聊天始终持有父 Pi session。`/需求生成` 只在用户提交非空补充说明后执行：
   完整父问答通过 Pi RPC `clone` 派生 child session；无完整上下文时创建独立需求。
   `ProjectChat.pi_session_file` 与 `Requirement.pi_session_file` 分别保存主/分支引用，

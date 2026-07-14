@@ -11,12 +11,13 @@ use serde_json::{Map, Value};
 
 use crate::error::AppError;
 use crate::models::{
-    AppData, ModelSettings, Project, ProjectChat, Requirement, RequirementStatus, SummaryNode,
-    TerminalCommandProfile,
+    AppData, ModelSettings, Project, ProjectChat, Requirement, RequirementFailureStage,
+    RequirementStatus, SummaryNode, TerminalCommandProfile,
 };
 
-const SCHEMA_VERSION: i64 = 5;
-const LEGACY_SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 8;
+const MIGRATABLE_SCHEMA_VERSIONS: &[i64] = &[5, 6, 7];
+const ARCHIVED_SCHEMA_VERSION: i64 = 4;
 
 pub struct Database {
     conn: std::sync::Mutex<Connection>,
@@ -72,6 +73,8 @@ impl Database {
                 clarification_history TEXT NOT NULL DEFAULT '[]',
                 pi_session_file TEXT,
                 error TEXT,
+                failure_stage TEXT,
+                failure_code TEXT,
                 queued_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -118,18 +121,19 @@ impl Database {
                 rescue_attempt_id TEXT,
                 blocked_reason TEXT,
                 paused_operation TEXT,
+                replaces_run_id TEXT,
                 version INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 completed_at TEXT,
-                FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE RESTRICT
+                FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE RESTRICT,
+                FOREIGN KEY (replaces_run_id) REFERENCES workflow_runs(id) ON DELETE RESTRICT
             );
 
             CREATE INDEX IF NOT EXISTS workflow_runs_requirement_created
                 ON workflow_runs(requirement_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS workflow_runs_status
                 ON workflow_runs(status, updated_at);
-
             CREATE TABLE IF NOT EXISTS workflow_work_items (
                 id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL,
@@ -272,6 +276,54 @@ impl Database {
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS workflow_publications (
+                run_id TEXT PRIMARY KEY,
+                mode TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                target_branch TEXT NOT NULL,
+                source_branch TEXT NOT NULL,
+                review_url TEXT,
+                head_commit TEXT,
+                merge_commit TEXT,
+                local_sync_status TEXT NOT NULL,
+                local_sync_message TEXT,
+                cleanup_status TEXT NOT NULL,
+                remote_ci_fix_used INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS workflow_item_workspaces (
+                work_item_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                worktree_path TEXT NOT NULL,
+                base_commit TEXT NOT NULL,
+                result_commit TEXT,
+                status TEXT NOT NULL,
+                fallback_serial INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (work_item_id) REFERENCES workflow_work_items(id) ON DELETE CASCADE,
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS workflow_item_workspaces_run
+                ON workflow_item_workspaces(run_id, status);
+
+            CREATE TABLE IF NOT EXISTS workflow_failure_fuses (
+                run_id TEXT NOT NULL,
+                work_item_id TEXT NOT NULL,
+                failure_class TEXT NOT NULL,
+                integration_fingerprint TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (work_item_id, failure_class, integration_fingerprint),
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY (work_item_id) REFERENCES workflow_work_items(id) ON DELETE CASCADE
+            );
             ",
         )?;
         let versions = {
@@ -283,13 +335,33 @@ impl Database {
         let unique_versions: HashSet<i64> = versions.iter().copied().collect();
         match unique_versions.len() {
             0 => {}
-            1 if unique_versions.contains(&SCHEMA_VERSION) => {}
+            1 if unique_versions.contains(&SCHEMA_VERSION)
+                || unique_versions
+                    .iter()
+                    .all(|version| MIGRATABLE_SCHEMA_VERSIONS.contains(version)) => {}
             1 => {
                 let version = unique_versions.iter().next().expect("one unique version");
                 return Err(AppError::internal(format!("不支持的数据库版本：{version}")));
             }
             _ => return Err(AppError::internal("数据库 schema_version 记录损坏")),
         }
+        if !table_has_column(&tx, "requirements", "failure_stage")? {
+            tx.execute("ALTER TABLE requirements ADD COLUMN failure_stage TEXT", [])?;
+        }
+        if !table_has_column(&tx, "requirements", "failure_code")? {
+            tx.execute("ALTER TABLE requirements ADD COLUMN failure_code TEXT", [])?;
+        }
+        if !table_has_column(&tx, "workflow_runs", "replaces_run_id")? {
+            tx.execute(
+                "ALTER TABLE workflow_runs ADD COLUMN replaces_run_id TEXT",
+                [],
+            )?;
+        }
+        tx.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_replaces_unique
+             ON workflow_runs(replaces_run_id) WHERE replaces_run_id IS NOT NULL",
+            [],
+        )?;
         tx.execute("DELETE FROM schema_version", [])?;
         tx.execute(
             "INSERT INTO schema_version (version) VALUES (?1)",
@@ -435,7 +507,7 @@ fn archive_legacy_database(path: &Path) -> Result<(), AppError> {
     let version = conn.query_row("SELECT MAX(version) FROM schema_version", [], |row| {
         row.get::<_, Option<i64>>(0)
     })?;
-    if version != Some(LEGACY_SCHEMA_VERSION) {
+    if version != Some(ARCHIVED_SCHEMA_VERSION) {
         return Ok(());
     }
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
@@ -451,7 +523,7 @@ fn archive_legacy_database(path: &Path) -> Result<(), AppError> {
     fs::create_dir(&archive_dir)?;
     fs::copy(path, archive_dir.join("data.db"))?;
     let manifest = serde_json::json!({
-        "schema_version": LEGACY_SCHEMA_VERSION,
+        "schema_version": ARCHIVED_SCHEMA_VERSION,
         "archived_at": Utc::now(),
         "source": "data.db",
         "mode": "byte_archive_before_workflow_v5",
@@ -553,9 +625,9 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
         "INSERT INTO requirements
          (id, project_id, title, original_message, status, messages,
           clarification_round, clarifications, draft, analysis_revision, active_prompt,
-          clarification_history, pi_session_file, error, queued_at, created_at,
-          updated_at, origin)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+          clarification_history, pi_session_file, error, failure_stage, failure_code,
+          queued_at, created_at, updated_at, origin)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
          ON CONFLICT(id) DO UPDATE SET
            project_id = excluded.project_id,
            title = excluded.title,
@@ -570,6 +642,8 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
            clarification_history = excluded.clarification_history,
            pi_session_file = excluded.pi_session_file,
            error = excluded.error,
+           failure_stage = excluded.failure_stage,
+           failure_code = excluded.failure_code,
            queued_at = excluded.queued_at,
            created_at = excluded.created_at,
            updated_at = excluded.updated_at,
@@ -589,6 +663,11 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
             serde_json::to_string(&persisted.clarification_history)?,
             persisted.pi_session_file,
             persisted.error,
+            persisted
+                .failure_stage
+                .map(requirement_failure_stage_text)
+                .transpose()?,
+            persisted.failure_code,
             persisted.queued_at.map(|value| value.to_rfc3339()),
             persisted.created_at.to_rfc3339(),
             persisted.updated_at.to_rfc3339(),
@@ -695,8 +774,8 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
     let mut statement = conn.prepare(
         "SELECT id, project_id, title, original_message, status, messages,
                 clarification_round, clarifications, draft, analysis_revision, active_prompt,
-                clarification_history, pi_session_file, error, queued_at,
-                created_at, updated_at, origin
+                clarification_history, pi_session_file, error, failure_stage, failure_code,
+                queued_at, created_at, updated_at, origin
          FROM requirements ORDER BY created_at, id",
     )?;
     let rows = statement.query_map([], |row| {
@@ -716,9 +795,11 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             row.get::<_, Option<String>>(12)?,
             row.get::<_, Option<String>>(13)?,
             row.get::<_, Option<String>>(14)?,
-            row.get::<_, String>(15)?,
-            row.get::<_, String>(16)?,
+            row.get::<_, Option<String>>(15)?,
+            row.get::<_, Option<String>>(16)?,
             row.get::<_, String>(17)?,
+            row.get::<_, String>(18)?,
+            row.get::<_, String>(19)?,
         ))
     })?;
     let mut requirements = Vec::new();
@@ -738,6 +819,8 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             clarification_history,
             pi_session_file,
             error,
+            failure_stage,
+            failure_code,
             queued_at,
             created_at,
             updated_at,
@@ -762,6 +845,10 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             )?,
             pi_session_file,
             error,
+            failure_stage: failure_stage
+                .map(|value| parse_json(&format!("\"{value}\""), "requirements.failure_stage"))
+                .transpose()?,
+            failure_code,
             queued_at: queued_at
                 .map(|value| parse_date(&value, "requirements.queued_at"))
                 .transpose()?,
@@ -827,6 +914,18 @@ fn status_text(status: RequirementStatus) -> Result<String, AppError> {
     Ok(serde_json::to_string(&status)?.trim_matches('"').to_owned())
 }
 
+fn requirement_failure_stage_text(stage: RequirementFailureStage) -> Result<String, AppError> {
+    Ok(serde_json::to_string(&stage)?.trim_matches('"').to_owned())
+}
+
+fn table_has_column(tx: &Transaction<'_>, table: &str, column: &str) -> Result<bool, AppError> {
+    let mut statement = tx.prepare(&format!("PRAGMA table_info({table})"))?;
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(names.iter().any(|name| name == column))
+}
+
 fn optional_json<T: serde::Serialize>(value: &Option<T>) -> Result<Option<String>, AppError> {
     value
         .as_ref()
@@ -851,4 +950,127 @@ fn parse_date(value: &str, field: &str) -> Result<DateTime<Utc>, AppError> {
     value
         .parse()
         .map_err(|error| AppError::internal(format!("数据库字段 {field} 损坏：{error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v5_database_is_incrementally_migrated_to_v8() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("data.db");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch("CREATE TABLE schema_version (version INTEGER NOT NULL); INSERT INTO schema_version VALUES (5);")
+            .unwrap();
+        drop(connection);
+
+        let database = Database::open(&path).unwrap();
+        let connection = database.lock_connection();
+        let version: i64 = connection
+            .query_row("SELECT version FROM schema_version", [], |row| row.get(0))
+            .unwrap();
+        let publication_table: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workflow_publications')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let failure_stage_column: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('requirements') WHERE name = 'failure_stage')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 8);
+        assert!(publication_table);
+        assert!(failure_stage_column);
+    }
+
+    #[test]
+    fn v6_requirements_gain_structured_failure_columns() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("data.db");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_version (version INTEGER NOT NULL);
+                 INSERT INTO schema_version VALUES (6);
+                 CREATE TABLE requirements (id TEXT PRIMARY KEY);",
+            )
+            .unwrap();
+        drop(connection);
+
+        let database = Database::open(&path).unwrap();
+        let connection = database.lock_connection();
+        let columns = ["failure_stage", "failure_code"];
+        for column in columns {
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('requirements') WHERE name = ?1)",
+                    [column],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(exists, "missing {column}");
+        }
+    }
+
+    #[test]
+    fn v7_workflow_runs_gain_clean_restart_link() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("data.db");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_version (version INTEGER NOT NULL);
+                 INSERT INTO schema_version VALUES (7);
+                 CREATE TABLE workflow_runs (
+                    id TEXT PRIMARY KEY,
+                    requirement_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    change_spec TEXT NOT NULL,
+                    design_notes TEXT NOT NULL DEFAULT '[]',
+                    plan_summary TEXT NOT NULL,
+                    source_revision INTEGER NOT NULL,
+                    base_head TEXT,
+                    integration_branch TEXT,
+                    integration_worktree TEXT,
+                    final_commit TEXT,
+                    rescue_used INTEGER NOT NULL DEFAULT 0,
+                    rescue_attempt_id TEXT,
+                    blocked_reason TEXT,
+                    paused_operation TEXT,
+                    version INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT
+                 );",
+            )
+            .unwrap();
+        drop(connection);
+
+        let database = Database::open(&path).unwrap();
+        let connection = database.lock_connection();
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('workflow_runs') WHERE name = 'replaces_run_id')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists);
+        let fuse_table: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workflow_failure_fuses')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(fuse_table);
+    }
 }

@@ -32,6 +32,14 @@ export default function WorkflowItemNode({
     (attempt) => attempt.work_item_id === item.id,
   );
   const latestAttempt = attempts.at(-1);
+  const parallelGroup = item.group
+    ? workflow.work_items
+        .filter((candidate) => candidate.group === item.group)
+        .sort((left, right) => left.position - right.position)
+    : [];
+  const parallelIndex = parallelGroup.findIndex(
+    (candidate) => candidate.id === item.id,
+  );
 
   return (
     <>
@@ -47,7 +55,9 @@ export default function WorkflowItemNode({
                 行为切片 {item.position + 1}
               </Text>
               <Text type="supporting" size="3xs" maxLines={1}>
-                {item.group ? `分组 ${item.group}` : "默认串行"}
+                {parallelGroup.length > 1
+                  ? `并行组 ${item.group} · ${parallelIndex + 1}/${parallelGroup.length}`
+                  : "串行"}
               </Text>
             </Stack>
           </HStack>

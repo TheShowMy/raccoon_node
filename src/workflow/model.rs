@@ -25,6 +25,7 @@ pub enum WorkflowRunStatus {
     Reviewing,
     Fixing,
     Rescuing,
+    Publishing,
     PausedTechnical,
     Completed,
     Blocked,
@@ -61,6 +62,7 @@ pub enum WorkflowAttemptKind {
     Implementation,
     Fix,
     IntegrationFix,
+    RemoteCiFix,
     Rescue,
 }
 
@@ -71,6 +73,64 @@ pub enum WorkflowAttemptStatus {
     Succeeded,
     Failed,
     Cancelled,
+    Superseded,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowPublicationMode {
+    Local,
+    PullRequest,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowPublicationProvider {
+    Local,
+    #[serde(rename = "github")]
+    GitHub,
+    #[serde(rename = "gitlab")]
+    GitLab,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowPublicationPhase {
+    Prepared,
+    Pushed,
+    ReviewOpen,
+    WaitingChecks,
+    Merged,
+    Cleaning,
+    Completed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowLocalSyncStatus {
+    Pending,
+    Synced,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowCleanupStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowItemWorkspaceStatus {
+    Prepared,
+    Running,
+    Committed,
+    Integrated,
+    Superseded,
+    Cleaned,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -146,6 +206,7 @@ pub enum FailureClass {
     Validation,
     ReviewRejected,
     GitConflict,
+    WorkspaceViolation,
     Infrastructure,
     BehaviourConflict,
     Cancelled,
@@ -155,7 +216,11 @@ impl FailureClass {
     pub fn is_technical(self) -> bool {
         matches!(
             self,
-            Self::ModelProtocol | Self::AgentRuntime | Self::GitConflict | Self::Infrastructure
+            Self::ModelProtocol
+                | Self::AgentRuntime
+                | Self::GitConflict
+                | Self::WorkspaceViolation
+                | Self::Infrastructure
         )
     }
 }
@@ -194,6 +259,8 @@ pub struct WorkflowRun {
     pub blocked_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused_operation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaces_run_id: Option<String>,
     pub version: u64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -216,6 +283,8 @@ pub struct WorkItem {
     pub verification_goals: Vec<String>,
     pub status: WorkItemStatus,
     pub attempt_count: u32,
+    #[serde(default)]
+    pub actual_attempt_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accepted_attempt_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -330,6 +399,55 @@ pub struct WorkflowReviewFinding {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkflowPublication {
+    pub run_id: String,
+    pub mode: WorkflowPublicationMode,
+    pub provider: WorkflowPublicationProvider,
+    pub phase: WorkflowPublicationPhase,
+    pub origin: String,
+    pub target_branch: String,
+    pub source_branch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_commit: Option<String>,
+    pub local_sync_status: WorkflowLocalSyncStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_sync_message: Option<String>,
+    pub cleanup_status: WorkflowCleanupStatus,
+    pub remote_ci_fix_used: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkflowItemWorkspace {
+    pub work_item_id: String,
+    pub run_id: String,
+    pub branch: String,
+    #[serde(skip_serializing)]
+    pub worktree_path: String,
+    pub base_commit: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_commit: Option<String>,
+    pub status: WorkflowItemWorkspaceStatus,
+    pub fallback_serial: bool,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletedWorkflowWorkspace {
+    pub run_id: String,
+    pub worktree_path: String,
+    pub branch: String,
+    pub base_head: String,
+    pub final_commit: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkflowEvent {
     pub sequence: i64,
@@ -356,6 +474,10 @@ pub struct WorkflowSnapshot {
     pub checkpoints: Vec<WorkflowCheckpoint>,
     pub validations: Vec<WorkflowValidation>,
     pub findings: Vec<WorkflowReviewFinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication: Option<WorkflowPublication>,
+    #[serde(default)]
+    pub item_workspaces: Vec<WorkflowItemWorkspace>,
     pub last_event_sequence: i64,
 }
 

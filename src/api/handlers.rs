@@ -31,12 +31,13 @@ use crate::models::{
     ProjectCanvasResponse, ProjectChatEventEmitter, ProjectChatMessageRequest, ProjectChatResponse,
     ProjectFileContent, ProjectFileTreeEntry, RequirementAnalysisInput, RequirementClarification,
     RequirementConfirmRequest, RequirementConversationResponse, RequirementEvent,
-    RequirementEventEmitter, RequirementMessageRequest, RequirementOrigin, RequirementStatus,
-    RpcStatus, SessionTranscriptPage, TerminalAccessRequest, TerminalAccessStatus,
-    TerminalClientMessage, TerminalCommandProfile, TerminalCommandProfilesUpdate,
-    TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
+    RequirementEventEmitter, RequirementFailureStage, RequirementMessageRequest, RequirementOrigin,
+    RequirementStatus, RpcStatus, SessionTranscriptPage, TerminalAccessRequest,
+    TerminalAccessStatus, TerminalClientMessage, TerminalCommandProfile,
+    TerminalCommandProfilesUpdate, TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
 };
-use crate::store::ProjectScheduleAction;
+use crate::store::{FailedRequirementWorkflowAction, ProjectScheduleAction};
+use crate::workflow::{clean_project_base, clone_workflow_for_clean_restart};
 use crate::{
     config::{CommitMode, THEME_PACKS},
     error::AppError,
@@ -336,6 +337,61 @@ pub async fn resume_workflow_run(
     spawn_project_scheduler(state.clone(), project_id);
     let store = state.store.read().await;
     Ok(Json(store.db.workflow_snapshot(&run_id)?))
+}
+
+pub async fn restart_workflow_run_clean(
+    State(state): State<AppState>,
+    AxumPath(run_id): AxumPath<String>,
+) -> Result<Json<crate::workflow::WorkflowSnapshot>, AppError> {
+    let (snapshot, project) = {
+        let store = state.store.read().await;
+        if let Some(replacement) = store.db.replacement_workflow_for(&run_id)? {
+            return Ok(Json(replacement));
+        }
+        let snapshot = store.db.workflow_snapshot(&run_id)?;
+        let project = store
+            .data
+            .projects
+            .iter()
+            .find(|project| project.id == snapshot.run.project_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("项目不存在"))?;
+        (snapshot, project)
+    };
+    if snapshot.run.status != crate::workflow::WorkflowRunStatus::PausedTechnical {
+        return Err(AppError::conflict(
+            "只有 paused_technical WorkflowRun 可以从干净工作区重建",
+        ));
+    }
+    if snapshot.publication.as_ref().is_some_and(|publication| {
+        publication.phase != crate::workflow::WorkflowPublicationPhase::Prepared
+            || publication.review_url.is_some()
+            || publication.head_commit.is_some()
+            || publication.merge_commit.is_some()
+    }) {
+        return Err(AppError::conflict(
+            "WorkflowRun 已进入远端发布流程，不能从干净工作区重建",
+        ));
+    }
+    let commit_mode = state.config.read().await.commit_mode;
+    let readiness = crate::api::publication::check(
+        &state.project_root,
+        &crate::utils::git_remote_origin(&state.project_root),
+        commit_mode,
+    )
+    .await;
+    ensure_publication_ready(&readiness)?;
+    *state.publication_readiness.write().await = readiness;
+    clean_project_base(&project.local_path).await?;
+
+    let workflow = clone_workflow_for_clean_restart(&snapshot);
+    let replacement_id = {
+        let store = state.store.read().await;
+        store.db.restart_workflow_clean(&run_id, &workflow)?
+    };
+    spawn_project_scheduler(state.clone(), project.id);
+    let store = state.store.read().await;
+    Ok(Json(store.db.workflow_snapshot(&replacement_id)?))
 }
 
 pub async fn get_workflow_attempt_session(
@@ -1231,6 +1287,10 @@ fn conversation_event_frame(
             | "draft_ready"
             | "analysis_cancelled"
             | "analysis_failed"
+            | "change_spec_repair_started"
+            | "change_spec_repair_completed"
+            | "change_spec_repair_failed"
+            | "workflow_planning_preflight_failed"
             | "message_append",
             _,
         ) => "snapshot.changed",
@@ -1257,11 +1317,36 @@ pub async fn confirm_requirement(
         ensure_publication_ready(&readiness)?;
     }
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
-    let project_id = {
+    let confirm_result = {
         let mut store = state.store.write().await;
         store
             .confirm_requirement(&requirement_id, payload.prompt_id, payload.revision)
-            .await?
+            .await
+    };
+    let project_id = match confirm_result {
+        Ok(project_id) => project_id,
+        Err(error) => {
+            let is_change_spec_failure = {
+                let store = state.store.read().await;
+                store
+                    .requirement_index(&requirement_id)
+                    .ok()
+                    .and_then(|index| store.data.requirements[index].failure_stage)
+                    == Some(RequirementFailureStage::ChangeSpecValidation)
+            };
+            if is_change_spec_failure {
+                let emitter = RequirementEventEmitter {
+                    requirement_id: requirement_id.clone(),
+                    task_id: None,
+                    bus: state.requirement_events.clone(),
+                };
+                emitter.emit(
+                    "workflow_planning_preflight_failed",
+                    "需求规格引用无效，未启动 Planner。",
+                );
+            }
+            return Err(error);
+        }
     };
     spawn_project_scheduler(state.clone(), project_id.clone());
     let store = state.store.read().await;
@@ -1277,10 +1362,33 @@ pub async fn start_requirement_workflow(
         ensure_publication_ready(&readiness)?;
     }
     let project_id = {
+        let store = state.store.read().await;
+        let index = store.requirement_index(&requirement_id)?;
+        store.data.requirements[index].project_id.clone()
+    };
+    let analysis_guard = RequirementAnalysisGuard::acquire(&state, &project_id)?;
+    let action = {
         let mut store = state.store.write().await;
         store.requeue_failed_planning(&requirement_id).await?
     };
-    spawn_project_scheduler(state.clone(), project_id.clone());
+    match action {
+        FailedRequirementWorkflowAction::Plan { project_id } => {
+            drop(analysis_guard);
+            spawn_project_scheduler(state.clone(), project_id);
+        }
+        FailedRequirementWorkflowAction::RepairChangeSpec { input } => {
+            let emitter = RequirementEventEmitter {
+                requirement_id: requirement_id.clone(),
+                task_id: None,
+                bus: state.requirement_events.clone(),
+            };
+            emitter.emit(
+                "change_spec_repair_started",
+                "开始修复 ChangeSpec 的用户消息证据引用。",
+            );
+            spawn_requirement_analysis(state.clone(), requirement_id, *input, analysis_guard);
+        }
+    }
     let store = state.store.read().await;
     Ok(Json(store.project_canvas(&project_id)?))
 }
@@ -1454,6 +1562,10 @@ fn spawn_requirement_analysis(
 ) {
     tokio::spawn(async move {
         let _guard = _guard;
+        let repair_baseline = input
+            .repair_change_spec_only
+            .then(|| input.draft.clone())
+            .flatten();
         let mut internal_events = state.requirement_events.subscribe();
         let emitter = RequirementEventEmitter {
             requirement_id: requirement_id.clone(),
@@ -1494,6 +1606,15 @@ fn spawn_requirement_analysis(
                         ("clarifications_ready", "新的澄清问题已生成。")
                     }
                     RequirementStatus::DraftReady => ("draft_ready", "确认需求卡片已生成。"),
+                    RequirementStatus::Failed
+                        if output.failure_stage
+                            == Some(RequirementFailureStage::ChangeSpecValidation) =>
+                    {
+                        (
+                            "change_spec_repair_failed",
+                            "ChangeSpec 修正后仍未通过证据校验。",
+                        )
+                    }
                     RequirementStatus::Failed => ("analysis_failed", "需求分析失败。"),
                     _ => ("coordinator_progress", "需求分析已更新。"),
                 }
@@ -1502,6 +1623,11 @@ fn spawn_requirement_analysis(
                 let error_text = error.to_string();
                 if error_text.contains("已被用户取消") {
                     ("analysis_cancelled", "分析已被取消")
+                } else if repair_baseline.is_some() {
+                    (
+                        "change_spec_repair_failed",
+                        "ChangeSpec 同会话修正发生技术失败。",
+                    )
                 } else {
                     ("analysis_failed", "需求分析失败。")
                 }
@@ -1513,7 +1639,7 @@ fn spawn_requirement_analysis(
             .lock()
             .await
             .remove(&requirement_id);
-        {
+        let auto_resume_project = {
             let mut store = state.store.write().await;
             if let Err(error) = store
                 .apply_requirement_analysis(&requirement_id, output)
@@ -1522,9 +1648,34 @@ fn spawn_requirement_analysis(
                 emitter.emit("analysis_failed", &format!("保存分析结果失败：{error}"));
                 return;
             }
-        }
+            if let Some(baseline) = repair_baseline.as_ref() {
+                match store
+                    .auto_queue_repaired_requirement(&requirement_id, baseline)
+                    .await
+                {
+                    Ok(project_id) => project_id,
+                    Err(error) => {
+                        emitter.emit(
+                            "change_spec_repair_failed",
+                            &format!("保存修正后的 ChangeSpec 失败：{error}"),
+                        );
+                        return;
+                    }
+                }
+            } else {
+                None
+            }
+        };
 
-        emitter.emit(event.0, event.1);
+        if let Some(project_id) = auto_resume_project {
+            emitter.emit(
+                "change_spec_repair_completed",
+                "ChangeSpec 仅修正证据引用，已自动继续生成 WorkPlan。",
+            );
+            spawn_project_scheduler(state.clone(), project_id);
+        } else {
+            emitter.emit(event.0, event.1);
+        }
     });
 }
 
@@ -1722,21 +1873,37 @@ async fn run_project_scheduler(state: AppState, project_id: String) {
                     .model_provider
                     .plan_workflow(*input, Some(emitter.clone()))
                     .await;
-                let succeeded = output.is_ok();
-                {
+                let run_id = {
                     let mut store = state.store.write().await;
-                    if let Err(error) = store.apply_workflow_plan(&requirement_id, output).await {
-                        emitter.emit(
-                            "workflow_plan_failed",
-                            &format!("保存 WorkPlan 失败：{error}"),
-                        );
-                        return;
+                    match store.apply_workflow_plan(&requirement_id, output).await {
+                        Ok(run_id) => run_id,
+                        Err(error) => {
+                            emitter.emit(
+                                "workflow_plan_failed",
+                                &format!("保存 WorkPlan 失败：{error}"),
+                            );
+                            return;
+                        }
                     }
-                }
-                if succeeded {
+                };
+                if run_id.is_some() {
                     emitter.emit("workflow_plan_ready", "WorkPlan 已生成。");
                 } else {
-                    emitter.emit("workflow_plan_failed", "WorkPlan 生成失败。");
+                    let failure_stage = {
+                        let store = state.store.read().await;
+                        store
+                            .requirement_index(&requirement_id)
+                            .ok()
+                            .and_then(|index| store.data.requirements[index].failure_stage)
+                    };
+                    if failure_stage == Some(RequirementFailureStage::ChangeSpecValidation) {
+                        emitter.emit(
+                            "workflow_planning_preflight_failed",
+                            "需求规格引用无效，未启动 Planner。",
+                        );
+                    } else {
+                        emitter.emit("workflow_plan_failed", "WorkPlan 生成失败。");
+                    }
                     return;
                 }
             }
@@ -1860,6 +2027,16 @@ mod event_filter_tests {
         )
         .unwrap();
         assert_eq!(changed["type"], "snapshot.changed");
+
+        let repair = conversation_event_frame(
+            "change_spec_repair_started",
+            "开始修正规格证据。",
+            None,
+            None,
+            serde_json::json!({"requirement_id": "requirement-1"}),
+        )
+        .unwrap();
+        assert_eq!(repair["type"], "snapshot.changed");
 
         let notice = conversation_event_frame(
             "coordinator_time_warning",

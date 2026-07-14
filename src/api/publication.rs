@@ -20,7 +20,14 @@ pub async fn check(
 
     let origin = origin.trim();
     if origin.is_empty() {
-        return PublicationReadiness::local();
+        return PublicationReadiness {
+            mode: "pull_request".to_owned(),
+            provider: GitProvider::Local,
+            ready: false,
+            summary: "PR/MR 发布前置检查未通过，任务执行已阻止。".to_owned(),
+            issues: vec!["pull_request 模式要求配置可访问的 origin。".to_owned()],
+            notes: Vec::new(),
+        };
     }
 
     match GitProvider::from_origin(origin) {
@@ -80,44 +87,58 @@ async fn check_github(project_root: &Path, origin: &str) -> PublicationReadiness
 }
 
 async fn check_gitlab(project_root: &Path, origin: &str) -> PublicationReadiness {
-    let glab_available = run(project_root, "glab", &["--version"]).await.is_some();
+    let token = std::env::var("RACCOON_GITLAB_TOKEN")
+        .or_else(|_| std::env::var("GITLAB_TOKEN"))
+        .ok();
     let Some(host) = origin_host(origin) else {
-        return gitlab_readiness(origin, glab_available, false, false, None);
+        return gitlab_readiness(origin, token.is_some(), false, false, None);
     };
-    let auth_args = ["auth", "status", "--hostname", &host];
-    let (git_default_branch, glab_auth, repository) = tokio::join!(
+    let project_path = origin_project_path(origin);
+    let (git_default_branch, repository) = tokio::join!(
         run(
             project_root,
             "git",
             &["ls-remote", "--symref", "origin", "HEAD"]
         ),
         async {
-            if glab_available {
-                run(project_root, "glab", &auth_args).await
+            let (Some(token), Some(project_path)) = (token.as_deref(), project_path.as_deref())
+            else {
+                return None;
+            };
+            let scheme = if origin.starts_with("http://") {
+                "http"
             } else {
-                None
-            }
-        },
-        async {
-            if glab_available {
-                run(project_root, "glab", &["repo", "view", "--output=json"]).await
-            } else {
-                None
-            }
+                "https"
+            };
+            let url = format!(
+                "{scheme}://{host}/api/v4/projects/{}",
+                percent_encode(project_path)
+            );
+            reqwest::Client::builder()
+                .timeout(CHECK_TIMEOUT)
+                .build()
+                .ok()?
+                .get(url)
+                .header("PRIVATE-TOKEN", token)
+                .send()
+                .await
+                .ok()?
+                .error_for_status()
+                .ok()?
+                .json::<Value>()
+                .await
+                .ok()
         }
     );
     let default_branch_ok = git_default_branch
         .as_deref()
         .is_some_and(|output| output.lines().any(|line| line.contains("refs/heads/")));
-    let repository = repository
-        .as_deref()
-        .and_then(|output| serde_json::from_str::<Value>(output).ok());
 
     gitlab_readiness(
         origin,
-        glab_available,
+        token.is_some(),
         default_branch_ok,
-        glab_auth.is_some(),
+        repository.is_some(),
         repository.as_ref(),
     )
 }
@@ -223,27 +244,27 @@ fn github_readiness(
 
 fn gitlab_readiness(
     origin: &str,
-    glab_available: bool,
+    token_available: bool,
     default_branch_ok: bool,
-    glab_authenticated: bool,
+    api_accessible: bool,
     repository: Option<&Value>,
 ) -> PublicationReadiness {
     let mut issues = Vec::new();
-    if !glab_available {
+    if !token_available {
+        issues.push("未设置 RACCOON_GITLAB_TOKEN 或 GITLAB_TOKEN，无法发布 GitLab MR。".to_owned());
+    } else if !api_accessible {
         issues.push(
-            "未安装 GitLab CLI。请从 https://gitlab.com/gitlab-org/cli 安装 glab 后重新启动。"
-                .to_owned(),
+            "GitLab API 无法识别或访问当前 origin。请检查 token、主机和仓库权限。".to_owned(),
         );
-    } else if !glab_authenticated {
-        issues.push("GitLab CLI 未登录 origin 对应主机。请执行 glab auth login。".to_owned());
     }
     if !default_branch_ok {
         issues.push("Git 无法读取 origin 默认分支。请检查网络、SSH key 或 Git 凭据。".to_owned());
     }
 
     match repository {
-        None if glab_available && glab_authenticated => issues
-            .push("GitLab CLI 无法识别或访问当前 origin。请检查远程地址和仓库权限。".to_owned()),
+        None if token_available && api_accessible => {
+            issues.push("GitLab API 返回了无效仓库信息。".to_owned())
+        }
         Some(repository) => {
             if repository
                 .get("archived")
@@ -288,6 +309,33 @@ fn gitlab_readiness(
             "实际账号仍需满足仓库分支规则，并具有推送、创建 MR 和合并权限。".to_owned(),
         ],
     }
+}
+
+fn origin_project_path(origin: &str) -> Option<String> {
+    let path = if let Some(rest) = origin.strip_prefix("git@") {
+        rest.split_once(':')?.1
+    } else {
+        let (_, rest) = origin.split_once("://")?;
+        rest.split_once('/')?.1
+    };
+    Some(
+        path.trim_end_matches('/')
+            .trim_end_matches(".git")
+            .to_owned(),
+    )
+}
+
+fn percent_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+                (byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
 }
 
 fn gitlab_write_permission(repository: &Value) -> bool {
@@ -340,11 +388,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_origin_with_pr_mode_falls_back_to_local() {
+    async fn empty_origin_with_pr_mode_is_not_silently_downgraded() {
         let readiness = check(Path::new("."), "", CommitMode::PullRequest).await;
-        assert_eq!(readiness.mode, "local");
-        assert_eq!(readiness.provider, GitProvider::Local);
-        assert!(readiness.ready);
+        assert_eq!(readiness.mode, "pull_request");
+        assert!(!readiness.ready);
     }
 
     #[test]
@@ -416,22 +463,22 @@ mod tests {
 
     #[test]
     fn gitlab_remote_checks_report_each_blocking_condition() {
-        let missing_glab =
+        let missing_token =
             gitlab_readiness("git@gitlab.com:acme/repo.git", false, true, false, None);
         assert!(
-            missing_glab
+            missing_token
                 .issues
                 .iter()
-                .any(|issue| issue.contains("GitLab CLI"))
+                .any(|issue| issue.contains("GITLAB_TOKEN"))
         );
 
-        let unauthenticated =
+        let inaccessible_api =
             gitlab_readiness("git@gitlab.com:acme/repo.git", true, true, false, None);
         assert!(
-            unauthenticated
+            inaccessible_api
                 .issues
                 .iter()
-                .any(|issue| issue.contains("glab auth login"))
+                .any(|issue| issue.contains("GitLab API"))
         );
 
         let inaccessible =

@@ -30,8 +30,8 @@ use crate::api::handlers::{
     get_workflow_events, get_workflow_run, list_project_terminals, project_chat_events,
     put_basic_settings, put_model_settings, put_terminal_command_profiles, reload_model_settings,
     requirement_conversation_events, requirement_events, reset_project_chat, restart_system,
-    resume_workflow_run, retry_requirement_analysis, send_project_chat_message,
-    spawn_startup_requirement_scheduler, start_requirement_workflow,
+    restart_workflow_run_clean, resume_workflow_run, retry_requirement_analysis,
+    send_project_chat_message, spawn_startup_requirement_scheduler, start_requirement_workflow,
     submit_requirement_clarifications, terminal_websocket, unlock_terminal_access,
     upload_project_attachment,
 };
@@ -85,6 +85,7 @@ pub async fn build_app(
     publication_readiness: crate::models::PublicationReadiness,
 ) -> Result<(Router, AppState), crate::error::AppError> {
     let mut store = JsonStore::open_project(project_root.clone()).await?;
+    cleanup_completed_workflow_workspaces(&store, &project_root).await;
     let startup_requirement_ids = store.recover_interrupted_requirements().await?;
     store.recover_interrupted_project_chats().await?;
     store.cleanup_stale_pi_sessions().await;
@@ -98,6 +99,49 @@ pub async fn build_app(
         runtime,
         publication_readiness,
     ))
+}
+
+async fn cleanup_completed_workflow_workspaces(store: &JsonStore, project_root: &std::path::Path) {
+    let candidates = match store.db.completed_workflow_workspaces() {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            tracing::warn!(%error, "failed to scan completed WorkflowRun workspaces");
+            return;
+        }
+    };
+    for candidate in candidates {
+        let worktree = std::path::PathBuf::from(&candidate.worktree_path);
+        let managed_run_root = worktree
+            .file_name()
+            .is_some_and(|name| name == "integration")
+            .then(|| worktree.parent().map(std::path::Path::to_path_buf))
+            .flatten()
+            .unwrap_or_else(|| worktree.clone());
+        let workspace = crate::workflow::IntegrationWorkspace {
+            project_root: project_root.to_path_buf(),
+            managed_run_root,
+            worktree,
+            branch: candidate.branch,
+            base_head: candidate.base_head,
+        };
+        match crate::workflow::cleanup_completed_workflow_workspace(
+            &workspace,
+            &candidate.final_commit,
+        )
+        .await
+        {
+            Ok(()) => {
+                if let Err(error) = store.db.mark_completed_workspace_cleaned(&candidate.run_id) {
+                    tracing::warn!(run_id = candidate.run_id, %error, "failed to persist legacy workflow cleanup");
+                }
+            }
+            Err(error) => tracing::warn!(
+                run_id = candidate.run_id,
+                %error,
+                "completed WorkflowRun workspace was not safe to clean"
+            ),
+        }
+    }
 }
 
 pub fn build_app_with_model_provider(
@@ -289,6 +333,10 @@ fn build_app_with_startup_requirements(
         .route("/workflow-runs/{run_id}", get(get_workflow_run))
         .route("/workflow-runs/{run_id}/events", get(get_workflow_events))
         .route("/workflow-runs/{run_id}/resume", post(resume_workflow_run))
+        .route(
+            "/workflow-runs/{run_id}/restart-clean",
+            post(restart_workflow_run_clean),
+        )
         .route(
             "/workflow-runs/{run_id}/attempts/{attempt_id}/session",
             get(get_workflow_attempt_session),

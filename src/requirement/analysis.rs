@@ -2,12 +2,14 @@ use serde_json::{Value, json};
 
 use crate::models::{
     ChangeSpec, RequirementAnalysisInput, RequirementAnalysisOutput, RequirementClarification,
-    RequirementMessageRole, RequirementStatus,
+    RequirementFailureStage, RequirementMessageRole, RequirementStatus,
 };
 use crate::prompt::{
     PromptRenderer, PromptSourceDelivery, PromptSourceKind, RenderedPrompt,
     strip_markdown_frontmatter,
 };
+
+use super::{format_requirement_evidence_index, requirement_evidence_index};
 
 const GLOBAL_PROMPT: &str = include_str!("../../prompts/global/raccoon.md");
 const REQUIREMENT_PROMPT_TEMPLATE: &str =
@@ -27,6 +29,7 @@ pub fn build_requirement_prompt(
         .find(|message| message.role == RequirementMessageRole::User)
         .map(|message| message.content.replace("###", "\\#\\#\\#"))
         .unwrap_or_default();
+    let evidence_index = format_requirement_evidence_index(&input.messages);
 
     let skill = strip_markdown_frontmatter(REQUIREMENT_PROMPT_TEMPLATE)
         .replace("{{PROJECT_NAME}}", &input.project.name)
@@ -52,7 +55,12 @@ pub fn build_requirement_prompt(
         .add_source(
             PromptSourceKind::InlinePolicy,
             "behavior_first_draft",
-            "ChangeSpec 只描述 intent、given/when/then 行为场景、带原消息 ID 与原文摘录的用户显式约束，以及 non_goals。行为场景禁止文件名、路径、CSS 变量、函数/API/组件精确名称和命令。",
+            "ChangeSpec 只描述 intent、given/when/then 行为场景、带原消息 ID 与原文摘录的用户显式技术约束，以及 non_goals。普通目标和行为事实放入 intent/acceptance_scenarios，不要复制到 explicit_constraints。行为场景禁止文件名、路径、CSS 变量、函数/API/组件精确名称和命令。",
+        )
+        .add_source(
+            PromptSourceKind::RequirementContext,
+            "requirement_evidence_index",
+            evidence_index,
         );
     if session_reused {
         renderer = renderer.add_source(
@@ -67,6 +75,17 @@ pub fn build_requirement_prompt(
             PromptSourceKind::RequirementContext,
             "requirement_context",
             requirement_context,
+        );
+    }
+    if input.repair_change_spec_only {
+        renderer = renderer.add_source(
+            PromptSourceKind::InlinePolicy,
+            "change_spec_repair_only",
+            format!(
+                "这是已确认 ChangeSpec 的证据修正轮。只能修正 explicit_constraints 的 source_message_id/source_quote，或删除并非用户显式技术限制的重复约束。禁止重新调研仓库，禁止修改 intent、acceptance_scenarios、约束 statement 或 non_goals。完成后只调用 submit_change_spec。\n当前 ChangeSpec：\n{}",
+                serde_json::to_string(input.draft.as_ref().expect("repair input requires draft"))
+                    .expect("ChangeSpec serializes")
+            ),
         );
     }
     renderer = renderer.add_optional_source(
@@ -95,26 +114,19 @@ pub fn build_requirement_prompt(
 }
 
 fn format_requirement_context(input: &RequirementAnalysisInput) -> String {
-    let user_messages = input
-        .messages
-        .iter()
-        .enumerate()
-        .filter(|(_, message)| message.role == RequirementMessageRole::User)
-        .filter(|(_, message)| !message.content.trim().is_empty())
-        .map(|(index, message)| (format!("message-{}", index + 1), message.content.trim()))
-        .collect::<Vec<_>>();
+    let user_messages = requirement_evidence_index(&input.messages);
     let original = user_messages
         .first()
-        .map(|(id, content)| format!("[{id}] {content}"))
+        .map(|evidence| format!("[{}] {}", evidence.message_id, evidence.content))
         .unwrap_or_else(|| "未提供".to_owned());
     let latest = user_messages
         .last()
-        .map(|(id, content)| format!("[{id}] {content}"))
+        .map(|evidence| format!("[{}] {}", evidence.message_id, evidence.content))
         .unwrap_or_else(|| "未提供".to_owned());
     let previous = if user_messages.len() > 2 {
         user_messages[1..user_messages.len() - 1]
             .iter()
-            .map(|(id, content)| format!("[{id}] {content}"))
+            .map(|evidence| format!("[{}] {}", evidence.message_id, evidence.content))
             .collect::<Vec<_>>()
             .join("\n- ")
     } else {
@@ -265,6 +277,8 @@ pub fn parse_requirement_tool_analysis(
             draft: None,
             pi_session_file,
             error: None,
+            failure_stage: None,
+            failure_code: None,
             trace,
         },
         RequirementToolDetails::ClarificationRequest {
@@ -279,6 +293,8 @@ pub fn parse_requirement_tool_analysis(
             draft: None,
             pi_session_file,
             error: None,
+            failure_stage: None,
+            failure_code: None,
             trace,
         },
         RequirementToolDetails::ChangeSpec {
@@ -293,6 +309,8 @@ pub fn parse_requirement_tool_analysis(
             draft: Some(change_spec),
             pi_session_file,
             error: None,
+            failure_stage: None,
+            failure_code: None,
             trace,
         },
     }
@@ -311,6 +329,8 @@ fn failed_tool_analysis(
         draft: None,
         pi_session_file,
         error: Some(error),
+        failure_stage: Some(RequirementFailureStage::Analysis),
+        failure_code: Some("managed_result_invalid".to_owned()),
         trace,
     }
 }
@@ -828,15 +848,64 @@ mod tests {
             draft: Some(change_spec("支持数据导出")),
             model_settings: ModelSettings::default(),
             pi_session_file: Some("session.jsonl".to_owned()),
+            repair_change_spec_only: false,
         };
 
         let prompt = build_requirement_prompt(&input, true).markdown;
         assert!(prompt.contains("继续处理同一个需求"));
         assert!(prompt.contains("本轮输入：\n补充支持 CSV"));
+        assert!(prompt.contains("\"message_id\":\"message-1\""));
+        assert!(prompt.contains("\"content\":\"增加导出功能\""));
+        assert!(prompt.contains("\"message_id\":\"message-2\""));
         assert!(!prompt.contains("原始需求：增加导出功能"));
         assert!(!prompt.contains("标题：导出功能"));
         assert!(!prompt.contains("支持数据导出"));
         assert!(!prompt.contains("可以下载文件"));
+    }
+
+    #[test]
+    fn branched_session_keeps_webgl_constraint_evidence_without_full_history() {
+        let now = Utc::now();
+        let message = |role, content: &str| RequirementMessage {
+            role,
+            content: content.to_owned(),
+            references: Vec::new(),
+            images: Vec::new(),
+            metadata: None,
+            created_at: now,
+        };
+        let input = RequirementAnalysisInput {
+            project: Project {
+                id: "current".to_owned(),
+                name: "Demo".to_owned(),
+                git_url: String::new(),
+                local_path: "/tmp/demo".to_owned(),
+                created_at: now,
+                updated_at: now,
+            },
+            messages: vec![
+                message(RequirementMessageRole::User, "修复 WebGL 不可用问题"),
+                message(RequirementMessageRole::Assistant, "需要澄清"),
+                message(RequirementMessageRole::Trace, "trace"),
+                message(
+                    RequirementMessageRole::User,
+                    "期望的修复策略是什么？：强制 WebGL 并优化检测",
+                ),
+            ],
+            reference_context: None,
+            prompt_images: Vec::new(),
+            clarifications: Vec::new(),
+            draft: None,
+            model_settings: ModelSettings::default(),
+            pi_session_file: Some("branched.jsonl".to_owned()),
+            repair_change_spec_only: false,
+        };
+
+        let prompt = build_requirement_prompt(&input, true).markdown;
+        assert!(prompt.contains("\"message_id\":\"message-1\""));
+        assert!(prompt.contains("\"message_id\":\"message-4\""));
+        assert!(prompt.contains("强制 WebGL 并优化检测"));
+        assert!(!prompt.contains("## 同一需求的连续上下文"));
     }
 
     #[test]
@@ -865,6 +934,7 @@ mod tests {
             draft: Some(change_spec("已有草案")),
             model_settings: ModelSettings::default(),
             pi_session_file: Some("session.jsonl".to_owned()),
+            repair_change_spec_only: false,
         };
 
         let prompt = build_requirement_prompt(&input, true).markdown;

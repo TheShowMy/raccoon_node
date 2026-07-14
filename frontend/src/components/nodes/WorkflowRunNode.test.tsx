@@ -3,7 +3,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getWorkflowEvents, resumeWorkflowRun } from "../../api/client";
+import {
+  getWorkflowEvents,
+  restartWorkflowRunClean,
+  resumeWorkflowRun,
+} from "../../api/client";
 import { RequirementTaskEventsProvider } from "../../contexts/RequirementTaskEventsContext";
 import type {
   Requirement,
@@ -14,6 +18,7 @@ import WorkflowRunNode from "./WorkflowRunNode";
 
 vi.mock("../../api/client", () => ({
   getWorkflowEvents: vi.fn(),
+  restartWorkflowRunClean: vi.fn(),
   resumeWorkflowRun: vi.fn(),
 }));
 
@@ -101,11 +106,13 @@ function workflow(status: WorkflowSnapshot["run"]["status"]): WorkflowSnapshot {
 
 describe("WorkflowRunNode", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.mocked(getWorkflowEvents).mockResolvedValue({
       events: [],
       next_after: null,
     });
     vi.mocked(resumeWorkflowRun).mockResolvedValue(workflow("running"));
+    vi.mocked(restartWorkflowRunClean).mockResolvedValue(workflow("running"));
   });
   it("shows only current planning thinking and ignores tools and task events", () => {
     renderNode([
@@ -272,5 +279,20 @@ describe("WorkflowRunNode", () => {
       expect(resumeWorkflowRun).toHaveBeenCalledWith("run-1"),
     );
     expect(await screen.findByText("执行中")).toBeInTheDocument();
+  });
+
+  it("restarts workspace violations from a clean run instead of resuming", async () => {
+    const paused = workflow("paused_technical");
+    paused.run.paused_operation = "workspace_violation";
+    paused.run.blocked_reason = "integration worktree 被越界修改";
+    renderNode([], "running", paused);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "从干净工作区重新执行" }),
+    );
+    await waitFor(() =>
+      expect(restartWorkflowRunClean).toHaveBeenCalledWith("run-1"),
+    );
+    expect(resumeWorkflowRun).not.toHaveBeenCalled();
   });
 });

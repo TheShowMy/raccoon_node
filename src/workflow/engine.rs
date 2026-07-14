@@ -189,6 +189,7 @@ mod tests {
             verification_goals: Vec::new(),
             status: WorkItemStatus::Pending,
             attempt_count,
+            actual_attempt_count: attempt_count,
             accepted_attempt_id: None,
             lease_owner: None,
             lease_expires_at: None,

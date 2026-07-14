@@ -1,6 +1,6 @@
 # 计划文档：借鉴 PlanWeave 的提示词工程与节点化改造
 
-> **已被取代（2026-07-13）**：本文记录的是旧节点化方案，不再描述当前实现。当前系统使用 `ChangeSpec -> WorkPlan -> WorkflowRun v5`，WorkPlan 只包含行为切片、依赖和可修订 DesignNotes；全部切片完成后才做仓库原生验证与完整 diff checkpoint，不再存在 Stage、Review、ReviewSummary、Fixing、Merge 或 Recovery 伪任务。隔离盲审使用 `raccoon:parallel-review:v5`，结构化结果与 Git 拦截分别为 `raccoon:workflow-output:v3` 和 `raccoon:task-runtime:v3`。旧 v4 数据库只做字节归档，运行时不保留旧 Workflow 执行器或协议兼容路径。
+> **已被取代（2026-07-14）**：本文记录的是旧节点化方案，不再描述当前实现。当前系统使用 `ChangeSpec -> WorkPlan -> WorkflowRun v5.2`，WorkPlan 只包含行为切片、依赖和可修订 DesignNotes；合法同层任务使用隔离 worktree 真并发，全部切片完成后才做仓库原生验证与完整 diff checkpoint，不再存在 Stage、Review、ReviewSummary、Fixing、Merge 或 Recovery 伪任务。审核通过后按冻结设置执行本地集成或远端 PR/MR 自动合并并清理资源。隔离盲审使用 `raccoon:parallel-review:v5`，结构化结果与 Git/工作区拦截分别为 `raccoon:workflow-output:v3` 和 `raccoon:task-runtime:v4`。SQLite v8 从 v5/v6/v7 增量迁移，并在 Planner 前完成 ChangeSpec 证据校验；旧 v4 数据库仍只做字节归档。
 
 > 版本：v0.1
 > 日期：2026-07-03

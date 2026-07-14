@@ -14,17 +14,18 @@ pub mod db;
 use crate::error::AppError;
 use crate::file_refs::{build_prompt_images, build_reference_context};
 use crate::models::{
-    AppData, ClarificationAnswer, FileReference, ImageAttachment, ModelSettings, PiModel, Project,
-    ProjectCanvasResponse, ProjectChat, ProjectChatInput, ProjectChatMessage,
+    AppData, ChangeSpec, ClarificationAnswer, FileReference, ImageAttachment, ModelSettings,
+    PiModel, Project, ProjectCanvasResponse, ProjectChat, ProjectChatInput, ProjectChatMessage,
     ProjectChatMessageRole, ProjectChatOutput, ProjectChatResponse, ProjectTokenUsage,
     PromptSourceUsage, Requirement, RequirementAnalysisInput, RequirementAnalysisOutput,
     RequirementClarificationRound, RequirementConversationItem, RequirementConversationPrompt,
-    RequirementConversationResponse, RequirementMessage, RequirementMessageRole,
-    RequirementNoticeLevel, RequirementProcessStatus, RequirementPromptState, RequirementStatus,
-    SessionContentBlock, SessionEntry, SessionTranscriptPage, SubagentReview,
-    TerminalCommandProfile, TerminalCommandProfileUpdate, TokenCompactionUsage, TokenUsageCategory,
-    TokenUsageHotspot, TokenUsageRole,
+    RequirementConversationResponse, RequirementFailureStage, RequirementMessage,
+    RequirementMessageRole, RequirementNoticeLevel, RequirementProcessStatus,
+    RequirementPromptState, RequirementStatus, SessionContentBlock, SessionEntry,
+    SessionTranscriptPage, SubagentReview, TerminalCommandProfile, TerminalCommandProfileUpdate,
+    TokenCompactionUsage, TokenUsageCategory, TokenUsageHotspot, TokenUsageRole,
 };
+use crate::requirement::change_spec_semantics_equal;
 use crate::utils::{
     build_clarification_answer_summary, clarification_has_answer, derive_requirement_title,
     ensure_child_path, git_remote_origin, resolve_git_root, sort_requirements_desc,
@@ -65,6 +66,57 @@ fn supersede_active_prompt(requirement: &mut Requirement) {
     requirement.active_prompt = None;
 }
 
+fn set_requirement_failure(
+    requirement: &mut Requirement,
+    stage: RequirementFailureStage,
+    code: &str,
+    message: String,
+) {
+    requirement.status = RequirementStatus::Failed;
+    requirement.error = Some(message.clone());
+    requirement.failure_stage = Some(stage);
+    requirement.failure_code = Some(code.to_owned());
+    requirement.active_prompt = None;
+    requirement.updated_at = Utc::now();
+    let content = match stage {
+        RequirementFailureStage::ChangeSpecValidation => {
+            format!("需求规格校验失败：{message}")
+        }
+        RequirementFailureStage::PlanValidation => format!("WorkPlan 校验失败：{message}"),
+        RequirementFailureStage::Persistence => format!("Workflow 持久化失败：{message}"),
+        RequirementFailureStage::Analysis => format!("需求分析失败：{message}"),
+        RequirementFailureStage::Planning => format!("WorkPlan 生成失败：{message}"),
+    };
+    let duplicate = requirement
+        .messages
+        .iter()
+        .rev()
+        .find(|item| item.role == RequirementMessageRole::System)
+        .is_some_and(|item| {
+            item.content == content
+                && item
+                    .metadata
+                    .as_ref()
+                    .and_then(|value| value.get("analysis_revision"))
+                    .and_then(Value::as_u64)
+                    == Some(u64::from(requirement.analysis_revision))
+        });
+    if !duplicate {
+        requirement.messages.push(RequirementMessage {
+            role: RequirementMessageRole::System,
+            content,
+            references: Vec::new(),
+            images: Vec::new(),
+            metadata: Some(serde_json::json!({
+                "failure_stage": stage,
+                "failure_code": code,
+                "analysis_revision": requirement.analysis_revision,
+            })),
+            created_at: requirement.updated_at,
+        });
+    }
+}
+
 pub enum ProjectScheduleAction {
     Plan {
         requirement_id: String,
@@ -73,6 +125,15 @@ pub enum ProjectScheduleAction {
     Execute {
         requirement_id: String,
         run_id: String,
+    },
+}
+
+pub enum FailedRequirementWorkflowAction {
+    Plan {
+        project_id: String,
+    },
+    RepairChangeSpec {
+        input: Box<RequirementAnalysisInput>,
     },
 }
 
@@ -829,6 +890,8 @@ impl JsonStore {
             clarification_history: Vec::new(),
             pi_session_file: pi_session_file.clone(),
             error: None,
+            failure_stage: None,
+            failure_code: None,
             queued_at: None,
             created_at: now,
             updated_at: now,
@@ -843,6 +906,7 @@ impl JsonStore {
             draft: None,
             model_settings: self.data.model_settings.clone(),
             pi_session_file,
+            repair_change_spec_only: false,
         };
         self.data.requirements.push(requirement);
         self.write_persist().await?;
@@ -889,6 +953,8 @@ impl JsonStore {
             let requirement = &mut self.data.requirements[index];
             requirement.status = RequirementStatus::Analyzing;
             requirement.error = None;
+            requirement.failure_stage = None;
+            requirement.failure_code = None;
             supersede_active_prompt(requirement);
             requirement.clarifications.clear();
             requirement.draft = None;
@@ -916,6 +982,7 @@ impl JsonStore {
                 draft: previous_draft,
                 model_settings: self.data.model_settings.clone(),
                 pi_session_file: requirement.pi_session_file,
+                repair_change_spec_only: false,
             },
         ))
     }
@@ -1001,6 +1068,8 @@ impl JsonStore {
             }
             requirement.status = RequirementStatus::Analyzing;
             requirement.error = None;
+            requirement.failure_stage = None;
+            requirement.failure_code = None;
             requirement.clarifications = clarifications;
             requirement.active_prompt = None;
             requirement.updated_at = now;
@@ -1027,6 +1096,7 @@ impl JsonStore {
                 draft: requirement.draft,
                 model_settings: self.data.model_settings.clone(),
                 pi_session_file: requirement.pi_session_file,
+                repair_change_spec_only: false,
             },
         ))
     }
@@ -1061,6 +1131,8 @@ impl JsonStore {
         requirement.clarification_round = requirement.clarification_round.saturating_add(1);
         requirement.clarifications = clarifications.clone();
         requirement.error = None;
+        requirement.failure_stage = None;
+        requirement.failure_code = None;
         requirement.updated_at = now;
         requirement.messages.push(RequirementMessage {
             role: RequirementMessageRole::Trace,
@@ -1097,6 +1169,8 @@ impl JsonStore {
         let requirement = &mut self.data.requirements[index];
         requirement.status = RequirementStatus::Analyzing;
         requirement.error = None;
+        requirement.failure_stage = None;
+        requirement.failure_code = None;
         requirement.pi_session_file = None;
         requirement.updated_at = now;
         requirement.messages.push(RequirementMessage {
@@ -1120,6 +1194,7 @@ impl JsonStore {
                 draft: requirement.draft,
                 model_settings: self.data.model_settings.clone(),
                 pi_session_file: None,
+                repair_change_spec_only: false,
             },
         ))
     }
@@ -1135,11 +1210,15 @@ impl JsonStore {
         match output {
             Ok(output) => {
                 requirement.status = output.status;
-                requirement.draft = output.draft;
+                if output.status != RequirementStatus::Failed || output.draft.is_some() {
+                    requirement.draft = output.draft;
+                }
                 requirement.analysis_revision = requirement.analysis_revision.saturating_add(1);
                 requirement.active_prompt = None;
                 requirement.pi_session_file = output.pi_session_file;
                 requirement.error = output.error;
+                requirement.failure_stage = output.failure_stage;
+                requirement.failure_code = output.failure_code;
                 requirement.updated_at = now;
                 if !output.clarifications.is_empty() {
                     requirement.clarification_round =
@@ -1178,11 +1257,20 @@ impl JsonStore {
                 }
                 if !output.assistant_message.trim().is_empty() {
                     requirement.messages.push(RequirementMessage {
-                        role: RequirementMessageRole::Assistant,
+                        role: if requirement.status == RequirementStatus::Failed {
+                            RequirementMessageRole::System
+                        } else {
+                            RequirementMessageRole::Assistant
+                        },
                         content: output.assistant_message,
                         references: Vec::new(),
                         images: Vec::new(),
-                        metadata: None,
+                        metadata: (requirement.status == RequirementStatus::Failed).then(|| {
+                            serde_json::json!({
+                                "failure_stage": requirement.failure_stage,
+                                "failure_code": requirement.failure_code,
+                            })
+                        }),
                         created_at: now,
                     });
                 }
@@ -1201,6 +1289,14 @@ impl JsonStore {
                 let failure_trace = error.trace().cloned();
                 requirement.status = RequirementStatus::Failed;
                 requirement.error = Some(error.to_string());
+                if requirement.failure_stage == Some(RequirementFailureStage::ChangeSpecValidation)
+                {
+                    requirement.failure_code =
+                        Some("change_spec_repair_transport_failed".to_owned());
+                } else {
+                    requirement.failure_stage = Some(RequirementFailureStage::Analysis);
+                    requirement.failure_code = Some("analysis_transport_failed".to_owned());
+                }
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::System,
@@ -1236,6 +1332,19 @@ impl JsonStore {
         if self.data.requirements[index].status != RequirementStatus::DraftReady {
             return Err(AppError::bad_request("只有已生成确认卡片的需求才能确认"));
         }
+        if let Err(error) = change_spec_from_requirement(&self.data.requirements[index]) {
+            let requirement = &mut self.data.requirements[index];
+            set_requirement_failure(
+                requirement,
+                RequirementFailureStage::ChangeSpecValidation,
+                "constraint_evidence_invalid",
+                error.to_string(),
+            );
+            self.write_persist().await?;
+            return Err(AppError::bad_request(
+                "需求规格引用无效，已转入自动修复入口",
+            ));
+        }
         if let Some(RequirementPromptState::Confirmation {
             prompt_id: active_prompt_id,
             revision: active_revision,
@@ -1257,6 +1366,8 @@ impl JsonStore {
         let requirement = &mut self.data.requirements[index];
         requirement.status = RequirementStatus::Queued;
         requirement.error = None;
+        requirement.failure_stage = None;
+        requirement.failure_code = None;
         requirement.active_prompt = None;
         requirement.queued_at = Some(now);
         requirement.updated_at = now;
@@ -1267,13 +1378,13 @@ impl JsonStore {
     pub async fn requeue_failed_planning(
         &mut self,
         requirement_id: &str,
-    ) -> Result<String, AppError> {
+    ) -> Result<FailedRequirementWorkflowAction, AppError> {
         let index = self.requirement_index(requirement_id)?;
         let has_workflow = self
             .db
             .active_workflow_for_requirement(requirement_id)?
             .is_some();
-        let requirement = &mut self.data.requirements[index];
+        let requirement = self.data.requirements[index].clone();
         if requirement.status != RequirementStatus::Failed
             || has_workflow
             || requirement.draft.is_none()
@@ -1282,14 +1393,103 @@ impl JsonStore {
                 "只有尚未创建 WorkflowRun 的规划失败需求才能重新规划",
             ));
         }
+        let project_id = requirement.project_id.clone();
+        match change_spec_from_requirement(&requirement) {
+            Ok(_) => {
+                let requirement = &mut self.data.requirements[index];
+                requirement.status = RequirementStatus::Queued;
+                requirement.error = None;
+                requirement.failure_stage = None;
+                requirement.failure_code = None;
+                requirement.active_prompt = None;
+                requirement.queued_at.get_or_insert(requirement.updated_at);
+                requirement.updated_at = Utc::now();
+                self.write_persist().await?;
+                Ok(FailedRequirementWorkflowAction::Plan { project_id })
+            }
+            Err(_) => {
+                let project = self
+                    .data
+                    .projects
+                    .iter()
+                    .find(|project| project.id == project_id)
+                    .cloned()
+                    .ok_or_else(|| AppError::not_found("项目不存在"))?;
+                debug_assert!(requirement.draft.is_some());
+                let now = Utc::now();
+                let requirement = &mut self.data.requirements[index];
+                requirement.status = RequirementStatus::Analyzing;
+                requirement.error = None;
+                requirement.failure_stage = Some(RequirementFailureStage::ChangeSpecValidation);
+                requirement.failure_code = Some("change_spec_repair_in_progress".to_owned());
+                requirement.active_prompt = None;
+                requirement.updated_at = now;
+                requirement.messages.push(RequirementMessage {
+                    role: RequirementMessageRole::System,
+                    content: "正在修复 ChangeSpec 的用户消息证据引用。".to_owned(),
+                    references: Vec::new(),
+                    images: Vec::new(),
+                    metadata: Some(serde_json::json!({
+                        "event": "change_spec_repair_started",
+                    })),
+                    created_at: now,
+                });
+                let input = RequirementAnalysisInput {
+                    project,
+                    messages: requirement.messages.clone(),
+                    reference_context: None,
+                    prompt_images: Vec::new(),
+                    clarifications: requirement.clarifications.clone(),
+                    draft: requirement.draft.clone(),
+                    model_settings: self.data.model_settings.clone(),
+                    pi_session_file: requirement.pi_session_file.clone(),
+                    repair_change_spec_only: true,
+                };
+                self.write_persist().await?;
+                Ok(FailedRequirementWorkflowAction::RepairChangeSpec {
+                    input: Box::new(input),
+                })
+            }
+        }
+    }
+
+    pub async fn auto_queue_repaired_requirement(
+        &mut self,
+        requirement_id: &str,
+        baseline: &ChangeSpec,
+    ) -> Result<Option<String>, AppError> {
+        let index = self.requirement_index(requirement_id)?;
+        let requirement = &self.data.requirements[index];
+        if requirement.status != RequirementStatus::DraftReady {
+            return Ok(None);
+        }
+        let repaired = change_spec_from_requirement(requirement)?;
+        if !change_spec_semantics_equal(baseline, &repaired) {
+            return Ok(None);
+        }
+        let now = Utc::now();
+        let requirement = &mut self.data.requirements[index];
         requirement.status = RequirementStatus::Queued;
         requirement.error = None;
+        requirement.failure_stage = None;
+        requirement.failure_code = None;
         requirement.active_prompt = None;
-        requirement.queued_at.get_or_insert(requirement.updated_at);
-        requirement.updated_at = Utc::now();
+        requirement.queued_at.get_or_insert(now);
+        requirement.updated_at = now;
+        requirement.messages.push(RequirementMessage {
+            role: RequirementMessageRole::System,
+            content: "ChangeSpec 仅修正了证据引用，已自动继续生成 WorkPlan。".to_owned(),
+            references: Vec::new(),
+            images: Vec::new(),
+            metadata: Some(serde_json::json!({
+                "event": "change_spec_repair_completed",
+                "auto_resumed": true,
+            })),
+            created_at: now,
+        });
         let project_id = requirement.project_id.clone();
         self.write_persist().await?;
-        Ok(project_id)
+        Ok(Some(project_id))
     }
 
     pub async fn start_requirement_planning(
@@ -1302,6 +1502,19 @@ impl JsonStore {
             RequirementStatus::Queued | RequirementStatus::Failed
         ) {
             return Err(AppError::bad_request("只有待执行需求才能生成 WorkPlan"));
+        }
+        if let Err(error) = change_spec_from_requirement(&self.data.requirements[index]) {
+            let requirement = &mut self.data.requirements[index];
+            set_requirement_failure(
+                requirement,
+                RequirementFailureStage::ChangeSpecValidation,
+                "planning_preflight_failed",
+                error.to_string(),
+            );
+            self.write_persist().await?;
+            return Err(AppError::bad_request(
+                "ChangeSpec preflight 失败，未启动 Planner",
+            ));
         }
         let now = Utc::now();
         let project_id = self.data.requirements[index].project_id.clone();
@@ -1316,6 +1529,8 @@ impl JsonStore {
             let requirement = &mut self.data.requirements[index];
             requirement.status = RequirementStatus::Planning;
             requirement.error = None;
+            requirement.failure_stage = None;
+            requirement.failure_code = None;
             requirement.updated_at = now;
         }
         let requirement = self.data.requirements[index].clone();
@@ -1338,20 +1553,55 @@ impl JsonStore {
         match output {
             Ok(output) => {
                 let requirement = self.data.requirements[index].clone();
-                let spec = change_spec_from_requirement(&requirement)?;
+                let spec = match change_spec_from_requirement(&requirement) {
+                    Ok(spec) => spec,
+                    Err(error) => {
+                        set_requirement_failure(
+                            &mut self.data.requirements[index],
+                            RequirementFailureStage::ChangeSpecValidation,
+                            "planning_preflight_failed",
+                            error.to_string(),
+                        );
+                        self.write_persist().await?;
+                        return Ok(None);
+                    }
+                };
                 let trace = output.trace;
-                let compiled = compile_work_plan(
+                let compiled = match compile_work_plan(
                     &requirement.id,
                     &requirement.project_id,
                     requirement.analysis_revision,
                     spec,
                     output.plan,
-                )?;
+                ) {
+                    Ok(compiled) => compiled,
+                    Err(error) => {
+                        set_requirement_failure(
+                            &mut self.data.requirements[index],
+                            RequirementFailureStage::PlanValidation,
+                            "work_plan_invalid",
+                            error.to_string(),
+                        );
+                        self.write_persist().await?;
+                        return Ok(None);
+                    }
+                };
                 let run_id = compiled.run.id.clone();
-                self.db.create_workflow(&compiled)?;
+                if let Err(error) = self.db.create_workflow(&compiled) {
+                    set_requirement_failure(
+                        &mut self.data.requirements[index],
+                        RequirementFailureStage::Persistence,
+                        "workflow_create_failed",
+                        error.to_string(),
+                    );
+                    self.write_persist().await?;
+                    return Ok(None);
+                }
                 let requirement = &mut self.data.requirements[index];
                 requirement.status = RequirementStatus::Running;
                 requirement.error = None;
+                requirement.failure_stage = None;
+                requirement.failure_code = None;
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::Assistant,
@@ -1382,17 +1632,25 @@ impl JsonStore {
             Err(error) => {
                 let trace = error.trace().cloned();
                 let requirement = &mut self.data.requirements[index];
-                requirement.status = RequirementStatus::Failed;
-                requirement.error = Some(error.to_string());
-                requirement.updated_at = now;
-                requirement.messages.push(RequirementMessage {
-                    role: RequirementMessageRole::System,
-                    content: format!("WorkPlan 生成失败：{error}"),
-                    references: Vec::new(),
-                    images: Vec::new(),
-                    metadata: trace,
-                    created_at: now,
-                });
+                let message = error.to_string();
+                let (stage, code) = if message.contains("WorkPlan 修正后仍不合法")
+                    || message.contains("WorkPlan 未通过结构或业务校验")
+                {
+                    (RequirementFailureStage::PlanValidation, "work_plan_invalid")
+                } else {
+                    (RequirementFailureStage::Planning, "planner_failed")
+                };
+                set_requirement_failure(requirement, stage, code, message);
+                if let Some(trace) = trace {
+                    requirement.messages.push(RequirementMessage {
+                        role: RequirementMessageRole::Trace,
+                        content: "WorkPlan 失败过程".to_owned(),
+                        references: Vec::new(),
+                        images: Vec::new(),
+                        metadata: Some(trace),
+                        created_at: now,
+                    });
+                }
                 self.write_persist().await?;
                 Ok(None)
             }
@@ -1416,6 +1674,8 @@ impl JsonStore {
         requirement.status = requirement_status;
         requirement.error = (requirement_status == RequirementStatus::Failed)
             .then(|| message.unwrap_or("WorkflowRun 未完成").to_owned());
+        requirement.failure_stage = None;
+        requirement.failure_code = None;
         requirement.updated_at = now;
         if requirement_status != RequirementStatus::Running {
             requirement.messages.push(RequirementMessage {
@@ -1499,6 +1759,8 @@ impl JsonStore {
             let requirement = &mut self.data.requirements[requirement_index];
             requirement.status = RequirementStatus::Failed;
             requirement.error = Some("运行中的需求缺少 WorkflowRun".to_owned());
+            requirement.failure_stage = Some(RequirementFailureStage::Persistence);
+            requirement.failure_code = Some("workflow_missing".to_owned());
             requirement.updated_at = Utc::now();
             self.write_persist().await?;
             return Ok(None);
@@ -1544,11 +1806,15 @@ impl JsonStore {
             ) {
                 requirement.status = RequirementStatus::Failed;
                 requirement.error = Some("需求澄清会话因应用重启中断，请重新分析".to_owned());
+                requirement.failure_stage = Some(RequirementFailureStage::Analysis);
+                requirement.failure_code = Some("analysis_interrupted".to_owned());
                 requirement.updated_at = now;
                 changed = true;
             } else if requirement.status == RequirementStatus::Planning {
                 requirement.status = RequirementStatus::Queued;
                 requirement.error = None;
+                requirement.failure_stage = None;
+                requirement.failure_code = None;
                 requirement.queued_at.get_or_insert(requirement.updated_at);
                 requirement.updated_at = now;
                 project_ids.insert(requirement.project_id.clone());
@@ -1568,12 +1834,16 @@ impl JsonStore {
                 }
                 requirement.error = (next_status == RequirementStatus::Failed)
                     .then(|| blocked_reason.unwrap_or_else(|| "WorkflowRun 已阻塞".to_owned()));
+                requirement.failure_stage = None;
+                requirement.failure_code = None;
                 if next_status == RequirementStatus::Running {
                     project_ids.insert(requirement.project_id.clone());
                 }
             } else if requirement.status == RequirementStatus::Running {
                 requirement.status = RequirementStatus::Failed;
                 requirement.error = Some("运行中的需求缺少 WorkflowRun".to_owned());
+                requirement.failure_stage = Some(RequirementFailureStage::Persistence);
+                requirement.failure_code = Some("workflow_missing".to_owned());
                 requirement.updated_at = now;
                 changed = true;
             } else if requirement.status == RequirementStatus::Queued {

@@ -122,6 +122,13 @@ export type RequirementStatus =
   | "completed"
   | "failed";
 
+export type RequirementFailureStage =
+  | "analysis"
+  | "change_spec_validation"
+  | "planning"
+  | "plan_validation"
+  | "persistence";
+
 export type RequirementMessage = {
   role: "user" | "assistant" | "system" | "trace";
   content: string;
@@ -168,6 +175,7 @@ export type WorkflowRunStatus =
   | "reviewing"
   | "fixing"
   | "rescuing"
+  | "publishing"
   | "paused_technical"
   | "blocked"
   | "completed"
@@ -205,6 +213,7 @@ export type WorkflowRun = {
   rescue_attempt_id?: string | null;
   blocked_reason?: string | null;
   paused_operation?: string | null;
+  replaces_run_id?: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -222,6 +231,7 @@ export type WorkItem = {
   verification_goals: string[];
   status: WorkItemStatus;
   attempt_count: number;
+  actual_attempt_count: number;
   accepted_attempt_id?: string | null;
   lease_owner?: string | null;
   lease_expires_at?: string | null;
@@ -234,9 +244,14 @@ export type WorkflowAttempt = {
   id: string;
   run_id: string;
   work_item_id?: string | null;
-  kind: "implementation" | "fix" | "integration_fix" | "rescue";
+  kind:
+    | "implementation"
+    | "fix"
+    | "integration_fix"
+    | "remote_ci_fix"
+    | "rescue";
   ordinal: number;
-  status: "running" | "succeeded" | "failed" | "cancelled";
+  status: "running" | "succeeded" | "failed" | "cancelled" | "superseded";
   model_tier: string;
   worktree_fingerprint?: string | null;
   result_summary?: string | null;
@@ -316,6 +331,47 @@ export type WorkflowSnapshot = {
     completed_at?: string | null;
   }>;
   findings: WorkflowFinding[];
+  publication?: {
+    run_id: string;
+    mode: "local" | "pull_request";
+    provider: "local" | "github" | "gitlab";
+    phase:
+      | "prepared"
+      | "pushed"
+      | "review_open"
+      | "waiting_checks"
+      | "merged"
+      | "cleaning"
+      | "completed";
+    origin: string;
+    target_branch: string;
+    source_branch: string;
+    review_url?: string | null;
+    head_commit?: string | null;
+    merge_commit?: string | null;
+    local_sync_status: "pending" | "synced" | "skipped";
+    local_sync_message?: string | null;
+    cleanup_status: "pending" | "running" | "completed" | "failed";
+    remote_ci_fix_used: boolean;
+    last_error?: string | null;
+    updated_at: string;
+  } | null;
+  item_workspaces?: Array<{
+    work_item_id: string;
+    run_id: string;
+    branch: string;
+    base_commit: string;
+    result_commit?: string | null;
+    status:
+      | "prepared"
+      | "running"
+      | "committed"
+      | "integrated"
+      | "superseded"
+      | "cleaned";
+    fallback_serial: boolean;
+    updated_at: string;
+  }>;
   last_event_sequence: number;
 };
 
@@ -511,6 +567,8 @@ export type Requirement = {
   clarifications: RequirementClarification[];
   draft: ChangeSpec | null;
   error: string | null;
+  failure_stage?: RequirementFailureStage | null;
+  failure_code?: string | null;
   queued_at?: string | null;
   created_at: string;
   updated_at: string;

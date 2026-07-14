@@ -26,7 +26,8 @@ pub fn build_workflow_plan_prompt(input: &WorkflowPlanInput) -> RenderedPrompt {
 - scope_hints 只提供安全仓库相对路径线索，不是机械写入限制；不确定时使用空数组。
 - verification_goals 描述要验证的结果，禁止提交 shell 命令、grep/rg 或字符串计数。
 - 技术选择只放 design_notes，并附仓库证据与理由；DesignNotes 可在实现时修订，不是验收条件。
-- 默认串行依赖。只有范围明确且互不重叠时才允许使用同一 group 表示可并行。
+- 默认串行依赖。同一依赖层只有 2–3 项范围明确、scope_hints 非空且两两不重叠时，才允许
+  使用相同的非空 group 表示可并行；同层其他组合必须增加明确串行依赖。
 - 完成后只调用 submit_work_plan。"#;
 
     PromptRenderer::new("workflow_planner_v5")
@@ -54,7 +55,9 @@ pub fn build_workflow_attempt_prompt(input: &WorkflowAgentInput) -> RenderedProm
     let is_continuation = input.continuation_feedback.is_some();
     let is_fix = matches!(
         input.attempt_kind,
-        WorkflowAttemptKind::Fix | WorkflowAttemptKind::IntegrationFix
+        WorkflowAttemptKind::Fix
+            | WorkflowAttemptKind::IntegrationFix
+            | WorkflowAttemptKind::RemoteCiFix
     );
     let mut packet = String::new();
     if let Some(feedback) = &input.continuation_feedback {
@@ -63,7 +66,12 @@ pub fn build_workflow_attempt_prompt(input: &WorkflowAgentInput) -> RenderedProm
     let _ = writeln!(packet, "## WorkflowRun\n- run_id: {}", input.run.id);
     if is_continuation {
         // The existing Pi session already contains the ChangeSpec and first Rescue turn.
-    } else if is_rescue || input.attempt_kind == WorkflowAttemptKind::IntegrationFix {
+    } else if is_rescue
+        || matches!(
+            input.attempt_kind,
+            WorkflowAttemptKind::IntegrationFix | WorkflowAttemptKind::RemoteCiFix
+        )
+    {
         append_json(
             &mut packet,
             "行为场景",
@@ -146,7 +154,12 @@ pub fn build_workflow_attempt_prompt(input: &WorkflowAgentInput) -> RenderedProm
                 "gating": validation.gating,
                 "baseline_status": validation.baseline_status,
                 "final_status": validation.final_status,
-                "summary": validation.output_summary,
+                "summary": sanitize_validation_summary(
+                    validation.output_summary.as_deref(),
+                    &input.working_dir,
+                    input.run.integration_worktree.as_deref(),
+                    Some(&input.project.local_path),
+                ),
                 "fingerprint": validation.worktree_fingerprint,
             })
         })
@@ -204,7 +217,12 @@ pub fn build_workflow_review_prompt(input: &WorkflowReviewInput) -> RenderedProm
             "gating": validation.gating,
             "baseline_status": validation.baseline_status,
             "final_status": validation.final_status,
-            "summary": validation.output_summary,
+            "summary": sanitize_validation_summary(
+                validation.output_summary.as_deref(),
+                &input.working_dir,
+                input.run.integration_worktree.as_deref(),
+                Some(&input.project.local_path),
+            ),
             "fingerprint": validation.worktree_fingerprint,
         })).collect::<Vec<_>>(),
     }))
@@ -305,6 +323,55 @@ fn append_json<T: Serialize>(output: &mut String, title: &str, value: &T) {
     output.push('\n');
 }
 
+fn sanitize_validation_summary(
+    summary: Option<&str>,
+    working_dir: &std::path::Path,
+    integration_worktree: Option<&str>,
+    project_root: Option<&str>,
+) -> Option<String> {
+    let summary = summary?;
+    let mut sanitized = strip_ansi(summary);
+    let mut replacements = vec![working_dir.to_string_lossy().into_owned()];
+    replacements.extend(integration_worktree.map(str::to_owned));
+    replacements.extend(project_root.map(str::to_owned));
+    replacements.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    replacements.dedup();
+    for value in replacements {
+        if value.is_empty() {
+            continue;
+        }
+        sanitized = sanitized.replace(&value, "<workspace>");
+        let slash_value = value.replace('\\', "/");
+        if slash_value != value {
+            sanitized = sanitized.replace(&slash_value, "<workspace>");
+        }
+        let backslash_value = value.replace('/', "\\");
+        if backslash_value != value {
+            sanitized = sanitized.replace(&backslash_value, "<workspace>");
+        }
+    }
+    Some(truncate_chars(&sanitized, 2_000).0)
+}
+
+fn strip_ansi(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character != '\u{1b}' {
+            output.push(character);
+            continue;
+        }
+        if characters.next_if_eq(&'[').is_some() {
+            for next in characters.by_ref() {
+                if ('@'..='~').contains(&next) {
+                    break;
+                }
+            }
+        }
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
@@ -341,6 +408,8 @@ mod tests {
             clarification_history: Vec::new(),
             pi_session_file: None,
             error: None,
+            failure_stage: None,
+            failure_code: None,
             queued_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -361,5 +430,22 @@ mod tests {
         assert!(prompt.contains("OpenSpec"));
         assert!(prompt.contains("禁止提交 shell 命令"));
         assert!(!prompt.contains("checkpoint_required"));
+    }
+
+    #[test]
+    fn validation_summary_hides_managed_worktree_paths_and_ansi() {
+        let working_dir = std::path::Path::new("/repo/.raccoon-node/worktrees/run-1/items/item-1");
+        let summary = sanitize_validation_summary(
+            Some(
+                "\u{1b}[31mfailed\u{1b}[0m in /repo/.raccoon-node/worktrees/run-1/integration/src/main.rs",
+            ),
+            working_dir,
+            Some("/repo/.raccoon-node/worktrees/run-1/integration"),
+            Some("/repo"),
+        )
+        .expect("summary");
+        assert_eq!(summary, "failed in <workspace>/src/main.rs");
+        assert!(!summary.contains(".raccoon-node"));
+        assert!(!summary.contains('\u{1b}'));
     }
 }

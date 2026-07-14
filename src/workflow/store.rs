@@ -10,9 +10,10 @@ use crate::error::AppError;
 use crate::store::db::Database;
 
 use super::{
-    CheckpointKind, CheckpointStatus, CompiledWorkflow, FailureClass, FindingStatus, ReviewAngle,
-    WorkItem, WorkItemDependency, WorkflowAttempt, WorkflowAttemptKind, WorkflowAttemptStatus,
-    WorkflowCheckpoint, WorkflowEvent, WorkflowEventPage, WorkflowReviewFinding, WorkflowRun,
+    CheckpointKind, CheckpointStatus, CompiledWorkflow, CompletedWorkflowWorkspace, FailureClass,
+    FindingStatus, ReviewAngle, WorkItem, WorkItemDependency, WorkflowAttempt, WorkflowAttemptKind,
+    WorkflowAttemptStatus, WorkflowCheckpoint, WorkflowEvent, WorkflowEventPage,
+    WorkflowItemWorkspace, WorkflowPublication, WorkflowReviewFinding, WorkflowRun,
     WorkflowRunStatus, WorkflowSnapshot, WorkflowValidation, new_workflow_id,
 };
 
@@ -20,6 +21,110 @@ const DEFAULT_EVENT_LIMIT: usize = 100;
 const MAX_EVENT_LIMIT: usize = 500;
 
 impl Database {
+    pub fn completed_workflow_workspaces(
+        &self,
+    ) -> Result<Vec<CompletedWorkflowWorkspace>, AppError> {
+        let conn = self.lock_connection();
+        let mut statement = conn.prepare(
+            "SELECT id, integration_worktree, integration_branch, base_head, final_commit
+             FROM workflow_runs
+             WHERE status = 'completed' AND integration_worktree IS NOT NULL
+               AND integration_branch IS NOT NULL AND base_head IS NOT NULL
+               AND final_commit IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM workflow_publications publication
+                 WHERE publication.run_id = workflow_runs.id
+                   AND publication.cleanup_status = 'completed'
+               )",
+        )?;
+        Ok(statement
+            .query_map([], |row| {
+                Ok(CompletedWorkflowWorkspace {
+                    run_id: row.get(0)?,
+                    worktree_path: row.get(1)?,
+                    branch: row.get(2)?,
+                    base_head: row.get(3)?,
+                    final_commit: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn record_workflow_event(
+        &self,
+        run_id: &str,
+        event_type: &str,
+        payload: &Value,
+    ) -> Result<(), AppError> {
+        let mut conn = self.lock_connection();
+        let tx = conn.transaction()?;
+        append_event_tx(&tx, run_id, "run", run_id, event_type, payload)?;
+        save_snapshot_tx(&tx, run_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn record_workflow_failure_fuse(
+        &self,
+        run_id: &str,
+        work_item_id: &str,
+        failure_class: FailureClass,
+        integration_fingerprint: &str,
+    ) -> Result<(), AppError> {
+        let conn = self.lock_connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO workflow_failure_fuses (
+                run_id, work_item_id, failure_class, integration_fingerprint, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                run_id,
+                work_item_id,
+                to_json_string(&failure_class)?,
+                integration_fingerprint,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn workflow_failure_fuse(
+        &self,
+        work_item_id: &str,
+        integration_fingerprint: &str,
+    ) -> Result<Option<FailureClass>, AppError> {
+        let conn = self.lock_connection();
+        conn.query_row(
+            "SELECT failure_class FROM workflow_failure_fuses
+             WHERE work_item_id = ?1 AND integration_fingerprint = ?2
+             ORDER BY created_at DESC LIMIT 1",
+            params![work_item_id, integration_fingerprint],
+            |row| parse_json_column::<FailureClass>(row, 0),
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn mark_completed_workspace_cleaned(&self, run_id: &str) -> Result<(), AppError> {
+        let mut conn = self.lock_connection();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE workflow_runs SET integration_worktree = NULL, updated_at = ?2,
+                 version = version + 1 WHERE id = ?1 AND status = 'completed'",
+            params![run_id, Utc::now().to_rfc3339()],
+        )?;
+        append_event_tx(
+            &tx,
+            run_id,
+            "run",
+            run_id,
+            "run.legacy_workspace_cleaned",
+            &json!({}),
+        )?;
+        save_snapshot_tx(&tx, run_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn workflow_session_files(&self) -> Result<Vec<String>, AppError> {
         let conn = self.lock_connection();
         let mut statement = conn.prepare(
@@ -39,7 +144,7 @@ impl Database {
                 "SELECT DISTINCT run_id FROM workflow_attempts WHERE status = 'running'
                  UNION SELECT run_id FROM workflow_checkpoints WHERE status = 'reviewing'
                  UNION SELECT id FROM workflow_runs
-                       WHERE status IN ('planning','running','validating','reviewing','fixing','rescuing')",
+                       WHERE status IN ('planning','running','validating','reviewing','fixing','rescuing','publishing')",
             )?;
             statement
                 .query_map([], |row| row.get::<_, String>(0))?
@@ -136,6 +241,109 @@ impl Database {
         Ok(())
     }
 
+    pub fn restart_workflow_clean(
+        &self,
+        old_run_id: &str,
+        workflow: &CompiledWorkflow,
+    ) -> Result<String, AppError> {
+        if workflow.run.replaces_run_id.as_deref() != Some(old_run_id) {
+            return Err(AppError::bad_request(
+                "replacement WorkflowRun 缺少正确的 replaces_run_id",
+            ));
+        }
+        let mut conn = self.lock_connection();
+        let tx = conn.transaction()?;
+        if let Some(existing) = tx
+            .query_row(
+                "SELECT id FROM workflow_runs WHERE replaces_run_id = ?1",
+                [old_run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            return Ok(existing);
+        }
+        let old_status = tx
+            .query_row(
+                "SELECT status FROM workflow_runs WHERE id = ?1",
+                [old_run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| AppError::not_found("WorkflowRun 不存在"))?;
+        if old_status != to_json_string(&WorkflowRunStatus::PausedTechnical)? {
+            return Err(AppError::conflict(
+                "只有 paused_technical WorkflowRun 可以从干净工作区重建",
+            ));
+        }
+        let publication_started = tx
+            .query_row(
+                "SELECT CASE WHEN phase <> 'prepared' OR review_url IS NOT NULL
+                     OR head_commit IS NOT NULL OR merge_commit IS NOT NULL THEN 1 ELSE 0 END
+                 FROM workflow_publications WHERE run_id = ?1",
+                [old_run_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0)
+            != 0;
+        if publication_started {
+            return Err(AppError::conflict(
+                "WorkflowRun 已进入远端发布流程，不能从干净工作区重建",
+            ));
+        }
+        let running_attempts = tx.query_row(
+            "SELECT COUNT(*) FROM workflow_attempts WHERE run_id = ?1 AND status = 'running'",
+            [old_run_id],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if running_attempts != 0 {
+            return Err(AppError::conflict(
+                "WorkflowRun 仍有活动 Agent 调用，不能从干净工作区重建",
+            ));
+        }
+
+        let now = Utc::now().to_rfc3339();
+        tx.execute(
+            "UPDATE workflow_runs SET status = 'cancelled',
+                 blocked_reason = '已从干净工作区创建 replacement WorkflowRun',
+                 paused_operation = NULL, completed_at = ?2, updated_at = ?2,
+                 version = version + 1 WHERE id = ?1",
+            params![old_run_id, now],
+        )?;
+        append_event_tx(
+            &tx,
+            old_run_id,
+            "run",
+            old_run_id,
+            "run.discarded",
+            &json!({"replacement_run_id": workflow.run.id}),
+        )?;
+        save_snapshot_tx(&tx, old_run_id)?;
+
+        insert_run(&tx, &workflow.run)?;
+        for item in &workflow.work_items {
+            insert_work_item(&tx, item)?;
+        }
+        for dependency in &workflow.dependencies {
+            tx.execute(
+                "INSERT INTO workflow_dependencies (work_item_id, depends_on_id) VALUES (?1, ?2)",
+                params![dependency.work_item_id, dependency.depends_on_id],
+            )?;
+        }
+        append_event_tx(
+            &tx,
+            &workflow.run.id,
+            "run",
+            &workflow.run.id,
+            "run.restarted_clean",
+            &json!({"replaces_run_id": old_run_id}),
+        )?;
+        save_snapshot_tx(&tx, &workflow.run.id)?;
+        tx.commit()?;
+        Ok(workflow.run.id.clone())
+    }
+
     pub fn workflow_snapshot(&self, run_id: &str) -> Result<WorkflowSnapshot, AppError> {
         let conn = self.lock_connection();
         load_snapshot(&conn, run_id)
@@ -155,6 +363,23 @@ impl Database {
             )
             .optional()?;
         run_id.map(|id| load_snapshot(&conn, &id)).transpose()
+    }
+
+    pub fn replacement_workflow_for(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<WorkflowSnapshot>, AppError> {
+        let conn = self.lock_connection();
+        let replacement_id = conn
+            .query_row(
+                "SELECT id FROM workflow_runs WHERE replaces_run_id = ?1",
+                [run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        replacement_id
+            .map(|replacement_id| load_snapshot(&conn, &replacement_id))
+            .transpose()
     }
 
     pub fn workflow_events(
@@ -217,6 +442,151 @@ impl Database {
         Ok(())
     }
 
+    pub fn ensure_workflow_publication(
+        &self,
+        publication: &WorkflowPublication,
+    ) -> Result<WorkflowPublication, AppError> {
+        let mut conn = self.lock_connection();
+        let tx = conn.transaction()?;
+        let inserted = tx.execute(
+            "INSERT OR IGNORE INTO workflow_publications (
+                run_id, mode, provider, phase, origin, target_branch, source_branch,
+                review_url, head_commit, merge_commit, local_sync_status,
+                local_sync_message, cleanup_status, remote_ci_fix_used, last_error, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            params![
+                publication.run_id,
+                to_json_string(&publication.mode)?,
+                to_json_string(&publication.provider)?,
+                to_json_string(&publication.phase)?,
+                publication.origin,
+                publication.target_branch,
+                publication.source_branch,
+                publication.review_url,
+                publication.head_commit,
+                publication.merge_commit,
+                to_json_string(&publication.local_sync_status)?,
+                publication.local_sync_message,
+                to_json_string(&publication.cleanup_status)?,
+                publication.remote_ci_fix_used,
+                publication.last_error,
+                publication.updated_at.to_rfc3339(),
+            ],
+        )?;
+        let stored = load_publication(&tx, &publication.run_id)?
+            .ok_or_else(|| AppError::internal("发布配置冻结失败"))?;
+        if inserted == 1 {
+            append_event_tx(
+                &tx,
+                &publication.run_id,
+                "publication",
+                &publication.run_id,
+                "publication.prepared",
+                &json!({
+                    "mode": publication.mode,
+                    "provider": publication.provider,
+                    "target_branch": publication.target_branch,
+                    "source_branch": publication.source_branch,
+                }),
+            )?;
+        }
+        save_snapshot_tx(&tx, &publication.run_id)?;
+        tx.commit()?;
+        Ok(stored)
+    }
+
+    pub fn save_workflow_publication(
+        &self,
+        publication: &WorkflowPublication,
+        event_type: &str,
+        event_payload: &Value,
+    ) -> Result<(), AppError> {
+        let mut conn = self.lock_connection();
+        let tx = conn.transaction()?;
+        let changed = tx.execute(
+            "UPDATE workflow_publications SET phase = ?2, review_url = ?3,
+                 head_commit = ?4, merge_commit = ?5, local_sync_status = ?6,
+                 local_sync_message = ?7, cleanup_status = ?8,
+                 remote_ci_fix_used = ?9, last_error = ?10, updated_at = ?11
+             WHERE run_id = ?1",
+            params![
+                publication.run_id,
+                to_json_string(&publication.phase)?,
+                publication.review_url,
+                publication.head_commit,
+                publication.merge_commit,
+                to_json_string(&publication.local_sync_status)?,
+                publication.local_sync_message,
+                to_json_string(&publication.cleanup_status)?,
+                publication.remote_ci_fix_used,
+                publication.last_error,
+                publication.updated_at.to_rfc3339(),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(AppError::not_found("WorkflowRun 发布记录不存在"));
+        }
+        append_event_tx(
+            &tx,
+            &publication.run_id,
+            "publication",
+            &publication.run_id,
+            event_type,
+            event_payload,
+        )?;
+        save_snapshot_tx(&tx, &publication.run_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn upsert_workflow_item_workspace(
+        &self,
+        workspace: &WorkflowItemWorkspace,
+        event_type: &str,
+    ) -> Result<(), AppError> {
+        let mut conn = self.lock_connection();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO workflow_item_workspaces (
+                work_item_id, run_id, branch, worktree_path, base_commit,
+                result_commit, status, fallback_serial, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(work_item_id) DO UPDATE SET
+                branch = excluded.branch, worktree_path = excluded.worktree_path,
+                base_commit = excluded.base_commit, result_commit = excluded.result_commit,
+                status = excluded.status, fallback_serial = excluded.fallback_serial,
+                updated_at = excluded.updated_at",
+            params![
+                workspace.work_item_id,
+                workspace.run_id,
+                workspace.branch,
+                workspace.worktree_path,
+                workspace.base_commit,
+                workspace.result_commit,
+                to_json_string(&workspace.status)?,
+                workspace.fallback_serial,
+                workspace.updated_at.to_rfc3339(),
+            ],
+        )?;
+        append_event_tx(
+            &tx,
+            &workspace.run_id,
+            "item_workspace",
+            &workspace.work_item_id,
+            event_type,
+            &json!({
+                "branch": workspace.branch,
+                "base_commit": workspace.base_commit,
+                "result_commit": workspace.result_commit,
+                "status": workspace.status,
+                "fallback_serial": workspace.fallback_serial,
+            }),
+        )?;
+        save_snapshot_tx(&tx, &workspace.run_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn claim_runnable_work_items(
         &self,
         run_id: &str,
@@ -228,8 +598,9 @@ impl Database {
         let tx = conn.transaction()?;
         let ids = {
             let mut statement = tx.prepare(
-                "SELECT wi.id FROM workflow_work_items wi
+                "SELECT wi.id, COALESCE(ws.fallback_serial, 0) FROM workflow_work_items wi
                  JOIN workflow_runs wr ON wr.id = wi.run_id
+                 LEFT JOIN workflow_item_workspaces ws ON ws.work_item_id = wi.id
                  WHERE wi.run_id = ?1 AND wi.status = 'pending'
                    AND wr.status IN ('running','fixing')
                    AND NOT EXISTS (
@@ -239,9 +610,16 @@ impl Database {
                    )
                  ORDER BY wi.position LIMIT ?2",
             )?;
-            statement
-                .query_map(params![run_id, limit.max(1)], |row| row.get::<_, String>(0))?
-                .collect::<Result<Vec<_>, _>>()?
+            let candidates = statement
+                .query_map(params![run_id, limit.max(1)], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some((id, _)) = candidates.iter().find(|(_, fallback)| *fallback) {
+                vec![id.clone()]
+            } else {
+                candidates.into_iter().map(|(id, _)| id).collect()
+            }
         };
         for id in &ids {
             tx.execute(
@@ -451,6 +829,124 @@ impl Database {
                 "attempt.failed"
             },
             &json!({"failure_class": failure_class, "failure_message": failure_message}),
+        )?;
+        save_snapshot_tx(&tx, &run_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn observe_workflow_attempt(
+        &self,
+        attempt_id: &str,
+        session_file: Option<&str>,
+        worktree_fingerprint: Option<&str>,
+        result_summary: Option<&str>,
+        usage: Option<&Value>,
+    ) -> Result<(), AppError> {
+        let mut conn = self.lock_connection();
+        let tx = conn.transaction()?;
+        let run_id = tx
+            .query_row(
+                "SELECT run_id FROM workflow_attempts WHERE id = ?1 AND status = 'running'",
+                [attempt_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| AppError::conflict("执行尝试已经结束或不存在"))?;
+        tx.execute(
+            "UPDATE workflow_attempts SET pi_session_file = COALESCE(?2, pi_session_file),
+                 worktree_fingerprint = COALESCE(?3, worktree_fingerprint),
+                 result_summary = COALESCE(?4, result_summary),
+                 usage = COALESCE(?5, usage) WHERE id = ?1 AND status = 'running'",
+            params![
+                attempt_id,
+                session_file,
+                worktree_fingerprint,
+                result_summary,
+                usage.map(serde_json::to_string).transpose()?,
+            ],
+        )?;
+        append_event_tx(
+            &tx,
+            &run_id,
+            "attempt",
+            attempt_id,
+            "attempt.usage_persisted",
+            &json!({"usage_known": usage.is_some()}),
+        )?;
+        save_snapshot_tx(&tx, &run_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn supersede_workflow_attempt(
+        &self,
+        attempt_id: &str,
+        reason: &str,
+        session_file: Option<&str>,
+        worktree_fingerprint: Option<&str>,
+        result_summary: Option<&str>,
+        usage: Option<&Value>,
+    ) -> Result<(), AppError> {
+        let mut conn = self.lock_connection();
+        let tx = conn.transaction()?;
+        let (run_id, work_item_id) = tx.query_row(
+            "SELECT run_id, work_item_id FROM workflow_attempts WHERE id = ?1",
+            [attempt_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )?;
+        let work_item_id = work_item_id
+            .ok_or_else(|| AppError::bad_request("run 级 attempt 不能标记为 superseded"))?;
+        let now = Utc::now().to_rfc3339();
+        let changed = tx.execute(
+            "UPDATE workflow_attempts SET status = 'superseded', failure_class = 'git_conflict',
+                 failure_message = ?2, pi_session_file = ?3, worktree_fingerprint = ?4,
+                 result_summary = ?5, usage = ?6, completed_at = ?7
+             WHERE id = ?1 AND status = 'running'",
+            params![
+                attempt_id,
+                reason,
+                session_file,
+                worktree_fingerprint,
+                result_summary,
+                usage.map(serde_json::to_string).transpose()?,
+                now
+            ],
+        )?;
+        if changed != 1 {
+            return Err(AppError::conflict("执行尝试已经结束或不存在"));
+        }
+        tx.execute(
+            "UPDATE workflow_work_items SET status = 'pending',
+                 attempt_count = MAX(attempt_count - 1, 0), accepted_attempt_id = NULL,
+                 lease_owner = NULL, lease_expires_at = NULL,
+                 version = version + 1, updated_at = ?2 WHERE id = ?1",
+            params![work_item_id, now],
+        )?;
+        tx.execute(
+            "UPDATE workflow_item_workspaces SET status = 'superseded', fallback_serial = 1,
+                 updated_at = ?2 WHERE work_item_id = ?1",
+            params![work_item_id, now],
+        )?;
+        append_event_tx(
+            &tx,
+            &run_id,
+            "attempt",
+            attempt_id,
+            "attempt.superseded",
+            &json!({
+                "work_item_id": work_item_id,
+                "reason": reason,
+                "usage_known": usage.is_some()
+            }),
+        )?;
+        append_event_tx(
+            &tx,
+            &run_id,
+            "run",
+            &run_id,
+            "parallel_batch.serial_fallback",
+            &json!({"work_item_id": work_item_id, "reason": reason}),
         )?;
         save_snapshot_tx(&tx, &run_id)?;
         tx.commit()?;
@@ -893,6 +1389,45 @@ impl Database {
         Ok(())
     }
 
+    pub fn begin_workflow_publication(
+        &self,
+        checkpoint_id: &str,
+        integration_commit: &str,
+        summary: &str,
+    ) -> Result<String, AppError> {
+        let mut conn = self.lock_connection();
+        let tx = conn.transaction()?;
+        let run_id = tx.query_row(
+            "SELECT run_id FROM workflow_checkpoints WHERE id = ?1",
+            [checkpoint_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        let now = Utc::now().to_rfc3339();
+        tx.execute(
+            "UPDATE workflow_checkpoints SET status = 'approved', summary = ?2,
+                 updated_at = ?3, completed_at = ?3 WHERE id = ?1",
+            params![checkpoint_id, summary, now],
+        )?;
+        tx.execute(
+            "UPDATE workflow_runs SET status = 'publishing', final_commit = NULL,
+                 blocked_reason = NULL, paused_operation = NULL,
+                 version = version + 1, updated_at = ?2
+             WHERE id = ?1 AND status NOT IN ('completed','blocked','cancelled')",
+            params![run_id, now],
+        )?;
+        append_event_tx(
+            &tx,
+            &run_id,
+            "run",
+            &run_id,
+            "run.publishing",
+            &json!({"integration_commit": integration_commit}),
+        )?;
+        save_snapshot_tx(&tx, &run_id)?;
+        tx.commit()?;
+        Ok(run_id)
+    }
+
     pub fn begin_run_rescue(
         &self,
         run_id: &str,
@@ -1028,6 +1563,24 @@ impl Database {
             .optional()?
             .flatten()
             .ok_or_else(|| AppError::conflict("只有 paused_technical WorkflowRun 可以恢复"))?;
+        let requires_clean_restart = operation == "workspace_violation"
+            || tx.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM workflow_attempts
+                    WHERE run_id = ?1 AND failure_class = 'workspace_violation'
+                 ) OR (
+                    SELECT COUNT(*) FROM workflow_attempts
+                    WHERE run_id = ?1 AND status = 'superseded'
+                      AND failure_class = 'git_conflict'
+                 ) >= 2",
+                [run_id],
+                |row| row.get::<_, bool>(0),
+            )?;
+        if requires_clean_restart {
+            return Err(AppError::conflict(
+                "该 WorkflowRun 存在工作区越界或重复 Git 冲突，请从干净工作区重新执行",
+            ));
+        }
         tx.execute(
             "UPDATE workflow_runs SET status = 'running',
                  blocked_reason = NULL, version = version + 1, updated_at = ?2 WHERE id = ?1",
@@ -1089,9 +1642,9 @@ fn insert_run(tx: &rusqlite::Transaction<'_>, run: &WorkflowRun) -> Result<(), A
         "INSERT INTO workflow_runs (
             id, requirement_id, project_id, status, change_spec, design_notes, plan_summary,
             source_revision, base_head, integration_branch, integration_worktree, final_commit,
-            rescue_used, rescue_attempt_id, blocked_reason, paused_operation, version,
-            created_at, updated_at, completed_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+            rescue_used, rescue_attempt_id, blocked_reason, paused_operation, replaces_run_id,
+            version, created_at, updated_at, completed_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         params![
             run.id,
             run.requirement_id,
@@ -1109,6 +1662,7 @@ fn insert_run(tx: &rusqlite::Transaction<'_>, run: &WorkflowRun) -> Result<(), A
             run.rescue_attempt_id,
             run.blocked_reason,
             run.paused_operation,
+            run.replaces_run_id,
             run.version,
             run.created_at.to_rfc3339(),
             run.updated_at.to_rfc3339(),
@@ -1268,14 +1822,15 @@ fn load_snapshot(conn: &rusqlite::Connection, run_id: &str) -> Result<WorkflowSn
             "SELECT id, requirement_id, project_id, status, change_spec, design_notes,
                     plan_summary, source_revision, base_head, integration_branch,
                     integration_worktree, final_commit, rescue_used, rescue_attempt_id,
-                    blocked_reason, paused_operation, version, created_at, updated_at, completed_at
+                    blocked_reason, paused_operation, replaces_run_id, version, created_at,
+                    updated_at, completed_at
              FROM workflow_runs WHERE id = ?1",
             [run_id],
             read_run,
         )
         .optional()?
         .ok_or_else(|| AppError::not_found("WorkflowRun 不存在"))?;
-    let work_items = query_rows(
+    let mut work_items = query_rows(
         conn,
         "SELECT id, run_id, position, objective, scenario_refs, group_name, scope_hints,
                 verification_goals, status, attempt_count, accepted_attempt_id, lease_owner,
@@ -1305,6 +1860,12 @@ fn load_snapshot(conn: &rusqlite::Connection, run_id: &str) -> Result<WorkflowSn
         run_id,
         read_attempt,
     )?;
+    for item in &mut work_items {
+        item.actual_attempt_count = attempts
+            .iter()
+            .filter(|attempt| attempt.work_item_id.as_deref() == Some(item.id.as_str()))
+            .count() as u32;
+    }
     let checkpoints = query_rows(
         conn,
         "SELECT id, run_id, kind, revision, status, snapshot_sha, required_angles,
@@ -1332,6 +1893,15 @@ fn load_snapshot(conn: &rusqlite::Connection, run_id: &str) -> Result<WorkflowSn
         run_id,
         read_finding,
     )?;
+    let publication = load_publication(conn, run_id)?;
+    let item_workspaces = query_rows(
+        conn,
+        "SELECT work_item_id, run_id, branch, worktree_path, base_commit,
+                result_commit, status, fallback_serial, updated_at
+         FROM workflow_item_workspaces WHERE run_id = ?1 ORDER BY work_item_id",
+        run_id,
+        read_item_workspace,
+    )?;
     let last_event_sequence = conn.query_row(
         "SELECT COALESCE(MAX(sequence), 0) FROM workflow_events WHERE run_id = ?1",
         [run_id],
@@ -1345,8 +1915,26 @@ fn load_snapshot(conn: &rusqlite::Connection, run_id: &str) -> Result<WorkflowSn
         checkpoints,
         validations,
         findings,
+        publication,
+        item_workspaces,
         last_event_sequence,
     })
+}
+
+fn load_publication(
+    conn: &rusqlite::Connection,
+    run_id: &str,
+) -> Result<Option<WorkflowPublication>, AppError> {
+    Ok(conn
+        .query_row(
+            "SELECT run_id, mode, provider, phase, origin, target_branch, source_branch,
+                    review_url, head_commit, merge_commit, local_sync_status,
+                    local_sync_message, cleanup_status, remote_ci_fix_used, last_error, updated_at
+             FROM workflow_publications WHERE run_id = ?1",
+            [run_id],
+            read_publication,
+        )
+        .optional()?)
 }
 
 fn query_rows<T>(
@@ -1390,10 +1978,11 @@ fn read_run(row: &Row<'_>) -> rusqlite::Result<WorkflowRun> {
         rescue_attempt_id: row.get(13)?,
         blocked_reason: row.get(14)?,
         paused_operation: row.get(15)?,
-        version: row.get(16)?,
-        created_at: parse_datetime_column(row, 17)?,
-        updated_at: parse_datetime_column(row, 18)?,
-        completed_at: parse_optional_datetime_column(row, 19)?,
+        replaces_run_id: row.get(16)?,
+        version: row.get(17)?,
+        created_at: parse_datetime_column(row, 18)?,
+        updated_at: parse_datetime_column(row, 19)?,
+        completed_at: parse_optional_datetime_column(row, 20)?,
     })
 }
 
@@ -1409,6 +1998,7 @@ fn read_work_item(row: &Row<'_>) -> rusqlite::Result<WorkItem> {
         verification_goals: parse_json_column(row, 7)?,
         status: parse_json_column(row, 8)?,
         attempt_count: row.get(9)?,
+        actual_attempt_count: 0,
         accepted_attempt_id: row.get(10)?,
         lease_owner: row.get(11)?,
         lease_expires_at: parse_optional_datetime_column(row, 12)?,
@@ -1502,6 +2092,41 @@ fn read_finding(row: &Row<'_>) -> rusqlite::Result<WorkflowReviewFinding> {
     })
 }
 
+fn read_publication(row: &Row<'_>) -> rusqlite::Result<WorkflowPublication> {
+    Ok(WorkflowPublication {
+        run_id: row.get(0)?,
+        mode: parse_json_column(row, 1)?,
+        provider: parse_json_column(row, 2)?,
+        phase: parse_json_column(row, 3)?,
+        origin: row.get(4)?,
+        target_branch: row.get(5)?,
+        source_branch: row.get(6)?,
+        review_url: row.get(7)?,
+        head_commit: row.get(8)?,
+        merge_commit: row.get(9)?,
+        local_sync_status: parse_json_column(row, 10)?,
+        local_sync_message: row.get(11)?,
+        cleanup_status: parse_json_column(row, 12)?,
+        remote_ci_fix_used: row.get(13)?,
+        last_error: row.get(14)?,
+        updated_at: parse_datetime_column(row, 15)?,
+    })
+}
+
+fn read_item_workspace(row: &Row<'_>) -> rusqlite::Result<WorkflowItemWorkspace> {
+    Ok(WorkflowItemWorkspace {
+        work_item_id: row.get(0)?,
+        run_id: row.get(1)?,
+        branch: row.get(2)?,
+        worktree_path: row.get(3)?,
+        base_commit: row.get(4)?,
+        result_commit: row.get(5)?,
+        status: parse_json_column(row, 6)?,
+        fallback_serial: row.get(7)?,
+        updated_at: parse_datetime_column(row, 8)?,
+    })
+}
+
 fn read_event(row: &Row<'_>) -> rusqlite::Result<WorkflowEvent> {
     Ok(WorkflowEvent {
         sequence: row.get(0)?,
@@ -1585,7 +2210,10 @@ mod tests {
     use crate::models::{AcceptanceScenario, ChangeSpec};
     use crate::store::db::Database;
     use crate::workflow::FindingPriority;
-    use crate::workflow::{PlannedWorkItem, WorkPlan, compile_work_plan};
+    use crate::workflow::{
+        PlannedWorkItem, WorkItemStatus, WorkPlan, clone_workflow_for_clean_restart,
+        compile_work_plan,
+    };
 
     fn compiled_workflow() -> CompiledWorkflow {
         compile_work_plan(
@@ -1682,6 +2310,55 @@ mod tests {
             map.into_values().next().unwrap().priority,
             FindingPriority::P1
         );
+    }
+
+    #[test]
+    fn publication_configuration_is_frozen_and_item_paths_are_not_serialized() {
+        let (_directory, database, workflow) = workflow_database();
+        let now = Utc::now();
+        let publication = WorkflowPublication {
+            run_id: workflow.run.id.clone(),
+            mode: crate::workflow::WorkflowPublicationMode::PullRequest,
+            provider: crate::workflow::WorkflowPublicationProvider::GitHub,
+            phase: crate::workflow::WorkflowPublicationPhase::Prepared,
+            origin: "git@github.com:acme/repo.git".to_owned(),
+            target_branch: "main".to_owned(),
+            source_branch: format!("raccoon/workflow-{}", workflow.run.id),
+            review_url: None,
+            head_commit: None,
+            merge_commit: None,
+            local_sync_status: crate::workflow::WorkflowLocalSyncStatus::Pending,
+            local_sync_message: None,
+            cleanup_status: crate::workflow::WorkflowCleanupStatus::Pending,
+            remote_ci_fix_used: false,
+            last_error: None,
+            updated_at: now,
+        };
+        database.ensure_workflow_publication(&publication).unwrap();
+        let mut changed = publication.clone();
+        changed.target_branch = "develop".to_owned();
+        let frozen = database.ensure_workflow_publication(&changed).unwrap();
+        assert_eq!(frozen.target_branch, "main");
+
+        database
+            .upsert_workflow_item_workspace(
+                &WorkflowItemWorkspace {
+                    work_item_id: workflow.work_items[0].id.clone(),
+                    run_id: workflow.run.id.clone(),
+                    branch: format!("raccoon/workflow-{}-item-000", workflow.run.id),
+                    worktree_path: "/secret/managed/item".to_owned(),
+                    base_commit: "base".to_owned(),
+                    result_commit: None,
+                    status: crate::workflow::WorkflowItemWorkspaceStatus::Prepared,
+                    fallback_serial: false,
+                    updated_at: now,
+                },
+                "item_workspace.prepared",
+            )
+            .unwrap();
+        let json =
+            serde_json::to_string(&database.workflow_snapshot(&workflow.run.id).unwrap()).unwrap();
+        assert!(!json.contains("/secret/managed/item"));
     }
 
     #[test]
@@ -1787,6 +2464,112 @@ mod tests {
             super::super::WorkItemStatus::Pending
         );
         assert_eq!(snapshot.work_items[0].attempt_count, 0);
+        assert_eq!(snapshot.work_items[0].actual_attempt_count, 1);
+    }
+
+    #[test]
+    fn superseded_attempt_preserves_usage_and_actual_call_count() {
+        let (_directory, database, workflow) = workflow_database();
+        let item = database
+            .claim_runnable_work_items(
+                &workflow.run.id,
+                "worker",
+                Utc::now() + chrono::Duration::minutes(5),
+                1,
+            )
+            .unwrap()
+            .remove(0);
+        let attempt = database
+            .start_workflow_attempt(
+                &workflow.run.id,
+                Some(&item.id),
+                WorkflowAttemptKind::Implementation,
+                "low",
+                "worker",
+            )
+            .unwrap();
+        let usage = json!({"input": 750000, "output": 1000});
+        database
+            .supersede_workflow_attempt(
+                &attempt.id,
+                "parallel overlap",
+                Some("session.jsonl"),
+                Some("git:item"),
+                Some("completed work"),
+                Some(&usage),
+            )
+            .unwrap();
+
+        let snapshot = database.workflow_snapshot(&workflow.run.id).unwrap();
+        assert_eq!(
+            snapshot.attempts[0].status,
+            WorkflowAttemptStatus::Superseded
+        );
+        assert_eq!(snapshot.attempts[0].usage.as_ref(), Some(&usage));
+        assert_eq!(snapshot.work_items[0].attempt_count, 0);
+        assert_eq!(snapshot.work_items[0].actual_attempt_count, 1);
+    }
+
+    #[test]
+    fn deterministic_failure_fuse_is_scoped_to_item_and_integration_fingerprint() {
+        let (_directory, database, workflow) = workflow_database();
+        let item_id = &workflow.work_items[0].id;
+        database
+            .record_workflow_failure_fuse(
+                &workflow.run.id,
+                item_id,
+                FailureClass::WorkspaceViolation,
+                "git:integration-a",
+            )
+            .unwrap();
+        assert_eq!(
+            database
+                .workflow_failure_fuse(item_id, "git:integration-a")
+                .unwrap(),
+            Some(FailureClass::WorkspaceViolation)
+        );
+        assert_eq!(
+            database
+                .workflow_failure_fuse(item_id, "git:integration-b")
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn clean_restart_is_idempotent_and_preserves_the_discarded_run() {
+        let (_directory, database, workflow) = workflow_database();
+        database
+            .pause_workflow_run(&workflow.run.id, "workspace_violation", "dirty integration")
+            .unwrap();
+        assert!(database.resume_workflow_run(&workflow.run.id).is_err());
+        let original = database.workflow_snapshot(&workflow.run.id).unwrap();
+        let replacement = clone_workflow_for_clean_restart(&original);
+        let replacement_id = database
+            .restart_workflow_clean(&workflow.run.id, &replacement)
+            .unwrap();
+        assert_eq!(replacement_id, replacement.run.id);
+        assert_eq!(
+            database
+                .restart_workflow_clean(&workflow.run.id, &replacement)
+                .unwrap(),
+            replacement_id
+        );
+
+        let old = database.workflow_snapshot(&workflow.run.id).unwrap();
+        assert_eq!(old.run.status, WorkflowRunStatus::Cancelled);
+        let restarted = database.workflow_snapshot(&replacement_id).unwrap();
+        assert_eq!(
+            restarted.run.replaces_run_id.as_deref(),
+            Some(workflow.run.id.as_str())
+        );
+        assert!(restarted.attempts.is_empty());
+        assert!(
+            restarted
+                .work_items
+                .iter()
+                .all(|item| item.status == WorkItemStatus::Pending)
+        );
     }
 
     #[test]

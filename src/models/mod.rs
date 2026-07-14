@@ -220,6 +220,10 @@ pub struct Requirement {
     #[serde(skip_serializing)]
     pub pi_session_file: Option<String>,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_stage: Option<RequirementFailureStage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_code: Option<String>,
     #[serde(default)]
     pub queued_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -246,6 +250,16 @@ pub enum RequirementStatus {
     Running,
     Completed,
     Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementFailureStage {
+    Analysis,
+    ChangeSpecValidation,
+    Planning,
+    PlanValidation,
+    Persistence,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1008,6 +1022,7 @@ pub struct RequirementAnalysisInput {
     pub draft: Option<ChangeSpec>,
     pub model_settings: ModelSettings,
     pub pi_session_file: Option<String>,
+    pub repair_change_spec_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1019,6 +1034,8 @@ pub struct RequirementAnalysisOutput {
     pub draft: Option<ChangeSpec>,
     pub pi_session_file: Option<String>,
     pub error: Option<String>,
+    pub failure_stage: Option<RequirementFailureStage>,
+    pub failure_code: Option<String>,
     pub trace: Option<Value>,
 }
 
@@ -1224,6 +1241,8 @@ mod tests {
             clarification_history: Vec::new(),
             pi_session_file: Some("/secret/session.json".to_owned()),
             error: None,
+            failure_stage: None,
+            failure_code: None,
             queued_at: None,
             created_at: now,
             updated_at: now,

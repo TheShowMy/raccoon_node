@@ -5,7 +5,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
-use crate::models::{AcceptanceScenario, ChangeSpec, Requirement, RequirementMessageRole};
+use crate::models::{AcceptanceScenario, ChangeSpec, Requirement, RequirementMessage};
+use crate::requirement::validate_constraint_evidence;
 
 use super::{
     DesignNote, WorkItem, WorkItemDependency, WorkItemStatus, WorkflowRun, WorkflowRunStatus,
@@ -75,6 +76,7 @@ pub fn compile_work_plan(
             verification_goals: planned.verification_goals.clone(),
             status: WorkItemStatus::Pending,
             attempt_count: 0,
+            actual_attempt_count: 0,
             accepted_attempt_id: None,
             lease_owner: None,
             lease_expires_at: None,
@@ -112,6 +114,7 @@ pub fn compile_work_plan(
             rescue_attempt_id: None,
             blocked_reason: None,
             paused_operation: None,
+            replaces_run_id: None,
             version: 0,
             created_at: now,
             updated_at: now,
@@ -122,18 +125,86 @@ pub fn compile_work_plan(
     })
 }
 
+pub fn clone_workflow_for_clean_restart(snapshot: &super::WorkflowSnapshot) -> CompiledWorkflow {
+    let now = Utc::now();
+    let run_id = new_workflow_id("run");
+    let id_map = snapshot
+        .work_items
+        .iter()
+        .map(|item| (item.id.clone(), format!("{run_id}:item:{}", item.position)))
+        .collect::<HashMap<_, _>>();
+    let work_items = snapshot
+        .work_items
+        .iter()
+        .map(|item| WorkItem {
+            id: id_map[&item.id].clone(),
+            run_id: run_id.clone(),
+            position: item.position,
+            objective: item.objective.clone(),
+            scenario_refs: item.scenario_refs.clone(),
+            group: item.group.clone(),
+            scope_hints: item.scope_hints.clone(),
+            verification_goals: item.verification_goals.clone(),
+            status: WorkItemStatus::Pending,
+            attempt_count: 0,
+            actual_attempt_count: 0,
+            accepted_attempt_id: None,
+            lease_owner: None,
+            lease_expires_at: None,
+            version: 0,
+            created_at: now,
+            updated_at: now,
+        })
+        .collect();
+    let dependencies = snapshot
+        .dependencies
+        .iter()
+        .map(|dependency| WorkItemDependency {
+            work_item_id: id_map[&dependency.work_item_id].clone(),
+            depends_on_id: id_map[&dependency.depends_on_id].clone(),
+        })
+        .collect();
+    CompiledWorkflow {
+        run: WorkflowRun {
+            id: run_id,
+            requirement_id: snapshot.run.requirement_id.clone(),
+            project_id: snapshot.run.project_id.clone(),
+            status: WorkflowRunStatus::Running,
+            change_spec: snapshot.run.change_spec.clone(),
+            design_notes: snapshot.run.design_notes.clone(),
+            plan_summary: snapshot.run.plan_summary.clone(),
+            source_revision: snapshot.run.source_revision,
+            base_head: None,
+            integration_branch: None,
+            integration_worktree: None,
+            final_commit: None,
+            rescue_used: false,
+            rescue_attempt_id: None,
+            blocked_reason: None,
+            paused_operation: None,
+            replaces_run_id: Some(snapshot.run.id.clone()),
+            version: 0,
+            created_at: now,
+            updated_at: now,
+            completed_at: None,
+        },
+        work_items,
+        dependencies,
+    }
+}
+
 pub fn change_spec_from_requirement(requirement: &Requirement) -> Result<ChangeSpec, AppError> {
     let spec = requirement
         .draft
         .clone()
         .ok_or_else(|| AppError::bad_request("需求尚未形成 ChangeSpec"))?;
-    validate_change_spec(&spec, Some(requirement))?;
+    validate_change_spec(&spec, Some(&requirement.messages))?;
     Ok(spec)
 }
 
 pub fn validate_change_spec(
     spec: &ChangeSpec,
-    requirement: Option<&Requirement>,
+    messages: Option<&[RequirementMessage]>,
 ) -> Result<(), AppError> {
     if spec.intent.trim().is_empty() {
         return Err(AppError::bad_request("ChangeSpec intent 不能为空"));
@@ -163,28 +234,9 @@ pub fn validate_change_spec(
                 "显式约束必须包含唯一 ID、原消息 ID 和原文摘录",
             ));
         }
-        if let Some(requirement) = requirement {
-            let source = requirement
-                .messages
-                .iter()
-                .enumerate()
-                .find(|(index, message)| {
-                    format!("message-{}", index + 1) == constraint.source_message_id
-                        && message.role == RequirementMessageRole::User
-                })
-                .ok_or_else(|| {
-                    AppError::bad_request(format!(
-                        "显式约束 {} 引用了不存在的用户消息",
-                        constraint.id
-                    ))
-                })?;
-            if !source.1.content.contains(constraint.source_quote.trim()) {
-                return Err(AppError::bad_request(format!(
-                    "显式约束 {} 的原文摘录与用户消息不匹配",
-                    constraint.id
-                )));
-            }
-        }
+    }
+    if let Some(messages) = messages {
+        validate_constraint_evidence(&spec.explicit_constraints, messages)?;
     }
     Ok(())
 }
@@ -345,6 +397,71 @@ fn validate_dependencies(items: &[PlannedWorkItem], ids: &HashSet<&str>) -> Resu
     if visited != items.len() {
         return Err(AppError::bad_request("工作项依赖包含环"));
     }
+    validate_parallel_frontiers(items)
+}
+
+fn validate_parallel_frontiers(items: &[PlannedWorkItem]) -> Result<(), AppError> {
+    let mut completed = HashSet::<&str>::new();
+    while completed.len() < items.len() {
+        let frontier = items
+            .iter()
+            .filter(|item| {
+                !completed.contains(item.id.as_str())
+                    && item
+                        .depends_on
+                        .iter()
+                        .all(|dependency| completed.contains(dependency.as_str()))
+            })
+            .collect::<Vec<_>>();
+        if frontier.is_empty() {
+            return Err(AppError::bad_request("工作项依赖包含环"));
+        }
+        if frontier.len() > 1 {
+            if frontier.len() > 3 {
+                return Err(AppError::bad_request(format!(
+                    "同一依赖层最多允许 3 个并行工作项，当前为 {} 个",
+                    frontier.len()
+                )));
+            }
+            let group = frontier[0]
+                .group
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    AppError::bad_request(
+                        "同一依赖层存在多个工作项时，必须使用相同的非空 group 或增加串行依赖",
+                    )
+                })?;
+            for item in &frontier {
+                if item.group.as_deref().map(str::trim) != Some(group)
+                    || item.scope_hints.is_empty()
+                {
+                    return Err(AppError::bad_request(
+                        "并行组必须使用相同的非空 group，且每项都必须声明非空 scope_hints",
+                    ));
+                }
+            }
+            for (index, left) in frontier.iter().enumerate() {
+                for right in frontier.iter().skip(index + 1) {
+                    if left.scope_hints.iter().any(|left_path| {
+                        right
+                            .scope_hints
+                            .iter()
+                            .any(|right_path| paths_overlap(left_path, right_path))
+                    }) {
+                        return Err(AppError::bad_request(format!(
+                            "并行工作项 {} 与 {} 的 scope_hints 重叠；请改为串行依赖",
+                            left.id, right.id
+                        )));
+                    }
+                }
+            }
+        }
+        for item in frontier {
+            completed.insert(item.id.as_str());
+        }
+    }
     Ok(())
 }
 
@@ -477,5 +594,38 @@ mod tests {
             then: "信息仍然容易理解".to_owned(),
         });
         assert!(compile_work_plan("req", "current", 1, value, plan()).is_err());
+    }
+
+    #[test]
+    fn parallel_frontier_requires_one_safe_group_of_at_most_three_items() {
+        let parallel_item = |id: &str, scope: &str| PlannedWorkItem {
+            id: id.to_owned(),
+            objective: format!("交付 {id}"),
+            scenario_refs: vec!["main-page".to_owned()],
+            depends_on: Vec::new(),
+            group: Some("ui".to_owned()),
+            scope_hints: vec![scope.to_owned()],
+            verification_goals: Vec::new(),
+        };
+        let mut value = plan();
+        value.work_items = vec![
+            parallel_item("a", "frontend/a"),
+            parallel_item("b", "frontend/b"),
+            parallel_item("c", "frontend/c"),
+        ];
+        assert!(compile_work_plan("req", "current", 1, spec(), value.clone()).is_ok());
+
+        value.work_items[1].scope_hints = vec!["frontend/a/child".to_owned()];
+        assert!(compile_work_plan("req", "current", 1, spec(), value).is_err());
+    }
+
+    #[test]
+    fn unrelated_roots_without_a_parallel_group_must_be_serialized() {
+        let mut value = plan();
+        let mut second = value.work_items[0].clone();
+        second.id = "secondary".to_owned();
+        second.scope_hints = vec!["docs".to_owned()];
+        value.work_items.push(second);
+        assert!(compile_work_plan("req", "current", 1, spec(), value).is_err());
     }
 }

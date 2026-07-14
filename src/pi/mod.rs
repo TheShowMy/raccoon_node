@@ -27,12 +27,13 @@ use crate::models::{
     PI_RPC_REQUEST_ID, PiModel, ProjectChatBranchFuture, ProjectChatEventEmitter,
     ProjectChatFuture, ProjectChatInput, ProjectChatOutput, PromptImage, RequirementAnalysisFuture,
     RequirementAnalysisInput, RequirementAnalysisOutput, RequirementEventEmitter,
-    RequirementModelTier, WorkflowAttemptFuture, WorkflowPlanFuture, WorkflowReviewFuture,
+    RequirementFailureStage, RequirementModelTier, RequirementStatus, WorkflowAttemptFuture,
+    WorkflowPlanFuture, WorkflowReviewFuture,
 };
 use crate::prompt::attach_prompt_diagnostics;
 use crate::requirement::{
     PiResponseFailure, build_requirement_prompt, extract_pi_response,
-    parse_requirement_tool_analysis,
+    format_requirement_evidence_index, parse_requirement_tool_analysis,
 };
 use crate::utils::{ensure_child_path, normalize_local_path, resolve_git_root};
 use crate::workflow::{
@@ -40,7 +41,7 @@ use crate::workflow::{
     WorkflowPlanInput, WorkflowPlanOutput, WorkflowReviewFinding, WorkflowReviewInput,
     WorkflowReviewOutput, build_workflow_attempt_prompt, build_workflow_plan_prompt,
     build_workflow_review_prompt, change_spec_from_requirement, compile_work_plan,
-    parse_review_angle,
+    parse_review_angle, validate_change_spec,
 };
 
 const MAX_PROJECT_CLIENTS: usize = 5;
@@ -473,6 +474,7 @@ impl ModelProvider for PiRpcModelProvider {
         events: Option<RequirementEventEmitter>,
     ) -> WorkflowPlanFuture<'_> {
         Box::pin(async move {
+            change_spec_from_requirement(&input.requirement)?;
             let working_dir =
                 resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
             let task_runtime = self.task_runtime_extension_path.as_ref().ok_or_else(|| {
@@ -1164,6 +1166,113 @@ impl PiRpcClient {
             ));
         }
 
+        let mut output = parse_requirement_tool_analysis(&pi_events, session_file.clone(), None);
+        if output.status == RequirementStatus::DraftReady {
+            let validation = output
+                .draft
+                .as_ref()
+                .ok_or_else(|| AppError::internal("DraftReady 缺少 ChangeSpec"))
+                .and_then(|draft| validate_change_spec(draft, Some(&input.messages)));
+            if let Err(error) = validation {
+                if let Some(emitter) = &events {
+                    emitter.emit(
+                        "change_spec_repair_started",
+                        "ChangeSpec 证据引用无效，正在同一会话内修正。",
+                    );
+                }
+                let repair_start = pi_events.len();
+                let repair_prompt = format!(
+                    "你提交的 ChangeSpec 未通过证据校验：{error}\n\
+                     只修正 explicit_constraints 的 source_message_id/source_quote；不要重新读取仓库、不要改变 intent、acceptance_scenarios、约束陈述或 non_goals。\n\
+                     如果某项只是普通目标或行为事实而非用户明确指定的技术限制，请删除该 explicit_constraint。\n\
+                     立即再次调用 submit_change_spec，不要调用其他工具。\n\n{}",
+                    format_requirement_evidence_index(&input.messages)
+                );
+                self.prompt(&repair_prompt).await?;
+                let repair_result = self
+                    .wait_for_agent_end_with_events(
+                        Duration::from_secs(OPERATION_WARNING_SECONDS),
+                        Duration::from_secs(OPERATION_IDLE_TIMEOUT_SECONDS),
+                        &events,
+                        None,
+                        &mut observation,
+                        |event| {
+                            if let Some(emitter) = &events {
+                                emitter.emit_pi_event(event.clone());
+                            }
+                            pi_events.push(event);
+                        },
+                    )
+                    .await;
+                if let Err(error) = repair_result {
+                    if let Some(emitter) = &events {
+                        emitter.emit(
+                            "change_spec_repair_failed",
+                            "ChangeSpec 同会话修正发生技术失败。",
+                        );
+                    }
+                    return Err(AppError::task_execution_with_trace(
+                        error.to_string(),
+                        session_file,
+                        attach_runtime_observation(
+                            build_failure_trace(&pi_events, true),
+                            &observation,
+                        ),
+                    ));
+                }
+                let repaired = parse_requirement_tool_analysis(
+                    &pi_events[repair_start..],
+                    session_file.clone(),
+                    None,
+                );
+                let repaired_validation = if repaired.status == RequirementStatus::DraftReady {
+                    repaired
+                        .draft
+                        .as_ref()
+                        .ok_or_else(|| AppError::internal("DraftReady 缺少 ChangeSpec"))
+                        .and_then(|draft| validate_change_spec(draft, Some(&input.messages)))
+                } else {
+                    Err(AppError::bad_request(
+                        repaired
+                            .error
+                            .clone()
+                            .unwrap_or_else(|| "修正轮未提交 ChangeSpec".to_owned()),
+                    ))
+                };
+                match repaired_validation {
+                    Ok(()) => {
+                        output = repaired;
+                        if let Some(emitter) = &events {
+                            emitter.emit(
+                                "change_spec_repair_completed",
+                                "ChangeSpec 证据引用已修正。",
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        output = RequirementAnalysisOutput {
+                            status: RequirementStatus::Failed,
+                            assistant_message: format!("ChangeSpec 修正后仍不合法：{error}"),
+                            progress: String::new(),
+                            clarifications: Vec::new(),
+                            draft: None,
+                            pi_session_file: session_file.clone(),
+                            error: Some(error.to_string()),
+                            failure_stage: Some(RequirementFailureStage::ChangeSpecValidation),
+                            failure_code: Some("constraint_evidence_invalid".to_owned()),
+                            trace: None,
+                        };
+                        if let Some(emitter) = &events {
+                            emitter.emit(
+                                "change_spec_repair_failed",
+                                "ChangeSpec 修正后仍未通过证据校验。",
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         let trace = self
             .attach_session_usage(
                 attach_prompt_diagnostics(
@@ -1178,11 +1287,9 @@ impl PiRpcClient {
             )
             .await;
         let trace = attach_runtime_observation(trace, &observation);
-        Ok(parse_requirement_tool_analysis(
-            &pi_events,
-            session_file,
-            trace,
-        ))
+        output.pi_session_file = session_file;
+        output.trace = trace;
+        Ok(output)
     }
 
     async fn ensure_clarification_extension(&self) -> Result<(), AppError> {
@@ -1236,7 +1343,7 @@ impl PiRpcClient {
             .and_then(Value::as_array)
             .is_some_and(|commands| {
                 commands.iter().any(|command| {
-                    command.get("name").and_then(Value::as_str) == Some("raccoon-task-runtime-v3")
+                    command.get("name").and_then(Value::as_str) == Some("raccoon-task-runtime-v4")
                 })
             });
         if available {

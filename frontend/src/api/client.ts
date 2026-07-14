@@ -146,6 +146,22 @@ export async function resumeWorkflowRun(
   return response.json();
 }
 
+export async function restartWorkflowRunClean(
+  runId: string,
+): Promise<WorkflowSnapshot> {
+  const response = await fetch(
+    `/api/workflow-runs/${encodeURIComponent(runId)}/restart-clean`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "从干净工作区重新执行失败");
+  }
+  return response.json();
+}
+
 export async function getWorkflowAttemptSession(
   runId: string,
   attemptId: string,

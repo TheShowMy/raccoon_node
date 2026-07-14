@@ -42,7 +42,8 @@ ChangeSpec 要求：
 - intent 只概括用户目标。
 - acceptance_scenarios 使用 given/when/then 描述用户可观察结果。
 - 行为场景禁止仓库路径、文件名、函数/API/组件精确名称、CSS selector/custom property、shell 命令和代码围栏。
-- 用户明确指定的技术限制只能进入 explicit_constraints，并必须原样引用上下文中的 message ID 和足以核验的原文摘录。
+- 用户明确指定的技术限制只能进入 explicit_constraints，并必须从 RequirementEvidenceIndex 复制 message ID 和对应消息中的连续原文摘录。
+- 普通目标、运行环境事实和行为结果放入 intent 或 acceptance_scenarios，不要为了重复需求而创建 explicit_constraints。
 - 模型根据仓库推断的实现方式不得进入 explicit_constraints。
 - non_goals 只记录用户明确排除或为防止范围扩张必须声明的事项。
 

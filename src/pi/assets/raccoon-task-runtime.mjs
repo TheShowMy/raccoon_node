@@ -1,10 +1,54 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export const TASK_RUNTIME_PROTOCOL = "raccoon:task-runtime:v3";
+export const TASK_RUNTIME_PROTOCOL = "raccoon:task-runtime:v4";
 export const WORKFLOW_OUTPUT_PROTOCOL = "raccoon:workflow-output:v3";
 export const GIT_WRITE_BLOCK_REASON =
   "Raccoon 禁止任务 Agent 执行 Git 写操作；暂存、提交、分支和发布由外部调度器负责。请继续修改或验证代码，不要重试该 Git 操作。";
+export const WORKSPACE_BLOCK_REASON =
+  "Raccoon 只允许任务 Agent 访问当前分配工作区；其他任务、integration、项目根目录和 .raccoon-node 受管资源不可访问。请继续在当前工作区内修改或验证代码，不要重试该越界操作。";
+
+const PATH_TOOL_FIELDS = new Map([
+  ["read", ["path", "file_path"]],
+  ["edit", ["path", "file_path"]],
+  ["write", ["path", "file_path"]],
+  ["grep", ["path", "directory", "root"]],
+  ["find", ["path", "directory", "root"]],
+  ["ls", ["path", "directory"]],
+]);
+
+const WORKSPACE_SENSITIVE_COMMANDS = new Set([
+  "add-content",
+  "cd",
+  "chdir",
+  "clear-content",
+  "cp",
+  "copy",
+  "copy-item",
+  "del",
+  "erase",
+  "install",
+  "ln",
+  "mkdir",
+  "move",
+  "move-item",
+  "mv",
+  "new-item",
+  "out-file",
+  "popd",
+  "pushd",
+  "rd",
+  "remove-item",
+  "ren",
+  "rename-item",
+  "rmdir",
+  "rm",
+  "set-location",
+  "set-content",
+  "tee",
+  "touch",
+  "truncate",
+]);
 
 const ALWAYS_READ_ONLY = new Set([
   "annotate",
@@ -425,6 +469,199 @@ function tokenizeShell(command) {
   }
   finishSegment();
   return { segments, nested };
+}
+
+function pathIsInside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
+}
+
+function hasForeignAbsolutePath(value) {
+  if (process.platform === "win32") return value.startsWith("/");
+  return path.win32.isAbsolute(value);
+}
+
+function nearestExistingPath(candidate) {
+  let current = candidate;
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+  return current;
+}
+
+export function workspacePathIsAllowed(value, cwd = process.cwd()) {
+  if (typeof value !== "string" || value.trim() === "") return true;
+  if (value.includes("\0") || hasForeignAbsolutePath(value)) return false;
+
+  let root;
+  try {
+    root = fs.realpathSync.native(cwd);
+  } catch {
+    return false;
+  }
+  const candidate = path.resolve(root, value);
+  if (!pathIsInside(root, candidate)) return false;
+
+  const existing = nearestExistingPath(candidate);
+  if (!existing) return false;
+  try {
+    if (existing === candidate && fs.lstatSync(existing).isSymbolicLink()) {
+      return false;
+    }
+    return pathIsInside(root, fs.realpathSync.native(existing));
+  } catch {
+    return false;
+  }
+}
+
+function inputPathValues(toolName, input) {
+  const fields = PATH_TOOL_FIELDS.get(toolName);
+  if (!fields || !input || typeof input !== "object") return [];
+  return fields.flatMap((field) => {
+    const value = input[field];
+    if (Array.isArray(value)) return value;
+    return value === undefined || value === null ? [] : [value];
+  });
+}
+
+export function containsBlockedToolPath(
+  toolName,
+  input,
+  cwd = process.cwd(),
+) {
+  return inputPathValues(toolName, input).some(
+    (value) => !workspacePathIsAllowed(value, cwd),
+  );
+}
+
+function stripShellQuotes(value) {
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function looksLikePath(value) {
+  return (
+    value === "." ||
+    value === ".." ||
+    value.startsWith("./") ||
+    value.startsWith("../") ||
+    value.startsWith(".\\") ||
+    value.startsWith("..\\") ||
+    value.startsWith("/") ||
+    path.win32.isAbsolute(value) ||
+    value.includes("/") ||
+    value.includes("\\")
+  );
+}
+
+function pathArgumentIsBlocked(value, cwd) {
+  const candidate = stripShellQuotes(value.trim());
+  if (
+    candidate === "" ||
+    candidate === "-" ||
+    candidate === "/dev/null" ||
+    candidate === "NUL" ||
+    candidate.startsWith("$") ||
+    candidate.startsWith("%") ||
+    candidate.startsWith("${") ||
+    candidate.startsWith("$(")
+  ) {
+    return false;
+  }
+  if (!looksLikePath(candidate)) return false;
+  return !workspacePathIsAllowed(candidate, cwd);
+}
+
+function segmentHasBlockedWorkspacePath(words, cwd) {
+  const index = commandIndex(words);
+  if (index >= words.length) return false;
+  const executable = executableBasename(words[index]);
+
+  if (SHELL_EXECUTABLES.has(executable) || WINDOWS_SHELL_EXECUTABLES.has(executable)) {
+    const commandFlag = words.findIndex(
+      (word, position) =>
+        position > index &&
+        ["/c", "-c", "-command"].includes(word.toLowerCase()),
+    );
+    return commandFlag >= 0 && commandFlag + 1 < words.length
+      ? containsBlockedWorkspacePath(words.slice(commandFlag + 1).join(" "), cwd)
+      : false;
+  }
+  if (executable === "eval") {
+    return containsBlockedWorkspacePath(words.slice(index + 1).join(" "), cwd);
+  }
+  if (!WORKSPACE_SENSITIVE_COMMANDS.has(executable)) return false;
+
+  return words
+    .slice(index + 1)
+    .filter((argument) => !argument.startsWith("-"))
+    .some((argument) => pathArgumentIsBlocked(argument, cwd));
+}
+
+function redirectionTargets(command) {
+  const targets = [];
+  const pattern = /(?:^|[\s;|&])(?:\d*>>?|&>|\*>)[ \t]*("[^"]+"|'[^']+'|[^\s;|&]+)/gm;
+  for (const match of command.matchAll(pattern)) targets.push(match[1]);
+  return targets;
+}
+
+function referencesOtherManagedWorkspace(command, cwd) {
+  const normalizedCommand = command.replaceAll("\\", "/");
+  if (!normalizedCommand.includes(".raccoon-node/worktrees/")) return false;
+  const normalizedRoot = path.resolve(cwd).replaceAll("\\", "/");
+  const candidates = normalizedCommand.match(
+    /(?:[A-Za-z]:)?[^\s'";|&]*\.raccoon-node\/worktrees\/[^\s'";|&]*/g,
+  );
+  return (candidates ?? []).some((candidate) => {
+    const cleaned = candidate.replace(/[),]+$/, "");
+    if (cleaned === normalizedRoot || cleaned.startsWith(`${normalizedRoot}/`)) {
+      return false;
+    }
+    if (!path.posix.isAbsolute(cleaned) && !path.win32.isAbsolute(cleaned)) {
+      return !workspacePathIsAllowed(cleaned, cwd);
+    }
+    return true;
+  });
+}
+
+export function containsBlockedWorkspacePath(command, cwd = process.cwd()) {
+  if (typeof command !== "string" || command.trim() === "") return false;
+  const withoutHeredocs = stripHeredocBodies(command);
+  if (referencesOtherManagedWorkspace(withoutHeredocs, cwd)) return true;
+  if (
+    redirectionTargets(withoutHeredocs).some((target) =>
+      pathArgumentIsBlocked(target, cwd),
+    )
+  ) {
+    return true;
+  }
+  const tokenInput =
+    process.platform === "win32" ||
+    /(?:^|\s)(?:cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?)(?:\s|$)/i.test(
+      withoutHeredocs,
+    )
+      ? withoutHeredocs.replaceAll("\\", "/")
+      : withoutHeredocs;
+  const { segments, nested } = tokenizeShell(tokenInput);
+  return (
+    segments.some((words) => segmentHasBlockedWorkspacePath(words, cwd)) ||
+    nested.some((nestedCommand) =>
+      containsBlockedWorkspacePath(nestedCommand, cwd),
+    )
+  );
 }
 
 function commandIndex(words) {
@@ -849,15 +1086,23 @@ export function createWorkflowTool(kind) {
 }
 
 export default function (pi) {
-  pi.registerCommand("raccoon-task-runtime-v3", {
-    description: "Raccoon 受管任务运行时协议 v3（能力标记）",
+  pi.registerCommand("raccoon-task-runtime-v4", {
+    description: "Raccoon 受管任务运行时协议 v4（能力标记）",
     handler: async () => {},
   });
 
   pi.on("tool_call", (event) => {
+    if (containsBlockedToolPath(event.toolName, event.input)) {
+      return { block: true, reason: WORKSPACE_BLOCK_REASON };
+    }
     if (event.toolName !== "bash") return undefined;
-    if (!containsBlockedGitWrite(event.input?.command)) return undefined;
-    return { block: true, reason: GIT_WRITE_BLOCK_REASON };
+    if (containsBlockedGitWrite(event.input?.command)) {
+      return { block: true, reason: GIT_WRITE_BLOCK_REASON };
+    }
+    if (containsBlockedWorkspacePath(event.input?.command)) {
+      return { block: true, reason: WORKSPACE_BLOCK_REASON };
+    }
+    return undefined;
   });
 
   const kind = workflowKindFromEnvironment(process.env.RACCOON_WORKFLOW_ROLE);

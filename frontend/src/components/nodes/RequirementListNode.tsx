@@ -91,6 +91,8 @@ export default function RequirementListNode({
               requirement.status === "failed" &&
               !hasWorkflow;
             const canView = hasWorkflow;
+            const isChangeSpecFailure =
+              requirement.failure_stage === "change_spec_validation";
             return (
               <Item
                 key={requirement.id}
@@ -99,7 +101,7 @@ export default function RequirementListNode({
                     {requirement.title}
                   </Text>
                 }
-                description={`更新于 ${formatDate(requirement.updated_at)}`}
+                description={`${isChangeSpecFailure ? "需求规格引用无效 · " : ""}更新于 ${formatDate(requirement.updated_at)}`}
                 align="start"
                 density="compact"
                 isSelected={isSelected}
@@ -113,7 +115,15 @@ export default function RequirementListNode({
                     />
                     {canPlan ? (
                       <Button
-                        label={isBusy ? "生成中…" : "重新生成 WorkPlan"}
+                        label={
+                          isBusy
+                            ? isChangeSpecFailure
+                              ? "修复中…"
+                              : "生成中…"
+                            : isChangeSpecFailure
+                              ? "修复需求规格并重新规划"
+                              : "重新生成 WorkPlan"
+                        }
                         size="sm"
                         variant="ghost"
                         icon={

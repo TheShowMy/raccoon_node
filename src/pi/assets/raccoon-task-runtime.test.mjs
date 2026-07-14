@@ -1,14 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import taskRuntime, {
   GIT_WRITE_BLOCK_REASON,
   TASK_RUNTIME_PROTOCOL,
+  WORKSPACE_BLOCK_REASON,
   WORKFLOW_OUTPUT_PROTOCOL,
   classifyGitArguments,
   containsBlockedGitWrite,
+  containsBlockedToolPath,
+  containsBlockedWorkspacePath,
   createWorkflowTool,
   validateWorkflowPayload,
   workflowKindFromEnvironment,
@@ -234,7 +243,7 @@ test("blocks unknown aliases and external Git subcommands", () => {
 test("extension blocks only matching bash calls with the managed reason", () => {
   const pi = loadForRole("chat");
   assert.equal(pi.commands.length, 1);
-  assert.equal(pi.commands[0].name, "raccoon-task-runtime-v3");
+  assert.equal(pi.commands[0].name, "raccoon-task-runtime-v4");
   assert.equal(pi.tools.length, 0);
   const handler = pi.handlers.get("tool_call");
   assert.equal(
@@ -251,6 +260,115 @@ test("extension blocks only matching bash calls with the managed reason", () => 
       block: true,
       reason: GIT_WRITE_BLOCK_REASON,
     },
+  );
+});
+
+test("blocks path tools outside the assigned workspace", () => {
+  const root = mkdtempSync(join(tmpdir(), "raccoon-workspace-"));
+  const outside = mkdtempSync(join(tmpdir(), "raccoon-outside-"));
+  mkdirSync(join(root, "src"));
+  writeFileSync(join(root, "src", "main.rs"), "fn main() {}\n");
+  try {
+    assert.equal(
+      containsBlockedToolPath("read", { path: "src/main.rs" }, root),
+      false,
+    );
+    assert.equal(
+      containsBlockedToolPath("write", { path: "src/new.rs" }, root),
+      false,
+    );
+    assert.equal(
+      containsBlockedToolPath("edit", { path: "../outside.rs" }, root),
+      true,
+    );
+    assert.equal(
+      containsBlockedToolPath("write", { path: join(outside, "new.rs") }, root),
+      true,
+    );
+    if (process.platform !== "win32") {
+      symlinkSync(outside, join(root, "linked"));
+      assert.equal(
+        containsBlockedToolPath("read", { path: "linked/file.rs" }, root),
+        true,
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("blocks shell navigation and writes outside the assigned workspace", () => {
+  const root = mkdtempSync(join(tmpdir(), "raccoon-shell-workspace-"));
+  mkdirSync(join(root, "src"));
+  try {
+    for (const command of [
+      "cd ..",
+      "pushd ../integration",
+      "cp src/main.rs ../../integration/main.rs",
+      "mv src/main.rs ../other/main.rs",
+      "rm ../other/file.rs",
+      "echo changed > ../integration/file.rs",
+      "echo changed | sh -c 'cat > ../../integration/file.rs'",
+      "echo $(cd ../../integration && pwd)",
+      "cmd.exe /c cd ..\\integration",
+      "powershell -Command Set-Location ..\\integration",
+      "pwsh -Command Set-Content ../integration/file.txt changed",
+      "powershell -Command Copy-Item src/main.rs ../integration/main.rs",
+    ]) {
+      assert.equal(containsBlockedWorkspacePath(command, root), true, command);
+    }
+    for (const command of [
+      "cd src && pwd",
+      "cp src/main.rs src/copy.rs",
+      "echo changed > src/main.rs",
+      "npm test && git status --short",
+      "cat /dev/null > /dev/null",
+    ]) {
+      assert.equal(containsBlockedWorkspacePath(command, root), false, command);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("blocks direct references to sibling managed worktrees", () => {
+  const root = mkdtempSync(join(tmpdir(), "raccoon-managed-shell-"));
+  const item = join(
+    root,
+    ".raccoon-node",
+    "worktrees",
+    "run-1",
+    "items",
+    "item-001",
+  );
+  const sibling = join(root, ".raccoon-node", "worktrees", "run-1", "integration");
+  mkdirSync(item, { recursive: true });
+  mkdirSync(sibling, { recursive: true });
+  try {
+    assert.equal(
+      containsBlockedWorkspacePath(`cat ${join(item, "README.md")}`, item),
+      false,
+    );
+    assert.equal(
+      containsBlockedWorkspacePath(`cat ${join(sibling, "README.md")}`, item),
+      true,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("extension returns the managed workspace reason for boundary violations", () => {
+  const pi = loadForRole("work_item");
+  const handler = pi.handlers.get("tool_call");
+  assert.deepEqual(
+    handler({ toolName: "write", input: { path: "../outside.txt" } }),
+    { block: true, reason: WORKSPACE_BLOCK_REASON },
+  );
+  assert.deepEqual(
+    handler({ toolName: "bash", input: { command: "cd .." } }),
+    { block: true, reason: WORKSPACE_BLOCK_REASON },
   );
 });
 

@@ -29,7 +29,11 @@ import type {
   PiModel,
   SettingsPage,
 } from "../types/api";
-import { WORKFLOW_RUN_NODE_POSITION, WORKFLOW_RUN_NODE_SIZE } from "./layout";
+import {
+  WORKFLOW_RUN_NODE_POSITION,
+  WORKFLOW_RUN_NODE_SIZE,
+  workflowItemPositions,
+} from "./layout";
 
 function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
   return nodes.map((node) => {
@@ -231,6 +235,9 @@ export function buildProjectNodes({
           workflow.run.requirement_id === selectedWorkflowRequirement.id,
       ) ?? null)
     : null;
+  const selectedWorkflowItemPositions = selectedWorkflow
+    ? workflowItemPositions(selectedWorkflow)
+    : new Map<string, { x: number; y: number }>();
 
   return withDimensions([
     {
@@ -288,14 +295,9 @@ export function buildProjectNodes({
             ? selectedWorkflow.work_items.map((item) => ({
                 id: `workflow-item-${item.id}`,
                 type: "startNode" as const,
-                position: {
-                  x:
-                    WORKFLOW_RUN_NODE_POSITION.x +
-                    WORKFLOW_RUN_NODE_SIZE.width +
-                    120 +
-                    item.position * 400,
-                  y: 40,
-                },
+                position:
+                  selectedWorkflowItemPositions.get(item.id) ??
+                  WORKFLOW_RUN_NODE_POSITION,
                 style: { width: 340, height: 220 },
                 data: {
                   kind: "workflow-item" as const,

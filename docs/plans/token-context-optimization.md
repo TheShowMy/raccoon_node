@@ -1,6 +1,6 @@
 # Prompt 工程与上下文结构优化建议
 
-> **状态（2026-07-13）**：此旧计划已被 WorkflowRun v5 破坏式重构取代，仅保留历史背景。当前流程使用行为型 ChangeSpec、行为切片 WorkPlan、仓库原生基线/最终验证和完整 diff 审核，不再生成 Stage 或 Review/Fix/Merge/Recovery 伪节点；隔离审核协议为 `raccoon:parallel-review:v5`，结构化提交和 Git 拦截协议分别为 `raccoon:workflow-output:v3` 与 `raccoon:task-runtime:v3`。集中预算、引用 path-only、operation usage、告警式 token 阈值、活动续期和 Pi 原生 compaction 仍保留；本文后续旧 DAG 和兼容策略不再属于实施范围。
+> **状态（2026-07-14）**：此旧计划已被 WorkflowRun v5.2 取代，仅保留历史背景。当前流程使用行为型 ChangeSpec、行为切片 WorkPlan、隔离 worktree 真并发、仓库原生基线/最终验证和完整 diff 审核，不再生成 Stage 或 Review/Fix/Merge/Recovery 伪节点；完成后按冻结设置执行本地集成或远端 PR/MR 自动合并并清理受管资源。隔离审核协议为 `raccoon:parallel-review:v5`，结构化提交和 Git/工作区拦截协议分别为 `raccoon:workflow-output:v3` 与 `raccoon:task-runtime:v4`。集中预算、引用 path-only、operation usage、告警式 token 阈值、活动续期和 Pi 原生 compaction 仍保留；superseded/technical usage 不再丢失，确定性工作区故障在新模型调用前熔断。本文后续旧 DAG 和兼容策略不再属于实施范围。
 
 > 日期：2026-07-05
 > 范围：`raccoon_node` 的需求澄清、执行规划、任务 DAG、Review/Recovery、Pi Agent RPC 会话、React Flow 节点与会话展示。

@@ -10,6 +10,7 @@ const now = "2026-06-25T00:00:00Z";
 function requirement(
   status: Requirement["status"],
   error: string | null = null,
+  failureStage: Requirement["failure_stage"] = null,
 ): Requirement {
   return {
     id: status,
@@ -23,6 +24,7 @@ function requirement(
     clarifications: [],
     draft: null,
     error,
+    failure_stage: failureStage,
     created_at: now,
     updated_at: now,
   };
@@ -61,6 +63,21 @@ describe("RequirementListNode", () => {
 
     expect(
       screen.getByRole("button", { name: "重新生成 WorkPlan" }),
+    ).toBeInTheDocument();
+  });
+
+  it("routes an invalid ChangeSpec through evidence repair", () => {
+    render(
+      <RequirementListNode
+        data={data([
+          requirement("failed", "显式约束引用无效", "change_spec_validation"),
+        ])}
+      />,
+    );
+
+    expect(screen.getByText(/需求规格引用无效/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "修复需求规格并重新规划" }),
     ).toBeInTheDocument();
   });
 

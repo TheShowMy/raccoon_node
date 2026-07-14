@@ -12,7 +12,11 @@ import { Toolbar } from "@astryxdesign/core/Toolbar";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import { GitBranch, LoaderCircle, RotateCcw, X } from "lucide-react";
-import { getWorkflowEvents, resumeWorkflowRun } from "../../api/client";
+import {
+  getWorkflowEvents,
+  restartWorkflowRunClean,
+  resumeWorkflowRun,
+} from "../../api/client";
 import type {
   StartNodeData,
   WorkflowEvent,
@@ -28,6 +32,7 @@ const statusText = {
   reviewing: "审核中",
   fixing: "集成修复中",
   rescuing: "Rescue 中",
+  publishing: "远端发布中",
   paused_technical: "技术暂停",
   completed: "已完成",
   blocked: "永久阻塞",
@@ -41,7 +46,10 @@ function eventLabel(event: WorkflowEvent) {
     "run.resumed": "从技术暂停恢复",
     "run.rescue_started": "高级 Rescue 启动",
     "run.rescuing": "高级 Rescue 继续",
+    "run.publishing": "进入发布阶段",
     "run.paused_technical": "技术暂停",
+    "run.discarded": "污染 Run 已废弃",
+    "run.restarted_clean": "已从干净工作区重建",
     "run.completed": "WorkflowRun 完成",
     "run.blocked": "WorkflowRun 永久阻塞",
     "work_item.leased": "行为切片已领取",
@@ -49,6 +57,26 @@ function eventLabel(event: WorkflowEvent) {
     "attempt.started": "Agent attempt 启动",
     "attempt.succeeded": "Agent attempt 成功",
     "attempt.failed": "Agent attempt 失败",
+    "attempt.superseded": "并行 attempt 已降级",
+    "attempt.usage_persisted": "Agent usage 已保存",
+    "parallel_batch.serial_fallback": "并行任务降级为串行",
+    "parallel_batch.serial_fallback_exhausted": "串行降级已熔断",
+    "workspace.boundary_blocked": "工作区越界已熔断",
+    "integration.guard_failed": "Integration 守卫失败",
+    "item_workspace.prepared": "隔离工作区已创建",
+    "item_workspace.integrated": "工作项已汇入 integration",
+    "item_workspace.cleaned": "工作项资源已清理",
+    "publication.prepared": "发布配置已冻结",
+    "publication.pushed": "workflow 分支已推送",
+    "publication.review_open": "远端 PR/MR 已创建",
+    "publication.waiting_checks": "等待远端检查与合并",
+    "publication.checks_changed": "远端检查状态变化",
+    "publication.checks_failed": "远端检查失败",
+    "publication.merged": "远端合并完成",
+    "publication.local_sync_finished": "本地主分支同步处理完成",
+    "publication.cleaning": "清理受管资源",
+    "publication.cleanup_failed": "受管资源清理失败",
+    "publication.completed": "发布与清理完成",
     "validation.completed": "仓库原生验证完成",
     "checkpoint.started": "最终审核启动",
     "checkpoint.review_observed": "审核子 Agent 返回",
@@ -163,6 +191,16 @@ export default function WorkflowRunNode({
     workflow?.work_items.filter((item) => item.status === "accepted").length ??
     0;
   const totalItems = workflow?.work_items.length ?? 0;
+  const semanticAttempts =
+    workflow?.work_items.reduce(
+      (total, item) => total + item.attempt_count,
+      0,
+    ) ?? 0;
+  const actualAttempts =
+    workflow?.work_items.reduce(
+      (total, item) => total + item.actual_attempt_count,
+      0,
+    ) ?? 0;
   const tokenTotal = useMemo(
     () =>
       workflow
@@ -178,6 +216,22 @@ export default function WorkflowRunNode({
     [workflow],
   );
   const reviews = workflow ? reviewRecords(workflow) : [];
+  const requiresCleanRestart =
+    workflow?.run.status === "paused_technical" &&
+    (workflow.run.paused_operation === "workspace_violation" ||
+      workflow.attempts.some(
+        (attempt) => attempt.failure_class === "workspace_violation",
+      ) ||
+      events.some((event) =>
+        ["workspace.boundary_blocked", "integration.guard_failed"].includes(
+          event.event_type,
+        ),
+      ) ||
+      workflow.attempts.filter(
+        (attempt) =>
+          attempt.status === "superseded" &&
+          attempt.failure_class === "git_conflict",
+      ).length >= 2);
   const primaryCause =
     workflow?.run.blocked_reason ??
     [...events]
@@ -212,6 +266,22 @@ export default function WorkflowRunNode({
       setTimelineError(null);
     } catch (error) {
       setTimelineError(error instanceof Error ? error.message : "恢复失败");
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  const restartClean = async () => {
+    if (!workflow) return;
+    setResuming(true);
+    try {
+      setWorkflow(await restartWorkflowRunClean(workflow.run.id));
+      setEvents([]);
+      setTimelineError(null);
+    } catch (error) {
+      setTimelineError(
+        error instanceof Error ? error.message : "从干净工作区重新执行失败",
+      );
     } finally {
       setResuming(false);
     }
@@ -268,6 +338,11 @@ export default function WorkflowRunNode({
             />
             <Token label={`${tokenTotal} tokens`} color="gray" size="sm" />
             <Token
+              label={`语义尝试 ${semanticAttempts} / 实际调用 ${actualAttempts}`}
+              color={actualAttempts > semanticAttempts ? "yellow" : "gray"}
+              size="sm"
+            />
+            <Token
               label={
                 workflow?.run.rescue_used ? "Rescue 已使用" : "Rescue 未使用"
               }
@@ -286,6 +361,67 @@ export default function WorkflowRunNode({
           />
         </Stack>
 
+        {workflow?.publication ? (
+          <Stack gap={1}>
+            <Divider label="发布" />
+            <HStack gap={1} wrap="wrap">
+              <Token
+                label={`${workflow.publication.provider} · ${workflow.publication.mode}`}
+                color="gray"
+                size="sm"
+              />
+              <Token
+                label={workflow.publication.phase}
+                color={
+                  workflow.publication.phase === "completed" ? "green" : "gray"
+                }
+                size="sm"
+              />
+              <Token
+                label={`清理 ${workflow.publication.cleanup_status}`}
+                color={
+                  workflow.publication.cleanup_status === "failed"
+                    ? "red"
+                    : "gray"
+                }
+                size="sm"
+              />
+            </HStack>
+            <Text type="supporting" size="3xs" maxLines={2}>
+              {workflow.publication.source_branch} →{" "}
+              {workflow.publication.target_branch}
+            </Text>
+            {workflow.publication.local_sync_message ? (
+              <Text
+                type="supporting"
+                size="3xs"
+                color={
+                  workflow.publication.local_sync_status === "skipped"
+                    ? "accent"
+                    : undefined
+                }
+                maxLines={2}
+              >
+                {workflow.publication.local_sync_message}
+              </Text>
+            ) : null}
+            {workflow.publication.review_url ? (
+              <Button
+                label="打开远端 PR/MR"
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  window.open(
+                    workflow.publication?.review_url ?? "",
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
+              />
+            ) : null}
+          </Stack>
+        ) : null}
+
         {workflow?.run.status === "paused_technical" ? (
           <HStack align="center" gap={2}>
             <StatusDot variant="error" label="技术暂停" />
@@ -293,12 +429,14 @@ export default function WorkflowRunNode({
               {workflow.run.paused_operation}: {workflow.run.blocked_reason}
             </Text>
             <Button
-              label="从暂停位置恢复"
+              label={
+                requiresCleanRestart ? "从干净工作区重新执行" : "从暂停位置恢复"
+              }
               icon={<RotateCcw size={14} />}
               size="sm"
               variant="secondary"
               isLoading={resuming}
-              onClick={resume}
+              onClick={requiresCleanRestart ? restartClean : resume}
             />
           </HStack>
         ) : null}
