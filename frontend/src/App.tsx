@@ -38,7 +38,7 @@ import "./styles/index.css";
 
 import type { StartNodeData, StreamEvent } from "./types/api";
 import ChatCanvasNode from "./canvas/ChatCanvasNode";
-import { buildRequirementDagEdges } from "./canvas/edges";
+import { buildWorkflowRunEdges } from "./canvas/edges";
 import {
   buildProjectChatNode,
   buildProjectGitNode,
@@ -367,7 +367,7 @@ function AppCanvas() {
     project.observedRequirementId,
     project.setProjectCanvas,
     project.loadProjectCanvas,
-    project.setSelectedDagRequirementId,
+    project.setSelectedWorkflowRequirementId,
     project.allProjectRequirements,
   );
   const projectChat = useProjectChat(selectedProjectId);
@@ -433,34 +433,26 @@ function AppCanvas() {
       buildProjectNodes({
         projectCanvas: project.projectCanvas,
         project: current.project,
-        selectedDagRequirement: project.selectedDagRequirement,
-        selectedDagRequirementId: project.selectedDagRequirementId,
-        collapsedTaskGroups: project.collapsedTaskGroups,
+        selectedWorkflowRequirement: project.selectedWorkflowRequirement,
+        selectedWorkflowRequirementId: project.selectedWorkflowRequirementId,
         requirementActionBusyId: project.requirementActionBusyId,
-        recoveringTaskGroupIds: project.recoveringTaskGroupIds,
         requirementActionError: project.requirementActionError,
         tokenUsageExpanded,
-        closeDag: project.closeDag,
-        selectDagRequirement: project.selectDagRequirement,
+        closeWorkflow: project.closeWorkflow,
+        selectWorkflowRequirement: project.selectWorkflowRequirement,
         planRequirement: project.planRequirement,
-        recoverTaskGroup: project.recoverTaskGroup,
-        toggleTaskGroupCollapsed: project.toggleTaskGroupCollapsed,
         onToggleTokenUsageExpanded: storeActions.toggleTokenUsageExpanded,
       }),
     [
       current.project,
-      project.closeDag,
-      project.collapsedTaskGroups,
+      project.closeWorkflow,
       project.planRequirement,
       project.projectCanvas,
-      project.recoveringTaskGroupIds,
       project.requirementActionBusyId,
       project.requirementActionError,
-      project.recoverTaskGroup,
-      project.selectDagRequirement,
-      project.selectedDagRequirement,
-      project.selectedDagRequirementId,
-      project.toggleTaskGroupCollapsed,
+      project.selectWorkflowRequirement,
+      project.selectedWorkflowRequirement,
+      project.selectedWorkflowRequirementId,
       tokenUsageExpanded,
     ],
   );
@@ -495,7 +487,7 @@ function AppCanvas() {
             ...(project.projectCanvas?.queued_requirements ?? []),
             ...(project.projectCanvas?.completed_requirements ?? []),
           ].find((candidate) => candidate.id === requirementId);
-          if (requirement) project.selectDagRequirement(requirement);
+          if (requirement) project.selectWorkflowRequirement(requirement);
           openMainPanel("requirements");
         },
         loadOlderRequirementHistory: requirement.loadOlderRequirementHistory,
@@ -611,7 +603,7 @@ function AppCanvas() {
       models.updateBasicSettings,
       models.updateModelTier,
       project.projectCanvas,
-      project.selectDagRequirement,
+      project.selectWorkflowRequirement,
       terminalDisabled,
       terminals.authorizeTerminalAccess,
       terminals.closePiLoginTerminal,
@@ -720,13 +712,17 @@ function AppCanvas() {
   );
   const requirementEdges = useMemo(
     () =>
-      project.selectedDagRequirement
-        ? buildRequirementDagEdges(
-            project.selectedDagRequirement,
-            project.collapsedTaskGroups,
+      project.selectedWorkflowRequirement
+        ? buildWorkflowRunEdges(
+            project.selectedWorkflowRequirement,
+            project.projectCanvas?.workflow_runs?.find(
+              (workflow) =>
+                workflow.run.requirement_id ===
+                project.selectedWorkflowRequirement?.id,
+            ) ?? null,
           )
         : [],
-    [project.collapsedTaskGroups, project.selectedDagRequirement],
+    [project.projectCanvas, project.selectedWorkflowRequirement],
   );
 
   const closePanel = useCallback(() => {
@@ -826,7 +822,7 @@ function AppCanvas() {
     terminal: "终端工作台",
     git: "Git 工作台",
     tokens: "Token 用量",
-    requirements: "需求与执行 DAG",
+    requirements: "需求与 WorkflowRun",
     files: "文件浏览器",
   };
 

@@ -12,6 +12,22 @@ import AstryxChatSurface from "./AstryxChatSurface";
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 type TimelineBranch = ChatData["requirementTimeline"][number];
 
+function changeSpec(intent: string, result: string) {
+  return {
+    intent,
+    acceptance_scenarios: [
+      {
+        id: "scenario-1",
+        given: "用户已进入相关流程",
+        when: "用户执行操作",
+        then: result,
+      },
+    ],
+    explicit_constraints: [],
+    non_goals: [],
+  };
+}
+
 function branch(
   requirement: TimelineBranch["requirement"],
   conversation: TimelineBranch["conversation"],
@@ -46,7 +62,6 @@ function requirementFixture(id: string, createdAt: string) {
     clarification_round: 0,
     clarifications: [],
     draft: null,
-    execution_plan: null,
     error: null,
     created_at: createdAt,
     updated_at: createdAt,
@@ -321,12 +336,7 @@ describe("AstryxChatSurface", () => {
       messages: [],
       clarification_round: 0,
       clarifications: [],
-      draft: {
-        title: "登录改造",
-        summary: "更新登录流程",
-        acceptance_criteria: ["登录测试通过"],
-      },
-      execution_plan: null,
+      draft: changeSpec("登录改造", "更新登录流程"),
       error: null,
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",
@@ -374,11 +384,7 @@ describe("AstryxChatSurface", () => {
     const requirement = {
       ...requirementFixture("requirement-focus", "2026-07-10T00:00:00Z"),
       status: "draft_ready" as const,
-      draft: {
-        title: "可继续补充的需求",
-        summary: "确认前仍可补充",
-        acceptance_criteria: ["补充内容被保留"],
-      },
+      draft: changeSpec("可继续补充的需求", "补充内容被保留"),
     };
     const conversation = {
       id: requirement.id,
@@ -546,7 +552,6 @@ describe("AstryxChatSurface", () => {
       clarification_round: 0,
       clarifications: [],
       draft: null,
-      execution_plan: null,
       error: null,
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",
@@ -604,7 +609,6 @@ describe("AstryxChatSurface", () => {
       clarification_round: 0,
       clarifications: [],
       draft: null,
-      execution_plan: null,
       error: null,
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",

@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 
-const PROTOCOL = "raccoon:requirements:v2";
+const PROTOCOL = "raccoon:requirements:v3";
 const QuestionType = Type.Union([
   Type.Literal("single_choice"),
   Type.Literal("multi_choice"),
@@ -43,11 +43,33 @@ function validateQuestions(questions) {
   }
 }
 
+function validateChangeSpec(changeSpec) {
+  const ids = new Set();
+  const forbidden = /```|`|\b(?:npm|npx|cargo|pytest|git|grep|rg)\s|(?:src|frontend|backend|tests|docs)\/|\.(?:rs|tsx?|jsx?|css|py|go)\b|--[a-z0-9-]+/i;
+  for (const scenario of changeSpec.acceptance_scenarios) {
+    if (!scenario.id || !scenario.given || !scenario.when || !scenario.then) {
+      fail("acceptance_scenarios 的 id/given/when/then 不能为空");
+    }
+    if (ids.has(scenario.id)) fail(`行为场景 id 重复：${scenario.id}`);
+    ids.add(scenario.id);
+    for (const field of ["given", "when", "then"]) {
+      if (forbidden.test(scenario[field])) {
+        fail(`acceptance_scenarios[${scenario.id}].${field} 包含实现细节；请改写为用户可观察行为`);
+      }
+    }
+  }
+  for (const constraint of changeSpec.explicit_constraints) {
+    if (!constraint.id || !constraint.statement || !constraint.source_message_id || !constraint.source_quote) {
+      fail("explicit_constraints 必须包含 id、statement、source_message_id 和 source_quote");
+    }
+  }
+}
+
 export default function (pi) {
-  pi.registerCommand("raccoon-requirements-v2", {
-    description: "Raccoon 受管需求确认协议 v2（能力标记）",
+  pi.registerCommand("raccoon-requirements-v3", {
+    description: "Raccoon OpenSpec 需求确认协议 v3（能力标记）",
     handler: async (_args, ctx) => {
-      ctx.ui.notify("Raccoon 需求确认协议 v2 已启用", "info");
+      ctx.ui.notify("Raccoon 需求确认协议 v3 已启用", "info");
     },
   });
 
@@ -89,33 +111,58 @@ export default function (pi) {
   });
 
   pi.registerTool({
-    name: "submit_requirement_draft",
-    label: "提交确认需求草案",
-    description: "需求足够明确后，提交唯一的结构化确认草案。",
+    name: "submit_change_spec",
+    label: "提交 ChangeSpec",
+    description: "需求足够明确后，提交只描述用户可观察行为的 ChangeSpec。",
     parameters: Type.Object({
       progress: Type.String(),
       message: Type.String(),
-      title: Type.String(),
-      summary: Type.String(),
-      acceptance_criteria: Type.Array(Type.String(), { minItems: 1 }),
+      intent: Type.String(),
+      acceptance_scenarios: Type.Array(Type.Object({
+        id: Type.String(),
+        given: Type.String(),
+        when: Type.String(),
+        then: Type.String(),
+      }), { minItems: 1 }),
+      explicit_constraints: Type.Optional(Type.Array(Type.Object({
+        id: Type.String(),
+        statement: Type.String(),
+        source_message_id: Type.String(),
+        source_quote: Type.String(),
+      }))),
+      non_goals: Type.Optional(Type.Array(Type.String())),
     }),
     async execute(_toolCallId, params) {
-      const draft = {
-        title: params.title.trim(),
-        summary: params.summary.trim(),
-        acceptance_criteria: params.acceptance_criteria.map((item) => item.trim()).filter(Boolean),
+      const changeSpec = {
+        intent: params.intent.trim(),
+        acceptance_scenarios: params.acceptance_scenarios.map((scenario) => ({
+          id: scenario.id.trim(),
+          given: scenario.given.trim(),
+          when: scenario.when.trim(),
+          then: scenario.then.trim(),
+        })),
+        explicit_constraints: (params.explicit_constraints ?? []).map((constraint) => ({
+          id: constraint.id.trim(),
+          statement: constraint.statement.trim(),
+          source_message_id: constraint.source_message_id.trim(),
+          source_quote: constraint.source_quote.trim(),
+        })),
+        non_goals: (params.non_goals ?? [])
+          .map((item) => item.trim())
+          .filter(Boolean),
       };
-      if (!draft.title || !draft.summary || draft.acceptance_criteria.length === 0) {
-        fail("确认草案的标题、摘要和验收标准不能为空");
+      if (!changeSpec.intent || changeSpec.acceptance_scenarios.length === 0) {
+        fail("ChangeSpec intent 和行为场景不能为空");
       }
+      validateChangeSpec(changeSpec);
       return {
-        content: [{ type: "text", text: "确认需求草案已提交。" }],
+        content: [{ type: "text", text: "ChangeSpec 已提交。" }],
         details: {
           protocol: PROTOCOL,
-          kind: "draft",
+          kind: "change_spec",
           progress: params.progress,
           message: params.message,
-          draft,
+          change_spec: changeSpec,
         },
       };
     },

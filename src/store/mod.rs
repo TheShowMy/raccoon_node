@@ -19,27 +19,23 @@ use crate::models::{
     ProjectChatMessageRole, ProjectChatOutput, ProjectChatResponse, ProjectTokenUsage,
     PromptSourceUsage, Requirement, RequirementAnalysisInput, RequirementAnalysisOutput,
     RequirementClarificationRound, RequirementConversationItem, RequirementConversationPrompt,
-    RequirementConversationResponse, RequirementExecutionPlan, RequirementMessage,
-    RequirementMessageRole, RequirementNoticeLevel, RequirementPlanInput, RequirementProcessStatus,
-    RequirementPromptState, RequirementRecoveryStage, RequirementReviewRound,
-    RequirementReviewRoundStatus, RequirementReviewStatus, RequirementReviewStep,
-    RequirementStatus, RequirementTaskDetailResponse, RequirementTaskExecutionInput,
-    RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
+    RequirementConversationResponse, RequirementMessage, RequirementMessageRole,
+    RequirementNoticeLevel, RequirementProcessStatus, RequirementPromptState, RequirementStatus,
     SessionContentBlock, SessionEntry, SessionTranscriptPage, SubagentReview,
-    TerminalCommandProfile, TerminalCommandProfileUpdate, TokenUsageCategory, TokenUsageHotspot,
-    TokenUsageRole,
+    TerminalCommandProfile, TerminalCommandProfileUpdate, TokenCompactionUsage, TokenUsageCategory,
+    TokenUsageHotspot, TokenUsageRole,
 };
-use crate::utils::commit_staged_changes;
-use crate::utils::effective_model_tier;
 use crate::utils::{
     build_clarification_answer_summary, clarification_has_answer, derive_requirement_title,
     ensure_child_path, git_remote_origin, resolve_git_root, sort_requirements_desc,
     validate_model_settings,
 };
+use crate::workflow::{
+    WorkflowPlanInput, WorkflowPlanOutput, WorkflowRunStatus, change_spec_from_requirement,
+    compile_work_plan,
+};
 
 pub const CURRENT_PROJECT_ID: &str = "current";
-const MAX_REVIEW_REJECTIONS: u32 = 5;
-const MAX_EXECUTION_FAILURES: u32 = 4;
 const MAX_TERMINAL_COMMAND_PROFILES: usize = 20;
 const MAX_TERMINAL_COMMAND_NAME_LEN: usize = 64;
 const MAX_TERMINAL_COMMAND_LEN: usize = 4096;
@@ -69,19 +65,14 @@ fn supersede_active_prompt(requirement: &mut Requirement) {
     requirement.active_prompt = None;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskExecutionDisposition {
-    Continue,
-    FinalFailure,
-}
-
 pub enum ProjectScheduleAction {
     Plan {
         requirement_id: String,
-        input: Box<RequirementPlanInput>,
+        input: Box<WorkflowPlanInput>,
     },
     Execute {
         requirement_id: String,
+        run_id: String,
     },
 }
 
@@ -150,24 +141,9 @@ impl JsonStore {
         tokio::fs::create_dir_all(&data_root).await?;
         let db_path = data_root.join("data.db");
         let db = crate::store::db::Database::open(&db_path)?;
+        db.recover_interrupted_workflows()?;
 
-        let mut data = db.load()?;
-        for requirement in &mut data.requirements {
-            if requirement.status == RequirementStatus::Completed {
-                continue;
-            }
-            if let Some(plan) = requirement.execution_plan.as_mut() {
-                for task in &mut plan.tasks {
-                    let tier = if task.recovery_stage == RequirementRecoveryStage::HighTierExecution
-                    {
-                        crate::models::RequirementModelTier::High
-                    } else {
-                        effective_model_tier(task.kind)
-                    };
-                    task.model_tier = tier;
-                }
-            }
-        }
+        let data = db.load()?;
         let persisted = data.clone();
         Ok(Self {
             data_root,
@@ -367,6 +343,17 @@ impl JsonStore {
             .collect::<Vec<_>>();
         sort_requirements_desc(&mut completed_requirements);
 
+        let workflow_runs = self
+            .data
+            .requirements
+            .iter()
+            .filter(|requirement| requirement.project_id == project_id)
+            .map(|requirement| self.db.active_workflow_for_requirement(&requirement.id))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
         let token_usage = aggregate_project_token_usage(
             self.data
                 .project_chats
@@ -376,6 +363,7 @@ impl JsonStore {
                 .requirements
                 .iter()
                 .filter(|requirement| requirement.project_id == project_id),
+            workflow_runs.iter(),
         );
 
         for requirement in active
@@ -384,11 +372,6 @@ impl JsonStore {
             .chain(completed_requirements.iter_mut())
         {
             requirement.messages.clear();
-            if let Some(plan) = requirement.execution_plan.as_mut() {
-                for task in plan.tasks.iter_mut() {
-                    task.trace = None;
-                }
-            }
         }
 
         Ok(ProjectCanvasResponse {
@@ -396,6 +379,7 @@ impl JsonStore {
             active_requirement: active.into_iter().next(),
             queued_requirements,
             completed_requirements,
+            workflow_runs,
             token_usage,
         })
     }
@@ -403,146 +387,40 @@ impl JsonStore {
     pub fn project_canvas_for_view(
         &self,
         project_id: &str,
-        dag_requirement_id: Option<&str>,
+        workflow_requirement_id: Option<&str>,
     ) -> Result<ProjectCanvasResponse, AppError> {
-        let mut canvas = self.project_canvas(project_id)?;
-        let mut selected_found = dag_requirement_id.is_none();
-        for requirement in canvas
-            .active_requirement
-            .iter_mut()
-            .chain(canvas.queued_requirements.iter_mut())
-            .chain(canvas.completed_requirements.iter_mut())
-        {
-            let is_selected = dag_requirement_id == Some(requirement.id.as_str());
-            if is_selected {
-                selected_found = true;
-            }
-            if !is_selected {
-                requirement.execution_plan = None;
-            } else if let Some(plan) = requirement.execution_plan.as_mut() {
-                for task in &mut plan.tasks {
-                    strip_task_detail(task, false, false);
-                }
-            }
-        }
+        let canvas = self.project_canvas(project_id)?;
+        let selected_found = workflow_requirement_id.is_none()
+            || canvas
+                .active_requirement
+                .iter()
+                .chain(canvas.queued_requirements.iter())
+                .chain(canvas.completed_requirements.iter())
+                .any(|requirement| workflow_requirement_id == Some(requirement.id.as_str()));
         if !selected_found {
             return Err(AppError::not_found("需求不存在"));
         }
         Ok(canvas)
     }
 
-    pub fn requirement_task_detail(
+    pub fn workflow_attempt_session_sources(
         &self,
-        requirement_id: &str,
-        task_id: &str,
-    ) -> Result<RequirementTaskDetailResponse, AppError> {
-        let requirement = self
-            .data
-            .requirements
-            .iter()
-            .find(|requirement| requirement.id == requirement_id)
-            .ok_or_else(|| AppError::not_found("需求不存在"))?;
-        let plan = requirement
-            .execution_plan
-            .as_ref()
-            .ok_or_else(|| AppError::not_found("执行 DAG 不存在"))?;
-        let mut task = plan
-            .tasks
-            .iter()
-            .find(|task| task.id == task_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("任务不存在"))?;
-        strip_task_detail(&mut task, true, true);
-        let reviews = plan
-            .tasks
-            .iter()
-            .filter(|candidate| candidate.review_for.as_deref() == Some(task_id))
-            .cloned()
-            .map(|mut review| {
-                strip_task_detail(&mut review, true, false);
-                review
-            })
-            .collect();
-        let dependencies = task
-            .depends_on
-            .iter()
-            .filter_map(|dependency_id| {
-                plan.tasks
-                    .iter()
-                    .find(|candidate| candidate.id == *dependency_id)
-                    .cloned()
-            })
-            .map(|mut dependency| {
-                strip_task_detail(&mut dependency, true, false);
-                dependency
-            })
-            .collect();
-        Ok(RequirementTaskDetailResponse {
-            task,
-            reviews,
-            dependencies,
-        })
-    }
-
-    pub fn requirement_task_session_sources(
-        &self,
-        requirement_id: &str,
-        task_id: &str,
+        run_id: &str,
+        attempt_id: &str,
     ) -> Result<Vec<(String, PathBuf)>, AppError> {
-        let requirement_index = self.requirement_index(requirement_id)?;
-        let plan = self.data.requirements[requirement_index]
-            .execution_plan
-            .as_ref()
-            .ok_or_else(|| AppError::not_found("执行 DAG 不存在"))?;
-        let task = plan
-            .tasks
+        let snapshot = self.db.workflow_snapshot(run_id)?;
+        let attempt = snapshot
+            .attempts
             .iter()
-            .find(|task| task.id == task_id)
-            .ok_or_else(|| AppError::not_found("任务不存在"))?;
-        let mut sources = Vec::new();
-        if let Some(session_file) = task.pi_session_file.as_deref() {
-            sources.push((
-                if task.kind == RequirementTaskKind::Implementation {
-                    "代码节点".to_owned()
-                } else {
-                    task.title.clone()
-                },
-                self.resolve_managed_session_path(session_file)?,
-            ));
-        }
-        if task.kind == RequirementTaskKind::Implementation {
-            for review in plan.tasks.iter().filter(|candidate| {
-                matches!(
-                    candidate.kind,
-                    RequirementTaskKind::Review | RequirementTaskKind::ReviewSummary
-                ) && candidate.review_for.as_deref() == Some(task_id)
-            }) {
-                if let Some(session_file) = review.pi_session_file.as_deref() {
-                    sources.push((
-                        format!("审核 · {}", review.title),
-                        self.resolve_managed_session_path(session_file)?,
-                    ));
-                }
-            }
-        }
-        if sources.is_empty() {
-            return Err(AppError::not_found("任务没有会话记录"));
-        }
-        Ok(sources)
-    }
-
-    pub fn requirement_task_session(
-        &self,
-        requirement_id: &str,
-        task_id: &str,
-        before: Option<usize>,
-        limit: usize,
-    ) -> Result<SessionTranscriptPage, AppError> {
-        read_session_transcript(
-            &self.requirement_task_session_sources(requirement_id, task_id)?,
-            before,
-            limit,
-        )
+            .find(|attempt| attempt.id == attempt_id)
+            .ok_or_else(|| AppError::not_found("Workflow attempt 不存在"))?;
+        let Some(session_file) = attempt.pi_session_file.as_deref() else {
+            return Ok(Vec::new());
+        };
+        Ok(vec![(
+            format!("{:?} · 尝试 {}", attempt.kind, attempt.ordinal),
+            self.resolve_managed_session_path(session_file)?,
+        )])
     }
 
     pub fn requirement_session(
@@ -721,6 +599,16 @@ impl JsonStore {
             }
             Err(error) => {
                 chat.error = Some(error.to_string());
+                if let Some(trace) = error.trace().cloned() {
+                    chat.messages.push(ProjectChatMessage {
+                        role: ProjectChatMessageRole::System,
+                        content: "项目问答失败过程".to_owned(),
+                        references: Vec::new(),
+                        images: Vec::new(),
+                        metadata: Some(trace),
+                        created_at: now,
+                    });
+                }
             }
         }
         let response = project_chat_response_from(chat);
@@ -939,7 +827,6 @@ impl JsonStore {
             analysis_revision: 0,
             active_prompt: None,
             clarification_history: Vec::new(),
-            execution_plan: None,
             pi_session_file: pi_session_file.clone(),
             error: None,
             queued_at: None,
@@ -1005,7 +892,6 @@ impl JsonStore {
             supersede_active_prompt(requirement);
             requirement.clarifications.clear();
             requirement.draft = None;
-            requirement.execution_plan = None;
             requirement.updated_at = now;
             requirement.messages.push(RequirementMessage {
                 role: RequirementMessageRole::User,
@@ -1252,9 +1138,6 @@ impl JsonStore {
                 requirement.draft = output.draft;
                 requirement.analysis_revision = requirement.analysis_revision.saturating_add(1);
                 requirement.active_prompt = None;
-                if requirement.status == RequirementStatus::DraftReady {
-                    requirement.execution_plan = None;
-                }
                 requirement.pi_session_file = output.pi_session_file;
                 requirement.error = output.error;
                 requirement.updated_at = now;
@@ -1315,6 +1198,7 @@ impl JsonStore {
                 }
             }
             Err(error) => {
+                let failure_trace = error.trace().cloned();
                 requirement.status = RequirementStatus::Failed;
                 requirement.error = Some(error.to_string());
                 requirement.updated_at = now;
@@ -1326,6 +1210,16 @@ impl JsonStore {
                     metadata: None,
                     created_at: now,
                 });
+                if let Some(trace) = failure_trace {
+                    requirement.messages.push(RequirementMessage {
+                        role: RequirementMessageRole::Trace,
+                        content: "Pi Agent 分析过程".to_owned(),
+                        references: Vec::new(),
+                        images: Vec::new(),
+                        metadata: Some(trace),
+                        created_at: now,
+                    });
+                }
             }
         }
         self.write_persist().await?;
@@ -1364,7 +1258,6 @@ impl JsonStore {
         requirement.status = RequirementStatus::Queued;
         requirement.error = None;
         requirement.active_prompt = None;
-        requirement.execution_plan = None;
         requirement.queued_at = Some(now);
         requirement.updated_at = now;
         self.write_persist().await?;
@@ -1376,13 +1269,17 @@ impl JsonStore {
         requirement_id: &str,
     ) -> Result<String, AppError> {
         let index = self.requirement_index(requirement_id)?;
+        let has_workflow = self
+            .db
+            .active_workflow_for_requirement(requirement_id)?
+            .is_some();
         let requirement = &mut self.data.requirements[index];
         if requirement.status != RequirementStatus::Failed
-            || requirement.execution_plan.is_some()
+            || has_workflow
             || requirement.draft.is_none()
         {
             return Err(AppError::bad_request(
-                "只有执行计划生成失败的需求才能重新规划",
+                "只有尚未创建 WorkflowRun 的规划失败需求才能重新规划",
             ));
         }
         requirement.status = RequirementStatus::Queued;
@@ -1398,13 +1295,13 @@ impl JsonStore {
     pub async fn start_requirement_planning(
         &mut self,
         requirement_id: &str,
-    ) -> Result<(String, RequirementPlanInput), AppError> {
+    ) -> Result<(String, WorkflowPlanInput), AppError> {
         let index = self.requirement_index(requirement_id)?;
         if !matches!(
             self.data.requirements[index].status,
             RequirementStatus::Queued | RequirementStatus::Failed
         ) {
-            return Err(AppError::bad_request("只有待执行需求才能生成执行 DAG"));
+            return Err(AppError::bad_request("只有待执行需求才能生成 WorkPlan"));
         }
         let now = Utc::now();
         let project_id = self.data.requirements[index].project_id.clone();
@@ -1419,11 +1316,10 @@ impl JsonStore {
             let requirement = &mut self.data.requirements[index];
             requirement.status = RequirementStatus::Planning;
             requirement.error = None;
-            requirement.execution_plan = None;
             requirement.updated_at = now;
         }
         let requirement = self.data.requirements[index].clone();
-        let input = RequirementPlanInput {
+        let input = WorkflowPlanInput {
             project,
             requirement,
             model_settings: self.data.model_settings.clone(),
@@ -1432,67 +1328,117 @@ impl JsonStore {
         Ok((project_id, input))
     }
 
-    pub async fn apply_requirement_execution_plan(
+    pub async fn apply_workflow_plan(
         &mut self,
         requirement_id: &str,
-        output: Result<RequirementExecutionPlan, AppError>,
-    ) -> Result<(), AppError> {
+        output: Result<WorkflowPlanOutput, AppError>,
+    ) -> Result<Option<String>, AppError> {
         let index = self.requirement_index(requirement_id)?;
         let now = Utc::now();
-        let requirement = &mut self.data.requirements[index];
         match output {
-            Ok(plan) => {
-                requirement.status = RequirementStatus::PlanReady;
-                requirement.execution_plan = Some(plan);
+            Ok(output) => {
+                let requirement = self.data.requirements[index].clone();
+                let spec = change_spec_from_requirement(&requirement)?;
+                let trace = output.trace;
+                let compiled = compile_work_plan(
+                    &requirement.id,
+                    &requirement.project_id,
+                    requirement.analysis_revision,
+                    spec,
+                    output.plan,
+                )?;
+                let run_id = compiled.run.id.clone();
+                self.db.create_workflow(&compiled)?;
+                let requirement = &mut self.data.requirements[index];
+                requirement.status = RequirementStatus::Running;
                 requirement.error = None;
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::Assistant,
-                    content: "执行 DAG 已生成，开始自动执行。".to_owned(),
+                    content: format!(
+                        "WorkPlan 已生成：{} 个真实工作项，开始执行。",
+                        compiled.work_items.len()
+                    ),
                     references: Vec::new(),
                     images: Vec::new(),
-                    metadata: None,
+                    metadata: Some(serde_json::json!({
+                        "workflow_run_id": run_id,
+                    })),
                     created_at: now,
                 });
+                if let Some(trace) = trace {
+                    requirement.messages.push(RequirementMessage {
+                        role: RequirementMessageRole::Trace,
+                        content: "WorkPlan 生成过程".to_owned(),
+                        references: Vec::new(),
+                        images: Vec::new(),
+                        metadata: Some(trace),
+                        created_at: now,
+                    });
+                }
+                self.write_persist().await?;
+                Ok(Some(run_id))
             }
             Err(error) => {
+                let trace = error.trace().cloned();
+                let requirement = &mut self.data.requirements[index];
                 requirement.status = RequirementStatus::Failed;
                 requirement.error = Some(error.to_string());
                 requirement.updated_at = now;
                 requirement.messages.push(RequirementMessage {
                     role: RequirementMessageRole::System,
-                    content: format!("执行计划生成失败：{error}"),
+                    content: format!("WorkPlan 生成失败：{error}"),
                     references: Vec::new(),
                     images: Vec::new(),
-                    metadata: None,
+                    metadata: trace,
                     created_at: now,
                 });
+                self.write_persist().await?;
+                Ok(None)
             }
         }
-        self.write_persist().await?;
-        Ok(())
     }
 
-    pub async fn start_requirement_execution(
+    pub async fn finish_requirement_from_workflow(
         &mut self,
         requirement_id: &str,
-    ) -> Result<String, AppError> {
+        status: WorkflowRunStatus,
+        message: Option<&str>,
+    ) -> Result<RequirementStatus, AppError> {
         let index = self.requirement_index(requirement_id)?;
-        if self.data.requirements[index].status != RequirementStatus::PlanReady {
-            return Err(AppError::bad_request(
-                "只有已生成执行 DAG 的需求才能开始执行",
-            ));
-        }
-        if self.data.requirements[index].execution_plan.is_none() {
-            return Err(AppError::bad_request("执行 DAG 不存在"));
-        }
         let now = Utc::now();
-        let project_id = self.data.requirements[index].project_id.clone();
-        self.data.requirements[index].status = RequirementStatus::Running;
-        self.data.requirements[index].error = None;
-        self.data.requirements[index].updated_at = now;
+        let requirement = &mut self.data.requirements[index];
+        let requirement_status = match status {
+            WorkflowRunStatus::Completed => RequirementStatus::Completed,
+            WorkflowRunStatus::Blocked | WorkflowRunStatus::Cancelled => RequirementStatus::Failed,
+            _ => RequirementStatus::Running,
+        };
+        requirement.status = requirement_status;
+        requirement.error = (requirement_status == RequirementStatus::Failed)
+            .then(|| message.unwrap_or("WorkflowRun 未完成").to_owned());
+        requirement.updated_at = now;
+        if requirement_status != RequirementStatus::Running {
+            requirement.messages.push(RequirementMessage {
+                role: if requirement_status == RequirementStatus::Completed {
+                    RequirementMessageRole::Assistant
+                } else {
+                    RequirementMessageRole::System
+                },
+                content: message
+                    .unwrap_or(if requirement_status == RequirementStatus::Completed {
+                        "WorkflowRun 已完成。"
+                    } else {
+                        "WorkflowRun 已阻塞。"
+                    })
+                    .to_owned(),
+                references: Vec::new(),
+                images: Vec::new(),
+                metadata: None,
+                created_at: now,
+            });
+        }
         self.write_persist().await?;
-        Ok(project_id)
+        Ok(requirement_status)
     }
 
     pub async fn prepare_next_project_action(
@@ -1533,11 +1479,29 @@ impl JsonStore {
         };
 
         if let Some(requirement_id) = oldest(RequirementStatus::Running) {
-            return Ok(Some(ProjectScheduleAction::Execute { requirement_id }));
-        }
-        if let Some(requirement_id) = oldest(RequirementStatus::PlanReady) {
-            self.start_requirement_execution(&requirement_id).await?;
-            return Ok(Some(ProjectScheduleAction::Execute { requirement_id }));
+            let snapshot = self.db.active_workflow_for_requirement(&requirement_id)?;
+            if let Some(snapshot) = snapshot {
+                if snapshot.run.status.is_terminal() {
+                    self.finish_requirement_from_workflow(
+                        &requirement_id,
+                        snapshot.run.status,
+                        snapshot.run.blocked_reason.as_deref(),
+                    )
+                    .await?;
+                    return Ok(None);
+                }
+                return Ok(Some(ProjectScheduleAction::Execute {
+                    requirement_id,
+                    run_id: snapshot.run.id,
+                }));
+            }
+            let requirement_index = self.requirement_index(&requirement_id)?;
+            let requirement = &mut self.data.requirements[requirement_index];
+            requirement.status = RequirementStatus::Failed;
+            requirement.error = Some("运行中的需求缺少 WorkflowRun".to_owned());
+            requirement.updated_at = Utc::now();
+            self.write_persist().await?;
+            return Ok(None);
         }
         if self.data.requirements.iter().any(|requirement| {
             requirement.project_id == project_id
@@ -1556,11 +1520,24 @@ impl JsonStore {
     }
 
     pub async fn recover_interrupted_requirements(&mut self) -> Result<Vec<String>, AppError> {
+        let workflow_states = self
+            .data
+            .requirements
+            .iter()
+            .map(|requirement| {
+                self.db
+                    .active_workflow_for_requirement(&requirement.id)
+                    .map(|snapshot| {
+                        snapshot.map(|snapshot| (snapshot.run.status, snapshot.run.blocked_reason))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let now = Utc::now();
         let mut changed = false;
         let mut project_ids = HashSet::new();
 
-        for requirement in &mut self.data.requirements {
+        for (requirement, workflow_state) in self.data.requirements.iter_mut().zip(workflow_states)
+        {
             if matches!(
                 requirement.status,
                 RequirementStatus::Analyzing | RequirementStatus::Clarifying
@@ -1568,91 +1545,38 @@ impl JsonStore {
                 requirement.status = RequirementStatus::Failed;
                 requirement.error = Some("需求澄清会话因应用重启中断，请重新分析".to_owned());
                 requirement.updated_at = now;
-                requirement.messages.push(RequirementMessage {
-                    role: RequirementMessageRole::System,
-                    content: "需求澄清会话因应用重启中断，请重新分析。".to_owned(),
-                    references: Vec::new(),
-                    images: Vec::new(),
-                    metadata: None,
-                    created_at: now,
-                });
                 changed = true;
-            }
-
-            if requirement.status == RequirementStatus::Planning {
+            } else if requirement.status == RequirementStatus::Planning {
                 requirement.status = RequirementStatus::Queued;
                 requirement.error = None;
-                requirement.execution_plan = None;
                 requirement.queued_at.get_or_insert(requirement.updated_at);
                 requirement.updated_at = now;
-                requirement.messages.push(RequirementMessage {
-                    role: RequirementMessageRole::System,
-                    content: format!("执行 DAG 生成因{RESTART_INTERRUPTION}，已重新排队。"),
-                    references: Vec::new(),
-                    images: Vec::new(),
-                    metadata: None,
-                    created_at: now,
-                });
+                project_ids.insert(requirement.project_id.clone());
                 changed = true;
-            }
-
-            if requirement.status == RequirementStatus::Running {
-                let mut interrupted_tasks = Vec::new();
-                let mut final_failure = false;
-                if let Some(plan) = requirement.execution_plan.as_mut() {
-                    for task in &mut plan.tasks {
-                        if task.status != RequirementTaskStatus::Running {
-                            continue;
-                        }
-
-                        let recoverable = register_execution_failure(
-                            task,
-                            RESTART_INTERRUPTION,
-                            RESTART_INTERRUPTION,
-                            true,
-                        );
-                        interrupted_tasks.push((task.title.clone(), recoverable));
-                        final_failure |= !recoverable;
-                        changed = true;
+            } else if let Some((status, blocked_reason)) = workflow_state {
+                let next_status = match status {
+                    WorkflowRunStatus::Completed => RequirementStatus::Completed,
+                    WorkflowRunStatus::Blocked | WorkflowRunStatus::Cancelled => {
+                        RequirementStatus::Failed
                     }
-                }
-
-                if !interrupted_tasks.is_empty() {
+                    _ => RequirementStatus::Running,
+                };
+                if requirement.status != next_status {
+                    requirement.status = next_status;
                     requirement.updated_at = now;
-                    for (task_title, recoverable) in interrupted_tasks {
-                        requirement.messages.push(RequirementMessage {
-                            role: RequirementMessageRole::System,
-                            content: if recoverable {
-                                format!(
-                                    "任务「{task_title}」因{RESTART_INTERRUPTION}，将按恢复策略重试。"
-                                )
-                            } else {
-                                format!(
-                                    "任务「{task_title}」因{RESTART_INTERRUPTION}，恢复次数已耗尽。"
-                                )
-                            },
-                            references: Vec::new(),
-                            images: Vec::new(),
-                            metadata: None,
-                            created_at: now,
-                        });
-                    }
-                    if final_failure {
-                        requirement.status = RequirementStatus::Failed;
-                        requirement.error =
-                            Some(format!("{RESTART_INTERRUPTION}，任务恢复次数已耗尽"));
-                    } else {
-                        requirement.error = None;
-                    }
+                    changed = true;
                 }
-            }
-
-            if matches!(
-                requirement.status,
-                RequirementStatus::Queued
-                    | RequirementStatus::PlanReady
-                    | RequirementStatus::Running
-            ) {
+                requirement.error = (next_status == RequirementStatus::Failed)
+                    .then(|| blocked_reason.unwrap_or_else(|| "WorkflowRun 已阻塞".to_owned()));
+                if next_status == RequirementStatus::Running {
+                    project_ids.insert(requirement.project_id.clone());
+                }
+            } else if requirement.status == RequirementStatus::Running {
+                requirement.status = RequirementStatus::Failed;
+                requirement.error = Some("运行中的需求缺少 WorkflowRun".to_owned());
+                requirement.updated_at = now;
+                changed = true;
+            } else if requirement.status == RequirementStatus::Queued {
                 project_ids.insert(requirement.project_id.clone());
             }
         }
@@ -1718,7 +1642,20 @@ impl JsonStore {
                 return;
             }
         };
-        let referenced = referenced_pi_session_paths(&self.data, &session_dir);
+        let mut referenced = referenced_pi_session_paths(&self.data, &session_dir);
+        match self.db.workflow_session_files() {
+            Ok(session_files) => {
+                for session_file in session_files {
+                    if let Ok(path) = self.resolve_managed_session_path(&session_file) {
+                        referenced.insert(std::fs::canonicalize(&path).unwrap_or(path));
+                    }
+                }
+            }
+            Err(error) => tracing::warn!(
+                error = %error,
+                "failed to enumerate WorkflowRun Pi sessions during cleanup"
+            ),
+        }
 
         loop {
             let entry = match entries.next_entry().await {
@@ -1778,557 +1715,6 @@ impl JsonStore {
         }
     }
 
-    pub async fn prepare_runnable_execution_tasks(
-        &mut self,
-        requirement_id: &str,
-    ) -> Result<Vec<RequirementTaskExecutionInput>, AppError> {
-        let index = self.requirement_index(requirement_id)?;
-        let requirement = self.data.requirements[index].clone();
-        if requirement.status != RequirementStatus::Running {
-            return Ok(Vec::new());
-        }
-        let Some(runnable_plan) = requirement.execution_plan.clone() else {
-            return Err(AppError::bad_request("执行 DAG 不存在"));
-        };
-
-        let task_indexes = runnable_task_indexes(&runnable_plan)?;
-        if task_indexes.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let project = self
-            .data
-            .projects
-            .iter()
-            .find(|project| project.id == requirement.project_id)
-            .cloned()
-            .ok_or_else(|| AppError::not_found("项目不存在"))?;
-
-        let now = Utc::now();
-        let requirement = &mut self.data.requirements[index];
-        let plan = requirement
-            .execution_plan
-            .as_mut()
-            .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
-        for task_index in &task_indexes {
-            let task = &mut plan.tasks[*task_index];
-            if task.status == RequirementTaskStatus::Fixing {
-                task.result_summary = None;
-                task.execution_warning = None;
-            }
-            task.model_tier = if task.recovery_stage == RequirementRecoveryStage::HighTierExecution
-            {
-                task.high_tier_execution_used = true;
-                crate::models::RequirementModelTier::High
-            } else {
-                effective_model_tier(task.kind)
-            };
-            task.status = RequirementTaskStatus::Running;
-            task.error = None;
-        }
-        requirement.updated_at = now;
-        let plan = plan.clone();
-        let requirement = requirement.clone();
-        self.write_persist().await?;
-
-        Ok(task_indexes
-            .into_iter()
-            .map(|task_index| {
-                let mut task = plan.tasks[task_index].clone();
-                if runnable_plan.tasks[task_index].status == RequirementTaskStatus::Fixing {
-                    task.status = RequirementTaskStatus::Fixing;
-                }
-                RequirementTaskExecutionInput {
-                    project: project.clone(),
-                    requirement: requirement.clone(),
-                    plan: plan.clone(),
-                    task,
-                    model_settings: self.data.model_settings.clone(),
-                }
-            })
-            .collect())
-    }
-
-    pub async fn apply_task_execution_result(
-        &mut self,
-        requirement_id: &str,
-        task_id: &str,
-        output: Result<RequirementTaskExecutionOutput, AppError>,
-    ) -> Result<TaskExecutionDisposition, AppError> {
-        let index = self.requirement_index(requirement_id)?;
-        let now = Utc::now();
-        let requirement = &mut self.data.requirements[index];
-        let plan = requirement
-            .execution_plan
-            .as_mut()
-            .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
-        let task_index = plan
-            .tasks
-            .iter()
-            .position(|task| task.id == task_id)
-            .ok_or_else(|| AppError::bad_request("执行任务不存在"))?;
-        let task_final_failure;
-
-        match output {
-            Ok(output) => {
-                if output.recovery_guidance.is_some()
-                    && plan.tasks[task_index].recovery_stage
-                        == RequirementRecoveryStage::GuidedRetry
-                    && plan.tasks[task_index].recovery_guidance.is_none()
-                {
-                    let task = &mut plan.tasks[task_index];
-                    task.pi_session_file = output
-                        .pi_session_file
-                        .clone()
-                        .or(task.pi_session_file.take());
-                    task.recovery_guidance = output.recovery_guidance;
-                    task.trace = output.trace;
-                    task.failure_summary = task
-                        .failure_summary
-                        .take()
-                        .or_else(|| Some("已生成高档模型恢复方案".to_owned()));
-                    task.status = if task.kind == RequirementTaskKind::Implementation {
-                        RequirementTaskStatus::Fixing
-                    } else {
-                        RequirementTaskStatus::Pending
-                    };
-                    task.error = None;
-                    requirement.status = RequirementStatus::Running;
-                    requirement.error = None;
-                    requirement.updated_at = now;
-                    requirement.messages.push(RequirementMessage {
-                        role: RequirementMessageRole::System,
-                        content: format!("任务「{}」已生成高档模型恢复方案。", task.title),
-                        references: Vec::new(),
-                        images: Vec::new(),
-                        metadata: None,
-                        created_at: now,
-                    });
-                    self.write_persist().await?;
-                    return Ok(TaskExecutionDisposition::Continue);
-                }
-                let task_kind = plan.tasks[task_index].kind;
-                let task_title = plan.tasks[task_index].title.clone();
-                let rejected_sub_agent_feedback =
-                    rejected_review_sub_agent_feedback(plan, task_index);
-                let forced_summary_rejection = task_kind == RequirementTaskKind::ReviewSummary
-                    && rejected_sub_agent_feedback.is_some();
-                let effective_review_status = match task_kind {
-                    RequirementTaskKind::ReviewSummary if forced_summary_rejection => {
-                        Some(RequirementReviewStatus::Rejected)
-                    }
-                    RequirementTaskKind::Review
-                    | RequirementTaskKind::ReviewSubAgent
-                    | RequirementTaskKind::ReviewSummary
-                    | RequirementTaskKind::MergeReview => output.review_status,
-                    _ => None,
-                };
-                let effective_review_feedback =
-                    rejected_sub_agent_feedback.or_else(|| output.review_feedback.clone());
-                let effective_fix_instructions = output.fix_instructions.clone();
-                let effective_result_summary = if forced_summary_rejection {
-                    format!(
-                        "审核不通过：{}",
-                        effective_review_feedback
-                            .as_deref()
-                            .unwrap_or("存在未通过的子审核意见")
-                    )
-                } else {
-                    output.result_summary.clone()
-                };
-                let mut review_update = None;
-                {
-                    let task = &mut plan.tasks[task_index];
-                    task.pi_session_file = output
-                        .pi_session_file
-                        .clone()
-                        .or(task.pi_session_file.take());
-                    task.branch_name = output.branch_name.clone().or(task.branch_name.take());
-                    task.worktree_path = output.worktree_path.clone().or(task.worktree_path.take());
-                    task.pull_request_url = output
-                        .pull_request_url
-                        .clone()
-                        .or(task.pull_request_url.take());
-                    task.merged_into = output.merged_into.clone().or(task.merged_into.take());
-                    task.cleanup_summary = output
-                        .cleanup_summary
-                        .clone()
-                        .or(task.cleanup_summary.take());
-                    task.execution_warning = output
-                        .execution_warning
-                        .clone()
-                        .or(task.execution_warning.take());
-                    task.trace = output.trace.clone().or(task.trace.take());
-                    task.attempt = task.attempt.saturating_add(1);
-                    task.execution_failure_count = 0;
-                    task.failure_summary = None;
-                    task.recovery_stage = RequirementRecoveryStage::None;
-                    task.recovery_guidance = output
-                        .recovery_guidance
-                        .clone()
-                        .or(task.recovery_guidance.take());
-                    task.result_summary = Some(effective_result_summary.clone());
-                    task.error = None;
-                    match task_kind {
-                        RequirementTaskKind::Implementation => {
-                            task.status = RequirementTaskStatus::AwaitingReview;
-                        }
-                        RequirementTaskKind::Review | RequirementTaskKind::ReviewSubAgent => {
-                            let review_status = effective_review_status
-                                .unwrap_or(RequirementReviewStatus::Rejected);
-                            task.review_status = review_status;
-                            task.last_review_feedback = effective_review_feedback.clone();
-                            task.last_review_fix_instructions = effective_fix_instructions.clone();
-                            task.status = match review_status {
-                                RequirementReviewStatus::Approved => {
-                                    RequirementTaskStatus::Completed
-                                }
-                                RequirementReviewStatus::Rejected => {
-                                    RequirementTaskStatus::Rejected
-                                }
-                                RequirementReviewStatus::Pending => RequirementTaskStatus::Pending,
-                            };
-                            if task_kind == RequirementTaskKind::Review {
-                                review_update = Some(review_status);
-                            }
-                        }
-                        RequirementTaskKind::ReviewSummary | RequirementTaskKind::MergeReview => {
-                            task.review_status = effective_review_status
-                                .unwrap_or(RequirementReviewStatus::Approved);
-                            task.last_review_feedback = effective_review_feedback.clone();
-                            task.last_review_fix_instructions = effective_fix_instructions.clone();
-                            task.status = if task.review_status == RequirementReviewStatus::Approved
-                            {
-                                RequirementTaskStatus::Completed
-                            } else {
-                                RequirementTaskStatus::Rejected
-                            };
-                            review_update = Some(task.review_status);
-                        }
-                        RequirementTaskKind::BranchMerge => {
-                            task.review_status = RequirementReviewStatus::Approved;
-                            task.status = RequirementTaskStatus::Completed;
-                        }
-                    }
-                }
-                match task_kind {
-                    RequirementTaskKind::Implementation => {
-                        begin_review_round(plan, task_id, effective_result_summary.clone(), now);
-                        reset_review_for(plan, task_id);
-                    }
-                    RequirementTaskKind::Review | RequirementTaskKind::ReviewSubAgent => {
-                        let review_status = review_update
-                            .or(effective_review_status)
-                            .unwrap_or(RequirementReviewStatus::Rejected);
-                        if task_kind == RequirementTaskKind::Review
-                            && record_parallel_review_steps(
-                                plan,
-                                task_id,
-                                output.trace.as_ref(),
-                                now,
-                            )
-                        {
-                            finish_review_round(
-                                plan,
-                                task_id,
-                                review_status,
-                                effective_result_summary.clone(),
-                                (review_status == RequirementReviewStatus::Rejected)
-                                    .then(|| effective_review_feedback.clone())
-                                    .flatten(),
-                                now,
-                            );
-                        } else {
-                            record_review_step(
-                                plan,
-                                task_id,
-                                review_status,
-                                effective_result_summary.clone(),
-                                (review_status == RequirementReviewStatus::Rejected)
-                                    .then(|| effective_review_feedback.clone())
-                                    .flatten(),
-                                now,
-                            );
-                        }
-                    }
-                    RequirementTaskKind::ReviewSummary => {
-                        let review_status =
-                            review_update.unwrap_or(RequirementReviewStatus::Rejected);
-                        finish_review_round(
-                            plan,
-                            task_id,
-                            review_status,
-                            effective_result_summary.clone(),
-                            (review_status == RequirementReviewStatus::Rejected)
-                                .then(|| effective_review_feedback.clone())
-                                .flatten(),
-                            now,
-                        );
-                    }
-                    RequirementTaskKind::BranchMerge | RequirementTaskKind::MergeReview => {}
-                }
-                match task_kind {
-                    RequirementTaskKind::Review | RequirementTaskKind::ReviewSummary => {
-                        match review_update.unwrap_or(RequirementReviewStatus::Rejected) {
-                            RequirementReviewStatus::Approved => {
-                                approve_reviewed_task(
-                                    plan,
-                                    task_id,
-                                    effective_review_feedback.clone(),
-                                )?;
-                                let review_for_id = plan.tasks[task_index].review_for.clone();
-                                if let Some(reviewed) = plan.tasks.iter_mut().find(|t| {
-                                    review_for_id.as_deref() == Some(t.id.as_str())
-                                        && t.kind == RequirementTaskKind::Implementation
-                                        && t.status == RequirementTaskStatus::Completed
-                                }) && let Some(worktree) = reviewed.worktree_path.as_deref()
-                                {
-                                    let message = format!("raccoon_node: {}", reviewed.title);
-                                    let _ =
-                                        commit_staged_changes(Path::new(worktree), &message).await;
-                                }
-                            }
-                            RequirementReviewStatus::Rejected => {
-                                reject_reviewed_task(
-                                    plan,
-                                    task_id,
-                                    effective_review_feedback.clone(),
-                                )?;
-                            }
-                            RequirementReviewStatus::Pending => {
-                                plan.tasks[task_index].status = RequirementTaskStatus::Pending;
-                            }
-                        }
-                    }
-                    RequirementTaskKind::ReviewSubAgent
-                    | RequirementTaskKind::Implementation
-                    | RequirementTaskKind::BranchMerge
-                    | RequirementTaskKind::MergeReview => {}
-                }
-                task_final_failure = match task_kind {
-                    RequirementTaskKind::Review | RequirementTaskKind::ReviewSummary => plan.tasks
-                        [task_index]
-                        .review_for
-                        .as_deref()
-                        .and_then(|review_for| plan.tasks.iter().find(|task| task.id == review_for))
-                        .is_some_and(|task| task.status == RequirementTaskStatus::Failed),
-                    RequirementTaskKind::MergeReview => {
-                        plan.tasks[task_index].status == RequirementTaskStatus::Rejected
-                    }
-                    _ => plan.tasks[task_index].status == RequirementTaskStatus::Failed,
-                };
-                requirement.updated_at = now;
-                requirement.messages.push(RequirementMessage {
-                    role: RequirementMessageRole::Assistant,
-                    content: format!("任务「{}」已完成：{effective_result_summary}", task_title),
-                    references: Vec::new(),
-                    images: Vec::new(),
-                    metadata: None,
-                    created_at: now,
-                });
-                if let Some(trace) = output.trace {
-                    requirement.messages.push(RequirementMessage {
-                        role: RequirementMessageRole::Trace,
-                        content: format!("任务「{}」执行过程", task_title),
-                        references: Vec::new(),
-                        images: Vec::new(),
-                        metadata: Some(trace),
-                        created_at: now,
-                    });
-                }
-                let has_failed_task = plan
-                    .tasks
-                    .iter()
-                    .any(|task| task.status == RequirementTaskStatus::Failed);
-                let merge_review_rejected = plan.tasks.iter().any(|task| {
-                    task.kind == RequirementTaskKind::MergeReview
-                        && task.status == RequirementTaskStatus::Rejected
-                });
-                if (has_failed_task || merge_review_rejected) && execution_can_progress(plan) {
-                    requirement.status = RequirementStatus::Running;
-                    requirement.error = None;
-                } else if plan.tasks.iter().any(|task| {
-                    task.kind == RequirementTaskKind::Implementation
-                        && task.status == RequirementTaskStatus::Failed
-                }) {
-                    requirement.status = RequirementStatus::Failed;
-                    requirement.error = Some("审核多次未通过，需求执行已停止".to_owned());
-                } else if merge_review_rejected {
-                    requirement.status = RequirementStatus::Failed;
-                    requirement.error = Some("最终合并审核未通过".to_owned());
-                } else if has_failed_task {
-                    requirement.status = RequirementStatus::Failed;
-                    requirement.error = Some("部分任务执行失败".to_owned());
-                } else if plan.tasks.iter().any(|task| {
-                    task.kind == RequirementTaskKind::MergeReview
-                        && task.status == RequirementTaskStatus::Completed
-                }) {
-                    requirement.status = RequirementStatus::Completed;
-                    requirement.messages.push(RequirementMessage {
-                        role: RequirementMessageRole::System,
-                        content: "需求执行完成。".to_owned(),
-                        references: Vec::new(),
-                        images: Vec::new(),
-                        metadata: None,
-                        created_at: now,
-                    });
-                }
-            }
-            Err(error) => {
-                let task_title = plan.tasks[task_index].title.clone();
-                let retryable = is_retryable_execution_error(&error);
-                let task = &mut plan.tasks[task_index];
-                if let Some(session_file) = error.pi_session_file() {
-                    task.pi_session_file = Some(session_file.to_owned());
-                }
-                let will_retry = register_execution_failure(
-                    task,
-                    &short_failure_summary(&error),
-                    &error.to_string(),
-                    retryable,
-                );
-                task_final_failure = !will_retry;
-                if will_retry || execution_can_progress(plan) {
-                    requirement.status = RequirementStatus::Running;
-                    requirement.error = None;
-                } else {
-                    requirement.status = RequirementStatus::Failed;
-                    requirement.error = Some(format!("任务「{}」执行失败：{error}", task_title));
-                }
-                requirement.updated_at = now;
-                requirement.messages.push(RequirementMessage {
-                    role: RequirementMessageRole::System,
-                    content: if will_retry {
-                        format!("任务「{}」执行失败，将按恢复策略重试：{error}", task_title)
-                    } else {
-                        format!("任务「{}」执行失败：{error}", task_title)
-                    },
-                    references: Vec::new(),
-                    images: Vec::new(),
-                    metadata: None,
-                    created_at: now,
-                });
-            }
-        }
-        self.write_persist().await?;
-        Ok(if task_final_failure {
-            TaskExecutionDisposition::FinalFailure
-        } else {
-            TaskExecutionDisposition::Continue
-        })
-    }
-
-    pub async fn recover_task_group(
-        &mut self,
-        requirement_id: &str,
-        top_level_task_id: &str,
-    ) -> Result<String, AppError> {
-        let index = self.requirement_index(requirement_id)?;
-        let project_id = self.data.requirements[index].project_id.clone();
-        let requirement = &mut self.data.requirements[index];
-        let plan = requirement
-            .execution_plan
-            .as_mut()
-            .ok_or_else(|| AppError::bad_request("执行 DAG 不存在"))?;
-        let top_level = plan
-            .tasks
-            .iter()
-            .find(|task| task.id == top_level_task_id)
-            .cloned()
-            .ok_or_else(|| AppError::bad_request("执行任务不存在"))?;
-        if !matches!(
-            top_level.kind,
-            RequirementTaskKind::Implementation
-                | RequirementTaskKind::BranchMerge
-                | RequirementTaskKind::MergeReview
-        ) {
-            return Err(AppError::bad_request("只能恢复顶层任务节点"));
-        }
-
-        let in_group = |task: &crate::models::RequirementExecutionTask| {
-            task.id == top_level_task_id
-                || (top_level.kind == RequirementTaskKind::Implementation
-                    && task.review_for.as_deref() == Some(top_level_task_id))
-        };
-        if plan
-            .tasks
-            .iter()
-            .any(|task| in_group(task) && task.status == RequirementTaskStatus::Running)
-        {
-            return Err(AppError::bad_request("目标任务组正在执行"));
-        }
-        if !plan
-            .tasks
-            .iter()
-            .any(|task| in_group(task) && task.status == RequirementTaskStatus::Failed)
-        {
-            return Err(AppError::bad_request("目标任务组没有失败节点"));
-        }
-
-        let implementation_failed = top_level.kind == RequirementTaskKind::Implementation
-            && top_level.status == RequirementTaskStatus::Failed;
-        let failed_sub_agent = plan.tasks.iter().any(|task| {
-            task.review_for.as_deref() == Some(top_level_task_id)
-                && task.kind == RequirementTaskKind::ReviewSubAgent
-                && task.status == RequirementTaskStatus::Failed
-        });
-        for task in &mut plan.tasks {
-            let reset = if implementation_failed {
-                in_group(task)
-            } else {
-                (in_group(task) && task.status == RequirementTaskStatus::Failed)
-                    || failed_sub_agent
-                        && task.kind == RequirementTaskKind::ReviewSummary
-                        && task.review_for.as_deref() == Some(top_level_task_id)
-            };
-            if !reset {
-                continue;
-            }
-            task.status = if task.id == top_level_task_id
-                && task.kind == RequirementTaskKind::Implementation
-            {
-                RequirementTaskStatus::Fixing
-            } else {
-                RequirementTaskStatus::Pending
-            };
-            task.review_status = RequirementReviewStatus::Pending;
-            task.error = None;
-            task.execution_warning = None;
-            task.result_summary = None;
-            task.last_review_feedback = None;
-            task.trace = None;
-            reset_recovery_state(task);
-        }
-        requirement.status = RequirementStatus::Running;
-        requirement.error = None;
-        requirement.updated_at = Utc::now();
-        self.write_persist().await?;
-        Ok(project_id)
-    }
-
-    pub async fn fail_requirement_execution(
-        &mut self,
-        requirement_id: &str,
-        error: AppError,
-    ) -> Result<(), AppError> {
-        let index = self.requirement_index(requirement_id)?;
-        let now = Utc::now();
-        let requirement = &mut self.data.requirements[index];
-        requirement.status = RequirementStatus::Failed;
-        requirement.error = Some(error.to_string());
-        requirement.updated_at = now;
-        requirement.messages.push(RequirementMessage {
-            role: RequirementMessageRole::System,
-            content: format!("需求执行失败：{error}"),
-            references: Vec::new(),
-            images: Vec::new(),
-            metadata: None,
-            created_at: now,
-        });
-        self.write_persist().await?;
-        Ok(())
-    }
-
     pub fn requirement_status(&self, requirement_id: &str) -> Result<RequirementStatus, AppError> {
         let index = self.requirement_index(requirement_id)?;
         Ok(self.data.requirements[index].status)
@@ -2362,6 +1748,7 @@ impl JsonStore {
 fn aggregate_project_token_usage<'a>(
     project_chats: impl Iterator<Item = &'a ProjectChat>,
     requirements: impl Iterator<Item = &'a Requirement>,
+    workflows: impl Iterator<Item = &'a crate::workflow::WorkflowSnapshot>,
 ) -> Option<ProjectTokenUsage> {
     let mut usage = ProjectTokenUsage::default();
     let mut found = false;
@@ -2369,11 +1756,18 @@ fn aggregate_project_token_usage<'a>(
     for chat in project_chats {
         let mut previous = None;
         for message in &chat.messages {
-            if let Some(metadata) = &message.metadata
-                && add_trace_usage_sequence(&mut usage.chat, metadata, &mut previous)
-            {
+            if let Some(metadata) = &message.metadata {
+                let previous_for_insights = previous.clone();
+                if !add_trace_usage_sequence(&mut usage.chat, metadata, &mut previous) {
+                    continue;
+                }
                 found = true;
-                collect_trace_insights(&mut usage, metadata, "项目问答", previous.as_ref());
+                collect_trace_insights(
+                    &mut usage,
+                    metadata,
+                    "项目问答",
+                    previous_for_insights.as_ref(),
+                );
             }
         }
     }
@@ -2384,39 +1778,59 @@ fn aggregate_project_token_usage<'a>(
             if message.role != RequirementMessageRole::Trace {
                 continue;
             }
-            if !matches!(
+            let Some(metadata) = &message.metadata else {
+                continue;
+            };
+            let split_operation = matches!(
                 message.content.as_str(),
-                "Pi Agent 分析过程" | "执行计划生成过程"
-            ) {
+                "Pi Agent 分析过程" | "WorkPlan 生成过程"
+            );
+            if split_operation {
+                let previous_for_insights = previous.clone();
+                if !add_trace_usage_sequence(&mut usage.split, metadata, &mut previous) {
+                    continue;
+                }
+                found = true;
+                collect_trace_insights(
+                    &mut usage,
+                    metadata,
+                    &requirement.title,
+                    previous_for_insights.as_ref(),
+                );
+            } else if is_operation_trace(metadata) && add_trace_usage(&mut usage.task, metadata) {
+                found = true;
+                collect_trace_insights(&mut usage, metadata, &message.content, None);
+            } else {
                 continue;
             }
-            if let Some(metadata) = &message.metadata
-                && add_trace_usage_sequence(&mut usage.split, metadata, &mut previous)
-            {
-                found = true;
-                collect_trace_insights(&mut usage, metadata, &requirement.title, previous.as_ref());
-            }
         }
+    }
 
-        if let Some(plan) = &requirement.execution_plan {
-            if let Some(trace) = &plan.trace
-                && add_trace_usage(&mut usage.split, trace)
+    for workflow in workflows {
+        for attempt in &workflow.attempts {
+            if let Some(trace) = &attempt.usage
+                && add_trace_usage(&mut usage.task, trace)
             {
                 found = true;
                 collect_trace_insights(
                     &mut usage,
                     trace,
-                    &format!("规划：{}", requirement.title),
+                    &format!("工作项尝试：{}", attempt.id),
                     None,
                 );
             }
-            for task in &plan.tasks {
-                if let Some(trace) = &task.trace
-                    && add_trace_usage(&mut usage.task, trace)
-                {
-                    found = true;
-                    collect_trace_insights(&mut usage, trace, &task.title, None);
-                }
+        }
+        for checkpoint in &workflow.checkpoints {
+            if let Some(trace) = &checkpoint.usage
+                && add_trace_usage(&mut usage.task, trace)
+            {
+                found = true;
+                collect_trace_insights(
+                    &mut usage,
+                    trace,
+                    &format!("Checkpoint：{}", checkpoint.id),
+                    None,
+                );
             }
         }
     }
@@ -2455,10 +1869,15 @@ fn collect_trace_insights(
         return;
     };
     let current = TokenUsageCategory {
-        input: raw.get("input").and_then(Value::as_u64).unwrap_or(0),
-        output: raw.get("output").and_then(Value::as_u64).unwrap_or(0),
-        cache_read: raw.get("cacheRead").and_then(Value::as_u64).unwrap_or(0),
-        cache_write: raw.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0),
+        input: usage_number(raw, "input", "input"),
+        output: usage_number(raw, "output", "output"),
+        cache_read: usage_number(raw, "cacheRead", "cache_read"),
+        cache_write: usage_number(raw, "cacheWrite", "cache_write"),
+    };
+    let previous = if is_operation_trace(trace) {
+        None
+    } else {
+        previous
     };
     let category = TokenUsageCategory {
         input: current
@@ -2488,6 +1907,10 @@ fn collect_trace_insights(
         role: role.to_owned(),
         usage: category.clone(),
         context_percent,
+        budget_exceeded: trace
+            .pointer("/trace/budget/exceeded")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     });
     if let Some(existing) = usage.roles.iter_mut().find(|item| item.role == role) {
         existing.usage.input += category.input;
@@ -2500,6 +1923,7 @@ fn collect_trace_insights(
             usage: category,
         });
     }
+    collect_compaction_insights(usage, trace);
     if let Some(sources) = trace
         .pointer("/trace/prompt/sources")
         .and_then(Value::as_array)
@@ -2540,14 +1964,55 @@ fn collect_trace_insights(
     }
 }
 
+fn collect_compaction_insights(usage: &mut ProjectTokenUsage, trace: &Value) {
+    let Some(compaction) = trace.pointer("/trace/compaction") else {
+        return;
+    };
+    let count = compaction.get("count").and_then(Value::as_u64).unwrap_or(0);
+    if count == 0 {
+        return;
+    }
+    let summary = usage
+        .compaction
+        .get_or_insert_with(TokenCompactionUsage::default);
+    summary.count += count;
+    summary.completed += compaction
+        .get("completed")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    summary.aborted += compaction
+        .get("aborted")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    summary.failed += compaction
+        .get("failed")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    summary.overflow_retries += compaction
+        .get("overflowRetries")
+        .or_else(|| compaction.get("overflow_retries"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    summary.estimated_tokens_saved += compaction
+        .get("estimatedTokensSaved")
+        .or_else(|| compaction.get("estimated_tokens_saved"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    summary.usage_known |= compaction
+        .get("usageKnown")
+        .or_else(|| compaction.get("usage_known"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+}
+
 fn add_trace_usage(category: &mut TokenUsageCategory, trace: &Value) -> bool {
     let Some(usage) = trace_usage(trace) else {
         return false;
     };
-    category.input += usage.get("input").and_then(Value::as_u64).unwrap_or(0);
-    category.output += usage.get("output").and_then(Value::as_u64).unwrap_or(0);
-    category.cache_read += usage.get("cacheRead").and_then(Value::as_u64).unwrap_or(0);
-    category.cache_write += usage.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0);
+    category.input += usage_number(usage, "input", "input");
+    category.output += usage_number(usage, "output", "output");
+    category.cache_read += usage_number(usage, "cacheRead", "cache_read");
+    category.cache_write += usage_number(usage, "cacheWrite", "cache_write");
     true
 }
 
@@ -2563,10 +2028,10 @@ fn add_trace_usage_sequence(
         return add_trace_usage(category, trace);
     }
     let current = TokenUsageCategory {
-        input: raw.get("input").and_then(Value::as_u64).unwrap_or(0),
-        output: raw.get("output").and_then(Value::as_u64).unwrap_or(0),
-        cache_read: raw.get("cacheRead").and_then(Value::as_u64).unwrap_or(0),
-        cache_write: raw.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0),
+        input: usage_number(raw, "input", "input"),
+        output: usage_number(raw, "output", "output"),
+        cache_read: usage_number(raw, "cacheRead", "cache_read"),
+        cache_write: usage_number(raw, "cacheWrite", "cache_write"),
     };
     let reused = raw.get("sessionReused").and_then(Value::as_bool) == Some(true);
     let base = if reused { previous.as_ref() } else { None };
@@ -2584,6 +2049,21 @@ fn add_trace_usage_sequence(
         .saturating_sub(base.map(|item| item.cache_write).unwrap_or(0));
     *previous = Some(current);
     true
+}
+
+fn usage_number(usage: &Value, camel_case: &str, snake_case: &str) -> u64 {
+    usage
+        .get(camel_case)
+        .and_then(Value::as_u64)
+        .or_else(|| usage.get(snake_case).and_then(Value::as_u64))
+        .unwrap_or(0)
+}
+
+fn is_operation_trace(trace: &Value) -> bool {
+    trace_usage(trace)
+        .and_then(|usage| usage.get("scope"))
+        .and_then(Value::as_str)
+        == Some("operation")
 }
 
 pub fn read_session_transcript(
@@ -2624,11 +2104,12 @@ pub fn read_session_transcript(
                 .unwrap_or("unknown")
                 .to_owned();
             let message = (kind == "message").then(|| raw.get("message")).flatten();
+            let public_raw = redact_session_entry(&raw, &kind);
             entries.push(SessionEntry {
                 cursor: 0,
                 source: source.clone(),
                 line: line_index + 1,
-                kind,
+                kind: kind.clone(),
                 id: raw.get("id").and_then(Value::as_str).map(ToOwned::to_owned),
                 role: message
                     .and_then(|value| value.get("role"))
@@ -2638,8 +2119,12 @@ pub fn read_session_transcript(
                     .get("timestamp")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
-                blocks: message.map(parse_session_blocks).unwrap_or_default(),
-                raw,
+                blocks: if kind == "compaction" {
+                    vec![parse_session_compaction(&raw)]
+                } else {
+                    message.map(parse_session_blocks).unwrap_or_default()
+                },
+                raw: public_raw,
             });
         }
     }
@@ -2668,6 +2153,65 @@ pub fn read_session_transcript(
         next_before: (start > 0).then_some(start),
         invalid_lines,
     })
+}
+
+fn redact_session_entry(entry: &Value, kind: &str) -> Value {
+    if kind != "compaction" {
+        return entry.clone();
+    }
+    let mut public = entry.clone();
+    if let Some(object) = public.as_object_mut() {
+        object.remove("summary");
+    }
+    public
+}
+
+fn parse_session_compaction(entry: &Value) -> SessionContentBlock {
+    let tokens_before = entry.get("tokensBefore").and_then(Value::as_u64);
+    let estimated_tokens_after = entry.get("estimatedTokensAfter").and_then(Value::as_u64);
+    let estimated_tokens_saved = tokens_before
+        .zip(estimated_tokens_after)
+        .map(|(before, after)| before.saturating_sub(after));
+    SessionContentBlock::Compaction {
+        reason: entry
+            .get("reason")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        status: entry
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("completed")
+            .to_owned(),
+        tokens_before,
+        estimated_tokens_after,
+        estimated_tokens_saved,
+        first_kept_entry_id: entry
+            .get("firstKeptEntryId")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        from_hook: entry
+            .get("fromHook")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        read_file_count: entry
+            .pointer("/details/readFiles")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+        modified_file_count: entry
+            .pointer("/details/modifiedFiles")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+        will_retry: entry
+            .get("willRetry")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        error: entry
+            .get("errorMessage")
+            .or_else(|| entry.get("error"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        usage_known: false,
+    }
 }
 
 fn parse_session_blocks(message: &Value) -> Vec<SessionContentBlock> {
@@ -2723,7 +2267,10 @@ fn parse_session_blocks(message: &Value) -> Vec<SessionContentBlock> {
             && let Some(reviews) = message.pointer("/details/reviews")
         {
             match serde_json::from_value::<Vec<SubagentReview>>(reviews.clone()) {
-                Ok(reviews) => blocks.push(SessionContentBlock::Subagents { reviews }),
+                Ok(reviews) => blocks.push(SessionContentBlock::Subagents {
+                    reviews,
+                    selection: message.pointer("/details/selection").cloned(),
+                }),
                 Err(_) => blocks.push(SessionContentBlock::Unknown {
                     block_type: "subagents".to_owned(),
                     raw: reviews.clone(),
@@ -2781,29 +2328,6 @@ fn parse_session_block(block: &Value) -> SessionContentBlock {
             block_type: block_type.unwrap_or("unknown").to_owned(),
             raw: block.clone(),
         },
-    }
-}
-
-fn strip_task_detail(
-    task: &mut crate::models::RequirementExecutionTask,
-    keep_branch: bool,
-    keep_trace_and_files: bool,
-) {
-    task.pi_session_file = None;
-    task.worktree_path = None;
-    if !keep_branch {
-        task.branch_name = None;
-    }
-    if !keep_trace_and_files {
-        task.failure_summary = None;
-        task.recovery_guidance = None;
-        task.last_review_feedback = None;
-        task.pull_request_url = None;
-        task.merged_into = None;
-        task.cleanup_summary = None;
-        task.review_history.clear();
-        task.trace = None;
-        task.target_files.clear();
     }
 }
 

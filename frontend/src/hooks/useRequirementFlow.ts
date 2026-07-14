@@ -42,7 +42,7 @@ export function useRequirementFlow(
   setProjectCanvas: (data: ProjectCanvasData) => void,
   loadProjectCanvas: (
     projectId: string,
-    dagRequirementId?: string | null,
+    workflowRequirementId?: string | null,
   ) => Promise<ProjectCanvasData>,
   observeRequirement: (requirementId: string) => void,
   allRequirements: Requirement[] = EMPTY_REQUIREMENTS,
@@ -528,20 +528,25 @@ export function useRequirementFlow(
       return;
     }
 
-    const dagSummaryMode = true;
+    const workflowSummaryMode = true;
     const canvasRefreshEvents = new Set([
       "clarifications_ready",
       "draft_ready",
-      "execution_plan_ready",
-      "execution_plan_failed",
-      "execution_started",
-      "execution_task_started",
-      "execution_task_completed",
-      "execution_task_failed",
-      "execution_task_retrying",
-      "execution_task_guided",
-      "execution_completed",
-      "execution_failed",
+      "workflow_plan_ready",
+      "workflow_plan_failed",
+      "workflow_started",
+      "work_item_fix_scheduled",
+      "work_item_attempt_started",
+      "work_item_attempt_failed",
+      "work_item_ready",
+      "work_item_validation_failed",
+      "checkpoint_review_started",
+      "checkpoint_review_retry",
+      "stage_checkpoint_approved",
+      "workflow_rescue_started",
+      "workflow_rescue_completed",
+      "workflow_completed",
+      "workflow_blocked",
     ]);
 
     const flushRequirementEvents = () => {
@@ -552,7 +557,7 @@ export function useRequirementFlow(
       if (batch.some((event) => canvasRefreshEvents.has(event.event))) {
         void loadProjectCanvas(
           selectedProjectId,
-          dagSummaryMode ? observedRequirementId : null,
+          workflowSummaryMode ? observedRequirementId : null,
         ).catch((reason) => setRequirementError(readError(reason)));
       }
     };
@@ -567,7 +572,7 @@ export function useRequirementFlow(
 
     const source = new EventSource(
       `/api/requirements/${encodeURIComponent(observedRequirementId)}/events${
-        dagSummaryMode ? "?include_pi_events=false" : ""
+        workflowSummaryMode ? "?include_pi_events=false" : ""
       }`,
     );
 
@@ -581,7 +586,7 @@ export function useRequirementFlow(
         if (parsed.requirement_id !== observedRequirementId) {
           return;
         }
-        if (dagSummaryMode && parsed.event === "pi_event") {
+        if (workflowSummaryMode && parsed.event === "pi_event") {
           return;
         }
         requirementEventBufferRef.current.push(parsed);
@@ -601,17 +606,23 @@ export function useRequirementFlow(
       "analysis_failed",
       "analysis_cancelled",
       "coordinator_time_warning",
-      "execution_planning_started",
-      "execution_plan_ready",
-      "execution_plan_failed",
-      "execution_started",
-      "execution_task_started",
-      "execution_task_completed",
-      "execution_task_failed",
-      "execution_task_retrying",
-      "execution_task_guided",
-      "execution_completed",
-      "execution_failed",
+      "coordinator_token_budget_warning",
+      "workflow_planning_started",
+      "workflow_plan_ready",
+      "workflow_plan_failed",
+      "workflow_started",
+      "work_item_fix_scheduled",
+      "work_item_attempt_started",
+      "work_item_attempt_failed",
+      "work_item_ready",
+      "work_item_validation_failed",
+      "checkpoint_review_started",
+      "checkpoint_review_retry",
+      "stage_checkpoint_approved",
+      "workflow_rescue_started",
+      "workflow_rescue_completed",
+      "workflow_completed",
+      "workflow_blocked",
     ]) {
       source.addEventListener(eventName, handleEvent);
     }

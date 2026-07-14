@@ -28,6 +28,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: review-extension-test
+        name: 测试受管并行审核 extension
+        entry: node --test src/pi/assets/raccoon-review-orchestrator.test.mjs src/pi/assets/raccoon-task-runtime.test.mjs
+        language: system
+        files: ^src/pi/assets/raccoon-(review-(orchestrator|worker)|task-runtime)(\.test)?\.mjs$
+        pass_filenames: false
+
       - id: prettier
         name: 使用 Prettier 检查 TS/TSX/CSS 文件
         entry: npm --prefix frontend run format:check
@@ -72,7 +79,7 @@ repos:
 
       - id: cargo-test
         name: 运行 Rust 单元测试
-        entry: cargo test
+        entry: cargo test -- --test-threads=1
         language: system
         files: \.rs$
         pass_filenames: false

@@ -31,7 +31,7 @@ export function useRequirementPlanningThinking() {
   );
   let planningStart = -1;
   for (let index = planningEvents.length - 1; index >= 0; index -= 1) {
-    if (planningEvents[index].event === "execution_planning_started") {
+    if (planningEvents[index].event === "workflow_planning_started") {
       planningStart = index;
       break;
     }

@@ -1,25 +1,21 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildProjectChatNode,
-  buildProjectGitNode,
-  buildProjectNodes,
-  buildProjectSettingsNode,
-  buildRequirementDagEdges,
-  mergeProjectNodes,
-  type BuildProjectNodesParams,
-} from "./buildProjectNodes";
 import type {
   Project,
   ProjectCanvasData,
   Requirement,
-  RequirementExecutionTask,
+  WorkflowSnapshot,
 } from "../types/api";
+import {
+  buildProjectNodes,
+  buildWorkflowRunEdges,
+  type BuildProjectNodesParams,
+} from "./buildProjectNodes";
 
 const now = new Date(0).toISOString();
 
 function project(): Project {
   return {
-    id: "project",
+    id: "current",
     name: "Project",
     git_url: "https://example.com/repo.git",
     local_path: "/tmp/repo",
@@ -28,597 +24,140 @@ function project(): Project {
   };
 }
 
-function task(
-  id: string,
-  kind: RequirementExecutionTask["kind"] = "implementation",
-  extra: Partial<RequirementExecutionTask> = {},
-): RequirementExecutionTask {
+function requirement(): Requirement {
   return {
-    id,
-    title: id,
-    description: id,
-    depends_on: [],
-    kind,
-    model_tier: "medium",
-    timeout_seconds: 60,
-    pi_session_file: null,
-    branch_name: null,
-    worktree_path: null,
-    review_for: null,
-    review_angle: null,
-    review_status: "pending",
-    attempt: 0,
-    execution_failure_count: 0,
-    review_rejection_count: 0,
-    recovery_stage: "none",
-    failure_summary: null,
-    recovery_guidance: null,
-    high_tier_execution_used: false,
-    last_review_feedback: null,
-    pull_request_url: null,
-    merged_into: null,
-    cleanup_summary: null,
-    execution_warning: null,
-    trace: null,
-    status: "pending",
-    target_files: [],
-    result_summary: null,
-    error: null,
-    review_history: [],
-    ...extra,
-  };
-}
-
-function requirement(
-  tasks: RequirementExecutionTask[] = [task("implementation")],
-): Requirement {
-  return {
-    id: "requirement",
-    project_id: "project",
-    title: "Requirement",
-    original_message: "Requirement",
+    id: "requirement-1",
+    project_id: "current",
+    title: "WorkflowRun",
+    original_message: "refactor",
     origin: "standalone",
-    status: "queued",
+    status: "running",
     messages: [],
     clarification_round: 0,
     clarifications: [],
     draft: null,
-    execution_plan: {
-      summary: "Plan",
-      tasks,
-    },
     error: null,
     created_at: now,
     updated_at: now,
   };
 }
 
-function params(
-  projectCanvas: ProjectCanvasData,
-  selectedDagRequirement: Requirement | null,
-): BuildProjectNodesParams {
+function workflow(itemCount = 2): WorkflowSnapshot {
   return {
-    projectCanvas,
-    project: projectCanvas.project,
-    selectedDagRequirement,
-    selectedDagRequirementId: selectedDagRequirement?.id ?? null,
-    collapsedTaskGroups: new Set(),
+    run: {
+      id: "run-1",
+      requirement_id: "requirement-1",
+      project_id: "current",
+      status: "running",
+      change_spec: {
+        intent: "WorkflowRun",
+        acceptance_scenarios: [
+          { id: "b1", given: "已有项目", when: "执行需求", then: "行为生效" },
+        ],
+        explicit_constraints: [],
+        non_goals: [],
+      },
+      design_notes: [],
+      plan_summary: "真实工作计划",
+      source_revision: 1,
+      rescue_used: false,
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    },
+    work_items: Array.from({ length: itemCount }, (_, index) => ({
+      id: `item-${index}`,
+      run_id: "run-1",
+      position: index,
+      objective: `工作项 ${index}`,
+      scenario_refs: ["b1"],
+      group: null,
+      scope_hints: [`src/${index}.rs`],
+      verification_goals: ["行为生效"],
+      status: index === 0 ? "running" : "pending",
+      attempt_count: index === 0 ? 1 : 0,
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    })),
+    dependencies: Array.from(
+      { length: Math.max(0, itemCount - 1) },
+      (_, index) => ({
+        work_item_id: `item-${index + 1}`,
+        depends_on_id: `item-${index}`,
+      }),
+    ),
+    attempts: [],
+    checkpoints: [],
+    validations: [],
+    findings: [],
+    last_event_sequence: 0,
+  };
+}
+
+function params(canvas: ProjectCanvasData): BuildProjectNodesParams {
+  const selected = canvas.active_requirement;
+  return {
+    projectCanvas: canvas,
+    project: canvas.project,
+    selectedWorkflowRequirement: selected,
+    selectedWorkflowRequirementId: selected?.id ?? null,
     requirementActionBusyId: null,
-    recoveringTaskGroupIds: new Set(),
     requirementActionError: null,
     tokenUsageExpanded: false,
-    closeDag: () => {},
-    selectDagRequirement: () => {},
+    closeWorkflow: () => {},
+    selectWorkflowRequirement: () => {},
     planRequirement: async () => {},
-    recoverTaskGroup: async () => {},
-    toggleTaskGroupCollapsed: () => {},
     onToggleTokenUsageExpanded: () => {},
   };
 }
 
-describe("buildProjectNodes", () => {
-  it("replaces only the chat node when high-frequency chat state changes", () => {
-    const selectedRequirement = requirement();
+describe("buildProjectNodes WorkflowRun", () => {
+  it("renders only real work items for the selected WorkflowRun", () => {
+    const selected = requirement();
     const canvas: ProjectCanvasData = {
       project: project(),
-      active_requirement: selectedRequirement,
-      queued_requirements: [selectedRequirement],
-      completed_requirements: [],
-    };
-    const structure = buildProjectNodes(params(canvas, selectedRequirement));
-    const chatParams = {
-      projectCanvas: canvas,
-      project: canvas.project,
-      requirementConversation: null,
-      requirementTimeline: [],
-      hasOlderRequirementHistory: false,
-      requirementBusy: false,
-      requirementOpeningId: null,
-      requirementError: null,
-      requirementStreamEvents: [],
-      projectChat: null,
-      projectChatBusy: false,
-      projectChatError: null,
-      projectChatEvents: [],
-      dismissedPromptRequirementId: null,
-      loadOlderRequirementHistory: async () => false,
-      startRequirement: async () => true,
-      sendRequirementMessage: async () => true,
-      sendProjectChatMessage: async () => true,
-      resetProjectChat: async () => true,
-      submitClarifications: async () => true,
-      confirmRequirement: async () => {},
-      continueEditingRequirement: () => {},
-      cancelRequirementAnalysis: async () => {},
-      abandonRequirement: async () => {},
-    };
-    const first = mergeProjectNodes(
-      structure,
-      buildProjectChatNode(chatParams),
-    );
-    const second = mergeProjectNodes(
-      structure,
-      buildProjectChatNode({ ...chatParams, requirementBusy: true }),
-    );
-
-    for (const node of structure) {
-      expect(second.find((candidate) => candidate.id === node.id)).toBe(node);
-    }
-    expect(second.find((node) => node.id === "requirement-chat")).not.toBe(
-      first.find((node) => node.id === "requirement-chat"),
-    );
-  });
-
-  it("forwards requirement creation acceptance to the chat node", async () => {
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
+      active_requirement: selected,
       queued_requirements: [],
       completed_requirements: [],
+      workflow_runs: [workflow()],
     };
-    let accepted = false;
-    const node = buildProjectChatNode({
-      projectCanvas: canvas,
-      project: canvas.project,
-      requirementConversation: null,
-      requirementTimeline: [],
-      hasOlderRequirementHistory: false,
-      requirementBusy: false,
-      requirementOpeningId: null,
-      requirementError: null,
-      requirementStreamEvents: [],
-      projectChat: null,
-      projectChatBusy: false,
-      projectChatError: null,
-      projectChatEvents: [],
-      dismissedPromptRequirementId: null,
-      loadOlderRequirementHistory: async () => false,
-      startRequirement: async () => accepted,
-      sendRequirementMessage: async () => true,
-      sendProjectChatMessage: async () => true,
-      resetProjectChat: async () => true,
-      submitClarifications: async () => true,
-      confirmRequirement: async () => {},
-      continueEditingRequirement: () => {},
-      cancelRequirementAnalysis: async () => {},
-      abandonRequirement: async () => {},
-    });
-    expect(node?.data.kind).toBe("requirement-chat");
-    if (!node || node.data.kind !== "requirement-chat") return;
+    const nodes = buildProjectNodes(params(canvas));
 
+    expect(nodes.some((node) => node.id === "workflow-run")).toBe(true);
     expect(
-      await node.data.onStartRequirement("登录改造", {
-        references: [{ path: "README.md" }],
-        images: [],
-      }),
-    ).toBe(false);
-
-    accepted = true;
-    expect(
-      await node.data.onStartRequirement("登录改造", {
-        references: [{ path: "README.md" }],
-        images: [],
-      }),
-    ).toBe(true);
+      nodes.filter((node) => node.data.kind === "workflow-item"),
+    ).toHaveLength(2);
   });
 
-  it("builds the Git node below the pending list with phased dimensions", () => {
+  it("keeps every Workflow edge endpoint valid for a large plan", () => {
+    const selected = requirement();
+    const run = workflow(60);
     const canvas: ProjectCanvasData = {
       project: project(),
-      active_requirement: null,
+      active_requirement: selected,
       queued_requirements: [],
       completed_requirements: [],
+      workflow_runs: [run],
     };
-    const base = {
-      projectCanvas: canvas,
-      project: canvas.project,
-      status: null,
-      diff: null,
-      selectedPaths: new Set<string>(),
-      selectedDiff: null,
-      busy: false,
-      error: null,
-      lastResult: null,
-      onToggleExpanded: () => {},
-      onRefresh: async () => {},
-      onTogglePath: () => {},
-      onSelectDiff: async () => {},
-      onAction: async () => true,
-    };
-
-    const collapsed = buildProjectGitNode({
-      ...base,
-      phase: "collapsed",
-    })!;
-    const expanded = buildProjectGitNode({ ...base, phase: "expanded" })!;
-
-    expect(collapsed.position).toEqual({ x: 984, y: 800 });
-    expect(collapsed.style).toMatchObject({ width: 360, height: 44 });
-    expect(expanded.position).toEqual({ x: 984, y: 800 });
-    expect(expanded.style).toMatchObject({ width: 1320, height: 780 });
-    expect(expanded.className).toContain("git-flow-node");
-  });
-
-  it("builds one settings workbench that expands toward the upper left", () => {
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [],
-      completed_requirements: [],
-    };
-    const base = {
-      projectCanvas: canvas,
-      project: canvas.project,
-      page: "basic" as const,
-      basicSettings: null,
-      basicError: null,
-      savingBasic: false,
-      savingTheme: false,
-      modelSettings: {
-        low: { model_id: null, thinking_level: "low" as const },
-        medium: { model_id: null, thinking_level: "medium" as const },
-        high: { model_id: null, thinking_level: "high" as const },
-      },
-      models: [],
-      modelRpcStatus: "idle" as const,
-      modelError: null,
-      savingModels: false,
-      terminalDisabled: false,
-      terminalAccessRequired: false,
-      terminalAccessAuthorized: true,
-      terminalAccessBusy: false,
-      terminalAccessError: null,
-      piLoginSession: null,
-      piLoginBusy: false,
-      piLoginError: null,
-      needsModelOnboarding: true,
-      modelDraftComplete: false,
-      modelSavedComplete: false,
-      onToggleExpanded: () => {},
-      onOpenBasic: () => {},
-      onOpenModels: () => {},
-      onBasicChange: () => {},
-      onThemeChange: async () => {},
-      onSaveBasic: async () => null,
-      onModelChange: () => {},
-      onSaveModels: async () => {},
-      onReloadModels: async () => {},
-      onAuthorizeTerminalAccess: async () => true,
-      onStartPiLogin: async () => {},
-      onClosePiLogin: async () => {},
-    };
-    const collapsed = buildProjectSettingsNode({
-      ...base,
-      expanded: false,
-    })!;
-    const expanded = buildProjectSettingsNode({ ...base, expanded: true })!;
-
-    expect(collapsed.position).toEqual({ x: 0, y: -44 });
-    expect(collapsed.style).toMatchObject({ width: 960, height: 44 });
-    expect(expanded.position).toEqual({ x: -180, y: -800 });
-    expect(expanded.style).toMatchObject({ width: 1320, height: 780 });
-    expect(expanded.data.kind).toBe("project-settings");
-    expect(buildProjectNodes(params(canvas, null))).not.toContainEqual(
-      expect.objectContaining({ id: "settings" }),
-    );
-  });
-
-  it("places the DAG entry to the right of the project requirement list", () => {
-    const selectedRequirement = requirement();
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [selectedRequirement],
-      completed_requirements: [],
-    };
-
-    const nodes = buildProjectNodes(params(canvas, selectedRequirement));
-    const requirements = nodes.find((node) => node.id === "requirements");
-    const dag = nodes.find((node) => node.id === "requirement-dag");
-
-    expect(requirements).toBeDefined();
-    expect(dag).toBeDefined();
-    expect(dag!.position.x).toBeGreaterThan(
-      requirements!.position.x + (requirements!.width ?? 0),
-    );
-  });
-
-  it("adds token usage above the merged requirements node", () => {
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [],
-      completed_requirements: [],
-      token_usage: {
-        chat: { input: 1, output: 2, cache_read: 3, cache_write: 4 },
-        split: { input: 5, output: 6, cache_read: 7, cache_write: 8 },
-        task: { input: 10, output: 20, cache_read: 30, cache_write: 40 },
-        total: { input: 16, output: 28, cache_read: 40, cache_write: 52 },
-      },
-    };
-
-    const nodes = buildProjectNodes(params(canvas, null));
-    const token = nodes.find((node) => node.id === "token-usage")!;
-    const requirements = nodes.find((node) => node.id === "requirements")!;
-
-    expect(token.position).toEqual({ x: 984, y: -44 });
-    expect(token.width).toBe(360);
-    expect(requirements.position).toEqual({ x: 984, y: 20 });
-    expect(requirements.height).toBe(760);
-    expect(token.data).toMatchObject({
-      kind: "token-usage",
-      usage: canvas.token_usage,
-    });
-    expect(token.height).toBe(44);
-  });
-
-  it("passes recovery errors to the selected DAG node", () => {
-    const selectedRequirement = requirement();
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [selectedRequirement],
-      completed_requirements: [],
-    };
-    const buildParams = params(canvas, selectedRequirement);
-    buildParams.requirementActionError = "恢复失败";
-
-    const dag = buildProjectNodes(buildParams).find(
-      (node) => node.id === "requirement-dag",
-    )!;
-
-    expect(dag.data).toMatchObject({
-      kind: "requirement-dag",
-      actionError: "恢复失败",
-    });
-  });
-
-  it("only marks the recovering top-level task as busy", () => {
-    const selectedRequirement = requirement([
-      task("implementation", "implementation", { status: "failed" }),
-      task("merge", "branch_merge", { status: "failed" }),
-    ]);
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: selectedRequirement,
-      queued_requirements: [],
-      completed_requirements: [],
-    };
-
-    const buildParams = params(canvas, selectedRequirement);
-    buildParams.recoveringTaskGroupIds.add("requirement:implementation");
-    const taskNodes = buildProjectNodes(buildParams).filter(
-      (node) => node.data.kind === "requirement-task",
-    );
-    const implementationNodes = taskNodes.filter(
-      (node) =>
-        node.id === "requirement-task-group-implementation" ||
-        node.parentId === "requirement-task-group-implementation",
-    );
-    const mergeNode = taskNodes.find(
-      (node) => node.id === "requirement-task-merge",
-    )!;
-
-    expect(
-      implementationNodes.every(
-        (node) => node.data.kind === "requirement-task" && node.data.busy,
-      ),
-    ).toBe(true);
-    expect(mergeNode.data).toMatchObject({ busy: false });
-  });
-
-  it("keeps the first task 130px to the right of the DAG", () => {
-    const selectedRequirement = requirement();
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [selectedRequirement],
-      completed_requirements: [],
-    };
-
-    const nodes = buildProjectNodes(params(canvas, selectedRequirement));
-    const dag = nodes.find((node) => node.id === "requirement-dag")!;
-    const firstTask = nodes.find(
-      (node) => node.id === "requirement-task-group-implementation",
-    )!;
-
-    expect(firstTask.position.x - (dag.position.x + (dag.width ?? 0))).toBe(
-      120,
-    );
-  });
-
-  it("injects resolved dependencies into standalone task details", () => {
-    const implementation = task("implementation", "implementation", {
-      title: "实现登录",
-    });
-    const merge = task("merge", "branch_merge", {
-      depends_on: ["implementation", "missing"],
-    });
-    const selectedRequirement = requirement([implementation, merge]);
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [selectedRequirement],
-      completed_requirements: [],
-    };
-
-    const mergeNode = buildProjectNodes(
-      params(canvas, selectedRequirement),
-    ).find((node) => node.id === "requirement-task-merge")!;
-
-    expect(mergeNode.data).toMatchObject({
-      kind: "requirement-task",
-      dependencies: [{ id: "implementation", title: "实现登录" }],
-    });
-  });
-
-  it("uses dependency layout for task children and keeps them in the group", () => {
-    const implementation = task("implementation");
-    const subAgents = Array.from({ length: 5 }, (_, index) =>
-      task(`review-${index}`, "review_sub_agent", {
-        depends_on: ["implementation"],
-        review_for: "implementation",
-      }),
-    );
-    const summary = task("summary", "review_summary", {
-      depends_on: subAgents.map((review) => review.id),
-      review_for: "implementation",
-    });
-    const selectedRequirement = requirement([
-      implementation,
-      ...subAgents,
-      summary,
-    ]);
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [selectedRequirement],
-      completed_requirements: [],
-    };
-
-    const nodes = buildProjectNodes(params(canvas, selectedRequirement));
-    const group = nodes.find(
-      (node) => node.id === "requirement-task-group-implementation",
-    )!;
-    const code = nodes.find(
-      (node) => node.id === "requirement-task-implementation",
-    )!;
-    const firstReview = nodes.find(
-      (node) => node.id === "requirement-task-review-0",
-    )!;
-    const summaryNode = nodes.find(
-      (node) => node.id === "requirement-task-summary",
-    )!;
-
-    expect(code.position.x).toBeLessThan(firstReview.position.x);
-    expect(firstReview.position.x).toBeLessThan(summaryNode.position.x);
-    expect({ width: code.width, height: code.height }).toEqual({
-      width: 180,
-      height: 120,
-    });
-    expect(group.height).toBeGreaterThan(200);
-    for (const child of nodes.filter((node) => node.parentId === group.id)) {
-      expect(child.position.x + (child.width ?? 0)).toBeLessThanOrEqual(
-        group.width ?? 0,
-      );
-      expect(child.position.y + (child.height ?? 0)).toBeLessThanOrEqual(
-        group.height ?? 0,
-      );
-    }
-  });
-
-  it("keeps compact review child size stable when failed", () => {
-    const implementation = task("implementation");
-    const failedReview = task("review-1", "review_sub_agent", {
-      status: "failed",
-      review_for: "implementation",
-    });
-    const completedReview = task("review-2", "review_sub_agent", {
-      status: "completed",
-      review_for: "implementation",
-    });
-    const selectedRequirement = requirement([
-      implementation,
-      failedReview,
-      completedReview,
-    ]);
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [selectedRequirement],
-      completed_requirements: [],
-    };
-
-    const nodes = buildProjectNodes(params(canvas, selectedRequirement));
-    const failed = nodes.find(
-      (node) => node.id === "requirement-task-review-1",
-    )!;
-    const completed = nodes.find(
-      (node) => node.id === "requirement-task-review-2",
-    )!;
-
-    expect({ width: failed.width, height: failed.height }).toEqual({
-      width: 180,
-      height: 64,
-    });
-    expect({ width: completed.width, height: completed.height }).toEqual({
-      width: 180,
-      height: 64,
-    });
-  });
-
-  it("keeps collapsed groups at 82px without child nodes", () => {
-    const selectedRequirement = requirement();
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [selectedRequirement],
-      completed_requirements: [],
-    };
-    const collapsedParams = params(canvas, selectedRequirement);
-    collapsedParams.collapsedTaskGroups = new Set([
-      "requirement:implementation",
-    ]);
-
-    const nodes = buildProjectNodes(collapsedParams);
-    const group = nodes.find(
-      (node) => node.id === "requirement-task-group-implementation",
-    )!;
-
-    expect(group.height).toBe(76);
-    expect(nodes.some((node) => node.parentId === group.id)).toBe(false);
-  });
-
-  it("keeps every edge endpoint valid with more than 50 DAG nodes", () => {
-    const tasks = Array.from({ length: 11 }, (_, index) => {
-      const implementation = task(`implementation-${index}`);
-      const reviews = Array.from({ length: 3 }, (_, reviewIndex) =>
-        task(`review-${index}-${reviewIndex}`, "review_sub_agent", {
-          depends_on: [implementation.id],
-          review_for: implementation.id,
-        }),
-      );
-      const summary = task(`summary-${index}`, "review_summary", {
-        depends_on: reviews.map((review) => review.id),
-        review_for: implementation.id,
-      });
-      return [implementation, ...reviews, summary];
-    }).flat();
-    const selectedRequirement = requirement(tasks);
-    const canvas: ProjectCanvasData = {
-      project: project(),
-      active_requirement: null,
-      queued_requirements: [selectedRequirement],
-      completed_requirements: [],
-    };
-    const nodes = buildProjectNodes(params(canvas, selectedRequirement));
+    const nodes = buildProjectNodes(params(canvas));
     const nodeIds = new Set(nodes.map((node) => node.id));
-    const edges = buildRequirementDagEdges(selectedRequirement, new Set());
-
-    expect(nodes.length).toBeGreaterThan(50);
-    for (const edge of edges) {
+    for (const edge of buildWorkflowRunEdges(selected, run)) {
       expect(nodeIds.has(edge.source), edge.id).toBe(true);
       expect(nodeIds.has(edge.target), edge.id).toBe(true);
     }
+  });
+
+  it("still renders requirements and token usage before a plan exists", () => {
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: null,
+      queued_requirements: [requirement()],
+      completed_requirements: [],
+      workflow_runs: [],
+    };
+    const nodes = buildProjectNodes(params(canvas));
+    expect(nodes.some((node) => node.id === "requirements")).toBe(true);
+    expect(nodes.some((node) => node.id === "token-usage")).toBe(true);
   });
 });

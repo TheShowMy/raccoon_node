@@ -17,15 +17,35 @@ async function run(command, args, timeout = 60_000) {
       if (timer) clearTimeout(timer);
       code === 0
         ? resolve()
-        : reject(new Error(`命令失败 (${signal ?? code}): ${command} ${args.join(" ")}`));
+        : reject(
+            new Error(
+              `命令失败 (${signal ?? code}): ${command} ${args.join(" ")}`,
+            ),
+          );
     });
   });
 }
 
 await run(process.execPath, [npmCli, "--prefix", "frontend", "run", "check"]);
-await run(process.execPath, [npmCli, "--prefix", "frontend", "run", "test", "--", "--run"]);
+await run(process.execPath, [
+  npmCli,
+  "--prefix",
+  "frontend",
+  "run",
+  "test",
+  "--",
+  "--run",
+]);
 await run(process.execPath, [npmCli, "--prefix", "frontend", "run", "build"]);
-await run(process.execPath, ["--test", "packages/raccoon-node/test/binary.test.js"]);
+await run(process.execPath, [
+  "--test",
+  "src/pi/assets/raccoon-review-orchestrator.test.mjs",
+  "src/pi/assets/raccoon-task-runtime.test.mjs",
+]);
+await run(process.execPath, [
+  "--test",
+  "packages/raccoon-node/test/binary.test.js",
+]);
 process.env.RACCOON_SKIP_FRONTEND_BUILD = "1";
 await run("cargo", ["test", "--no-run"], 0);
 await run("cargo", ["test"]);

@@ -82,6 +82,7 @@ export default function TokenUsageNode({ data }: { data: Data }) {
                 >
                   {item.label} · {item.role} ·{" "}
                   {formatCompactNumber(categoryTotal(item.usage))}
+                  {item.budget_exceeded ? " · 已超观测预算" : ""}
                 </Text>
               ))}
               {(usage.sources ?? []).slice(0, 3).map((item) => (

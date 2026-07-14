@@ -38,7 +38,6 @@ const requirement: Requirement = {
   clarification_round: 0,
   clarifications: [],
   draft: null,
-  execution_plan: null,
   error: null,
   created_at: now,
   updated_at: now,
@@ -137,9 +136,17 @@ describe("useRequirementFlow", () => {
       prompt: {
         type: "confirmation",
         draft: {
-          title: "测试需求",
-          summary: "确认前草案",
-          acceptance_criteria: ["保留完整记录"],
+          intent: "测试需求",
+          acceptance_scenarios: [
+            {
+              id: "scenario-1",
+              given: "需求已确认",
+              when: "执行工作流",
+              then: "保留完整记录",
+            },
+          ],
+          explicit_constraints: [],
+          non_goals: [],
         },
         prompt_id: "prompt-1",
         revision: 1,
@@ -569,7 +576,7 @@ describe("useRequirementFlow", () => {
     ).toEqual(["agent.event", "snapshot.changed"]);
   });
 
-  it("keeps DAG summary events out of memory and refreshes on task boundaries", async () => {
+  it("keeps workflow summary events out of memory and refreshes on work-item boundaries", async () => {
     const loadProjectCanvas = vi.fn().mockResolvedValue(canvas);
     const { result } = renderHook(() =>
       useRequirementFlow(
@@ -587,9 +594,9 @@ describe("useRequirementFlow", () => {
     );
 
     act(() => {
-      source.emit("execution_started", {
+      source.emit("workflow_started", {
         requirement_id: "other-requirement",
-        event: "execution_started",
+        event: "workflow_started",
         message: "other",
       });
     });
@@ -605,10 +612,10 @@ describe("useRequirementFlow", () => {
           message: `event-${index}`,
         });
       }
-      source.emit("execution_task_started", {
+      source.emit("work_item_attempt_started", {
         requirement_id: requirement.id,
         task_id: "task-1",
-        event: "execution_task_started",
+        event: "work_item_attempt_started",
         message: "started",
       });
     });

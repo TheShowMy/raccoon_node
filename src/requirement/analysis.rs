@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 
 use crate::models::{
-    RequirementAnalysisInput, RequirementAnalysisOutput, RequirementClarification,
-    RequirementDraft, RequirementMessageRole, RequirementStatus,
+    ChangeSpec, RequirementAnalysisInput, RequirementAnalysisOutput, RequirementClarification,
+    RequirementMessageRole, RequirementStatus,
 };
 use crate::prompt::{
     PromptRenderer, PromptSourceDelivery, PromptSourceKind, RenderedPrompt,
@@ -48,7 +48,12 @@ pub fn build_requirement_prompt(
 
     let mut renderer = PromptRenderer::new("requirement_coordinator")
         .add_source(PromptSourceKind::Global, "raccoon", GLOBAL_PROMPT)
-        .add_source(PromptSourceKind::Skill, "requirement_coordinator", skill);
+        .add_source(PromptSourceKind::Skill, "requirement_coordinator", skill)
+        .add_source(
+            PromptSourceKind::InlinePolicy,
+            "behavior_first_draft",
+            "ChangeSpec 只描述 intent、given/when/then 行为场景、带原消息 ID 与原文摘录的用户显式约束，以及 non_goals。行为场景禁止文件名、路径、CSS 变量、函数/API/组件精确名称和命令。",
+        );
     if session_reused {
         renderer = renderer.add_source(
             PromptSourceKind::RequirementContext,
@@ -93,14 +98,25 @@ fn format_requirement_context(input: &RequirementAnalysisInput) -> String {
     let user_messages = input
         .messages
         .iter()
-        .filter(|message| message.role == RequirementMessageRole::User)
-        .map(|message| message.content.trim())
-        .filter(|message| !message.is_empty())
+        .enumerate()
+        .filter(|(_, message)| message.role == RequirementMessageRole::User)
+        .filter(|(_, message)| !message.content.trim().is_empty())
+        .map(|(index, message)| (format!("message-{}", index + 1), message.content.trim()))
         .collect::<Vec<_>>();
-    let original = user_messages.first().copied().unwrap_or("未提供");
-    let latest = user_messages.last().copied().unwrap_or("未提供");
+    let original = user_messages
+        .first()
+        .map(|(id, content)| format!("[{id}] {content}"))
+        .unwrap_or_else(|| "未提供".to_owned());
+    let latest = user_messages
+        .last()
+        .map(|(id, content)| format!("[{id}] {content}"))
+        .unwrap_or_else(|| "未提供".to_owned());
     let previous = if user_messages.len() > 2 {
-        user_messages[1..user_messages.len() - 1].join("\n- ")
+        user_messages[1..user_messages.len() - 1]
+            .iter()
+            .map(|(id, content)| format!("[{id}] {content}"))
+            .collect::<Vec<_>>()
+            .join("\n- ")
     } else {
         "无".to_owned()
     };
@@ -109,10 +125,17 @@ fn format_requirement_context(input: &RequirementAnalysisInput) -> String {
         .as_ref()
         .map(|draft| {
             format!(
-                "标题：{}\n摘要：{}\n验收标准：\n- {}",
-                draft.title,
-                draft.summary,
-                draft.acceptance_criteria.join("\n- ")
+                "intent：{}\n行为场景：\n{}",
+                draft.intent,
+                draft
+                    .acceptance_scenarios
+                    .iter()
+                    .map(|scenario| format!(
+                        "- {}: Given {} / When {} / Then {}",
+                        scenario.id, scenario.given, scenario.when, scenario.then
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             )
         })
         .unwrap_or_else(|| "无".to_owned());
@@ -144,11 +167,11 @@ fn format_requirement_context(input: &RequirementAnalysisInput) -> String {
     };
 
     let mut context = format!(
-        "原始需求：{original}\n此前补充：{previous}\n上一版确认草案：\n{draft}\n已有澄清：{clarifications}\n本轮输入：{latest}"
+        "原始需求：{original}\n此前补充：{previous}\n上一版 ChangeSpec：\n{draft}\n已有澄清：{clarifications}\n本轮输入：{latest}"
     );
     if input.draft.is_some() {
         context.push_str(
-            "\n\n续写/修订规则：\n- 这不是一个新需求，必须基于上一版确认草案修订。\n- 如果本轮输入明确要求先给澄清项、候选方案或让用户选择，必须先调用 request_clarifications，选项不得提前写入确认草案。\n- 否则默认继承上一版确认草案中未被本轮输入明确否定的内容。\n- 本轮输入是对上一版草案的补充/修订，不是独立需求。\n- 新版 submit_requirement_draft 必须覆盖完整需求，而不是只描述本轮新增内容。\n- 禁止把本轮输入当成新的独立需求。",
+            "\n\n续写/修订规则：\n- 这不是一个新需求，必须基于上一版 ChangeSpec 修订。\n- 如果本轮输入明确要求先给澄清项、候选方案或让用户选择，必须先调用 request_clarifications。\n- 否则默认继承未被明确否定的行为场景。\n- submit_change_spec 必须覆盖完整需求。\n- 技术细节只有用户明确指定时才可进入 explicit_constraints，并且必须引用本上下文给出的消息 ID 与原文摘录。\n- 行为场景禁止代码名称、路径、CSS/API 和命令。",
         );
     }
     context
@@ -167,10 +190,10 @@ enum RequirementToolDetails {
         message: String,
         questions: Vec<RequirementClarification>,
     },
-    Draft {
+    ChangeSpec {
         progress: String,
         message: String,
-        draft: RequirementDraft,
+        change_spec: ChangeSpec,
     },
 }
 
@@ -187,7 +210,7 @@ pub fn parse_requirement_tool_analysis(
                 && event.get("isError").and_then(Value::as_bool) != Some(true)
                 && matches!(
                     event.get("toolName").and_then(Value::as_str),
-                    Some("request_clarifications" | "submit_requirement_draft")
+                    Some("request_clarifications" | "submit_change_spec")
                 )
         })
         .collect::<Vec<_>>();
@@ -210,7 +233,7 @@ pub fn parse_requirement_tool_analysis(
     };
     if !matches!(
         details.get("protocol").and_then(Value::as_str),
-        Some("raccoon:requirements:v2" | "raccoon:clarifications:v1")
+        Some("raccoon:requirements:v3" | "raccoon:clarifications:v1")
     ) {
         return failed_tool_analysis(
             "需求分析工具协议版本不匹配".to_owned(),
@@ -258,16 +281,16 @@ pub fn parse_requirement_tool_analysis(
             error: None,
             trace,
         },
-        RequirementToolDetails::Draft {
+        RequirementToolDetails::ChangeSpec {
             progress,
             message,
-            draft,
+            change_spec,
         } => RequirementAnalysisOutput {
             status: RequirementStatus::DraftReady,
             assistant_message: message,
             progress,
             clarifications: Vec::new(),
-            draft: Some(draft),
+            draft: Some(change_spec),
             pi_session_file,
             error: None,
             trace,
@@ -358,6 +381,7 @@ pub fn build_pi_trace_metadata(events: &[Value]) -> Option<Value> {
 pub struct PiResponseExtraction {
     pub assistant_text: String,
     pub trace: Option<Value>,
+    pub events: Vec<Value>,
 }
 
 #[derive(Debug)]
@@ -382,6 +406,7 @@ pub fn extract_pi_response(
     Ok(PiResponseExtraction {
         assistant_text,
         trace,
+        events: events.to_vec(),
     })
 }
 
@@ -740,9 +765,23 @@ mod tests {
 
     use super::*;
     use crate::models::{
-        ClarificationAnswer, ClarificationQuestionType, ModelSettings, Project, RequirementDraft,
-        RequirementMessage,
+        AcceptanceScenario, ChangeSpec, ClarificationAnswer, ClarificationQuestionType,
+        ModelSettings, Project, RequirementMessage,
     };
+
+    fn change_spec(intent: &str) -> ChangeSpec {
+        ChangeSpec {
+            intent: intent.to_owned(),
+            acceptance_scenarios: vec![AcceptanceScenario {
+                id: "scenario-1".to_owned(),
+                given: "用户可以访问导出功能".to_owned(),
+                when: "用户发起导出".to_owned(),
+                then: "用户获得可下载的数据".to_owned(),
+            }],
+            explicit_constraints: Vec::new(),
+            non_goals: Vec::new(),
+        }
+    }
 
     #[test]
     fn continuation_prompt_keeps_the_previous_requirement_context() {
@@ -786,11 +825,7 @@ mod tests {
                     custom_text: None,
                 }),
             }],
-            draft: Some(RequirementDraft {
-                title: "导出功能".to_owned(),
-                summary: "支持数据导出".to_owned(),
-                acceptance_criteria: vec!["可以下载文件".to_owned()],
-            }),
+            draft: Some(change_spec("支持数据导出")),
             model_settings: ModelSettings::default(),
             pi_session_file: Some("session.jsonl".to_owned()),
         };
@@ -827,11 +862,7 @@ mod tests {
             reference_context: None,
             prompt_images: Vec::new(),
             clarifications: Vec::new(),
-            draft: Some(RequirementDraft {
-                title: "已有需求".to_owned(),
-                summary: "已有草案".to_owned(),
-                acceptance_criteria: vec!["保持现有行为".to_owned()],
-            }),
+            draft: Some(change_spec("已有草案")),
             model_settings: ModelSettings::default(),
             pi_session_file: Some("session.jsonl".to_owned()),
         };
@@ -851,7 +882,7 @@ mod tests {
             "result": {
                 "content": [{"type": "text", "text": "pending"}],
                 "details": {
-                    "protocol": "raccoon:requirements:v2",
+                    "protocol": "raccoon:requirements:v3",
                     "kind": "clarification_request",
                     "progress": "需要确认范围",
                     "message": "请确认范围",
@@ -890,19 +921,25 @@ mod tests {
         let events = vec![json!({
             "type": "tool_execution_end",
             "toolCallId": "call-1",
-            "toolName": "submit_requirement_draft",
+            "toolName": "submit_change_spec",
             "isError": false,
             "result": {
                 "content": [{"type": "text", "text": "ok"}],
                 "details": {
-                    "protocol": "raccoon:clarifications:v1",
-                    "kind": "draft",
+                    "protocol": "raccoon:requirements:v3",
+                    "kind": "change_spec",
                     "progress": "已检查仓库现状",
                     "message": "需求已明确",
-                    "draft": {
-                        "title": "导出 CSV",
-                        "summary": "沿用现有导出入口",
-                        "acceptance_criteria": ["可以下载 CSV"]
+                    "change_spec": {
+                        "intent": "导出 CSV",
+                        "acceptance_scenarios": [{
+                            "id": "scenario-export",
+                            "given": "用户有可导出的数据",
+                            "when": "用户发起导出",
+                            "then": "用户获得 CSV 文件"
+                        }],
+                        "explicit_constraints": [],
+                        "non_goals": []
                     }
                 }
             }
@@ -910,7 +947,7 @@ mod tests {
 
         let output = parse_requirement_tool_analysis(&events, None, None);
         assert_eq!(output.status, RequirementStatus::DraftReady);
-        assert_eq!(output.draft.unwrap().title, "导出 CSV");
+        assert_eq!(output.draft.unwrap().intent, "导出 CSV");
     }
 
     #[test]
@@ -918,17 +955,24 @@ mod tests {
         let event = json!({
             "type": "tool_execution_end",
             "toolCallId": "call-1",
-            "toolName": "submit_requirement_draft",
+            "toolName": "submit_change_spec",
             "isError": false,
             "result": {
                 "details": {
-                    "kind": "draft",
+                    "protocol": "raccoon:requirements:v3",
+                    "kind": "change_spec",
                     "progress": "done",
                     "message": "ok",
-                    "draft": {
-                        "title": "t",
-                        "summary": "s",
-                        "acceptance_criteria": ["a"]
+                    "change_spec": {
+                        "intent": "目标",
+                        "acceptance_scenarios": [{
+                            "id": "scenario-1",
+                            "given": "初始状态成立",
+                            "when": "用户执行操作",
+                            "then": "得到预期结果"
+                        }],
+                        "explicit_constraints": [],
+                        "non_goals": []
                     }
                 }
             }

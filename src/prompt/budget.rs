@@ -20,9 +20,6 @@ pub const MAX_REVIEW_FEEDBACK_CHARS: usize = 2_000;
 pub const MAX_REVIEW_FEEDBACK_TOTAL_CHARS: usize = 6_000;
 /// 恢复指导方案的最大字符数。
 pub const MAX_RECOVERY_GUIDANCE_CHARS: usize = 3_000;
-/// JSON 修复摘要的最大字符数。
-pub const MAX_JSON_REPAIR_EXCERPT_CHARS: usize = 2_000;
-
 /// 按 Unicode 字符截断字符串，并在截断时追加标记。
 /// 返回 `(截断后文本, 是否被截断)`。首尾空白会被 `trim`。
 pub fn truncate_chars(value: &str, max_chars: usize) -> (String, bool) {

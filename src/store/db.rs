@@ -1,4 +1,8 @@
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, Transaction, params};
@@ -11,7 +15,8 @@ use crate::models::{
     TerminalCommandProfile,
 };
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 5;
+const LEGACY_SCHEMA_VERSION: i64 = 4;
 
 pub struct Database {
     conn: std::sync::Mutex<Connection>,
@@ -19,7 +24,9 @@ pub struct Database {
 
 impl Database {
     pub fn open(path: &Path) -> Result<Self, AppError> {
+        archive_legacy_database(path)?;
         let conn = Connection::open(path)?;
+        conn.busy_handler(Some(retry_busy_database_operation))?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA foreign_keys = ON;
@@ -63,7 +70,6 @@ impl Database {
                 analysis_revision INTEGER NOT NULL DEFAULT 0,
                 active_prompt TEXT,
                 clarification_history TEXT NOT NULL DEFAULT '[]',
-                execution_plan TEXT,
                 pi_session_file TEXT,
                 error TEXT,
                 queued_at TEXT,
@@ -91,9 +97,180 @@ impl Database {
                 running INTEGER NOT NULL DEFAULT 0,
                 error TEXT,
                 pi_session_file TEXT,
-                requirement_summary TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workflow_runs (
+                id TEXT PRIMARY KEY,
+                requirement_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                change_spec TEXT NOT NULL,
+                design_notes TEXT NOT NULL DEFAULT '[]',
+                plan_summary TEXT NOT NULL,
+                source_revision INTEGER NOT NULL,
+                base_head TEXT,
+                integration_branch TEXT,
+                integration_worktree TEXT,
+                final_commit TEXT,
+                rescue_used INTEGER NOT NULL DEFAULT 0,
+                rescue_attempt_id TEXT,
+                blocked_reason TEXT,
+                paused_operation TEXT,
+                version INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE RESTRICT
+            );
+
+            CREATE INDEX IF NOT EXISTS workflow_runs_requirement_created
+                ON workflow_runs(requirement_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS workflow_runs_status
+                ON workflow_runs(status, updated_at);
+
+            CREATE TABLE IF NOT EXISTS workflow_work_items (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                objective TEXT NOT NULL,
+                scenario_refs TEXT NOT NULL,
+                group_name TEXT,
+                scope_hints TEXT NOT NULL DEFAULT '[]',
+                verification_goals TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                accepted_attempt_id TEXT,
+                lease_owner TEXT,
+                lease_expires_at TEXT,
+                version INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (run_id, position),
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS workflow_work_items_runnable
+                ON workflow_work_items(run_id, status, position);
+
+            CREATE TABLE IF NOT EXISTS workflow_dependencies (
+                work_item_id TEXT NOT NULL,
+                depends_on_id TEXT NOT NULL,
+                PRIMARY KEY (work_item_id, depends_on_id),
+                CHECK (work_item_id != depends_on_id),
+                FOREIGN KEY (work_item_id) REFERENCES workflow_work_items(id) ON DELETE CASCADE,
+                FOREIGN KEY (depends_on_id) REFERENCES workflow_work_items(id) ON DELETE RESTRICT
+            );
+
+            CREATE TABLE IF NOT EXISTS workflow_attempts (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                work_item_id TEXT,
+                kind TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                model_tier TEXT NOT NULL,
+                pi_session_file TEXT,
+                worktree_fingerprint TEXT,
+                result_summary TEXT,
+                failure_class TEXT,
+                failure_message TEXT,
+                usage TEXT,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                UNIQUE (run_id, work_item_id, kind, ordinal),
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY (work_item_id) REFERENCES workflow_work_items(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS workflow_attempts_run_started
+                ON workflow_attempts(run_id, started_at);
+
+            CREATE TABLE IF NOT EXISTS workflow_checkpoints (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                snapshot_sha TEXT NOT NULL,
+                required_angles TEXT NOT NULL,
+                summary TEXT,
+                review_details TEXT,
+                usage TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS workflow_checkpoints_run_created
+                ON workflow_checkpoints(run_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS workflow_validations (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                attempt_id TEXT,
+                checkpoint_id TEXT,
+                command TEXT NOT NULL,
+                source TEXT NOT NULL,
+                gating INTEGER NOT NULL DEFAULT 0,
+                baseline_status TEXT NOT NULL,
+                final_status TEXT NOT NULL,
+                baseline_exit_code INTEGER,
+                final_exit_code INTEGER,
+                output_summary TEXT,
+                worktree_fingerprint TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id) ON DELETE SET NULL,
+                FOREIGN KEY (checkpoint_id) REFERENCES workflow_checkpoints(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS workflow_validations_fingerprint
+                ON workflow_validations(run_id, command, worktree_fingerprint, final_status);
+
+            CREATE TABLE IF NOT EXISTS workflow_review_findings (
+                id TEXT PRIMARY KEY,
+                checkpoint_id TEXT NOT NULL,
+                angle TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                status TEXT NOT NULL,
+                category TEXT NOT NULL,
+                path TEXT,
+                location TEXT,
+                summary TEXT NOT NULL,
+                evidence TEXT NOT NULL,
+                reproduction TEXT,
+                remediation TEXT,
+                scenario_ref TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (checkpoint_id, angle, category, path, location),
+                FOREIGN KEY (checkpoint_id) REFERENCES workflow_checkpoints(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS workflow_events (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS workflow_events_run_sequence
+                ON workflow_events(run_id, sequence);
+
+            CREATE TABLE IF NOT EXISTS workflow_snapshots (
+                run_id TEXT PRIMARY KEY,
+                last_event_sequence INTEGER NOT NULL,
+                snapshot TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
             );
             ",
         )?;
@@ -106,36 +283,13 @@ impl Database {
         let unique_versions: HashSet<i64> = versions.iter().copied().collect();
         match unique_versions.len() {
             0 => {}
+            1 if unique_versions.contains(&SCHEMA_VERSION) => {}
             1 => {
-                let version = *unique_versions.iter().next().expect("one unique version");
-                if !(1..=SCHEMA_VERSION).contains(&version) {
-                    return Err(AppError::internal(format!("不支持的数据库版本：{version}")));
-                }
+                let version = unique_versions.iter().next().expect("one unique version");
+                return Err(AppError::internal(format!("不支持的数据库版本：{version}")));
             }
             _ => return Err(AppError::internal("数据库 schema_version 记录损坏")),
         }
-        add_column_if_missing(&tx, "requirements", "queued_at", "TEXT")?;
-        add_column_if_missing(&tx, "requirements", "pi_session_file", "TEXT")?;
-        add_column_if_missing(
-            &tx,
-            "requirements",
-            "analysis_revision",
-            "INTEGER NOT NULL DEFAULT 0",
-        )?;
-        add_column_if_missing(&tx, "requirements", "active_prompt", "TEXT")?;
-        add_column_if_missing(
-            &tx,
-            "requirements",
-            "clarification_history",
-            "TEXT NOT NULL DEFAULT '[]'",
-        )?;
-        add_column_if_missing(
-            &tx,
-            "requirements",
-            "origin",
-            "TEXT NOT NULL DEFAULT 'standalone'",
-        )?;
-        add_column_if_missing(&tx, "project_chats", "requirement_summary", "TEXT")?;
         tx.execute("DELETE FROM schema_version", [])?;
         tx.execute(
             "INSERT INTO schema_version (version) VALUES (?1)",
@@ -249,25 +403,84 @@ impl Database {
         let rows = statement.query_map([requirement_id], |row| row.get(0))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
+
+    pub(crate) fn lock_connection(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().expect("db lock poisoned")
+    }
 }
 
-fn add_column_if_missing(
-    tx: &Transaction<'_>,
-    table: &str,
-    column: &str,
-    definition: &str,
-) -> Result<(), AppError> {
-    let mut statement = tx.prepare(&format!("PRAGMA table_info({table})"))?;
-    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-    for existing in columns {
-        if existing? == column {
-            return Ok(());
+fn retry_busy_database_operation(previous_attempts: i32) -> bool {
+    if previous_attempts >= 3 {
+        return false;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(
+        25 * u64::try_from(previous_attempts + 1).unwrap_or(1),
+    ));
+    true
+}
+
+fn archive_legacy_database(path: &Path) -> Result<(), AppError> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let conn = Connection::open(path)?;
+    let has_schema_version = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !has_schema_version {
+        return Ok(());
+    }
+    let version = conn.query_row("SELECT MAX(version) FROM schema_version", [], |row| {
+        row.get::<_, Option<i64>>(0)
+    })?;
+    if version != Some(LEGACY_SCHEMA_VERSION) {
+        return Ok(());
+    }
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+    drop(conn);
+
+    let data_root = path
+        .parent()
+        .ok_or_else(|| AppError::internal("数据库路径缺少父目录"))?;
+    let archive_root = data_root.join("archive");
+    fs::create_dir_all(&archive_root)?;
+    let timestamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+    let archive_dir = unique_archive_directory(&archive_root, &format!("workflow-v4-{timestamp}"));
+    fs::create_dir(&archive_dir)?;
+    fs::copy(path, archive_dir.join("data.db"))?;
+    let manifest = serde_json::json!({
+        "schema_version": LEGACY_SCHEMA_VERSION,
+        "archived_at": Utc::now(),
+        "source": "data.db",
+        "mode": "byte_archive_before_workflow_v5",
+    });
+    fs::write(
+        archive_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+    fs::remove_file(path)?;
+    for suffix in ["-wal", "-shm"] {
+        let mut sidecar = path.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        let sidecar = PathBuf::from(sidecar);
+        if sidecar.exists() {
+            fs::remove_file(sidecar)?;
         }
     }
-    tx.execute_batch(&format!(
-        "ALTER TABLE {table} ADD COLUMN {column} {definition}"
-    ))?;
     Ok(())
+}
+
+fn unique_archive_directory(root: &Path, stem: &str) -> PathBuf {
+    let initial = root.join(stem);
+    if !initial.exists() {
+        return initial;
+    }
+    (1..)
+        .map(|suffix| root.join(format!("{stem}-{suffix}")))
+        .find(|candidate| !candidate.exists())
+        .expect("archive suffix space exhausted")
 }
 
 fn sync_by_id<T, F, S>(
@@ -336,18 +549,13 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
             .as_ref()
             .map(|value| compact_trace(value).unwrap_or_else(|| value.clone()));
     }
-    if let Some(plan) = persisted.execution_plan.as_mut() {
-        for task in &mut plan.tasks {
-            task.trace = task.trace.as_ref().and_then(compact_trace);
-        }
-    }
     tx.execute(
         "INSERT INTO requirements
          (id, project_id, title, original_message, status, messages,
           clarification_round, clarifications, draft, analysis_revision, active_prompt,
-          clarification_history, execution_plan, pi_session_file, error, queued_at, created_at,
+          clarification_history, pi_session_file, error, queued_at, created_at,
           updated_at, origin)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(id) DO UPDATE SET
            project_id = excluded.project_id,
            title = excluded.title,
@@ -360,7 +568,6 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
            analysis_revision = excluded.analysis_revision,
            active_prompt = excluded.active_prompt,
            clarification_history = excluded.clarification_history,
-           execution_plan = excluded.execution_plan,
            pi_session_file = excluded.pi_session_file,
            error = excluded.error,
            queued_at = excluded.queued_at,
@@ -380,7 +587,6 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
             persisted.analysis_revision,
             optional_json(&persisted.active_prompt)?,
             serde_json::to_string(&persisted.clarification_history)?,
-            optional_json(&persisted.execution_plan)?,
             persisted.pi_session_file,
             persisted.error,
             persisted.queued_at.map(|value| value.to_rfc3339()),
@@ -489,7 +695,7 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
     let mut statement = conn.prepare(
         "SELECT id, project_id, title, original_message, status, messages,
                 clarification_round, clarifications, draft, analysis_revision, active_prompt,
-                clarification_history, execution_plan, pi_session_file, error, queued_at,
+                clarification_history, pi_session_file, error, queued_at,
                 created_at, updated_at, origin
          FROM requirements ORDER BY created_at, id",
     )?;
@@ -510,10 +716,9 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             row.get::<_, Option<String>>(12)?,
             row.get::<_, Option<String>>(13)?,
             row.get::<_, Option<String>>(14)?,
-            row.get::<_, Option<String>>(15)?,
+            row.get::<_, String>(15)?,
             row.get::<_, String>(16)?,
             row.get::<_, String>(17)?,
-            row.get::<_, String>(18)?,
         ))
     })?;
     let mut requirements = Vec::new();
@@ -531,7 +736,6 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             analysis_revision,
             active_prompt,
             clarification_history,
-            execution_plan,
             pi_session_file,
             error,
             queued_at,
@@ -556,7 +760,6 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
                 &clarification_history,
                 "requirements.clarification_history",
             )?,
-            execution_plan: parse_optional_json(execution_plan, "requirements.execution_plan")?,
             pi_session_file,
             error,
             queued_at: queued_at

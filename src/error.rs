@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -19,6 +20,7 @@ pub enum AppError {
     TaskExecution {
         message: String,
         pi_session_file: Option<String>,
+        trace: Option<Value>,
     },
     #[error("I/O 错误：{0}")]
     Io(#[source] std::io::Error),
@@ -49,6 +51,19 @@ impl AppError {
         Self::TaskExecution {
             message: message.into(),
             pi_session_file,
+            trace: None,
+        }
+    }
+
+    pub fn task_execution_with_trace(
+        message: impl Into<String>,
+        pi_session_file: Option<String>,
+        trace: Option<Value>,
+    ) -> Self {
+        Self::TaskExecution {
+            message: message.into(),
+            pi_session_file,
+            trace,
         }
     }
 
@@ -58,6 +73,13 @@ impl AppError {
                 pi_session_file: Some(path),
                 ..
             } => Some(path),
+            _ => None,
+        }
+    }
+
+    pub fn trace(&self) -> Option<&Value> {
+        match self {
+            Self::TaskExecution { trace, .. } => trace.as_ref(),
             _ => None,
         }
     }
@@ -146,5 +168,20 @@ mod tests {
 
         let error = AppError::from(rusqlite::Error::InvalidQuery);
         assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[test]
+    fn task_execution_can_carry_failure_trace_without_breaking_old_constructor() {
+        let old = AppError::task_execution("failed", Some("session.jsonl".to_owned()));
+        assert!(old.trace().is_none());
+
+        let trace = serde_json::json!({"trace": {"usage": {"scope": "operation"}}});
+        let error = AppError::task_execution_with_trace(
+            "failed",
+            Some("session.jsonl".to_owned()),
+            Some(trace.clone()),
+        );
+        assert_eq!(error.pi_session_file(), Some("session.jsonl"));
+        assert_eq!(error.trace(), Some(&trace));
     }
 }

@@ -141,12 +141,8 @@
   }
 
   .node-card--requirement-list,
-  .node-card--requirement-dag {
+  .node-card--workflow-run {
     box-shadow: var(--shadow-high);
-  }
-
-  .node-card--requirement-task {
-    box-shadow: var(--shadow-med);
   }
 
   .orbit-tool-button {
@@ -336,15 +332,7 @@
   }
 
   .rich-content,
-  .session-diff,
-  .task-detail-dialog__details,
-  .task-detail-dialog__rounds,
-  .task-detail-dialog__lanes,
-  .task-detail-dialog__lane,
-  .task-detail-dialog__pipeline,
-  .task-detail-dialog__exchange,
-  .task-detail-dialog__stage,
-  .task-detail-dialog__step {
+  .session-diff {
     min-width: 0;
     overflow-wrap: anywhere;
   }

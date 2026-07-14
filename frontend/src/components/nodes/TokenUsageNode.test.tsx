@@ -53,4 +53,33 @@ describe("TokenUsageNode", () => {
     const scrollable = document.querySelector(".astryx-stack.nodrag.nowheel");
     expect(scrollable).toBeInTheDocument();
   });
+
+  it("marks over-budget hotspots as observational warnings", () => {
+    render(
+      <TokenUsageNode
+        data={data({
+          expanded: true,
+          usage: {
+            ...data().usage!,
+            hotspots: [
+              {
+                label: "修复任务",
+                role: "implementation_runner",
+                usage: {
+                  input: 281178,
+                  output: 1,
+                  cache_read: 0,
+                  cache_write: 0,
+                },
+                context_percent: 5,
+                budget_exceeded: true,
+              },
+            ],
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/修复任务/)).toHaveTextContent("已超观测预算");
+  });
 });

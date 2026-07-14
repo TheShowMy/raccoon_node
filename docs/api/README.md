@@ -59,9 +59,9 @@
 
 `GET /api/projects/current/canvas`
 
-默认响应不携带任何需求的 `execution_plan`。打开某个 DAG 时使用
-`GET /api/projects/current/canvas?dag_requirement_id={requirement_id}`，仅所选需求返回
-轻量执行计划；任务 trace、审核历史、session/worktree、恢复和发布详情按空值返回。
+默认响应只携带需求和 WorkflowRun 摘要。打开某个 WorkflowRun 时使用
+`GET /api/projects/current/canvas?workflow_requirement_id={requirement_id}`；仅所选需求返回
+完整 Workflow 快照，attempt session 仍通过独立接口按需读取。
 
 返回 `ProjectCanvasResponse`：
 
@@ -313,33 +313,81 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
 - `POST /api/requirements/{id}/cancel`
 - `DELETE /api/requirements/{id}`
 
-确认后需求进入当前项目 FIFO 队列，后端自动生成执行 DAG 并开始执行。失败需求会
-暂停后续队列，避免后续需求越过失败项。确认或放弃后父聊天恢复可用；child session
-中的消息和确认草案不会写回父 session。
+确认后需求进入当前项目 FIFO 队列。调度器自动生成只包含真实工作项的 WorkPlan，创建
+一个 WorkflowRun，并在独立 integration worktree 中串行执行。失败 WorkflowRun 会暂停
+后续队列，避免后续需求越过失败项。确认或放弃后父聊天恢复可用；child session 中的
+消息和确认草案不会写回父 session。
 
-### 重试规划和任务组恢复
+### WorkflowRun
 
 - `POST /api/requirements/{id}/retry-analysis`：在澄清会话中断后创建新 session，
   并使用已保存业务上下文重试分析
 - `GET /api/requirements/{id}/session`：按时间合并该需求历次分析 session
-- `POST /api/requirements/{id}/plan`：重试失败的执行规划
-- `POST /api/requirements/{id}/tasks/{task_id}/recover`：恢复顶层任务组内的技术失败节点
-- `GET /api/requirements/{id}/tasks/{task_id}`：按需读取完整任务详情、关联审核和依赖；
-  保留 failure/recovery/review、PR、merge、cleanup、review history、trace 和 target
-  files，仅隐藏内部 session/worktree 路径
-- `GET /api/requirements/{id}/tasks/{task_id}/session`：读取任务及其关联
-  `review_summary` 的 Pi Agent session，按时间合并并标注来源
+- `POST /api/requirements/{id}/workflow-run`：为已确认需求生成 WorkPlan，并启动或续跑
+  该需求唯一的 WorkflowRun
+- `GET /api/requirements/{id}/workflow-run`：读取该需求最近的 Workflow 快照
+- `GET /api/workflow-runs/{run_id}`：读取 run、行为切片、依赖、attempt、验证、
+  checkpoint 和 finding 的一致性快照
+- `GET /api/workflow-runs/{run_id}/events?after={sequence}&limit={limit}`：分页增量读取只追加
+  事件，响应为 `{ "events": [], "next_after": null }`
+- `POST /api/workflow-runs/{run_id}/resume`：只恢复 `paused_technical`，从已保存 operation
+  继续；其他状态返回 `409 Conflict`
+- `GET /api/workflow-runs/{run_id}/attempts/{attempt_id}/session`：分页读取指定 attempt 的
+  Pi JSONL 会话；内部 session 路径不会出现在响应中
 
-执行计划中的实现任务通过 `review_history` 返回结构化审核轮次。旧任务没有历史时返回
-空数组；仅保存结果摘要，不包含思考内容或完整工具输出。
+需求确认产物是 OpenSpec 风格 `ChangeSpec`：`intent`、Given/When/Then
+`acceptance_scenarios`、带原消息 ID 和原文摘录的 `explicit_constraints`、`non_goals`。
+行为场景禁止文件名、函数/API/组件精确名称、CSS 选择器或变量和 shell 命令。WorkPlan
+只描述行为切片的 `objective`、`scenario_refs`、`depends_on`、非约束 `scope_hints` 与
+`verification_goals`；技术选择进入可修订 `DesignNotes`，不成为机械验收条件。不存在 Stage、
+Review、Summary、Merge、Fix 或 Recovery 伪任务。Planner 非法结构在同一 Pi session 中只做
+一次短纠正，仍失败进入技术暂停。
 
-新执行计划为每个实现任务生成一个 Review 父节点。父 session 内的受管工具并发运行“正确性 / 边界与安全 / 代码质量与测试”三个无持久化隔离子代理；任务 session API 在同一个工具结果中返回三个 subagents 明细，不产生子 session 文件。旧 ReviewSubAgent/ReviewSummary 计划仍按旧协议恢复。
+当前执行器默认串行租约工作项，并在一个受管 integration worktree 上累计改动。每个工作项
+依次执行低档首次实现、低档普通修复和高档修复；结构化结果缺失或不合法同样只允许一次
+同 session 短纠正。每次 attempt 都是独立持久 session，前后复核 HEAD、分支 ref 与 staged
+指纹；任务 Agent 可运行 Git 只读命令，受管 `raccoon:task-runtime:v3` extension 在工具调用
+前拒绝 Git 写命令，调度器负责 stage、checkpoint commit 和最终集成。
+
+WorkflowRun 启动时确定性生成 `RepositoryValidationCatalog`：始终包含 `git diff --check`，
+并按仓库现有脚本选择 Node check/test/build、Rust test/既有 Clippy、pytest 或 Go test。
+调度器在 base HEAD 建立基线，最终 fingerprint 重新执行；只有基线通过而最终失败才是硬阻断，
+既有失败未恶化只展示，无法建立基线标记 unverified。Agent 自创 grep、rg 或字符串计数只作为
+observation。全部行为切片完成后才执行最终 checkpoint。审核父调用通过
+`raccoon:parallel-review:v5` 编排上下文、工具和内存 session 完全隔离的真实 AgentSession，
+子 Agent 不写 session 文件：
+
+- 正确性只看 ChangeSpec、base 到当前 worktree 的固定完整 diff 和中性验证结果；
+- 代码质量与安全是盲审，完全看不到任务标题、需求描述、验收文本、实现总结、正确性意见
+  或其他角度上下文；
+- 完整 diff 按风险确定性选择 1–3 个角度；修复后只复审正确性、仍有 P0/P1 的角度和
+  本次修复新增触发的安全角度；
+- finding 只提交 P0–P3、类别、路径、位置、短摘要、证据和修复建议；P0/P1 阻断，P2/P3
+  只展示；传输成功使用 `transport_status=completed`，不等于业务审核通过；
+- 非法结构带精确 JSON 路径返回原隔离 session 修正两次，仍失败只重试该角度一次；再次失败
+  进入 `paused_technical`，不触发 Fixing 或 Rescue。
+
+常规低档实现、低档修复、高档修复和一次高档集成修复发生语义失败后，WorkflowRun 最多获得
+一次外部高级 Rescue。
+Rescue 使用全新短 session，从整个 run 的契约、失败分类、未关闭 blocker、验证摘要和当前
+diff 总览恢复 integration worktree；不继承失败 Agent 的长上下文。Rescue 修改后先运行原生
+gate；首次失败会把精简证据反馈给同一个 Rescue session 一次。再次语义失败才进入
+`blocked`。数据库、协议、Pi 进程、审核持久化和子 Agent 传输失败进入
+`paused_technical`，不消耗 Rescue；SQLite busy 操作最多重试三次。
+
+token 预算仅用于一次性告警和 operation trace，不会终止 Agent，也不会写回模型上下文。
+运行看门狗只按有效活动续期：普通 Pi 操作或验证连续 600 秒无活动才失败，审核子 Agent
+连续 300 秒无活动才失败；总时长没有硬上限。Pi 原生 compaction 尊重用户现有设置，压缩
+活动刷新空闲计时；估算节省量标记 `usageKnown=false`，不混入供应商计费用量，也不把摘要
+正文复制到 SQLite。
 
 ### JSONL 会话分页
 
-项目问答、需求分析和任务会话接口使用相同响应。默认返回最新 100 条记录，
+项目问答、需求分析和 Workflow attempt 会话接口使用相同响应。默认返回最新 100 条记录，
 `limit` 最大为 200；存在更早记录时，用 `next_before` 继续请求。每条有效 JSONL
-都会保留原始 `raw`；无法解析的行只计入 `invalid_lines`。
+都会保留原始 `raw`，但 compaction 记录会从 API `raw` 中移除摘要正文；无法解析的行
+只计入 `invalid_lines`。持久 compaction 记录展示 Pi 实际保存的压缩前 token、文件上下文
+计数和 hook 来源；压缩后估算仅在本次 operation trace 可得时展示，不伪造 session 字段。
 
 ```json
 {
@@ -372,66 +420,34 @@ Commit 和 Push 必须显式传入 `confirmed: true`。Pull 固定使用 fast-fo
 内容块类型为 `text`、`thinking`、`tool_call`、`tool_result` 或 `unknown`。
 `tool_result` 可携带 `output`、`diff` 和 `is_error`。接口不会返回 session 文件路径。
 
-最终合并审核根据仓库是否配置 `origin` 选择发布方式：有 `origin` 时通过 PR 合并，
-没有 `origin` 时直接合并到项目根工作区当前分支。纯本地合并成功后
-`pull_request_url` 为 `null`，`merged_into` 返回实际合入分支。
+WorkflowRun 通过最终 checkpoint 后，由调度器提交 integration 分支，并在主工作区仍处于
+原始 HEAD 且保持干净时执行 fast-forward-only 合并。主工作区在运行期间变化会触发唯一
+Rescue 或最终 blocked，不会覆盖用户改动，也不会自动 push。
 
-```json
-{
-  "review_history": [
-    {
-      "round": 1,
-      "implementation_attempt": 1,
-      "implementation_summary": "完成实现",
-      "status": "approved",
-      "started_at": "2026-06-30T10:00:00Z",
-      "completed_at": "2026-06-30T10:02:00Z",
-      "reviews": [
-        {
-          "task_id": "review-sub-task-1-1",
-          "angle": "正确性与边界",
-          "status": "approved",
-          "summary": "检查通过",
-          "failure_reason": null,
-          "completed_at": "2026-06-30T10:01:00Z"
-        }
-      ],
-      "summary_conclusion": "approved",
-      "summary": "审核通过",
-      "failure_reason": null
-    }
-  ]
-}
-```
-
-### 任务执行事件流
+### Workflow 事件
 
 `GET /api/requirements/{id}/events`
 
-运行中 DAG 可传 `include_pi_events=false` 仅订阅状态事件；未传参数时保持完整事件流。
+需求事件 SSE 仍提供实时 UI 通知；可传 `include_pi_events=false` 只订阅状态事件。Workflow
+事实与重连对账以 SQLite 快照和 `/api/workflow-runs/{run_id}/events` 增量事件为准。
 
 ```json
 {
   "requirement_id": "requirement-id",
-  "task_id": "task-id",
-  "event": "execution_task_started",
-  "message": "开始执行任务：任务标题",
+  "task_id": "work-item-id",
+  "event": "work_item_attempt_started",
+  "message": "开始执行工作项：标题",
   "pi_type": null,
   "payload": null
 }
 ```
 
-该 SSE 仅用于需求任务 DAG 的规划、执行和恢复；需求分析与澄清对话改用上方
-`conversation/events` WebSocket。常见事件：
-
-- 规划：`execution_planning_started`、`execution_plan_ready`、
-  `execution_plan_failed`
-- 执行：`execution_started`、`execution_task_started`、
-  `execution_task_completed`、`execution_task_failed`、`execution_task_retrying`、
-  `execution_task_guided`、`execution_completed`、`execution_failed`
-- 降级：`serialization_failed`
-
-SSE 不作为状态存储；重连后应重新获取项目画布。
+常见通知为 `workflow_planning_started`、`workflow_plan_ready`、`workflow_plan_failed`、
+`workflow_started`、`work_item_attempt_started`、`work_item_attempt_failed`、
+`work_item_completed`、`integration_fix_started`、`final_review_started`、
+`workflow_rescue_started`、`workflow_rescue_feedback_started`、
+`workflow_paused_technical`、`workflow_completed` 和 `workflow_blocked`。需求分析与澄清
+对话继续使用上方 `conversation/events` WebSocket。
 
 ## 基础设置
 
@@ -597,8 +613,10 @@ settings 文件，也不读写 `models.json`。
 - 附件：`.raccoon-node/attachments/`
 
 旧 `.raccoon-node/app.json` 仅在首次迁移时读取；成功导入 SQLite 后原子改名，
-后续启动不再读取。SQLite 保存业务消息、澄清轮次、DAG、恢复状态与 token usage
-摘要，Pi session 保存完整 thinking 和工具输入输出。
+后续启动不再读取。SQLite 保存业务消息、澄清轮次、WorkflowRun 规范化状态、只追加事件
+与 token usage 摘要，Pi session 保存完整 thinking 和工具输入输出。检测到旧 v3 执行库时，
+启动过程先按字节归档 v4 数据库，再创建全新 v5 schema；运行时不保留旧 Workflow 执行器
+或协议兼容分支。
 
 Pi 会话记录的 `cwd` 必须等于当前 Git 根目录或受管 worktree。所有清理操作只能
 作用于 `.raccoon-node/`，不会删除用户仓库。

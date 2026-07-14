@@ -1,6 +1,6 @@
 # Prompt 工程与上下文结构优化建议
 
-> **状态（2026-07-12）**：此旧计划已由当前实现收敛。Prompt renderer、sources、sections、contracts、分页 session 和统一时间线已经完成；剩余可取部分已落实为集中预算、引用 path-only、operation usage 和单 Review 父会话。本文中的 Plan Auditor、review profile、rolling summary、thinking 强制覆盖和完整 prompt 复制不再属于实施范围。
+> **状态（2026-07-13）**：此旧计划已被 WorkflowRun v5 破坏式重构取代，仅保留历史背景。当前流程使用行为型 ChangeSpec、行为切片 WorkPlan、仓库原生基线/最终验证和完整 diff 审核，不再生成 Stage 或 Review/Fix/Merge/Recovery 伪节点；隔离审核协议为 `raccoon:parallel-review:v5`，结构化提交和 Git 拦截协议分别为 `raccoon:workflow-output:v3` 与 `raccoon:task-runtime:v3`。集中预算、引用 path-only、operation usage、告警式 token 阈值、活动续期和 Pi 原生 compaction 仍保留；本文后续旧 DAG 和兼容策略不再属于实施范围。
 
 > 日期：2026-07-05
 > 范围：`raccoon_node` 的需求澄清、执行规划、任务 DAG、Review/Recovery、Pi Agent RPC 会话、React Flow 节点与会话展示。
@@ -64,15 +64,15 @@
 
 PlanWeave 把 agent loop 拆成稳定角色：
 
-| Skill | 职责 | 对 raccoon_node 的对应 |
-|---|---|---|
-| `plan-maker` | 从模糊目标生成计划草案 | 需求确认草案后的执行规划 |
-| `plan-importer` | 把 PRD/roadmap/docs 转成 plan package | 从需求草案、引用文件、项目上下文生成 DAG |
-| `plan-auditor` | 审计计划是否覆盖流程、契约、失败路径 | PlanNode / DAG 审计 |
-| `plan-coordinator` | 调度 block，不亲自实现/review | FIFO/DAG scheduler 的提示词表达 |
-| `plan-runner` | 执行一个 implementation block | implementation task prompt |
-| `plan-reviewer` | 执行一个 review gate | ReviewSubAgent / ReviewSummary |
-| `plan-recovery` | 修复 stale refs、drift、blocked 等异常状态 | GuidedRecovery / HighTier takeover 前的恢复诊断 |
+| Skill              | 职责                                       | 对 raccoon_node 的对应                          |
+| ------------------ | ------------------------------------------ | ----------------------------------------------- |
+| `plan-maker`       | 从模糊目标生成计划草案                     | 需求确认草案后的执行规划                        |
+| `plan-importer`    | 把 PRD/roadmap/docs 转成 plan package      | 从需求草案、引用文件、项目上下文生成 DAG        |
+| `plan-auditor`     | 审计计划是否覆盖流程、契约、失败路径       | PlanNode / DAG 审计                             |
+| `plan-coordinator` | 调度 block，不亲自实现/review              | FIFO/DAG scheduler 的提示词表达                 |
+| `plan-runner`      | 执行一个 implementation block              | implementation task prompt                      |
+| `plan-reviewer`    | 执行一个 review gate                       | ReviewSubAgent / ReviewSummary                  |
+| `plan-recovery`    | 修复 stale refs、drift、blocked 等异常状态 | GuidedRecovery / HighTier takeover 前的恢复诊断 |
 
 关键启发：**每个角色要有自己的边界、输入包、输出契约、停止条件**。当前 raccoon_node 的 `execution.rs` 中多个 prompt 由 Rust inline string 临时拼装，角色边界不够显式。
 
@@ -220,15 +220,15 @@ raccoon_node 当前已有 ReviewSubAgent、ReviewSummary、GuidedRecovery，但 
 
 关键位置：
 
-| 领域 | 当前位置 | 问题 |
-|---|---|---|
-| 项目问答 | `src/chat/mod.rs` | prompt 与历史拼接逻辑耦合在代码中 |
-| 需求分析 | `src/requirement/analysis.rs`、`prompts/skills/requirement_coordinator.md` | 模板文件和 Rust 拼接混合，显式历史与 Pi session 可能重复 |
-| 执行规划 | `src/requirement/execution.rs` | plan prompt、JSON repair、task prompt、review prompt、recovery prompt 混在一个文件 |
-| 引用上下文 | `src/file_refs.rs` | 文件/图片进入 prompt 的策略与 prompt layer 没有关联 |
-| Pi RPC 调用 | `src/pi/mod.rs` | 负责 session 恢复、模型/thinking 设置和 prompt 发送，但缺少统一 RenderedPrompt metadata |
-| 任务会话展示 | `src/store/mod.rs`、前端任务详情 | 读取完整 session，而不是围绕 Prompt Source / Run Artifact 展示 |
-| token usage | `TokenUsageNode.tsx`、`aggregate_project_token_usage` | 更像聚合结果，不解释 prompt 结构来源 |
+| 领域         | 当前位置                                                                   | 问题                                                                                    |
+| ------------ | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 项目问答     | `src/chat/mod.rs`                                                          | prompt 与历史拼接逻辑耦合在代码中                                                       |
+| 需求分析     | `src/requirement/analysis.rs`、`prompts/skills/requirement_coordinator.md` | 模板文件和 Rust 拼接混合，显式历史与 Pi session 可能重复                                |
+| 执行规划     | `src/requirement/execution.rs`                                             | plan prompt、JSON repair、task prompt、review prompt、recovery prompt 混在一个文件      |
+| 引用上下文   | `src/file_refs.rs`                                                         | 文件/图片进入 prompt 的策略与 prompt layer 没有关联                                     |
+| Pi RPC 调用  | `src/pi/mod.rs`                                                            | 负责 session 恢复、模型/thinking 设置和 prompt 发送，但缺少统一 RenderedPrompt metadata |
+| 任务会话展示 | `src/store/mod.rs`、前端任务详情                                           | 读取完整 session，而不是围绕 Prompt Source / Run Artifact 展示                          |
+| token usage  | `TokenUsageNode.tsx`、`aggregate_project_token_usage`                      | 更像聚合结果，不解释 prompt 结构来源                                                    |
 
 根因：
 
@@ -293,15 +293,19 @@ boundaries:
 ---
 
 ## Role
+
 ...
 
 ## Required input packet
+
 ...
 
 ## Stop conditions
+
 ...
 
 ## Output contract
+
 See prompts/contracts/task_result.schema.json
 ```
 
@@ -351,11 +355,15 @@ pub enum PromptSourceKind {
 
 ```markdown
 <!-- raccoon:managed:start requirement-context -->
+
 ...
+
 <!-- raccoon:managed:end requirement-context -->
 
 <!-- raccoon:user:start notes -->
+
 ...
+
 <!-- raccoon:user:end notes -->
 ```
 
@@ -494,15 +502,15 @@ pub enum PromptSourceKind {
 
 为每类 PromptSource 定预算：
 
-| Source | 默认预算 | 超限策略 |
-|---|---:|---|
-| Global | 稳定，不频繁变 | 启动时校验 |
-| RequirementContext | 8–16KB | rolling summary |
-| ReferenceFile | 单文件 32KB，总 128KB | 片段化/拒绝 |
-| DependencyOutput | 单依赖 1KB | result_summary 压缩 |
-| ReviewFeedback | 2KB | 结构化摘要 |
-| RecoveryGuidance | 3KB | 分节摘要 |
-| JSONRepairExcerpt | 1.5–2KB | 只保留错误附近 |
+| Source             |              默认预算 | 超限策略            |
+| ------------------ | --------------------: | ------------------- |
+| Global             |        稳定，不频繁变 | 启动时校验          |
+| RequirementContext |                8–16KB | rolling summary     |
+| ReferenceFile      | 单文件 32KB，总 128KB | 片段化/拒绝         |
+| DependencyOutput   |            单依赖 1KB | result_summary 压缩 |
+| ReviewFeedback     |                   2KB | 结构化摘要          |
+| RecoveryGuidance   |                   3KB | 分节摘要            |
+| JSONRepairExcerpt  |               1.5–2KB | 只保留错误附近      |
 
 ### P2.2 引用上下文预算化
 
@@ -532,18 +540,18 @@ MAX_PROMPT_IMAGE_TOTAL_BYTES = 10 MiB
 
 ### P2.4 thinking level 按角色覆盖
 
-| 角色 | 默认档位 | 默认 thinking |
-|---|---|---|
-| Requirement Coordinator | high | medium |
-| Execution Planner | high | medium/high |
-| Plan Auditor | high | medium/high |
-| Implementation Runner | medium/high | medium |
-| JSON Repair | low/medium | minimal/off |
-| Code Reviewer | medium | low/medium |
-| Review Summarizer | medium | low |
-| Branch Merger | high | low/medium |
-| Merge Reviewer | high | medium/high |
-| Recovery Guide | high | high |
+| 角色                    | 默认档位    | 默认 thinking |
+| ----------------------- | ----------- | ------------- |
+| Requirement Coordinator | high        | medium        |
+| Execution Planner       | high        | medium/high   |
+| Plan Auditor            | high        | medium/high   |
+| Implementation Runner   | medium/high | medium        |
+| JSON Repair             | low/medium  | minimal/off   |
+| Code Reviewer           | medium      | low/medium    |
+| Review Summarizer       | medium      | low           |
+| Branch Merger           | high        | low/medium    |
+| Merge Reviewer          | high        | medium/high   |
+| Recovery Guide          | high        | high          |
 
 ### P2.5 token usage 分阶段、分 source 归因
 

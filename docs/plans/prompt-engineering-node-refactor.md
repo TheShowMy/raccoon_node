@@ -1,6 +1,6 @@
 # 计划文档：借鉴 PlanWeave 的提示词工程与节点化改造
 
-> **Phase 2 修订（2026-07-12）**：新计划不再生成三个外部 ReviewSubAgent 和一个 ReviewSummary。每个实现任务只生成一个 Review 父节点；父 Pi session 通过 `raccoon:parallel-review:v1` 受管工具并发启动三个 `pi --mode rpc --no-session` 子代理。子代理无 session 文件、上下文互相隔离，事件和 usage 作为父 session 工具 details 保存。旧 DAG 继续按原结构恢复。
+> **已被取代（2026-07-13）**：本文记录的是旧节点化方案，不再描述当前实现。当前系统使用 `ChangeSpec -> WorkPlan -> WorkflowRun v5`，WorkPlan 只包含行为切片、依赖和可修订 DesignNotes；全部切片完成后才做仓库原生验证与完整 diff checkpoint，不再存在 Stage、Review、ReviewSummary、Fixing、Merge 或 Recovery 伪任务。隔离盲审使用 `raccoon:parallel-review:v5`，结构化结果与 Git 拦截分别为 `raccoon:workflow-output:v3` 和 `raccoon:task-runtime:v3`。旧 v4 数据库只做字节归档，运行时不保留旧 Workflow 执行器或协议兼容路径。
 
 > 版本：v0.1
 > 日期：2026-07-03
@@ -159,8 +159,11 @@ boundaries:
 
 ```markdown
 ## 当前需求草案
+
 <!-- raccoon:managed:start requirement-draft -->
+
 {{REQUIREMENT_DRAFT}}
+
 <!-- raccoon:managed:end requirement-draft -->
 ```
 
@@ -222,6 +225,11 @@ pub struct RenderedPrompt {
 - PlanNode 显示黄色，展示 findings；用户可点击「按建议重试规划」。
 
 #### 4.2.3 Sub-Agent 插件化
+
+> 本节以下内容记录初版方案，已被文首的 Phase 2 修订取代。当前实现不生成三个
+> `ReviewSubAgent` task、不启动外部 `pi --no-session` 子进程，也不保存
+> `sub_session_file`；必要审核角度由 Review 父 session 的 v3 受管工具按风险并行运行，规范化
+> 明细保存在父工具结果中。
 
 **目标**：把当前 backend-driven 的 `ReviewSubAgent` 改为由 Pi 插件编排的独立 sub-agent 会话；审核节点（Review / 原 ReviewSummary）能看到执行过程，但**不污染审核节点自身的上下文**。
 
@@ -390,9 +398,9 @@ React Flow 边样式：
 
 在 PlanNode 或 TaskDetailDialog 中展示审计生成的 Flow Coverage 表：
 
-| Flow | Trigger | Processing | State | Output | Failure Path | Verification | Gaps |
-|---|---|---|---|---|---|---|---|
-| ... | ... | ... | ... | ... | ... | ... | Gap: ... |
+| Flow | Trigger | Processing | State | Output | Failure Path | Verification | Gaps     |
+| ---- | ------- | ---------- | ----- | ------ | ------------ | ------------ | -------- |
+| ...  | ...     | ...        | ...   | ...    | ...          | ...          | Gap: ... |
 
 #### 4.4.3 Skill 市场基础
 
@@ -476,13 +484,13 @@ pub struct ReviewSubAgentResult {
 
 ## 6. 风险与应对
 
-| 风险 | 影响 | 应对 |
-|---|---|---|
-| Pi 插件开发/选型失败 | Phase 2 受阻 | 保留当前 backend-driven ReviewSubAgent 作为 fallback，先实现 audit 和 RecoveryNode |
-| 节点布局变复杂 | RecoveryNode 重叠、边混乱 | 先在 `layout.ts` 中给 RecoveryNode 预留一列，逐步迭代 |
-| Prompt 拆分后语义漂移 | 测试失败、LLM 输出变化 | Phase 1 必须通过「改造前后 prompt diff 完全一致」的测试 |
-| 数据模型变更导致旧需求无法加载 | 兼容性 | 所有新增字段加 `serde(default)`；旧 plan 无 audit_result 时 UI 隐藏相关面板 |
-| 高档模型接管后用户困惑 | UX | 用红色 X 线和明确文案「实现失败，已由高档模型接管」 |
+| 风险                           | 影响                      | 应对                                                                               |
+| ------------------------------ | ------------------------- | ---------------------------------------------------------------------------------- |
+| Pi 插件开发/选型失败           | Phase 2 受阻              | 保留当前 backend-driven ReviewSubAgent 作为 fallback，先实现 audit 和 RecoveryNode |
+| 节点布局变复杂                 | RecoveryNode 重叠、边混乱 | 先在 `layout.ts` 中给 RecoveryNode 预留一列，逐步迭代                              |
+| Prompt 拆分后语义漂移          | 测试失败、LLM 输出变化    | Phase 1 必须通过「改造前后 prompt diff 完全一致」的测试                            |
+| 数据模型变更导致旧需求无法加载 | 兼容性                    | 所有新增字段加 `serde(default)`；旧 plan 无 audit_result 时 UI 隐藏相关面板        |
+| 高档模型接管后用户困惑         | UX                        | 用红色 X 线和明确文案「实现失败，已由高档模型接管」                                |
 
 ---
 
@@ -522,12 +530,12 @@ pub struct ReviewSubAgentResult {
 
 ## 9. 里程碑
 
-| 里程碑 | 交付物 | 预计周期 |
-|---|---|---|
-| M1 | Phase 1 完成：prompt skill 化、section marker、Prompt Surface | 1 周 |
-| M2 | Phase 2 完成：PlanNode + 审计、Review 语义变更、sub-agent 插件 PoC | 1.5 周 |
-| M3 | Phase 3 完成：RecoveryNode、高档模型接管可视化 | 1 周 |
-| M4 | Phase 4 完成：Prompt Layers、Flow Coverage、skill 校验 | 0.5 周 |
+| 里程碑 | 交付物                                                             | 预计周期 |
+| ------ | ------------------------------------------------------------------ | -------- |
+| M1     | Phase 1 完成：prompt skill 化、section marker、Prompt Surface      | 1 周     |
+| M2     | Phase 2 完成：PlanNode + 审计、Review 语义变更、sub-agent 插件 PoC | 1.5 周   |
+| M3     | Phase 3 完成：RecoveryNode、高档模型接管可视化                     | 1 周     |
+| M4     | Phase 4 完成：Prompt Layers、Flow Coverage、skill 校验             | 0.5 周   |
 
 ---
 

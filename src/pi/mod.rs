@@ -1,17 +1,19 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{HashMap, HashSet},
+    hash::{Hash, Hasher},
     io::ErrorKind,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
 
 mod transport;
 
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -21,29 +23,69 @@ use transport::PiRpcTransportConfig;
 
 use crate::error::AppError;
 use crate::models::{
-    GitProvider, ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings,
-    ModelTierSetting, PI_RPC_REQUEST_ID, PiModel, ProjectChatBranchFuture, ProjectChatEventEmitter,
+    ModelProvider, ModelProviderActionFuture, ModelProviderFuture, ModelSettings, ModelTierSetting,
+    PI_RPC_REQUEST_ID, PiModel, ProjectChatBranchFuture, ProjectChatEventEmitter,
     ProjectChatFuture, ProjectChatInput, ProjectChatOutput, PromptImage, RequirementAnalysisFuture,
     RequirementAnalysisInput, RequirementAnalysisOutput, RequirementEventEmitter,
-    RequirementModelTier, RequirementPlanFuture, RequirementPlanInput, RequirementReviewStatus,
-    RequirementTaskExecutionFuture, RequirementTaskExecutionInput, RequirementTaskExecutionOutput,
-    RequirementTaskKind,
+    RequirementModelTier, WorkflowAttemptFuture, WorkflowPlanFuture, WorkflowReviewFuture,
 };
 use crate::prompt::attach_prompt_diagnostics;
 use crate::requirement::{
-    PiResponseFailure, build_recovery_guidance_json_repair_prompt, build_recovery_guidance_prompt,
-    build_requirement_plan_json_repair_prompt, build_requirement_plan_prompt,
-    build_requirement_prompt, build_requirement_task_prompt_with_session,
-    build_task_output_json_repair_prompt, extract_pi_response, parse_recovery_guidance,
-    parse_requirement_plan, parse_requirement_tool_analysis, parse_task_execution_output,
+    PiResponseFailure, build_requirement_prompt, extract_pi_response,
+    parse_requirement_tool_analysis,
 };
 use crate::utils::{ensure_child_path, normalize_local_path, resolve_git_root};
+use crate::workflow::{
+    FindingPriority, FindingStatus, WorkflowAgentInput, WorkflowAgentOutput, WorkflowAttemptKind,
+    WorkflowPlanInput, WorkflowPlanOutput, WorkflowReviewFinding, WorkflowReviewInput,
+    WorkflowReviewOutput, build_workflow_attempt_prompt, build_workflow_plan_prompt,
+    build_workflow_review_prompt, change_spec_from_requirement, compile_work_plan,
+    parse_review_angle,
+};
 
 const MAX_PROJECT_CLIENTS: usize = 5;
-const MAX_JSON_REPAIR_ATTEMPTS: usize = 1;
+static PI_OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const CLARIFICATION_EXTENSION: &str = include_str!("assets/raccoon-clarification.mjs");
 const REVIEW_ORCHESTRATOR_EXTENSION: &str = include_str!("assets/raccoon-review-orchestrator.mjs");
 const REVIEW_WORKER_EXTENSION: &str = include_str!("assets/raccoon-review-worker.mjs");
+const TASK_RUNTIME_EXTENSION: &str = include_str!("assets/raccoon-task-runtime.mjs");
+
+const PROJECT_CHAT_TOOLS: &str = "read,bash,grep,find,ls";
+const REQUIREMENT_ANALYSIS_TOOLS: &str =
+    "read,bash,grep,find,ls,request_clarifications,submit_change_spec";
+const WORK_PLAN_TOOLS: &str = "read,bash,grep,find,ls,submit_work_plan";
+const WORK_ITEM_TOOLS: &str = "read,bash,edit,write,grep,find,ls,submit_workflow_result";
+const OPERATION_WARNING_SECONDS: u64 = 120;
+const OPERATION_IDLE_TIMEOUT_SECONDS: u64 = 600;
+
+#[derive(Debug, Clone)]
+struct OperationRuntimeObservation {
+    warning_after: Duration,
+    idle_timeout: Duration,
+    input_budget: Option<u64>,
+    observed_input: u64,
+    budget_warning_emitted: bool,
+    idle_warning_count: u64,
+    activity_count: u64,
+    max_idle: Duration,
+    termination_reason: &'static str,
+}
+
+impl OperationRuntimeObservation {
+    fn new(warning_after: Duration, idle_timeout: Duration, input_budget: Option<u64>) -> Self {
+        Self {
+            warning_after,
+            idle_timeout,
+            input_budget,
+            observed_input: 0,
+            budget_warning_emitted: false,
+            idle_warning_count: 0,
+            activity_count: 0,
+            max_idle: Duration::ZERO,
+            termination_reason: "running",
+        }
+    }
+}
 
 async fn install_managed_extension(
     data_root: &Path,
@@ -79,7 +121,9 @@ pub struct PiRpcModelProvider {
     pub rpc_status: Arc<AtomicU8>,
     clarification_extension_path: Option<PathBuf>,
     review_extension_path: Option<PathBuf>,
+    task_runtime_extension_path: Option<PathBuf>,
     clarification_extension_error: Option<String>,
+    task_runtime_extension_error: Option<String>,
     heartbeat_shutdown: Arc<AtomicBool>,
     heartbeat_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -118,6 +162,17 @@ impl PiRpcModelProvider {
             .ok(),
             Err(_) => None,
         };
+        let (task_runtime_extension_path, task_runtime_extension_error) =
+            match install_managed_extension(
+                &data_root,
+                "raccoon-task-runtime.mjs",
+                TASK_RUNTIME_EXTENSION,
+            )
+            .await
+            {
+                Ok(path) => (Some(path), None),
+                Err(error) => (None, Some(error.to_string())),
+            };
         let project_root = data_root
             .parent()
             .map(Path::to_path_buf)
@@ -160,7 +215,9 @@ impl PiRpcModelProvider {
             rpc_status,
             clarification_extension_path,
             review_extension_path,
+            task_runtime_extension_path,
             clarification_extension_error,
+            task_runtime_extension_error,
             heartbeat_shutdown,
             heartbeat_task: std::sync::Mutex::new(Some(heartbeat_task)),
         }
@@ -333,13 +390,22 @@ impl PiRpcModelProvider {
                         .unwrap_or_else(|| "受管需求澄清插件不可用".to_owned()),
                 )
             })?;
-        let mut extension_paths = vec![extension_path.to_path_buf()];
-        if let Some(path) = &self.review_extension_path {
-            extension_paths.push(path.clone());
-        }
-        let client =
-            PiRpcClient::start_with_extensions(&self.session_dir, &working_dir, &extension_paths)
-                .await?;
+        let task_runtime = self.task_runtime_extension_path.as_deref().ok_or_else(|| {
+            AppError::internal(
+                self.task_runtime_extension_error
+                    .clone()
+                    .unwrap_or_else(|| "受管 Pi 任务运行时插件不可用".to_owned()),
+            )
+        })?;
+        let extension_paths = vec![extension_path.to_path_buf(), task_runtime.to_path_buf()];
+        let client = PiRpcClient::start_managed(
+            &self.session_dir,
+            &working_dir,
+            &extension_paths,
+            REQUIREMENT_ANALYSIS_TOOLS,
+            Some("requirement_analysis"),
+        )
+        .await?;
         let client = Arc::new(client);
         clients.insert(project_id, (client.clone(), Instant::now()));
         Ok(client)
@@ -401,82 +467,88 @@ impl ModelProvider for PiRpcModelProvider {
         })
     }
 
-    fn plan_requirement_execution(
+    fn plan_workflow(
         &self,
-        input: RequirementPlanInput,
+        input: WorkflowPlanInput,
         events: Option<RequirementEventEmitter>,
-    ) -> RequirementPlanFuture<'_> {
+    ) -> WorkflowPlanFuture<'_> {
         Box::pin(async move {
-            let client = self.project_client(&input.project).await?;
-            client.plan_requirement_execution(input, events).await
+            let working_dir =
+                resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
+            let task_runtime = self.task_runtime_extension_path.as_ref().ok_or_else(|| {
+                AppError::internal(
+                    self.task_runtime_extension_error
+                        .clone()
+                        .unwrap_or_else(|| "受管 Pi 任务运行时插件不可用".to_owned()),
+                )
+            })?;
+            let client = PiRpcClient::start_managed(
+                &self.session_dir,
+                &working_dir,
+                std::slice::from_ref(task_runtime),
+                WORK_PLAN_TOOLS,
+                Some("work_plan"),
+            )
+            .await?;
+            let result = client.plan_workflow(input, events).await;
+            client.shutdown().await;
+            result
         })
     }
 
-    fn execute_requirement_task(
+    fn execute_workflow_attempt(
         &self,
-        input: RequirementTaskExecutionInput,
+        input: WorkflowAgentInput,
         events: Option<RequirementEventEmitter>,
-    ) -> RequirementTaskExecutionFuture<'_> {
+    ) -> WorkflowAttemptFuture<'_> {
         Box::pin(async move {
-            let (working_dir, branch_name, worktree_path) =
-                prepare_task_workspace(&self.data_root, &input).await?;
-            let no_session = input.task.kind == RequirementTaskKind::ReviewSubAgent;
-            let client = if no_session {
-                PiRpcClient::start_no_session(&working_dir).await?
-            } else {
-                // 任务执行子进程需要加载受管扩展：审核任务依赖
-                // raccoon-review-orchestrator.mjs 提供的 run_parallel_code_review 工具。
-                let mut extension_paths = Vec::new();
-                if let Some(path) = &self.clarification_extension_path {
-                    extension_paths.push(path.clone());
-                }
-                if let Some(path) = &self.review_extension_path {
-                    extension_paths.push(path.clone());
-                }
-                PiRpcClient::start_with_extensions(
-                    &self.session_dir,
-                    &working_dir,
-                    &extension_paths,
+            let task_runtime = self.task_runtime_extension_path.as_ref().ok_or_else(|| {
+                AppError::internal(
+                    self.task_runtime_extension_error
+                        .clone()
+                        .unwrap_or_else(|| "受管 Pi 任务运行时插件不可用".to_owned()),
                 )
-                .await?
+            })?;
+            let role = if input.attempt_kind == WorkflowAttemptKind::Rescue {
+                "rescue"
+            } else {
+                "work_item"
             };
-            let mut input = input;
-            if input.task.branch_name.is_none() {
-                input.task.branch_name = branch_name;
-            }
-            if input.task.worktree_path.is_none() {
-                input.task.worktree_path =
-                    worktree_path.map(|path| path.to_string_lossy().to_string());
-            }
-            let mut output = match client.execute_requirement_task(input.clone(), events).await {
-                Ok(output) => output,
-                Err(error) => {
-                    let session_file = if no_session {
-                        None
-                    } else {
-                        match error.pi_session_file() {
-                            Some(path) => Some(path.to_owned()),
-                            None => client.get_session_file().await.ok().flatten(),
-                        }
-                    };
-                    if no_session {
-                        client.shutdown().await;
-                    }
-                    return Err(AppError::task_execution(error.to_string(), session_file));
-                }
-            };
-            if no_session {
-                client.shutdown().await;
-            }
-            if input.task.kind == RequirementTaskKind::MergeReview
-                && output.review_status == Some(RequirementReviewStatus::Approved)
-            {
-                let publish = publish_merge_review(&self.data_root, &input, &output).await?;
-                output.pull_request_url = publish.pull_request_url;
-                output.merged_into = Some(publish.merged_into);
-                output.cleanup_summary = Some(publish.cleanup_summary);
-            }
-            Ok(output)
+            let client = PiRpcClient::start_managed(
+                &self.session_dir,
+                &input.working_dir,
+                std::slice::from_ref(task_runtime),
+                WORK_ITEM_TOOLS,
+                Some(role),
+            )
+            .await?;
+            let result = client.execute_workflow_attempt(input, events).await;
+            client.shutdown().await;
+            result
+        })
+    }
+
+    fn review_workflow_checkpoint(
+        &self,
+        input: WorkflowReviewInput,
+        events: Option<RequirementEventEmitter>,
+    ) -> WorkflowReviewFuture<'_> {
+        Box::pin(async move {
+            let review_extension = self
+                .review_extension_path
+                .as_ref()
+                .ok_or_else(|| AppError::internal("受管 Pi 内存子 Agent 审核插件不可用"))?;
+            let client = PiRpcClient::start_managed(
+                &self.session_dir,
+                &input.working_dir,
+                std::slice::from_ref(review_extension),
+                "run_parallel_code_review",
+                None,
+            )
+            .await?;
+            let result = client.review_workflow_checkpoint(input, events).await;
+            client.shutdown().await;
+            result
         })
     }
 
@@ -497,7 +569,23 @@ impl ModelProvider for PiRpcModelProvider {
             let result = async {
                 let working_dir =
                     resolve_project_working_dir(&self.data_root, &input.project.local_path)?;
-                let client = Arc::new(PiRpcClient::start(&self.session_dir, &working_dir).await?);
+                let task_runtime = self.task_runtime_extension_path.as_ref().ok_or_else(|| {
+                    AppError::internal(
+                        self.task_runtime_extension_error
+                            .clone()
+                            .unwrap_or_else(|| "受管 Pi 任务运行时插件不可用".to_owned()),
+                    )
+                })?;
+                let client = Arc::new(
+                    PiRpcClient::start_managed(
+                        &self.session_dir,
+                        &working_dir,
+                        std::slice::from_ref(task_runtime),
+                        PROJECT_CHAT_TOOLS,
+                        Some("chat"),
+                    )
+                    .await?,
+                );
                 self.project_chat_clients
                     .lock()
                     .await
@@ -679,7 +767,7 @@ pub struct PiRpcClient {
 
 impl PiRpcClient {
     pub async fn start(session_dir: &Path, working_dir: &Path) -> Result<Self, AppError> {
-        Self::start_with_optional_extensions(session_dir, working_dir, &[]).await
+        Self::start_with_optional_extensions(session_dir, working_dir, &[], None, None).await
     }
 
     pub async fn start_with_extension(
@@ -695,13 +783,49 @@ impl PiRpcClient {
         working_dir: &Path,
         extension_paths: &[PathBuf],
     ) -> Result<Self, AppError> {
-        Self::start_with_optional_extensions(session_dir, working_dir, extension_paths).await
+        Self::start_with_optional_extensions(session_dir, working_dir, extension_paths, None, None)
+            .await
+    }
+
+    pub async fn start_with_extensions_and_tools(
+        session_dir: &Path,
+        working_dir: &Path,
+        extension_paths: &[PathBuf],
+        tool_names: &str,
+    ) -> Result<Self, AppError> {
+        Self::start_with_optional_extensions(
+            session_dir,
+            working_dir,
+            extension_paths,
+            Some(tool_names),
+            None,
+        )
+        .await
+    }
+
+    pub async fn start_managed(
+        session_dir: &Path,
+        working_dir: &Path,
+        extension_paths: &[PathBuf],
+        tool_names: &str,
+        workflow_role: Option<&str>,
+    ) -> Result<Self, AppError> {
+        Self::start_with_optional_extensions(
+            session_dir,
+            working_dir,
+            extension_paths,
+            Some(tool_names),
+            workflow_role,
+        )
+        .await
     }
 
     async fn start_with_optional_extensions(
         session_dir: &Path,
         working_dir: &Path,
         extension_paths: &[PathBuf],
+        tool_names: Option<&str>,
+        workflow_role: Option<&str>,
     ) -> Result<Self, AppError> {
         let session_dir = normalize_local_path(session_dir)?;
         let working_dir = normalize_local_path(working_dir)?;
@@ -715,8 +839,15 @@ impl PiRpcClient {
 
         let mut last_error = None;
         for program in &candidates {
-            match Self::start_with_program(program, &session_dir, &working_dir, extension_paths)
-                .await
+            match Self::start_with_program(
+                program,
+                &session_dir,
+                &working_dir,
+                extension_paths,
+                tool_names,
+                workflow_role,
+            )
+            .await
             {
                 Ok(client) => {
                     tracing::info!("started Pi Agent RPC using {}", program);
@@ -733,6 +864,30 @@ impl PiRpcClient {
     }
 
     pub async fn start_no_session(working_dir: &Path) -> Result<Self, AppError> {
+        Self::start_no_session_optional(working_dir, &[], None, None).await
+    }
+
+    pub async fn start_no_session_managed(
+        working_dir: &Path,
+        extension_paths: &[PathBuf],
+        tool_names: &str,
+        workflow_role: Option<&str>,
+    ) -> Result<Self, AppError> {
+        Self::start_no_session_optional(
+            working_dir,
+            extension_paths,
+            Some(tool_names),
+            workflow_role,
+        )
+        .await
+    }
+
+    async fn start_no_session_optional(
+        working_dir: &Path,
+        extension_paths: &[PathBuf],
+        tool_names: Option<&str>,
+        workflow_role: Option<&str>,
+    ) -> Result<Self, AppError> {
         let working_dir = normalize_local_path(working_dir)?;
         let candidates: Vec<&str> = if cfg!(target_os = "windows") {
             vec!["pi.cmd", "pi.exe", "pi"]
@@ -741,7 +896,15 @@ impl PiRpcClient {
         };
         let mut last_error = None;
         for program in &candidates {
-            match Self::start_with_program_no_session(program, &working_dir).await {
+            match Self::start_with_program_no_session(
+                program,
+                &working_dir,
+                extension_paths,
+                tool_names,
+                workflow_role,
+            )
+            .await
+            {
                 Ok(client) => {
                     tracing::info!("started Pi Agent RPC (no-session) using {}", program);
                     return Ok(client);
@@ -762,8 +925,20 @@ impl PiRpcClient {
     async fn start_with_program_no_session(
         program: &str,
         working_dir: &Path,
+        extension_paths: &[PathBuf],
+        tool_names: Option<&str>,
+        workflow_role: Option<&str>,
     ) -> Result<Self, AppError> {
-        let transport_config = PiRpcTransportConfig::no_session(program, working_dir);
+        let git_executable = trusted_git_executable(working_dir)?;
+        let transport_config = match tool_names {
+            Some(tool_names) => PiRpcTransportConfig::no_session_with_tools(
+                program,
+                working_dir,
+                extension_paths,
+                tool_names,
+            ),
+            None => PiRpcTransportConfig::no_session(program, working_dir),
+        };
         let _pi_session_config = transport_config.to_pi_session_config();
         let mut command = if cfg!(windows) && program.ends_with(".cmd") {
             let mut command = Command::new("cmd.exe");
@@ -772,11 +947,16 @@ impl PiRpcClient {
         } else {
             Command::new(program)
         };
-        let mut child = command
+        command
             .arg("--mode")
             .arg("rpc")
             .args(transport_config.extra_args())
             .env("RACCOON_PI_EXECUTABLE", program)
+            .env("RACCOON_GIT_EXECUTABLE", git_executable);
+        if let Some(workflow_role) = workflow_role {
+            command.env("RACCOON_WORKFLOW_ROLE", workflow_role);
+        }
+        let mut child = command
             .current_dir(working_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -830,9 +1010,22 @@ impl PiRpcClient {
         session_dir: &Path,
         working_dir: &Path,
         extension_paths: &[PathBuf],
+        tool_names: Option<&str>,
+        workflow_role: Option<&str>,
     ) -> Result<Self, AppError> {
-        let transport_config =
-            PiRpcTransportConfig::session(program, session_dir, working_dir, extension_paths);
+        let git_executable = trusted_git_executable(working_dir)?;
+        let transport_config = match tool_names {
+            Some(tool_names) => PiRpcTransportConfig::session_with_tools(
+                program,
+                session_dir,
+                working_dir,
+                extension_paths,
+                tool_names,
+            ),
+            None => {
+                PiRpcTransportConfig::session(program, session_dir, working_dir, extension_paths)
+            }
+        };
         let _pi_session_config = transport_config.to_pi_session_config();
         let mut command = if cfg!(windows) && program.ends_with(".cmd") {
             let mut command = Command::new("cmd.exe");
@@ -848,8 +1041,13 @@ impl PiRpcClient {
         if let Some(session_dir) = transport_config.session_dir.as_deref() {
             command.arg("--session-dir").arg(session_dir);
         }
-        let mut child = command
+        command
             .env("RACCOON_PI_EXECUTABLE", program)
+            .env("RACCOON_GIT_EXECUTABLE", git_executable);
+        if let Some(workflow_role) = workflow_role {
+            command.env("RACCOON_WORKFLOW_ROLE", workflow_role);
+        }
+        let mut child = command
             .current_dir(working_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -929,34 +1127,57 @@ impl PiRpcClient {
             }));
         }
         self.ensure_clarification_extension().await?;
+        self.ensure_task_runtime_extension().await?;
         self.prepare_high_model(&input.model_settings).await?;
         let rendered_prompt = build_requirement_prompt(&input, session_reused);
         self.prompt_with_images(&rendered_prompt.markdown, &input.prompt_images)
             .await?;
         let mut pi_events = Vec::new();
-        self.wait_for_agent_end_with_events(
-            Duration::from_secs(120), // first warning at 120s
-            Duration::from_secs(600), // hard stop at 600s (10 min)
-            &events,
-            |event| {
-                if let Some(emitter) = &events {
-                    emitter.emit_pi_event(event.clone());
-                }
-                pi_events.push(event);
-            },
-        )
-        .await?;
+        let mut observation = OperationRuntimeObservation::new(
+            Duration::from_secs(OPERATION_WARNING_SECONDS),
+            Duration::from_secs(OPERATION_IDLE_TIMEOUT_SECONDS),
+            None,
+        );
+        let wait_result = self
+            .wait_for_agent_end_with_events(
+                Duration::from_secs(OPERATION_WARNING_SECONDS),
+                Duration::from_secs(OPERATION_IDLE_TIMEOUT_SECONDS),
+                &events,
+                None,
+                &mut observation,
+                |event| {
+                    if let Some(emitter) = &events {
+                        emitter.emit_pi_event(event.clone());
+                    }
+                    pi_events.push(event);
+                },
+            )
+            .await;
+        if let Err(error) = wait_result {
+            return Err(AppError::task_execution_with_trace(
+                error.to_string(),
+                session_file,
+                attach_runtime_observation(
+                    build_failure_trace(&pi_events, session_reused),
+                    &observation,
+                ),
+            ));
+        }
 
         let trace = self
             .attach_session_usage(
                 attach_prompt_diagnostics(
-                    crate::requirement::build_pi_trace_metadata(&pi_events),
+                    attach_compaction_observability(
+                        crate::requirement::build_pi_trace_metadata(&pi_events),
+                        &pi_events,
+                    ),
                     &rendered_prompt.diagnostics,
                 ),
                 session_reused,
                 usage_before.as_ref(),
             )
             .await;
+        let trace = attach_runtime_observation(trace, &observation);
         Ok(parse_requirement_tool_analysis(
             &pi_events,
             session_file,
@@ -973,7 +1194,7 @@ impl PiRpcClient {
             .and_then(Value::as_array)
             .is_some_and(|commands| {
                 commands.iter().any(|command| {
-                    command.get("name").and_then(Value::as_str) == Some("raccoon-requirements-v2")
+                    command.get("name").and_then(Value::as_str) == Some("raccoon-requirements-v3")
                 })
             });
         if !available {
@@ -994,262 +1215,362 @@ impl PiRpcClient {
             .is_some_and(|commands| {
                 commands.iter().any(|command| {
                     command.get("name").and_then(Value::as_str)
-                        == Some("raccoon-parallel-review-v1")
+                        == Some("raccoon-parallel-review-v5")
                 })
             });
         if available {
             Ok(())
         } else {
-            Err(AppError::internal("受管 Pi 并行审核插件未加载或协议不兼容"))
+            Err(AppError::internal(
+                "受管 Pi 内存子 Agent 审核插件未加载或协议不兼容",
+            ))
         }
     }
 
-    pub async fn plan_requirement_execution(
+    async fn ensure_task_runtime_extension(&self) -> Result<(), AppError> {
+        let response = self
+            .send_command(serde_json::json!({ "type": "get_commands" }))
+            .await?;
+        let available = response
+            .pointer("/data/commands")
+            .and_then(Value::as_array)
+            .is_some_and(|commands| {
+                commands.iter().any(|command| {
+                    command.get("name").and_then(Value::as_str) == Some("raccoon-task-runtime-v3")
+                })
+            });
+        if available {
+            Ok(())
+        } else {
+            Err(AppError::internal(
+                "受管 Pi 任务运行时插件 v3 未加载或协议不兼容",
+            ))
+        }
+    }
+
+    pub async fn plan_workflow(
         &self,
-        input: RequirementPlanInput,
+        input: WorkflowPlanInput,
         events: Option<RequirementEventEmitter>,
-    ) -> Result<crate::models::RequirementExecutionPlan, AppError> {
+    ) -> Result<WorkflowPlanOutput, AppError> {
         self.new_session().await?;
+        self.ensure_task_runtime_extension().await?;
         let usage_before = self.get_session_stats().await.ok();
         self.prepare_high_model(&input.model_settings).await?;
-        let rendered_prompt = build_requirement_plan_prompt(&input.requirement);
+        let rendered_prompt = build_workflow_plan_prompt(&input);
+        let change_spec = change_spec_from_requirement(&input.requirement)?;
+        let parse = |events: &[Value]| -> Result<crate::workflow::WorkPlan, AppError> {
+            let payload = parse_workflow_payload(events, "submit_work_plan", "work_plan")?;
+            let plan = serde_json::from_value::<crate::workflow::WorkPlan>(payload)?;
+            compile_work_plan(
+                &input.requirement.id,
+                &input.project.id,
+                input.requirement.analysis_revision,
+                change_spec.clone(),
+                plan.clone(),
+            )?;
+            Ok(plan)
+        };
         let mut response = self
             .prompt_and_extract_response(
                 &rendered_prompt.markdown,
-                Duration::from_secs(600),
-                Duration::from_secs(600),
+                Duration::from_secs(OPERATION_WARNING_SECONDS),
+                Duration::from_secs(OPERATION_IDLE_TIMEOUT_SECONDS),
                 &events,
+                None,
                 false,
             )
             .await?;
         response.trace = attach_prompt_diagnostics(response.trace, &rendered_prompt.diagnostics);
-        match parse_requirement_plan(&response.assistant_text) {
-            Ok(mut plan) => {
-                plan.trace = self
-                    .attach_session_usage(response.trace, false, usage_before.as_ref())
-                    .await;
-                Ok(plan)
-            }
-            Err(parse_error) => {
-                let repair_prompt = build_requirement_plan_json_repair_prompt(
-                    &parse_error.to_string(),
-                    &response.assistant_text,
+        let plan = match parse(&response.events) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let repair = format!(
+                    "上一份 WorkPlan 未通过结构或业务校验：{error}\n不要重新调研仓库。只修正结构、依赖、契约或证据，并立即再次调用 submit_work_plan。"
                 );
-                let repaired = self
+                response = self
                     .prompt_and_extract_response(
-                        &repair_prompt,
-                        Duration::from_secs(600),
-                        Duration::from_secs(600),
+                        &repair,
+                        Duration::from_secs(OPERATION_WARNING_SECONDS),
+                        Duration::from_secs(OPERATION_IDLE_TIMEOUT_SECONDS),
                         &events,
+                        None,
                         true,
                     )
                     .await?;
-                let mut plan =
-                    parse_requirement_plan(&repaired.assistant_text).map_err(|repair_error| {
-                        AppError::internal(format!(
-                            "执行计划 JSON 解析失败，已尝试同会话修复：{repair_error}"
-                        ))
-                    })?;
-                plan.trace = self
-                    .attach_session_usage(repaired.trace, false, usage_before.as_ref())
-                    .await;
-                Ok(plan)
+                response.trace =
+                    attach_prompt_diagnostics(response.trace, &rendered_prompt.diagnostics);
+                parse(&response.events).map_err(|repair_error| {
+                    AppError::task_execution_with_trace(
+                        format!("WorkPlan 修正后仍不合法：{repair_error}"),
+                        None,
+                        response.trace.clone(),
+                    )
+                })?
             }
-        }
+        };
+        let trace = self
+            .attach_session_usage(response.trace, false, usage_before.as_ref())
+            .await;
+        Ok(WorkflowPlanOutput { plan, trace })
     }
 
-    pub async fn execute_requirement_task(
+    pub async fn execute_workflow_attempt(
         &self,
-        input: RequirementTaskExecutionInput,
+        input: WorkflowAgentInput,
         events: Option<RequirementEventEmitter>,
-    ) -> Result<RequirementTaskExecutionOutput, AppError> {
-        let session_reused = self
-            .restore_or_new_session(input.task.pi_session_file.as_deref())
+    ) -> Result<WorkflowAgentOutput, AppError> {
+        let restored = self
+            .restore_or_new_session(input.resume_session_file.as_deref())
             .await?;
+        if input.resume_session_file.is_some() && !restored {
+            return Err(AppError::internal(
+                "Rescue 反馈必须恢复原 Pi 会话，但原会话不可用",
+            ));
+        }
+        self.ensure_task_runtime_extension().await?;
         let usage_before = self.get_session_stats().await.ok();
-        if input.task.recovery_stage == crate::models::RequirementRecoveryStage::GuidedRetry
-            && input.task.recovery_guidance.is_none()
-        {
+        if input.attempt_kind == WorkflowAttemptKind::Rescue {
             self.prepare_high_model(&input.model_settings).await?;
-            let timeout = Duration::from_secs(input.task.timeout_seconds.min(600));
-            let recovery_prompt = build_recovery_guidance_prompt(&input.task);
-            let mut response = self
-                .prompt_and_extract_response(
-                    &recovery_prompt.markdown,
-                    timeout,
-                    timeout,
-                    &events,
-                    session_reused,
-                )
+        } else {
+            self.prepare_model_tier(&input.model_settings, input.model_tier)
                 .await?;
-            response.trace =
-                attach_prompt_diagnostics(response.trace, &recovery_prompt.diagnostics);
-            let guidance = match parse_recovery_guidance(&response.assistant_text) {
-                Ok(guidance) => guidance,
-                Err(parse_error) => {
-                    let repair_prompt = build_recovery_guidance_json_repair_prompt(
-                        &parse_error.to_string(),
-                        &response.assistant_text,
-                    );
-                    response = self
-                        .prompt_and_extract_response(
-                            &repair_prompt,
-                            timeout,
-                            timeout,
-                            &events,
-                            true,
-                        )
-                        .await?;
-                    response.trace =
-                        attach_prompt_diagnostics(response.trace, &recovery_prompt.diagnostics);
-                    parse_recovery_guidance(&response.assistant_text).map_err(|repair_error| {
-                        AppError::internal(format!(
-                            "恢复指导 JSON 解析失败，已尝试同会话修复：{repair_error}"
-                        ))
-                    })?
-                }
-            };
-            response.trace = self
-                .attach_session_usage(response.trace, session_reused, usage_before.as_ref())
-                .await;
-            return Ok(RequirementTaskExecutionOutput {
-                result_summary: "高档模型恢复方案已生成。".to_owned(),
-                pi_session_file: self.get_session_file().await?,
-                branch_name: input.task.branch_name.clone(),
-                worktree_path: input.task.worktree_path.clone(),
-                review_status: None,
-                review_feedback: None,
-                fix_instructions: None,
-                pull_request_url: None,
-                merged_into: None,
-                cleanup_summary: None,
-                execution_warning: None,
-                changed: None,
-                no_op_reason: None,
-                recovery_guidance: Some(guidance),
-                trace: response.trace,
-            });
         }
-
-        self.prepare_model_tier(&input.model_settings, input.task.model_tier)
-            .await?;
-        let task_timeout = Duration::from_secs(input.task.timeout_seconds);
-        let rendered_prompt = build_requirement_task_prompt_with_session(
-            &input.requirement,
-            &input.plan,
-            &input.task,
-            session_reused,
-        );
-        if input.task.kind == RequirementTaskKind::Review {
-            self.ensure_parallel_review_extension().await?;
-            self.prompt(&rendered_prompt.markdown).await?;
-            let mut pi_events = Vec::new();
-            self.wait_for_agent_end_with_events(
-                Duration::from_secs(input.task.timeout_seconds),
-                Duration::from_secs(input.task.timeout_seconds),
-                &events,
-                |event| {
-                    if let Some(emitter) = &events {
-                        emitter.emit_pi_event(event.clone());
-                    }
-                    pi_events.push(event);
-                },
-            )
-            .await?;
-            let mut output = parse_parallel_review_output(&pi_events)?;
-            let review_details = output
-                .trace
-                .take()
-                .and_then(|trace| trace.pointer("/trace/parallelReview").cloned());
-            let mut trace = attach_prompt_diagnostics(
-                crate::requirement::build_pi_trace_metadata(&pi_events),
-                &rendered_prompt.diagnostics,
-            );
-            if let (Some(trace), Some(review_details)) = (&mut trace, review_details) {
-                trace["trace"]["parallelReview"] = review_details;
-            }
-            output.trace = self
-                .attach_session_usage(trace, session_reused, usage_before.as_ref())
-                .await;
-            output.pi_session_file = self.get_session_file().await?;
-            output.branch_name = input.task.branch_name.clone();
-            output.worktree_path = input.task.worktree_path.clone();
-            return Ok(output);
-        }
+        let git_guard = TaskGitState::capture(&self.working_dir).await?;
+        let rendered_prompt = build_workflow_attempt_prompt(&input);
         let mut response = self
             .prompt_and_extract_response(
                 &rendered_prompt.markdown,
-                task_timeout,
-                task_timeout,
+                Duration::from_secs(OPERATION_WARNING_SECONDS),
+                Duration::from_secs(OPERATION_IDLE_TIMEOUT_SECONDS),
                 &events,
-                session_reused,
+                Some(
+                    if input.attempt_kind == WorkflowAttemptKind::Implementation {
+                        500_000
+                    } else {
+                        250_000
+                    },
+                ),
+                false,
             )
-            .await
-            .map_err(|error| {
-                AppError::internal(format!(
-                    "节点「{}」执行超时或失败：{error}",
-                    input.task.title
-                ))
-            })?;
+            .await?;
+        let expected_kind = if input.attempt_kind == WorkflowAttemptKind::Rescue {
+            "rescue"
+        } else {
+            "work_item"
+        };
+        let parse = |events: &[Value]| -> Result<WorkflowAgentPayload, AppError> {
+            let payload = parse_workflow_payload(events, "submit_workflow_result", expected_kind)?;
+            let payload = serde_json::from_value::<WorkflowAgentPayload>(payload)?;
+            if !payload.changed
+                && payload
+                    .no_op_reason
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .is_empty()
+            {
+                return Err(AppError::internal("changed=false 时必须说明 no_op_reason"));
+            }
+            Ok(payload)
+        };
+        let payload = match parse(&response.events) {
+            Ok(payload) => payload,
+            Err(error) => {
+                response = self
+                    .prompt_and_extract_response(
+                        &format!(
+                            "你的实现结果没有按协议提交：{error}\n不要重新读取或修改代码，只调用 submit_workflow_result 提交当前结果。"
+                        ),
+                        Duration::from_secs(OPERATION_WARNING_SECONDS),
+                        Duration::from_secs(OPERATION_IDLE_TIMEOUT_SECONDS),
+                        &events,
+                        None,
+                        true,
+                    )
+                    .await?;
+                parse(&response.events).map_err(|repair_error| {
+                    AppError::task_execution_with_trace(
+                        format!("工作项结构化结果修正后仍不合法：{repair_error}"),
+                        None,
+                        response.trace.clone(),
+                    )
+                })?
+            }
+        };
         response.trace = attach_prompt_diagnostics(response.trace, &rendered_prompt.diagnostics);
-        let mut output =
-            match parse_task_execution_output(&response.assistant_text, response.trace.clone()) {
-                Ok(output) => output,
-                Err(parse_error) => {
-                    let mut last_error = parse_error;
-                    let mut repaired_output = None;
-                    for _ in 0..MAX_JSON_REPAIR_ATTEMPTS {
-                        let repair_prompt = build_task_output_json_repair_prompt(
-                            &input.task,
-                            &last_error.to_string(),
-                            &response.assistant_text,
-                        );
-                        response = self
-                            .prompt_and_extract_response(
-                                &repair_prompt,
-                                task_timeout,
-                                task_timeout,
-                                &events,
-                                true,
-                            )
-                            .await?;
-                        response.trace =
-                            attach_prompt_diagnostics(response.trace, &rendered_prompt.diagnostics);
-                        match parse_task_execution_output(
-                            &response.assistant_text,
-                            response.trace.clone(),
-                        ) {
-                            Ok(output) => {
-                                repaired_output = Some(output);
-                                break;
-                            }
-                            Err(error) => last_error = error,
-                        }
-                    }
-                    repaired_output.ok_or_else(|| {
-                        AppError::internal(format!(
-                            "任务结果 JSON 解析失败，已尝试同会话修复：{last_error}"
-                        ))
-                    })?
-                }
-            };
-        output.recovery_guidance = input.task.recovery_guidance.clone();
-        output.pi_session_file = self.get_session_file().await?;
-        output.branch_name = input.task.branch_name.clone();
-        output.worktree_path = input.task.worktree_path.clone();
-        output.trace = self
-            .attach_session_usage(output.trace, session_reused, usage_before.as_ref())
+        response.trace = self
+            .attach_session_usage(response.trace, false, usage_before.as_ref())
             .await;
-        match input.task.kind {
-            RequirementTaskKind::BranchMerge | RequirementTaskKind::MergeReview => {
-                commit_task_changes(&input.task, &mut output).await?;
-            }
-            RequirementTaskKind::Implementation => {
-                stage_task_changes(&input.task, &mut output).await?;
-            }
-            _ => {}
+        git_guard.verify(&self.working_dir).await.map_err(|error| {
+            AppError::task_execution_with_trace(error.to_string(), None, response.trace.clone())
+        })?;
+        let diff = git(
+            &self.working_dir,
+            &["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD"],
+        )
+        .await?;
+        let summary = if payload.changed {
+            payload.result_summary
+        } else {
+            format!(
+                "{}（未修改：{}）",
+                payload.result_summary,
+                payload.no_op_reason.unwrap_or_default()
+            )
+        };
+        Ok(WorkflowAgentOutput {
+            completed: payload.outcome == "completed",
+            changed: payload.changed,
+            result_summary: summary,
+            pi_session_file: self.get_session_file().await?,
+            worktree_fingerprint: Some(format!("diff:{:016x}", text_fingerprint(&diff))),
+            usage: response.trace,
+        })
+    }
+
+    pub async fn review_workflow_checkpoint(
+        &self,
+        input: WorkflowReviewInput,
+        events: Option<RequirementEventEmitter>,
+    ) -> Result<WorkflowReviewOutput, AppError> {
+        self.new_session().await?;
+        self.ensure_parallel_review_extension().await?;
+        let usage_before = self.get_session_stats().await.ok();
+        if matches!(
+            input.checkpoint.kind,
+            crate::workflow::CheckpointKind::Final | crate::workflow::CheckpointKind::Rescue
+        ) {
+            self.prepare_high_model(&input.model_settings).await?;
+        } else {
+            self.prepare_model_tier(&input.model_settings, RequirementModelTier::Medium)
+                .await?;
         }
-        Ok(output)
+        let rendered_prompt = build_workflow_review_prompt(&input);
+        self.prompt(&rendered_prompt.markdown).await?;
+        let mut pi_events = Vec::new();
+        let mut observation = OperationRuntimeObservation::new(
+            Duration::from_secs(OPERATION_WARNING_SECONDS),
+            Duration::from_secs(OPERATION_IDLE_TIMEOUT_SECONDS),
+            None,
+        );
+        self.wait_for_agent_end_with_events(
+            Duration::from_secs(OPERATION_WARNING_SECONDS),
+            Duration::from_secs(OPERATION_IDLE_TIMEOUT_SECONDS),
+            &events,
+            None,
+            &mut observation,
+            |event| {
+                if let Some(emitter) = &events {
+                    emitter.emit_pi_event(event.clone());
+                }
+                pi_events.push(event);
+            },
+        )
+        .await?;
+        let details = parallel_review_tool_details(&pi_events)
+            .ok_or_else(|| AppError::internal("并行审核未返回结构化 details"))?;
+        let protocol = details.get("protocol").and_then(Value::as_str);
+        if protocol != Some("raccoon:parallel-review:v5") {
+            return Err(AppError::internal("并行审核协议版本不兼容"));
+        }
+        let mut findings = Vec::new();
+        let mut technical_failures = Vec::new();
+        let expected_angles = input
+            .checkpoint
+            .required_angles
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>();
+        let selected_angles = details
+            .pointer("/selection/angles")
+            .and_then(Value::as_array)
+            .map(|angles| {
+                angles
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter_map(parse_review_angle)
+                    .collect::<HashSet<_>>()
+            });
+        if selected_angles.as_ref() != Some(&expected_angles) {
+            technical_failures.push("审核 selection 与 checkpoint 所需角度不一致".to_owned());
+        }
+        let reviews = details.get("reviews").and_then(Value::as_array);
+        if reviews.is_none() {
+            technical_failures.push("并行审核 details 缺少 reviews".to_owned());
+        }
+        let mut seen_angles = HashSet::new();
+        let scenario_refs = input
+            .run
+            .change_spec
+            .acceptance_scenarios
+            .iter()
+            .map(|scenario| scenario.id.as_str())
+            .collect::<HashSet<_>>();
+        for review in reviews.into_iter().flatten() {
+            let angle_text = review.get("angle").and_then(Value::as_str).unwrap_or("");
+            let Some(angle) = parse_review_angle(angle_text) else {
+                technical_failures.push(format!("未知审核角度：{angle_text}"));
+                continue;
+            };
+            if !expected_angles.contains(&angle) {
+                technical_failures.push(format!("返回了未选择的审核角度：{angle_text}"));
+                continue;
+            }
+            if !seen_angles.insert(angle) {
+                technical_failures.push(format!("重复返回审核角度：{angle_text}"));
+                continue;
+            }
+            if review.get("transport_status").and_then(Value::as_str) != Some("completed") {
+                technical_failures.push(format!(
+                    "{angle_text}：{}",
+                    review
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("技术失败")
+                ));
+                continue;
+            }
+            let result = review.get("result").unwrap_or(&Value::Null);
+            let Some(raw_findings) = result.get("findings").and_then(Value::as_array) else {
+                technical_failures.push(format!("{angle_text}：结构化结果缺少 findings"));
+                continue;
+            };
+            if raw_findings.len() > 5 {
+                technical_failures.push(format!("{angle_text}：finding 超过 5 个"));
+                continue;
+            }
+            for raw in raw_findings {
+                if let Some(reference) = raw.get("scenario_ref").and_then(Value::as_str)
+                    && (angle != crate::workflow::ReviewAngle::Correctness
+                        || !scenario_refs.contains(reference))
+                {
+                    technical_failures.push(format!("{angle_text}：非法 scenario_ref {reference}"));
+                    continue;
+                }
+                findings.push(parse_workflow_finding(&input.checkpoint.id, angle, raw)?);
+            }
+        }
+        if seen_angles != expected_angles {
+            technical_failures.push("审核结果缺少一个或多个选中角度".to_owned());
+        }
+        let trace = attach_runtime_observation(
+            attach_prompt_diagnostics(
+                crate::requirement::build_pi_trace_metadata(&pi_events),
+                &rendered_prompt.diagnostics,
+            ),
+            &observation,
+        );
+        let usage = self
+            .attach_session_usage(trace, false, usage_before.as_ref())
+            .await;
+        Ok(WorkflowReviewOutput {
+            findings,
+            technical_failure: (!technical_failures.is_empty())
+                .then(|| technical_failures.join("；")),
+            usage,
+            details: Some(details.clone()),
+        })
     }
 
     pub async fn ask_project_chat(
@@ -1261,6 +1582,7 @@ impl PiRpcClient {
             .restore_or_new_session(input.pi_session_file.as_deref())
             .await?;
         let usage_before = self.get_session_stats().await.ok();
+        self.ensure_task_runtime_extension().await?;
         self.prepare_model_tier(&input.model_settings, RequirementModelTier::Medium)
             .await?;
         let rendered_prompt = crate::chat::build_project_chat_prompt(&input, session_reused);
@@ -1268,26 +1590,55 @@ impl PiRpcClient {
             .await?;
         let mut pi_events = Vec::new();
         let no_requirement_events = None;
-        self.wait_for_agent_end_with_events(
-            Duration::from_secs(120),
-            Duration::from_secs(600),
-            &no_requirement_events,
-            |event| {
-                if let Some(emitter) = &events {
-                    emitter.emit_pi_event(event.clone());
-                }
-                pi_events.push(event);
-            },
-        )
-        .await?;
-        let mut response = self
-            .extract_pi_response(&pi_events)
-            .await
-            .map_err(pi_response_failure_error)?;
+        let mut observation = OperationRuntimeObservation::new(
+            Duration::from_secs(OPERATION_WARNING_SECONDS),
+            Duration::from_secs(OPERATION_IDLE_TIMEOUT_SECONDS),
+            None,
+        );
+        let wait_result = self
+            .wait_for_agent_end_with_events(
+                Duration::from_secs(OPERATION_WARNING_SECONDS),
+                Duration::from_secs(OPERATION_IDLE_TIMEOUT_SECONDS),
+                &no_requirement_events,
+                None,
+                &mut observation,
+                |event| {
+                    if let Some(emitter) = &events {
+                        emitter.emit_pi_event(event.clone());
+                    }
+                    pi_events.push(event);
+                },
+            )
+            .await;
+        if let Err(error) = wait_result {
+            return Err(AppError::task_execution_with_trace(
+                error.to_string(),
+                self.get_session_file().await.ok().flatten(),
+                attach_runtime_observation(
+                    build_failure_trace(&pi_events, session_reused),
+                    &observation,
+                ),
+            ));
+        }
+        let mut response = match self.extract_pi_response(&pi_events).await {
+            Ok(response) => response,
+            Err(failure) => {
+                log_pi_response_failure(&failure);
+                return Err(AppError::task_execution_with_trace(
+                    failure.message,
+                    self.get_session_file().await.ok().flatten(),
+                    attach_runtime_observation(
+                        build_failure_trace(&pi_events, session_reused).or(failure.trace),
+                        &observation,
+                    ),
+                ));
+            }
+        };
         response.trace = attach_prompt_diagnostics(response.trace, &rendered_prompt.diagnostics);
         response.trace = self
             .attach_session_usage(response.trace, session_reused, usage_before.as_ref())
             .await;
+        response.trace = attach_runtime_observation(response.trace, &observation);
         Ok(ProjectChatOutput {
             assistant_message: response.assistant_text,
             pi_session_file: self.get_session_file().await?,
@@ -1556,7 +1907,20 @@ impl PiRpcClient {
                 return trace;
             }
         };
-        attach_session_usage(trace, &stats, session_reused, before)
+        let trace = attach_session_usage(trace, &stats, session_reused, before);
+        let auto_enabled = match self
+            .send_command(serde_json::json!({ "type": "get_state" }))
+            .await
+        {
+            Ok(state) => state
+                .pointer("/data/autoCompactionEnabled")
+                .and_then(Value::as_bool),
+            Err(error) => {
+                tracing::warn!("读取 Pi Agent 自动压缩状态失败：{error}");
+                None
+            }
+        };
+        attach_auto_compaction_state(trace, auto_enabled)
     }
 
     async fn extract_pi_response(
@@ -1568,9 +1932,20 @@ impl PiRpcClient {
                 .await
                 .map_err(|error| PiResponseFailure {
                     message: error.to_string(),
-                    trace: crate::requirement::build_pi_trace_metadata(events),
+                    trace: attach_compaction_observability(
+                        crate::requirement::build_pi_trace_metadata(events),
+                        events,
+                    ),
                 })?;
         extract_pi_response(events, last_assistant_text)
+            .map(|mut response| {
+                response.trace = attach_compaction_observability(response.trace, events);
+                response
+            })
+            .map_err(|mut failure| {
+                failure.trace = attach_compaction_observability(failure.trace, events);
+                failure
+            })
     }
 
     async fn prompt_and_extract_response(
@@ -1579,32 +1954,66 @@ impl PiRpcClient {
         warning_after: Duration,
         idle_timeout: Duration,
         events: &Option<RequirementEventEmitter>,
+        input_budget: Option<u64>,
         session_reused: bool,
     ) -> Result<crate::requirement::PiResponseExtraction, AppError> {
         self.prompt(prompt).await?;
         let mut pi_events = Vec::new();
-        self.wait_for_agent_end_with_events(warning_after, idle_timeout, events, |event| {
-            if let Some(emitter) = events {
-                emitter.emit_pi_event(event.clone());
+        let mut observation =
+            OperationRuntimeObservation::new(warning_after, idle_timeout, input_budget);
+        let wait_result = self
+            .wait_for_agent_end_with_events(
+                warning_after,
+                idle_timeout,
+                events,
+                input_budget,
+                &mut observation,
+                |event| {
+                    if let Some(emitter) = events {
+                        emitter.emit_pi_event(event.clone());
+                    }
+                    pi_events.push(event);
+                },
+            )
+            .await;
+        if let Err(error) = wait_result {
+            return Err(AppError::task_execution_with_trace(
+                error.to_string(),
+                self.get_session_file().await.ok().flatten(),
+                attach_runtime_observation(
+                    build_failure_trace(&pi_events, session_reused),
+                    &observation,
+                ),
+            ));
+        }
+        let mut response = match self.extract_pi_response(&pi_events).await {
+            Ok(response) => response,
+            Err(failure) => {
+                log_pi_response_failure(&failure);
+                return Err(AppError::task_execution_with_trace(
+                    failure.message,
+                    self.get_session_file().await.ok().flatten(),
+                    attach_runtime_observation(
+                        build_failure_trace(&pi_events, session_reused).or(failure.trace),
+                        &observation,
+                    ),
+                ));
             }
-            pi_events.push(event);
-        })
-        .await?;
-        let mut response = self
-            .extract_pi_response(&pi_events)
-            .await
-            .map_err(pi_response_failure_error)?;
+        };
         response.trace = self
             .attach_session_usage(response.trace, session_reused, None)
             .await;
+        response.trace = attach_runtime_observation(response.trace, &observation);
         Ok(response)
     }
 
     async fn wait_for_agent_end_with_events<F>(
         &self,
         warning_after: Duration,
-        hard_timeout: Duration,
+        idle_timeout: Duration,
         events: &Option<RequirementEventEmitter>,
+        input_budget: Option<u64>,
+        observation: &mut OperationRuntimeObservation,
         mut on_event: F,
     ) -> Result<(), AppError>
     where
@@ -1614,60 +2023,106 @@ impl PiRpcClient {
         let mut line = String::new();
         let mut last_output_at = Instant::now();
         let mut warned = false;
+        let mut operation_input = 0_u64;
+        let mut terminal_pending = false;
         let cancelled = io.cancelled.clone();
+
+        *observation = OperationRuntimeObservation::new(warning_after, idle_timeout, input_budget);
 
         loop {
             if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
                 let _ = io.child.start_kill();
+                observation.termination_reason = "cancelled";
                 return Err(AppError::internal("分析已被用户取消"));
             }
 
             let idle_for = last_output_at.elapsed();
+            observation.max_idle = observation.max_idle.max(idle_for);
             if !warned && idle_for > warning_after {
                 warned = true;
+                observation.idle_warning_count += 1;
                 if let Some(emitter) = &events {
                     emitter.emit(
                         "coordinator_time_warning",
-                        "Pi Agent 已较长时间没有产生新输出，可取消或等待自动重试",
+                        "Pi Agent 已较长时间没有产生新活动，可取消或继续等待",
                     );
                 }
             }
 
             line.clear();
-            let remaining = hard_timeout.saturating_sub(idle_for);
+            let remaining = idle_timeout.saturating_sub(idle_for);
+            let wait_for = if terminal_pending {
+                remaining.min(Duration::from_millis(250))
+            } else {
+                remaining
+            };
             tokio::select! {
                 read = io.stdout.read_line(&mut line) => {
-                    let read = read?;
+                    let read = match read {
+                        Ok(read) => read,
+                        Err(error) => {
+                            observation.termination_reason = "rpc_read_error";
+                            return Err(error.into());
+                        }
+                    };
                     if read == 0 {
                         let _ = io.child.start_kill();
+                        observation.termination_reason = "process_exit";
                         return Err(AppError::internal("Pi Agent RPC 已退出"));
                     }
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
                     }
-                    let value: Value = serde_json::from_str(trimmed)?;
+                    let value: Value = match serde_json::from_str(trimmed) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            observation.termination_reason = "invalid_rpc_event";
+                            return Err(error.into());
+                        }
+                    };
                     if value.get("type") == Some(&serde_json::json!("response")) {
                         continue;
                     }
 
                     let has_activity = event_has_output_activity(&value);
                     let terminal = is_terminal_agent_end(&value);
+                    terminal_pending = next_terminal_pending(terminal_pending, &value, terminal);
+                    operation_input = operation_input.saturating_add(assistant_message_input(&value));
+                    observation.observed_input = operation_input;
                     on_event(value);
+                    if let Some(budget) = input_budget
+                        && operation_input > budget
+                        && !observation.budget_warning_emitted
+                    {
+                        observation.budget_warning_emitted = true;
+                        if let Some(emitter) = &events {
+                            emitter.emit(
+                                "coordinator_token_budget_warning",
+                                &format!(
+                                    "Pi Agent operation input 已超观测预算：{operation_input} > {budget}；任务将继续运行"
+                                ),
+                            );
+                        }
+                    }
                     if has_activity {
                         last_output_at = Instant::now();
                         warned = false;
-                    }
-                    if terminal {
-                        break;
+                        observation.activity_count += 1;
                     }
                 }
-                _ = tokio::time::sleep(remaining) => {
+                _ = tokio::time::sleep(wait_for) => {
+                    if terminal_pending {
+                        observation.termination_reason = "completed";
+                        break;
+                    }
                     let _ = io.child.start_kill();
+                    observation.termination_reason = "idle_timeout";
                     return Err(AppError::internal("等待 Pi Agent 新输出空闲超时"));
                 }
                 _ = self.cancel_notify.notified() => {
                     let _ = io.child.start_kill();
+                    observation.termination_reason = "cancelled";
                     return Err(AppError::internal("分析已被用户取消"));
                 }
             }
@@ -1816,6 +2271,76 @@ fn is_terminal_agent_end(event: &Value) -> bool {
         && event.get("willRetry").and_then(Value::as_bool) != Some(true)
 }
 
+fn next_terminal_pending(current: bool, event: &Value, terminal_agent_end: bool) -> bool {
+    match event.get("type").and_then(Value::as_str) {
+        Some("agent_start" | "compaction_start") => false,
+        Some("compaction_end") => event.get("willRetry").and_then(Value::as_bool) != Some(true),
+        _ if terminal_agent_end => true,
+        _ => current,
+    }
+}
+
+#[derive(Debug)]
+struct TaskGitState {
+    head: String,
+    branch: String,
+    branch_ref: String,
+    staged_fingerprint: u64,
+}
+
+impl TaskGitState {
+    async fn capture(worktree: &Path) -> Result<Self, AppError> {
+        let head = git(worktree, &["rev-parse", "HEAD"]).await?;
+        let branch = git(worktree, &["rev-parse", "--abbrev-ref", "HEAD"]).await?;
+        let branch_ref = git(worktree, &["symbolic-ref", "-q", "HEAD"])
+            .await
+            .unwrap_or_default();
+        let staged = git(
+            worktree,
+            &[
+                "diff",
+                "--cached",
+                "--binary",
+                "--no-ext-diff",
+                "--no-textconv",
+            ],
+        )
+        .await?;
+        Ok(Self {
+            head: head.trim().to_owned(),
+            branch: branch.trim().to_owned(),
+            branch_ref: branch_ref.trim().to_owned(),
+            staged_fingerprint: text_fingerprint(&staged),
+        })
+    }
+
+    async fn verify(&self, worktree: &Path) -> Result<(), AppError> {
+        let current = Self::capture(worktree).await?;
+        if self.head != current.head {
+            return Err(AppError::internal(
+                "任务 Agent 修改了 HEAD；Git 写操作必须由外部调度器执行",
+            ));
+        }
+        if self.branch != current.branch || self.branch_ref != current.branch_ref {
+            return Err(AppError::internal(
+                "任务 Agent 修改了当前分支；Git 写操作必须由外部调度器执行",
+            ));
+        }
+        if self.staged_fingerprint != current.staged_fingerprint {
+            return Err(AppError::internal(
+                "任务 Agent 修改了暂存区；Git 写操作必须由外部调度器执行",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn text_fingerprint(value: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
 fn event_has_output_activity(event: &Value) -> bool {
     if event.get("type") == Some(&serde_json::json!("response")) {
         return false;
@@ -1828,13 +2353,111 @@ fn event_has_output_activity(event: &Value) -> bool {
         | Some("content_delta")
         | Some("message_delta")
         | Some("thinking_delta") => value_has_non_empty_text(event),
-        Some("tool_execution_update") | Some("tool_execution_end") => {
-            ["partialResult", "partial_result", "result", "output"]
-                .iter()
-                .any(|key| event.get(*key).is_some_and(value_has_non_empty_text))
-        }
+        Some("tool_execution_start") | Some("tool_execution_end") => true,
+        Some("tool_execution_update") => ["partialResult", "partial_result", "result", "output"]
+            .iter()
+            .any(|key| event.get(*key).is_some_and(value_has_non_empty_text)),
+        Some("agent_start")
+        | Some("turn_start")
+        | Some("turn_end")
+        | Some("auto_retry_start")
+        | Some("auto_retry_end")
+        | Some("compaction_start")
+        | Some("compaction_end") => true,
         _ => false,
     }
+}
+
+fn assistant_message_input(event: &Value) -> u64 {
+    if event.get("type").and_then(Value::as_str) != Some("message_end")
+        || event.pointer("/message/role").and_then(Value::as_str) != Some("assistant")
+    {
+        return 0;
+    }
+    event
+        .pointer("/message/usage/input")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn build_failure_trace(events: &[Value], session_reused: bool) -> Option<Value> {
+    let mut trace = attach_compaction_observability(
+        crate::requirement::build_pi_trace_metadata(events),
+        events,
+    )?;
+    let mut call_count = 0_u64;
+    let mut input = 0_u64;
+    let mut output = 0_u64;
+    let mut cache_read = 0_u64;
+    let mut cache_write = 0_u64;
+    for event in events {
+        if event.get("type").and_then(Value::as_str) != Some("message_end")
+            || event.pointer("/message/role").and_then(Value::as_str) != Some("assistant")
+        {
+            continue;
+        }
+        let usage = event.pointer("/message/usage").unwrap_or(&Value::Null);
+        call_count += 1;
+        input = input.saturating_add(usage.get("input").and_then(Value::as_u64).unwrap_or(0));
+        output = output.saturating_add(usage.get("output").and_then(Value::as_u64).unwrap_or(0));
+        cache_read =
+            cache_read.saturating_add(usage.get("cacheRead").and_then(Value::as_u64).unwrap_or(0));
+        cache_write = cache_write
+            .saturating_add(usage.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0));
+    }
+    trace["trace"]["usage"] = serde_json::json!({
+        "scope": "operation",
+        "sessionReused": session_reused,
+        "callCount": call_count,
+        "input": input,
+        "output": output,
+        "cacheRead": cache_read,
+        "cacheWrite": cache_write,
+    });
+    trace["trace"]["operationId"] = serde_json::json!(next_operation_id());
+    Some(trace)
+}
+
+fn attach_runtime_observation(
+    mut trace: Option<Value>,
+    observation: &OperationRuntimeObservation,
+) -> Option<Value> {
+    let trace_data = trace.as_mut()?.get_mut("trace")?.as_object_mut()?;
+    trace_data.insert(
+        "runtime".to_owned(),
+        serde_json::json!({
+            "warningAfterSeconds": observation.warning_after.as_secs(),
+            "idleTimeoutSeconds": observation.idle_timeout.as_secs(),
+            "maxIdleMilliseconds": observation.max_idle.as_millis().min(u128::from(u64::MAX)) as u64,
+            "activityCount": observation.activity_count,
+            "idleWarningCount": observation.idle_warning_count,
+            "terminationReason": observation.termination_reason,
+            "absoluteTimeout": false,
+        }),
+    );
+    if let Some(limit) = observation.input_budget {
+        let observed = observation.observed_input;
+        trace_data.insert(
+            "budget".to_owned(),
+            serde_json::json!({
+                "limit": limit,
+                "observed": observed,
+                "ratio": if limit == 0 { 0.0 } else { observed as f64 / limit as f64 },
+                "exceeded": observed > limit,
+                "enforced": false,
+                "warningEmitted": observation.budget_warning_emitted,
+            }),
+        );
+    }
+    trace
+}
+
+fn next_operation_id() -> String {
+    format!(
+        "operation-{}-{}",
+        chrono::Utc::now().timestamp_millis(),
+        PI_OPERATION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 fn value_has_non_empty_text(value: &Value) -> bool {
@@ -1859,6 +2482,151 @@ fn value_has_non_empty_text(value: &Value) -> bool {
         }
         _ => false,
     }
+}
+
+fn attach_compaction_observability(mut trace: Option<Value>, events: &[Value]) -> Option<Value> {
+    let trace_data = trace.as_mut()?.get_mut("trace")?.as_object_mut()?;
+    let mut attempts: Vec<Value> = Vec::new();
+
+    for event in events {
+        let event_type = event.get("type").and_then(Value::as_str);
+        let reason = event
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        match event_type {
+            Some("compaction_start") => attempts.push(serde_json::json!({
+                "reason": reason,
+                "status": "running",
+                "willRetry": false,
+                "usageKnown": false,
+            })),
+            Some("compaction_end") => {
+                let result = event.get("result").unwrap_or(&Value::Null);
+                let aborted = event
+                    .get("aborted")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let error = event
+                    .get("errorMessage")
+                    .or_else(|| event.get("error"))
+                    .and_then(Value::as_str);
+                let status = if aborted {
+                    "aborted"
+                } else if error.is_some() || result.is_null() {
+                    "failed"
+                } else {
+                    "completed"
+                };
+                let tokens_before = result.get("tokensBefore").and_then(Value::as_u64);
+                let estimated_after = result.get("estimatedTokensAfter").and_then(Value::as_u64);
+                let estimated_saved = tokens_before
+                    .zip(estimated_after)
+                    .map(|(before, after)| before.saturating_sub(after));
+                let mut normalized = serde_json::json!({
+                    "reason": reason,
+                    "status": status,
+                    "willRetry": event
+                        .get("willRetry")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    "usageKnown": false,
+                });
+                if let Some(value) = tokens_before {
+                    normalized["tokensBefore"] = serde_json::json!(value);
+                }
+                if let Some(value) = estimated_after {
+                    normalized["estimatedTokensAfter"] = serde_json::json!(value);
+                }
+                if let Some(value) = estimated_saved {
+                    normalized["estimatedTokensSaved"] = serde_json::json!(value);
+                }
+                if let Some(value) = error {
+                    normalized["error"] = serde_json::json!(value);
+                }
+
+                if let Some(started) = attempts.iter_mut().rev().find(|attempt| {
+                    attempt.get("status").and_then(Value::as_str) == Some("running")
+                        && attempt.get("reason").and_then(Value::as_str) == Some(reason)
+                }) {
+                    *started = normalized;
+                } else {
+                    attempts.push(normalized);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if attempts.is_empty() {
+        return trace;
+    }
+
+    let completed = attempts
+        .iter()
+        .filter(|attempt| attempt.get("status").and_then(Value::as_str) == Some("completed"))
+        .count() as u64;
+    let aborted = attempts
+        .iter()
+        .filter(|attempt| attempt.get("status").and_then(Value::as_str) == Some("aborted"))
+        .count() as u64;
+    let failed = attempts
+        .iter()
+        .filter(|attempt| attempt.get("status").and_then(Value::as_str) == Some("failed"))
+        .count() as u64;
+    let overflow_retries = attempts
+        .iter()
+        .filter(|attempt| {
+            attempt.get("reason").and_then(Value::as_str) == Some("overflow")
+                && attempt.get("willRetry").and_then(Value::as_bool) == Some(true)
+        })
+        .count() as u64;
+    let estimated_tokens_saved = attempts
+        .iter()
+        .filter_map(|attempt| attempt.get("estimatedTokensSaved").and_then(Value::as_u64))
+        .sum::<u64>();
+
+    trace_data.insert(
+        "compaction".to_owned(),
+        serde_json::json!({
+            "usageKnown": false,
+            "estimated": true,
+            "count": attempts.len(),
+            "completed": completed,
+            "aborted": aborted,
+            "failed": failed,
+            "overflowRetries": overflow_retries,
+            "estimatedTokensSaved": estimated_tokens_saved,
+            "events": attempts,
+        }),
+    );
+    trace
+}
+
+fn attach_auto_compaction_state(
+    mut trace: Option<Value>,
+    auto_enabled: Option<bool>,
+) -> Option<Value> {
+    let trace_data = trace.as_mut()?.get_mut("trace")?.as_object_mut()?;
+    let compaction = trace_data
+        .entry("compaction".to_owned())
+        .or_insert_with(|| {
+            serde_json::json!({
+                "usageKnown": false,
+                "estimated": true,
+                "count": 0,
+                "completed": 0,
+                "aborted": 0,
+                "failed": 0,
+                "overflowRetries": 0,
+                "estimatedTokensSaved": 0,
+                "events": [],
+            })
+        });
+    if let (Some(compaction), Some(enabled)) = (compaction.as_object_mut(), auto_enabled) {
+        compaction.insert("autoEnabled".to_owned(), Value::Bool(enabled));
+    }
+    trace
 }
 
 fn attach_session_usage(
@@ -1953,129 +2721,143 @@ fn attach_session_usage(
             },
         }),
     );
+    trace_data
+        .entry("operationId".to_owned())
+        .or_insert_with(|| serde_json::json!(next_operation_id()));
     trace
 }
 
-fn parse_parallel_review_output(
+fn parse_workflow_payload(
     events: &[Value],
-) -> Result<RequirementTaskExecutionOutput, AppError> {
-    const PROTOCOL: &str = "raccoon:parallel-review:v1";
-    let details = events
+    tool_name: &str,
+    expected_kind: &str,
+) -> Result<Value, AppError> {
+    let results = events
+        .iter()
+        .filter(|event| {
+            event.get("type").and_then(Value::as_str) == Some("tool_execution_end")
+                && event.get("toolName").and_then(Value::as_str) == Some(tool_name)
+                && event.get("isError").and_then(Value::as_bool) != Some(true)
+        })
+        .collect::<Vec<_>>();
+    if results.len() != 1 {
+        return Err(AppError::internal(format!(
+            "受管工作流必须提交一次 {tool_name} 结果，实际为 {} 次",
+            results.len()
+        )));
+    }
+    let details = results[0]
+        .pointer("/result/details")
+        .ok_or_else(|| AppError::internal("受管工作流工具结果缺少 details"))?;
+    if details.get("protocol").and_then(Value::as_str) != Some("raccoon:workflow-output:v3") {
+        return Err(AppError::internal("受管工作流输出协议版本不兼容"));
+    }
+    if details.get("kind").and_then(Value::as_str) != Some(expected_kind) {
+        return Err(AppError::internal(format!(
+            "受管工作流结果类型不匹配，预期 {expected_kind}"
+        )));
+    }
+    details
+        .get("payload")
+        .cloned()
+        .ok_or_else(|| AppError::internal("受管工作流工具结果缺少 payload"))
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkflowAgentPayload {
+    outcome: String,
+    changed: bool,
+    no_op_reason: Option<String>,
+    result_summary: String,
+}
+
+fn parallel_review_tool_details(events: &[Value]) -> Option<&Value> {
+    events
         .iter()
         .find(|event| {
             event.get("type").and_then(Value::as_str) == Some("tool_execution_end")
                 && event.get("toolName").and_then(Value::as_str) == Some("run_parallel_code_review")
         })
         .and_then(|event| event.pointer("/result/details"))
-        .ok_or_else(|| AppError::internal("并行审核未返回受管工具结果"))?;
-    if details.get("protocol").and_then(Value::as_str) != Some(PROTOCOL) {
-        return Err(AppError::internal("并行审核协议版本不兼容"));
-    }
-    let reviews = details
-        .get("reviews")
-        .and_then(Value::as_array)
-        .ok_or_else(|| AppError::internal("并行审核结果缺少 reviews"))?;
-    let expected = ["正确性", "边界与安全", "代码质量与测试"];
-    if reviews.len() != expected.len() {
-        return Err(AppError::internal("并行审核必须返回三个审核角度"));
-    }
-    let mut approved = true;
-    let mut feedback = Vec::new();
-    let mut normalized = Vec::new();
-    let mut seen = BTreeSet::new();
-    for review in reviews {
-        let angle = review
-            .get("angle")
+}
+
+fn parse_workflow_finding(
+    checkpoint_id: &str,
+    angle: crate::workflow::ReviewAngle,
+    raw: &Value,
+) -> Result<WorkflowReviewFinding, AppError> {
+    let required = |name: &str| {
+        raw.get(name)
             .and_then(Value::as_str)
-            .ok_or_else(|| AppError::internal("并行审核结果缺少角度"))?;
-        if !expected.contains(&angle) || !seen.insert(angle.to_owned()) {
-            return Err(AppError::internal("并行审核角度缺失、重复或未知"));
-        }
-        if review.get("ok").and_then(Value::as_bool) != Some(true) {
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AppError::internal(format!("审核 finding 缺少 {name}")))
+    };
+    let category = required("category")?;
+    let priority = match required("priority")? {
+        "P0" => FindingPriority::P0,
+        "P1" => FindingPriority::P1,
+        "P2" => FindingPriority::P2,
+        "P3" => FindingPriority::P3,
+        value => {
             return Err(AppError::internal(format!(
-                "审核子代理「{angle}」执行失败：{}",
-                review
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("未知错误")
+                "审核 finding priority 非法：{value}"
             )));
         }
-        let result = review
-            .get("result")
-            .ok_or_else(|| AppError::internal("审核子代理缺少结构化结论"))?;
-        let item_approved = result
-            .get("approved")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let item_feedback = result
-            .get("feedback")
-            .and_then(Value::as_str)
-            .unwrap_or("未提供反馈");
-        let item_feedback =
-            crate::prompt::truncate_chars(item_feedback, crate::prompt::MAX_REVIEW_FEEDBACK_CHARS)
-                .0;
-        let summary = result
-            .get("result_summary")
-            .and_then(Value::as_str)
-            .unwrap_or(&item_feedback);
-        approved &= item_approved;
-        if !item_approved {
-            feedback.push(format!("{angle}：{item_feedback}"));
-        }
-        normalized.push(serde_json::json!({
-            "angle": angle,
-            "approved": item_approved,
-            "feedback": item_feedback,
-            "resultSummary": summary,
-            "usage": review.get("usage").cloned().unwrap_or(Value::Null),
-        }));
-    }
-    let feedback = if feedback.is_empty() {
-        None
-    } else {
-        Some(
-            crate::prompt::truncate_chars(
-                &feedback.join("\n"),
-                crate::prompt::MAX_REVIEW_FEEDBACK_TOTAL_CHARS,
-            )
-            .0,
-        )
     };
-    Ok(RequirementTaskExecutionOutput {
-        result_summary: if approved {
-            "三个隔离审核角度均已通过。".to_owned()
-        } else {
-            format!(
-                "审核不通过：{}",
-                feedback.as_deref().unwrap_or("存在审核问题")
-            )
-        },
-        pi_session_file: None,
-        branch_name: None,
-        worktree_path: None,
-        review_status: Some(if approved {
-            RequirementReviewStatus::Approved
-        } else {
-            RequirementReviewStatus::Rejected
-        }),
-        review_feedback: feedback,
-        fix_instructions: None,
-        pull_request_url: None,
-        merged_into: None,
-        cleanup_summary: None,
-        execution_warning: None,
-        changed: None,
-        no_op_reason: None,
-        recovery_guidance: None,
-        trace: Some(serde_json::json!({
-            "type": "pi_trace",
-            "version": 2,
-            "trace": { "parallelReview": normalized }
-        })),
+    let summary = required("summary")?;
+    let evidence = required("evidence")?;
+    let path = required("path")?;
+    let location = required("location")?;
+    let angle_label = crate::workflow::review_angle_label(angle);
+    let now = chrono::Utc::now();
+    Ok(WorkflowReviewFinding {
+        id: stable_workflow_finding_id(checkpoint_id, angle_label, category, path, location),
+        checkpoint_id: checkpoint_id.to_owned(),
+        angle,
+        priority,
+        status: FindingStatus::Open,
+        category: category.to_owned(),
+        path: Some(path.to_owned()),
+        location: Some(location.to_owned()),
+        summary: summary.to_owned(),
+        evidence: evidence.to_owned(),
+        reproduction: raw
+            .get("reproduction")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        remediation: raw
+            .get("remediation")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        scenario_ref: raw
+            .get("scenario_ref")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        created_at: now,
+        updated_at: now,
     })
 }
 
-fn pi_response_failure_error(failure: PiResponseFailure) -> AppError {
+fn stable_workflow_finding_id(
+    checkpoint_id: &str,
+    angle: &str,
+    category: &str,
+    path: &str,
+    location: &str,
+) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in [checkpoint_id, angle, category, path, location]
+        .join("\0")
+        .bytes()
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("finding-{hash:016x}")
+}
+
+fn log_pi_response_failure(failure: &PiResponseFailure) {
     let trace_summary = failure
         .trace
         .as_ref()
@@ -2089,7 +2871,30 @@ fn pi_response_failure_error(failure: PiResponseFailure) -> AppError {
     if let Some(trace) = &failure.trace {
         tracing::debug!(error = %failure.message, trace = %trace, "Pi Agent RPC failed trace");
     }
-    AppError::internal(failure.message)
+}
+
+fn trusted_git_executable(working_dir: &Path) -> Result<PathBuf, AppError> {
+    let path = std::env::var_os("PATH").ok_or_else(|| AppError::internal("PATH 未配置"))?;
+    #[cfg(windows)]
+    const GIT_NAMES: &[&str] = &["git.exe"];
+    #[cfg(not(windows))]
+    const GIT_NAMES: &[&str] = &["git"];
+
+    for directory in std::env::split_paths(&path).filter(|item| item.is_absolute()) {
+        for name in GIT_NAMES {
+            let candidate = directory.join(name);
+            if !candidate.is_file() {
+                continue;
+            }
+            let candidate = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+            let candidate = normalize_local_path(&candidate)?;
+            if ensure_child_path(working_dir, &candidate).is_ok() {
+                continue;
+            }
+            return Ok(candidate);
+        }
+    }
+    Err(AppError::internal("未找到可信的 Git 可执行文件"))
 }
 
 fn trace_summary(trace: &Value) -> String {
@@ -2114,689 +2919,6 @@ fn trace_summary(trace: &Value) -> String {
         last_status.to_owned()
     };
     format!("statuses={status_count} last=\"{truncated}\"")
-}
-
-async fn prepare_task_workspace(
-    data_root: &Path,
-    input: &RequirementTaskExecutionInput,
-) -> Result<(PathBuf, Option<String>, Option<PathBuf>), AppError> {
-    match input.task.kind {
-        RequirementTaskKind::Review
-        | RequirementTaskKind::ReviewSubAgent
-        | RequirementTaskKind::ReviewSummary => {
-            let review_for = input
-                .task
-                .review_for
-                .as_deref()
-                .ok_or_else(|| AppError::bad_request("审核节点缺少 review_for"))?;
-            let reviewed = input
-                .plan
-                .tasks
-                .iter()
-                .find(|task| task.id == review_for)
-                .ok_or_else(|| AppError::bad_request("审核目标不存在"))?;
-            let worktree = reviewed
-                .worktree_path
-                .as_deref()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(&input.project.local_path));
-            let worktree = resolve_project_working_dir(data_root, &worktree.to_string_lossy())?;
-            Ok((worktree, None, None))
-        }
-        RequirementTaskKind::Implementation
-        | RequirementTaskKind::BranchMerge
-        | RequirementTaskKind::MergeReview => {
-            let repo = resolve_project_working_dir(data_root, &input.project.local_path)?;
-            let branch = input
-                .task
-                .branch_name
-                .clone()
-                .unwrap_or_else(|| task_branch_name(&input.requirement.id, &input.task.id));
-            let worktree = input
-                .task
-                .worktree_path
-                .as_deref()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    task_worktree_path(data_root, &input.requirement.id, &input.task.id)
-                });
-            let worktree = normalize_local_path(&worktree)?;
-            ensure_child_path(&data_root.join("worktrees"), &worktree)?;
-
-            let existed = worktree.join(".git").exists();
-            let recovering = input.task.worktree_path.is_some() || input.task.branch_name.is_some();
-            if recovering && !existed {
-                return Err(AppError::internal("恢复节点失败：worktree 不存在"));
-            }
-            if let Some(existing_branch) = input.task.branch_name.as_deref() {
-                ensure_branch_exists(&repo, existing_branch).await?;
-            }
-            if !existed {
-                if let Some(parent) = worktree.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
-                let dependency_branches = task_dependency_branches(input);
-                let base_ref = dependency_branches
-                    .first()
-                    .map(String::as_str)
-                    .unwrap_or("HEAD");
-                git(
-                    &repo,
-                    &[
-                        "worktree",
-                        "add",
-                        "-B",
-                        &branch,
-                        path_str(&worktree)?,
-                        base_ref,
-                    ],
-                )
-                .await?;
-                merge_dependency_branches(&worktree, dependency_branches.into_iter().skip(1))
-                    .await?;
-            }
-            Ok((worktree.clone(), Some(branch), Some(worktree)))
-        }
-    }
-}
-
-async fn ensure_branch_exists(repo: &Path, branch: &str) -> Result<(), AppError> {
-    git(repo, &["rev-parse", "--verify", branch])
-        .await
-        .map(|_| ())
-        .map_err(|_| AppError::internal(format!("恢复节点失败：分支 {branch} 不存在")))
-}
-
-fn task_dependency_branches(input: &RequirementTaskExecutionInput) -> Vec<String> {
-    dependency_branches_for_task(&input.task, &input.plan)
-}
-
-fn dependency_branches_for_task(
-    task: &crate::models::RequirementExecutionTask,
-    plan: &crate::models::RequirementExecutionPlan,
-) -> Vec<String> {
-    match task.kind {
-        RequirementTaskKind::Implementation
-        | RequirementTaskKind::BranchMerge
-        | RequirementTaskKind::MergeReview => task
-            .depends_on
-            .iter()
-            .filter_map(|dependency| {
-                plan.tasks
-                    .iter()
-                    .find(|task| task.id == *dependency)
-                    .and_then(|task| task.branch_name.clone())
-            })
-            .collect(),
-        RequirementTaskKind::Review
-        | RequirementTaskKind::ReviewSubAgent
-        | RequirementTaskKind::ReviewSummary => Vec::new(),
-    }
-}
-
-async fn merge_dependency_branches(
-    worktree: &Path,
-    branches: impl Iterator<Item = String>,
-) -> Result<(), AppError> {
-    for branch in branches {
-        git(worktree, &["merge", "--no-ff", "--no-edit", &branch]).await?;
-    }
-    Ok(())
-}
-
-pub(crate) async fn stage_task_changes(
-    task: &crate::models::RequirementExecutionTask,
-    output: &mut RequirementTaskExecutionOutput,
-) -> Result<(), AppError> {
-    let worktree = task
-        .worktree_path
-        .as_deref()
-        .map(PathBuf::from)
-        .ok_or_else(|| AppError::internal("执行节点缺少 worktree_path"))?;
-    let status = git(&worktree, &["status", "--porcelain"]).await?;
-    if !status.trim().is_empty() {
-        git(&worktree, &["add", "-A"]).await?;
-        return Ok(());
-    }
-
-    if task.status == crate::models::RequirementTaskStatus::Fixing {
-        return Err(AppError::internal("修复实现节点必须产生实际代码改动"));
-    }
-
-    let no_op_reason = output
-        .no_op_reason
-        .as_deref()
-        .map(str::trim)
-        .filter(|reason| !reason.is_empty());
-    if output.changed == Some(false) {
-        if let Some(reason) = no_op_reason {
-            output.execution_warning =
-                Some(format!("未产生新改动：{reason}。按 no-op 完成并进入审核。"));
-            return Ok(());
-        }
-        return Err(AppError::internal(
-            "实现节点未产生改动，且缺少 no_op_reason",
-        ));
-    }
-
-    Err(AppError::internal("实现节点没有产生可提交改动"))
-}
-
-async fn commit_task_changes(
-    task: &crate::models::RequirementExecutionTask,
-    _output: &mut RequirementTaskExecutionOutput,
-) -> Result<(), AppError> {
-    let worktree = task
-        .worktree_path
-        .as_deref()
-        .map(PathBuf::from)
-        .ok_or_else(|| AppError::internal("执行节点缺少 worktree_path"))?;
-    let status = git(&worktree, &["status", "--porcelain"]).await?;
-    if !status.trim().is_empty() {
-        git(&worktree, &["add", "-A"]).await?;
-        let message = format!("raccoon_node: {}", task.title);
-        git(&worktree, &["commit", "-m", &message]).await?;
-    }
-    Ok(())
-}
-
-struct PublishResult {
-    pull_request_url: Option<String>,
-    merged_into: String,
-    cleanup_summary: String,
-}
-
-async fn publish_merge_review(
-    data_root: &Path,
-    input: &RequirementTaskExecutionInput,
-    output: &RequirementTaskExecutionOutput,
-) -> Result<PublishResult, AppError> {
-    let repo = resolve_project_working_dir(data_root, &input.project.local_path)?;
-    let branch = output
-        .branch_name
-        .as_deref()
-        .ok_or_else(|| AppError::internal("最终合并节点缺少分支名"))?;
-    let worktree = input
-        .task
-        .worktree_path
-        .as_deref()
-        .ok_or_else(|| AppError::internal("最终合并节点缺少 worktree_path"))?;
-    let worktree = resolve_project_working_dir(data_root, worktree)?;
-    let provider = remote_provider(&repo).await;
-    let (pull_request_url, base_branch) = match provider {
-        GitProvider::Local => {
-            let base_branch = local_merge_base(&repo).await?;
-            merge_local_branch(&repo, branch).await?;
-            (None, base_branch)
-        }
-        GitProvider::GitHub => {
-            let commit = git(&worktree, &["rev-parse", "HEAD"])
-                .await?
-                .trim()
-                .to_owned();
-            let base_branch = default_branch(&repo).await?;
-            git(&repo, &["push", "-u", "origin", branch]).await?;
-            let pr_url = ensure_pull_request(&repo, &base_branch, branch, input).await?;
-            if !pull_request_is_merged(&repo, &pr_url).await {
-                let merge_args = build_pr_merge_args(&pr_url, &commit);
-                run_gh(
-                    &repo,
-                    &merge_args.iter().map(String::as_str).collect::<Vec<_>>(),
-                )
-                .await?;
-            }
-            sync_checked_out_remote_base(&repo, &base_branch).await?;
-            (Some(pr_url), base_branch)
-        }
-        GitProvider::GitLab => {
-            let commit = git(&worktree, &["rev-parse", "HEAD"])
-                .await?
-                .trim()
-                .to_owned();
-            let base_branch = default_branch(&repo).await?;
-            git(&repo, &["push", "-u", "origin", branch]).await?;
-            let mr_url = ensure_merge_request(&repo, &base_branch, branch, input).await?;
-            if !merge_request_is_merged(&repo, branch).await {
-                let merge_args = build_gitlab_mr_merge_args(branch, &commit);
-                run_glab(
-                    &repo,
-                    &merge_args.iter().map(String::as_str).collect::<Vec<_>>(),
-                )
-                .await?;
-            }
-            sync_checked_out_remote_base(&repo, &base_branch).await?;
-            (Some(mr_url), base_branch)
-        }
-    };
-    let cleanup_summary =
-        cleanup_requirement_branches(data_root, &repo, input, provider != GitProvider::Local).await;
-
-    Ok(PublishResult {
-        pull_request_url,
-        merged_into: base_branch,
-        cleanup_summary,
-    })
-}
-
-async fn remote_provider(repo: &Path) -> GitProvider {
-    match git(repo, &["remote", "get-url", "origin"]).await {
-        Ok(url) => GitProvider::from_origin(url.trim()),
-        Err(_) => GitProvider::Local,
-    }
-}
-
-#[cfg(test)]
-async fn repository_has_origin(repo: &Path) -> bool {
-    git(repo, &["remote", "get-url", "origin"])
-        .await
-        .is_ok_and(|url| !url.trim().is_empty())
-}
-
-async fn local_merge_base(repo: &Path) -> Result<String, AppError> {
-    let branch = git(repo, &["symbolic-ref", "--short", "HEAD"])
-        .await
-        .map_err(|_| AppError::internal("本地合并失败：项目根工作区处于 detached HEAD"))?;
-    let status = git(repo, &["status", "--porcelain"]).await?;
-    if !status.trim().is_empty() {
-        return Err(AppError::internal(
-            "本地合并失败：项目根工作区存在未提交改动",
-        ));
-    }
-    Ok(branch.trim().to_owned())
-}
-
-async fn merge_local_branch(repo: &Path, branch: &str) -> Result<(), AppError> {
-    if let Err(error) = git(repo, &["merge", "--no-ff", "--no-edit", branch]).await {
-        let _ = git(repo, &["merge", "--abort"]).await;
-        return Err(error);
-    }
-    Ok(())
-}
-
-async fn sync_checked_out_remote_base(repo: &Path, base_branch: &str) -> Result<(), AppError> {
-    git(repo, &["fetch", "origin"]).await?;
-    let Ok(current_branch) = git(repo, &["symbolic-ref", "--short", "HEAD"]).await else {
-        return Ok(());
-    };
-    if current_branch.trim() != base_branch {
-        return Ok(());
-    }
-    let status = git(repo, &["status", "--porcelain"]).await?;
-    if !status.trim().is_empty() {
-        return Err(AppError::internal(
-            "PR 已合并，但本地目标分支存在未提交改动，无法安全同步",
-        ));
-    }
-    git(
-        repo,
-        &["merge", "--ff-only", &format!("origin/{base_branch}")],
-    )
-    .await?;
-    Ok(())
-}
-
-async fn default_branch(repo: &Path) -> Result<String, AppError> {
-    let cached = git(
-        repo,
-        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    )
-    .await
-    .unwrap_or_default();
-    if !cached.trim().is_empty() {
-        return Ok(parse_default_branch(&cached));
-    }
-    let remote = git(repo, &["ls-remote", "--symref", "origin", "HEAD"]).await?;
-    parse_remote_default_branch(&remote)
-        .ok_or_else(|| AppError::internal("无法确定 origin 的默认分支"))
-}
-
-fn parse_default_branch(output: &str) -> String {
-    let branch = output
-        .trim()
-        .strip_prefix("origin/")
-        .unwrap_or(output.trim())
-        .trim();
-    if branch.is_empty() {
-        "main".to_owned()
-    } else {
-        branch.to_owned()
-    }
-}
-
-fn parse_remote_default_branch(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        line.strip_prefix("ref: refs/heads/")
-            .and_then(|line| line.strip_suffix("\tHEAD"))
-            .map(str::to_owned)
-    })
-}
-
-async fn ensure_pull_request(
-    repo: &Path,
-    base_branch: &str,
-    branch: &str,
-    input: &RequirementTaskExecutionInput,
-) -> Result<String, AppError> {
-    if let Ok(url) = run_gh(
-        repo,
-        &["pr", "view", branch, "--json", "url", "--jq", ".url"],
-    )
-    .await
-    {
-        let url = url.trim();
-        if !url.is_empty() {
-            return Ok(url.to_owned());
-        }
-    }
-
-    let title = format!("raccoon_node: {}", input.requirement.title);
-    let body = format!(
-        "自动合并需求：{}\n\n{}",
-        input.requirement.title,
-        input
-            .requirement
-            .draft
-            .as_ref()
-            .map(|draft| draft.summary.as_str())
-            .unwrap_or("无摘要")
-    );
-    let args = [
-        "pr",
-        "create",
-        "--base",
-        base_branch,
-        "--head",
-        branch,
-        "--title",
-        &title,
-        "--body",
-        &body,
-    ];
-    let url = run_gh(repo, &args).await?;
-    let url = url.trim();
-    if url.is_empty() {
-        return Err(AppError::internal("gh pr create 未返回 PR 地址"));
-    }
-    Ok(url.to_owned())
-}
-
-async fn pull_request_is_merged(repo: &Path, pr_url: &str) -> bool {
-    run_gh(
-        repo,
-        &["pr", "view", pr_url, "--json", "state", "--jq", ".state"],
-    )
-    .await
-    .is_ok_and(|state| state.trim() == "MERGED")
-}
-
-fn build_pr_merge_args(pr_url: &str, commit: &str) -> Vec<String> {
-    vec![
-        "pr".to_owned(),
-        "merge".to_owned(),
-        pr_url.to_owned(),
-        "--merge".to_owned(),
-        "--match-head-commit".to_owned(),
-        commit.to_owned(),
-    ]
-}
-
-async fn ensure_merge_request(
-    repo: &Path,
-    base_branch: &str,
-    branch: &str,
-    input: &RequirementTaskExecutionInput,
-) -> Result<String, AppError> {
-    if let Ok(json) = run_glab(repo, &["mr", "view", branch, "--output=json"]).await
-        && let Some(url) = json
-            .trim()
-            .lines()
-            .last()
-            .and_then(|line| serde_json::from_str::<Value>(line).ok())
-            .and_then(|value| {
-                value
-                    .get("web_url")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            })
-    {
-        return Ok(url);
-    }
-
-    let title = format!("raccoon_node: {}", input.requirement.title);
-    let body = format!(
-        "自动合并需求：{}\n\n{}",
-        input.requirement.title,
-        input
-            .requirement
-            .draft
-            .as_ref()
-            .map(|draft| draft.summary.as_str())
-            .unwrap_or("无摘要")
-    );
-    let output = run_glab(
-        repo,
-        &[
-            "mr",
-            "create",
-            "--target-branch",
-            base_branch,
-            "--source-branch",
-            branch,
-            "--title",
-            &title,
-            "--description",
-            &body,
-            "--yes",
-            "--output=json",
-        ],
-    )
-    .await?;
-    let url = output
-        .trim()
-        .lines()
-        .last()
-        .and_then(|line| serde_json::from_str::<Value>(line).ok())
-        .and_then(|value| {
-            value
-                .get("web_url")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .ok_or_else(|| AppError::internal("glab mr create 未返回 MR 地址"))?;
-    Ok(url)
-}
-
-async fn merge_request_is_merged(repo: &Path, branch: &str) -> bool {
-    run_glab(repo, &["mr", "view", branch, "--output=json"])
-        .await
-        .is_ok_and(|json| {
-            json.trim()
-                .lines()
-                .last()
-                .and_then(|line| serde_json::from_str::<Value>(line).ok())
-                .and_then(|value| {
-                    value
-                        .get("state")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned)
-                })
-                == Some("merged".to_owned())
-        })
-}
-
-fn build_gitlab_mr_merge_args(branch: &str, commit: &str) -> Vec<String> {
-    vec![
-        "mr".to_owned(),
-        "merge".to_owned(),
-        branch.to_owned(),
-        "--sha".to_owned(),
-        commit.to_owned(),
-        "--yes".to_owned(),
-    ]
-}
-
-async fn cleanup_requirement_branches(
-    data_root: &Path,
-    repo: &Path,
-    input: &RequirementTaskExecutionInput,
-    delete_remote: bool,
-) -> String {
-    let branches = generated_branch_names(
-        input
-            .plan
-            .tasks
-            .iter()
-            .chain(std::iter::once(&input.task))
-            .filter_map(|task| task.branch_name.as_deref()),
-    );
-    let worktrees = input
-        .plan
-        .tasks
-        .iter()
-        .chain(std::iter::once(&input.task))
-        .filter_map(|task| task.worktree_path.as_deref())
-        .map(PathBuf::from)
-        .collect::<BTreeSet<_>>();
-
-    let mut removed_worktrees = 0;
-    for worktree in worktrees {
-        if ensure_child_path(&data_root.join("worktrees"), &worktree).is_ok() && worktree.exists() {
-            let Ok(worktree_str) = path_str(&worktree) else {
-                continue;
-            };
-            if git(repo, &["worktree", "remove", "--force", worktree_str])
-                .await
-                .is_ok()
-            {
-                removed_worktrees += 1;
-            }
-        }
-    }
-
-    let mut removed_local = 0;
-    let mut removed_remote = 0;
-    for branch in branches {
-        if git(repo, &["branch", "-D", &branch]).await.is_ok() {
-            removed_local += 1;
-        }
-        if delete_remote
-            && git(repo, &["push", "origin", "--delete", &branch])
-                .await
-                .is_ok()
-        {
-            removed_remote += 1;
-        }
-    }
-
-    format!(
-        "已清理 worktree {removed_worktrees} 个、本地分支 {removed_local} 个、远端分支 {removed_remote} 个"
-    )
-}
-
-fn generated_branch_names<'a>(branches: impl Iterator<Item = &'a str>) -> BTreeSet<String> {
-    branches
-        .filter(|branch| branch.starts_with("rn/"))
-        .map(ToOwned::to_owned)
-        .collect()
-}
-
-async fn run_gh(dir: &Path, args: &[&str]) -> Result<String, AppError> {
-    let dir = normalize_local_path(dir)?;
-    let output = Command::new("gh")
-        .args(args)
-        .current_dir(&dir)
-        .output()
-        .await?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(AppError::internal(format!(
-        "gh {} 失败：{}",
-        args.join(" "),
-        stderr.trim()
-    )))
-}
-
-async fn run_glab(dir: &Path, args: &[&str]) -> Result<String, AppError> {
-    let dir = normalize_local_path(dir)?;
-    let program = if cfg!(windows) { "glab.exe" } else { "glab" };
-    let output = Command::new(program)
-        .args(args)
-        .current_dir(&dir)
-        .output()
-        .await?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(AppError::internal(format!(
-        "glab {} 失败：{}",
-        args.join(" "),
-        stderr.trim()
-    )))
-}
-
-fn task_branch_name(requirement_id: &str, task_id: &str) -> String {
-    format!("rn/{}/{}", slug(requirement_id), slug(task_id))
-}
-
-fn task_worktree_path(data_root: &Path, requirement_id: &str, task_id: &str) -> PathBuf {
-    data_root
-        .join("worktrees")
-        .join(safe_worktree_name(&format!("{requirement_id}-{task_id}")))
-}
-
-fn safe_worktree_name(value: &str) -> String {
-    const MAX_LEN: usize = 80;
-    let mut name = slug(value);
-    if is_windows_reserved_name(&name) {
-        name.insert(0, '_');
-    }
-    if name.len() <= MAX_LEN {
-        return name;
-    }
-    let hash = value.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
-    });
-    format!("{}-{hash:08x}", &name[..MAX_LEN - 17])
-}
-
-fn is_windows_reserved_name(value: &str) -> bool {
-    let value = value.trim_end_matches(['.', ' ']).to_ascii_lowercase();
-    matches!(value.as_str(), "con" | "prn" | "aux" | "nul")
-        || matches!(
-            value
-                .strip_prefix("com")
-                .and_then(|value| value.parse::<u8>().ok()),
-            Some(1..=9)
-        )
-        || matches!(
-            value
-                .strip_prefix("lpt")
-                .and_then(|value| value.parse::<u8>().ok()),
-            Some(1..=9)
-        )
-}
-
-fn slug(value: &str) -> String {
-    let slug = value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_owned();
-    if slug.is_empty() {
-        "node".to_owned()
-    } else {
-        slug
-    }
 }
 
 fn path_str(path: &Path) -> Result<&str, AppError> {

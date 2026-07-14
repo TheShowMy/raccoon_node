@@ -35,7 +35,7 @@ pub fn build_project_chat_prompt(input: &ProjectChatInput, session_reused: bool)
 
 规则：
 - 只能读取、搜索、解释当前仓库代码。
-- 禁止修改文件、创建提交、切换分支、创建需求、规划任务、生成 DAG 或触发执行。
+- 禁止修改文件、创建提交、切换分支、创建需求、规划工作项、创建 WorkflowRun 或触发执行。
 - 如果需要确认现状，请优先用只读命令，例如 ls、rg、git status --short、git log。
 - 用简体中文回答，直接给结论和必要依据。
 
@@ -116,7 +116,7 @@ mod tests {
         let prompt = build_project_chat_prompt(&input, false).markdown;
         assert!(prompt.contains("禁止修改文件"));
         assert!(prompt.contains("禁止"));
-        assert!(prompt.contains("生成 DAG"));
+        assert!(prompt.contains("创建 WorkflowRun"));
         assert!(prompt.contains("入口在哪里？"));
     }
 }

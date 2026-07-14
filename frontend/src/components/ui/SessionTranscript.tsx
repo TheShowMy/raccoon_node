@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Copy,
   Database,
+  Minimize2,
   Wrench,
 } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
@@ -14,7 +15,7 @@ import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Spinner } from "@astryxdesign/core/Spinner";
-import { Stack } from "@astryxdesign/core/Stack";
+import { Stack, StackItem } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Token } from "@astryxdesign/core/Token";
 import type {
@@ -47,16 +48,35 @@ function TranscriptCodeBlock({
   );
 }
 
+function subagentEventText(event: Record<string, unknown>): string {
+  const type = typeof event.type === "string" ? event.type : "event";
+  if (type === "message_update" && typeof event.text === "string") {
+    return `输出：${event.text}`;
+  }
+  if (type === "tool_execution_start") {
+    return `调用 ${String(event.toolName || "tool")}：${String(event.args || "")}`;
+  }
+  if (type === "tool_execution_end") {
+    return `${event.isError ? "失败" : "完成"} ${String(event.toolName || "tool")}：${String(event.result || "")}`;
+  }
+  if (type === "technical_retry") return "首次技术失败，开始单角度重试";
+  return type;
+}
+
 export default function SessionTranscript({
   scopeKey,
   loadPage,
   title = "原始会话",
   initiallyOpen = false,
+  scrollMaxHeight = 520,
+  height,
 }: {
   scopeKey: string;
   loadPage: Loader;
   title?: string;
   initiallyOpen?: boolean;
+  scrollMaxHeight?: number | string;
+  height?: number | string;
 }) {
   const loaderRef = useRef(loadPage);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -136,8 +156,101 @@ export default function SessionTranscript({
     return true;
   });
 
+  const filterBar = (
+    <HStack
+      gap={1}
+      justify="between"
+      align="center"
+      padding={2}
+      style={{ borderBottom: "1px solid var(--color-border)" }}
+    >
+      <HStack gap={1}>
+        {(["all", "messages", "tools"] as const).map((value) => (
+          <Button
+            label={
+              value === "all"
+                ? "\u5168\u90e8"
+                : value === "messages"
+                  ? "\u6d88\u606f"
+                  : "\u5de5\u5177"
+            }
+            size="sm"
+            variant={filter === value ? "primary" : "ghost"}
+            onClick={() => setFilter(value)}
+            key={value}
+          >
+            {value === "all" ? "全部" : value === "messages" ? "消息" : "工具"}
+          </Button>
+        ))}
+      </HStack>
+      <CheckboxInput
+        label="system"
+        size="sm"
+        value={showSystem}
+        onChange={setShowSystem}
+      />
+    </HStack>
+  );
+
+  const scrollContent = (
+    <Stack
+      ref={viewportRef}
+      gap={2}
+      padding={2}
+      isScrollable
+      style={{ maxHeight: height ? undefined : scrollMaxHeight }}
+    >
+      {nextBefore !== null ? (
+        <HStack justify="center">
+          <Button
+            label={"\u52a0\u8f7d\u66f4\u65e9\u8bb0\u5f55"}
+            size="sm"
+            variant="secondary"
+            isDisabled={loading}
+            onClick={() => void load(nextBefore)}
+          >
+            加载更早记录
+          </Button>
+        </HStack>
+      ) : null}
+      {visible.map((entry) => (
+        <SessionEntryCard entry={entry} key={entry.cursor} />
+      ))}
+      {loading ? (
+        <StatusRow>
+          <Spinner size="sm" label="加载中" />
+          <Text type="supporting" size="xsm">
+            加载中…
+          </Text>
+        </StatusRow>
+      ) : null}
+      {error ? (
+        <StatusRow isError>
+          <Text type="supporting" size="xsm">
+            {error}
+          </Text>
+          <Button
+            label={"\u91cd\u8bd5"}
+            size="sm"
+            variant="ghost"
+            onClick={() => setError(null)}
+          >
+            重试
+          </Button>
+        </StatusRow>
+      ) : null}
+      {!loading && !error && visible.length === 0 ? (
+        <StatusRow>
+          <Text type="supporting" size="xsm">
+            暂无匹配记录
+          </Text>
+        </StatusRow>
+      ) : null}
+    </Stack>
+  );
+
   return (
-    <Card padding={0} width="100%">
+    <Card padding={0} width="100%" height={height}>
       <Button
         label={title}
         variant="ghost"
@@ -165,107 +278,39 @@ export default function SessionTranscript({
         />
       </Button>
       {open ? (
-        <Stack>
-          <HStack
-            gap={1}
-            justify="between"
-            align="center"
-            padding={2}
-            style={{ borderBottom: "1px solid var(--color-border)" }}
-          >
-            <HStack gap={1}>
-              {(["all", "messages", "tools"] as const).map((value) => (
-                <Button
-                  label={
-                    value === "all"
-                      ? "\u5168\u90e8"
-                      : value === "messages"
-                        ? "\u6d88\u606f"
-                        : "\u5de5\u5177"
-                  }
-                  size="sm"
-                  variant={filter === value ? "primary" : "ghost"}
-                  onClick={() => setFilter(value)}
-                  key={value}
-                >
-                  {value === "all"
-                    ? "全部"
-                    : value === "messages"
-                      ? "消息"
-                      : "工具"}
-                </Button>
-              ))}
-            </HStack>
-            <CheckboxInput
-              label="system"
-              size="sm"
-              value={showSystem}
-              onChange={setShowSystem}
-            />
-          </HStack>
-          {invalidLines > 0 ? (
-            <StatusRow isError>
-              <AlertTriangle size={13} />
-              <Text type="supporting" size="xsm">
-                已跳过 {invalidLines} 条无效 JSONL
-              </Text>
-            </StatusRow>
-          ) : null}
-          <Stack
-            ref={viewportRef}
-            gap={2}
-            padding={2}
-            isScrollable
-            style={{ maxHeight: 520 }}
-          >
-            {nextBefore !== null ? (
-              <HStack justify="center">
-                <Button
-                  label={"\u52a0\u8f7d\u66f4\u65e9\u8bb0\u5f55"}
-                  size="sm"
-                  variant="secondary"
-                  isDisabled={loading}
-                  onClick={() => void load(nextBefore)}
-                >
-                  加载更早记录
-                </Button>
-              </HStack>
-            ) : null}
-            {visible.map((entry) => (
-              <SessionEntryCard entry={entry} key={entry.cursor} />
-            ))}
-            {loading ? (
-              <StatusRow>
-                <Spinner size="sm" label="加载中" />
-                <Text type="supporting" size="xsm">
-                  加载中…
-                </Text>
-              </StatusRow>
-            ) : null}
-            {error ? (
-              <StatusRow isError>
-                <Text type="supporting" size="xsm">
-                  {error}
-                </Text>
-                <Button
-                  label={"\u91cd\u8bd5"}
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setError(null)}
-                >
-                  重试
-                </Button>
-              </StatusRow>
-            ) : null}
-            {!loading && !error && visible.length === 0 ? (
-              <StatusRow>
-                <Text type="supporting" size="xsm">
-                  暂无匹配记录
-                </Text>
-              </StatusRow>
-            ) : null}
+        height ? (
+          <Stack height="100%" minHeight={0}>
+            <StackItem size="fill" isScrollable={false}>
+              <Stack height="100%" minHeight={0}>
+                {filterBar}
+                {invalidLines > 0 ? (
+                  <StatusRow isError>
+                    <AlertTriangle size={13} />
+                    <Text type="supporting" size="xsm">
+                      已跳过 {invalidLines} 条无效 JSONL
+                    </Text>
+                  </StatusRow>
+                ) : null}
+                <StackItem size="fill" isScrollable>
+                  {scrollContent}
+                </StackItem>
+              </Stack>
+            </StackItem>
           </Stack>
-        </Stack>
+        ) : (
+          <Stack>
+            {filterBar}
+            {invalidLines > 0 ? (
+              <StatusRow isError>
+                <AlertTriangle size={13} />
+                <Text type="supporting" size="xsm">
+                  已跳过 {invalidLines} 条无效 JSONL
+                </Text>
+              </StatusRow>
+            ) : null}
+            {scrollContent}
+          </Stack>
+        )
       ) : null}
     </Card>
   );
@@ -342,14 +387,14 @@ function SessionEntryCard({ entry }: { entry: SessionEntry }) {
           </Text>
         )}
       </HStack>
-      {entry.kind === "message" ? (
+      {entry.blocks.length ? (
         <Stack gap={2} paddingBlock={2}>
           {entry.blocks.map((block, index) => (
             <SessionBlock block={block} key={`${block.type}-${index}`} />
           ))}
         </Stack>
       ) : null}
-      <RawJson value={entry.raw} />
+      {entry.kind !== "compaction" ? <RawJson value={entry.raw} /> : null}
     </Card>
   );
 }
@@ -394,29 +439,114 @@ function SessionBlock({ block }: { block: SessionContentBlock }) {
   if (block.type === "subagents") {
     return (
       <Card variant="muted" padding={0}>
-        <Collapsible trigger="隔离审核子代理" defaultIsOpen={false}>
+        <Collapsible
+          trigger={`隔离审核子代理 · ${block.reviews.filter((review) => review.transport_status === "completed").length}/${block.selection?.angles.length ?? block.reviews.length}`}
+          defaultIsOpen={false}
+        >
           <Stack gap={2} padding={2}>
+            {block.selection ? (
+              <Card variant="muted" padding={2}>
+                <Stack gap={1}>
+                  <Text type="label" weight="semibold">
+                    风险分类：{block.selection.classification}
+                  </Text>
+                  <Text type="supporting">
+                    已选：{block.selection.angles.join("、")}
+                    {block.selection.skippedAngles.length
+                      ? " · 跳过：" + block.selection.skippedAngles.join("、")
+                      : ""}
+                  </Text>
+                  <Text type="supporting" size="3xs">
+                    {block.selection.reasons.join("；")} ·{" "}
+                    {block.selection.fileCount} 个文件 ·{" "}
+                    {block.selection.changedLines} 行改动 ·{" "}
+                    {block.selection.diffBytes} bytes
+                  </Text>
+                </Stack>
+              </Card>
+            ) : null}
             {block.reviews.map((review) => (
               <Card key={review.angle} variant="muted" padding={2}>
                 <Stack gap={1}>
                   <Text type="label" weight="semibold">
-                    {review.angle} · {review.ok ? "完成" : "技术失败"}
+                    {review.angle} · {review.transport_status}
                   </Text>
+                  {review.context_mode ? (
+                    <Text type="supporting" size="3xs">
+                      {review.context_mode === "blind"
+                        ? "需求隔离盲审"
+                        : "行为契约可见"}
+                      {review.context_bytes != null
+                        ? ` · 输入 ${review.context_bytes} bytes`
+                        : ""}
+                      {review.context_hash
+                        ? ` · SHA-256 ${review.context_hash.slice(0, 12)}`
+                        : ""}
+                    </Text>
+                  ) : null}
                   <Text type="supporting">
                     {review.result
-                      ? `${review.result.approved ? "通过" : "不通过"}：${review.result.result_summary}`
+                      ? `${review.result.findings.filter((finding) => finding.priority === "P0" || finding.priority === "P1").length} 个 P0/P1 · ${review.result.findings.length} 个 finding`
                       : review.error || "没有结构化结果"}
                   </Text>
-                  {review.result?.feedback ? (
-                    <Text type="supporting" size="3xs">
-                      反馈：{review.result.feedback}
+                  {review.result?.findings.map((finding) => (
+                    <Text
+                      key={`${finding.priority}:${finding.path}:${finding.location}:${finding.summary}`}
+                      type="supporting"
+                      size="3xs"
+                    >
+                      {finding.priority} · {finding.summary} · 证据：
+                      {finding.evidence}
+                      {finding.remediation
+                        ? ` · 修复：${finding.remediation}`
+                        : ""}
                     </Text>
+                  ))}
+                  {review.events?.length ? (
+                    <Collapsible
+                      trigger={`精简过程 (${review.events.length})`}
+                      defaultIsOpen={false}
+                    >
+                      <Stack padding={1}>
+                        <TranscriptCodeBlock
+                          code={review.events.map(subagentEventText).join("\n")}
+                        />
+                      </Stack>
+                    </Collapsible>
                   ) : null}
                   {review.usage ? (
                     <Text type="supporting" size="3xs">
                       输入 {review.usage.input} · 输出 {review.usage.output} ·
                       缓存读取 {review.usage.cacheRead} · 缓存写入{" "}
                       {review.usage.cacheWrite}
+                      {review.usage.context
+                        ? ` · Context ${review.usage.context.percent.toFixed(1)}%`
+                        : ""}
+                      {review.turns ? ` · ${review.turns} turns` : ""}
+                      {review.retry_count
+                        ? ` · ${review.retry_count} 次技术重试`
+                        : ""}
+                      {review.submission_correction_count
+                        ? ` · ${review.submission_correction_count} 次结构纠正`
+                        : ""}
+                      {review.duration_ms
+                        ? ` · ${(review.duration_ms / 1000).toFixed(1)}s`
+                        : ""}
+                    </Text>
+                  ) : null}
+                  {review.runtime ? (
+                    <Text type="supporting" size="3xs">
+                      空闲阈值{" "}
+                      {(review.runtime.idleTimeoutMs / 1000).toFixed(0)}s · 活动{" "}
+                      {review.runtime.activityCount} 次 · 空闲告警{" "}
+                      {review.runtime.idleWarningCount} 次
+                    </Text>
+                  ) : null}
+                  {review.session_persisted || review.events_truncated ? (
+                    <Text type="supporting" size="3xs">
+                      {review.session_persisted
+                        ? "警告：子 Agent 意外产生持久 session。"
+                        : "调试事件已截断，结构化结论不受影响。"}
                     </Text>
                   ) : null}
                 </Stack>
@@ -424,6 +554,71 @@ function SessionBlock({ block }: { block: SessionContentBlock }) {
             ))}
           </Stack>
         </Collapsible>
+      </Card>
+    );
+  }
+  if (block.type === "compaction") {
+    const reason =
+      block.reason === "manual"
+        ? "手动"
+        : block.reason === "threshold"
+          ? "达到阈值"
+          : block.reason === "overflow"
+            ? "Context 溢出"
+            : "Pi 原生";
+    const status =
+      block.status === "completed"
+        ? "压缩完成"
+        : block.status === "aborted"
+          ? "压缩已取消"
+          : block.status === "failed"
+            ? "压缩失败"
+            : "压缩中";
+    return (
+      <Card variant="muted" padding={2}>
+        <Stack gap={1}>
+          <HStack gap={1.5} align="center">
+            <Minimize2 size={13} />
+            <Text type="label" size="xsm" weight="semibold">
+              {status} · {reason}
+            </Text>
+          </HStack>
+          {block.tokens_before !== null ? (
+            <Text type="supporting" size="3xs">
+              压缩前 {block.tokens_before.toLocaleString()} tokens
+              {block.estimated_tokens_after !== null
+                ? ` · 压缩后约 ${block.estimated_tokens_after.toLocaleString()} tokens`
+                : ""}
+              {block.estimated_tokens_saved !== null
+                ? ` · 预计节省 ${block.estimated_tokens_saved.toLocaleString()} tokens`
+                : ""}
+            </Text>
+          ) : null}
+          {block.read_file_count || block.modified_file_count ? (
+            <Text type="supporting" size="3xs">
+              文件上下文：读取 {block.read_file_count} · 修改{" "}
+              {block.modified_file_count}
+              {block.from_hook ? " · Extension 生成摘要" : ""}
+            </Text>
+          ) : null}
+          <Text type="supporting" size="3xs">
+            {block.will_retry ? "压缩后将自动重试 · " : ""}
+            {block.usage_known
+              ? "压缩调用 usage 已记录"
+              : block.estimated_tokens_after !== null
+                ? "压缩后 token 为估算值，供应商 usage 未提供"
+                : "Pi session 未保存压缩后估算，供应商 usage 未提供"}
+          </Text>
+          {block.error ? (
+            <Text
+              type="supporting"
+              size="3xs"
+              style={{ color: "var(--color-error)" }}
+            >
+              {block.error}
+            </Text>
+          ) : null}
+        </Stack>
       </Card>
     );
   }

@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getProjectCanvas, recoverTaskGroup } from "../api/client";
+import { getProjectCanvas } from "../api/client";
 import type {
   ProjectCanvasData,
   Requirement,
@@ -10,8 +10,7 @@ import { useProjectCanvas } from "./useProjectCanvas";
 
 vi.mock("../api/client", () => ({
   getProjectCanvas: vi.fn(),
-  planRequirementExecution: vi.fn(),
-  recoverTaskGroup: vi.fn(),
+  startRequirementWorkflow: vi.fn(),
 }));
 
 const project = {
@@ -38,7 +37,6 @@ function createRequirement(
     clarification_round: 0,
     clarifications: [],
     draft: null,
-    execution_plan: null,
     error: null,
     created_at: "2026-06-24T00:00:00Z",
     updated_at: "2026-06-24T00:00:00Z",
@@ -62,45 +60,20 @@ function renderProjectCanvas(setError = vi.fn()) {
   return { ...result, setError };
 }
 
-describe("useProjectCanvas task recovery actions", () => {
+describe("useProjectCanvas workflow selection", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(getProjectCanvas).mockResolvedValue(initialCanvas);
   });
 
-  it("恢复任务组并用返回值更新画布", async () => {
-    const updatedCanvas = createCanvas(createRequirement("running"));
-    vi.mocked(recoverTaskGroup).mockResolvedValue(updatedCanvas);
-    const { result } = renderProjectCanvas();
-
-    await waitFor(() => {
-      expect(result.current.projectCanvas).toBe(initialCanvas);
-    });
-
-    act(() => {
-      result.current.selectDagRequirement(initialRequirement);
-    });
-
-    await act(async () => {
-      await result.current.recoverTaskGroup("requirement-1", "task-1");
-    });
-
-    expect(recoverTaskGroup).toHaveBeenCalledTimes(1);
-    expect(recoverTaskGroup).toHaveBeenCalledWith("requirement-1", "task-1");
-    expect(result.current.selectedDagRequirementId).toBe("requirement-1");
-    expect(result.current.projectCanvas).toBe(updatedCanvas);
-    expect(result.current.recoveringTaskGroupIds.size).toBe(0);
-    expect(result.current.requirementActionError).toBeNull();
-  });
-
-  it("选择 DAG 时只请求该需求的轻量执行计划", async () => {
+  it("选择 WorkflowRun 时只请求该需求的运行快照", async () => {
     const { result } = renderProjectCanvas();
     await waitFor(() => {
       expect(result.current.projectCanvas).toBe(initialCanvas);
     });
 
     act(() => {
-      result.current.selectDagRequirement(initialRequirement);
+      result.current.selectWorkflowRequirement(initialRequirement);
     });
 
     await waitFor(() =>
@@ -109,76 +82,6 @@ describe("useProjectCanvas task recovery actions", () => {
         initialRequirement.id,
       ),
     );
-  });
-
-  it("API 失败时保持画布和选中需求，并只设置操作错误", async () => {
-    vi.mocked(recoverTaskGroup).mockRejectedValue(new Error("节点恢复失败"));
-    const setError = vi.fn();
-    const { result } = renderProjectCanvas(setError);
-
-    await waitFor(() => {
-      expect(result.current.projectCanvas).toBe(initialCanvas);
-    });
-
-    act(() => {
-      result.current.selectDagRequirement(initialRequirement);
-    });
-    setError.mockClear();
-
-    await act(async () => {
-      await result.current.recoverTaskGroup("requirement-1", "task-1");
-    });
-
-    expect(recoverTaskGroup).toHaveBeenCalledTimes(1);
-    expect(recoverTaskGroup).toHaveBeenCalledWith("requirement-1", "task-1");
-    expect(result.current.projectCanvas).toBe(initialCanvas);
-    expect(result.current.selectedDagRequirementId).toBe("requirement-1");
-    expect(result.current.requirementActionError).toBe("节点恢复失败");
-    expect(result.current.recoveringTaskGroupIds.size).toBe(0);
-    expect(setError).not.toHaveBeenCalled();
-  });
-
-  it("多个任务组恢复时分别维护 busy，互不禁用", async () => {
-    const resolvers = new Map<string, (data: ProjectCanvasData) => void>();
-    vi.mocked(recoverTaskGroup).mockImplementation(
-      (_requirementId, taskId) =>
-        new Promise((resolve) => resolvers.set(taskId, resolve)),
-    );
-    const { result } = renderProjectCanvas();
-
-    await waitFor(() => {
-      expect(result.current.projectCanvas).toBe(initialCanvas);
-    });
-
-    let firstRecovery!: Promise<void>;
-    let secondRecovery!: Promise<void>;
-    act(() => {
-      firstRecovery = result.current.recoverTaskGroup(
-        "requirement-1",
-        "task-1",
-      );
-      secondRecovery = result.current.recoverTaskGroup(
-        "requirement-1",
-        "task-2",
-      );
-    });
-    expect(result.current.recoveringTaskGroupIds).toEqual(
-      new Set(["requirement-1:task-1", "requirement-1:task-2"]),
-    );
-
-    await act(async () => {
-      resolvers.get("task-1")!(initialCanvas);
-      await firstRecovery;
-    });
-    expect(result.current.recoveringTaskGroupIds).toEqual(
-      new Set(["requirement-1:task-2"]),
-    );
-
-    await act(async () => {
-      resolvers.get("task-2")!(initialCanvas);
-      await secondRecovery;
-    });
-    expect(result.current.recoveringTaskGroupIds.size).toBe(0);
   });
 
   it.each(["completed", "failed"] as const)(

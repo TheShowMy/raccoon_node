@@ -1,39 +1,13 @@
-#[allow(unused_imports)]
-use super::*;
-
+use super::transport::PiRpcTransportConfig;
 use super::{
-    attach_session_usage, build_gitlab_mr_merge_args, build_pr_merge_args,
-    event_has_output_activity, generated_branch_names, is_terminal_agent_end, local_merge_base,
-    merge_local_branch, parse_default_branch, parse_remote_default_branch,
-    parse_session_header_cwd, repository_has_origin, resolve_project_working_dir,
-    safe_worktree_name, session_header_matches_working_dir, stage_task_changes,
-    sync_checked_out_remote_base,
+    OperationRuntimeObservation, TaskGitState, assistant_message_input,
+    attach_auto_compaction_state, attach_compaction_observability, attach_runtime_observation,
+    attach_session_usage, build_failure_trace, event_has_output_activity, is_terminal_agent_end,
+    next_terminal_pending, parse_session_header_cwd, parse_workflow_payload,
+    resolve_project_working_dir, session_header_matches_working_dir,
 };
-use crate::models::{
-    RequirementExecutionPlan, RequirementModelTier, RequirementReviewStatus,
-    RequirementTaskExecutionOutput, RequirementTaskKind, RequirementTaskStatus,
-};
-use crate::utils::commit_staged_changes;
 use std::path::Path;
-
-#[test]
-fn parse_default_branch_falls_back_to_main() {
-    assert_eq!(parse_default_branch("origin/main\n"), "main");
-    assert_eq!(parse_default_branch("origin/trunk\n"), "trunk");
-    assert_eq!(parse_default_branch(""), "main");
-}
-
-#[test]
-fn parses_remote_default_branch_without_guessing() {
-    assert_eq!(
-        parse_remote_default_branch(
-            "ref: refs/heads/trunk\tHEAD\nabc123\tHEAD\nabc123\trefs/heads/trunk\n"
-        )
-        .as_deref(),
-        Some("trunk")
-    );
-    assert_eq!(parse_remote_default_branch("abc123\tHEAD\n"), None);
-}
+use std::time::Duration;
 
 #[test]
 fn session_header_requires_absolute_cwd() {
@@ -59,12 +33,88 @@ fn restored_session_must_match_the_client_working_directory() {
 }
 
 #[test]
-fn worktree_names_avoid_windows_reserved_names_and_long_components() {
-    assert_eq!(safe_worktree_name("CON"), "_con");
-    assert_eq!(safe_worktree_name("com1"), "_com1");
-    let long = safe_worktree_name(&"a".repeat(300));
-    assert!(long.len() <= 80);
-    assert_ne!(long, safe_worktree_name(&"b".repeat(300)));
+fn review_transport_disables_user_resources_and_limits_parent_tools() {
+    let config = PiRpcTransportConfig::session_with_tools(
+        "pi",
+        Path::new("/tmp/sessions"),
+        Path::new("/tmp/repo"),
+        &[],
+        "run_parallel_code_review",
+    );
+    let args = config.extra_args();
+    for expected in [
+        "--no-extensions",
+        "--no-context-files",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--tools",
+        "run_parallel_code_review",
+    ] {
+        assert!(args.iter().any(|arg| arg == expected), "missing {expected}");
+    }
+}
+
+#[test]
+fn workflow_payload_requires_exactly_one_valid_managed_submission() {
+    let valid = serde_json::json!({
+        "type": "tool_execution_end",
+        "toolName": "submit_work_plan",
+        "result": {
+            "details": {
+                "protocol": "raccoon:workflow-output:v3",
+                "kind": "work_plan",
+                "payload": {
+                    "summary": "plan",
+                    "design_notes": [],
+                    "work_items": []
+                }
+            }
+        }
+    });
+
+    let payload = parse_workflow_payload(
+        std::slice::from_ref(&valid),
+        "submit_work_plan",
+        "work_plan",
+    )
+    .unwrap();
+    assert_eq!(payload["summary"], "plan");
+
+    assert!(
+        parse_workflow_payload(&[], "submit_work_plan", "work_plan")
+            .unwrap_err()
+            .to_string()
+            .contains("实际为 0 次")
+    );
+    assert!(
+        parse_workflow_payload(
+            &[valid.clone(), valid.clone()],
+            "submit_work_plan",
+            "work_plan",
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("实际为 2 次")
+    );
+
+    let mut invalid_protocol = valid.clone();
+    invalid_protocol["result"]["details"]["protocol"] = serde_json::json!("legacy");
+    assert!(
+        parse_workflow_payload(&[invalid_protocol], "submit_work_plan", "work_plan",)
+            .unwrap_err()
+            .to_string()
+            .contains("协议版本不兼容")
+    );
+
+    let mut invalid_kind = valid;
+    invalid_kind["result"]["details"]["kind"] = serde_json::json!("task_result");
+    assert!(
+        parse_workflow_payload(&[invalid_kind], "submit_work_plan", "work_plan",)
+            .unwrap_err()
+            .to_string()
+            .contains("结果类型不匹配")
+    );
 }
 
 #[test]
@@ -92,220 +142,6 @@ fn pi_working_directory_is_limited_to_project_root_or_managed_worktree() {
 }
 
 #[test]
-fn pr_merge_args_lock_head_commit_without_deleting_branch() {
-    assert_eq!(
-        build_pr_merge_args("https://github.com/acme/repo/pull/1", "abc123"),
-        vec![
-            "pr",
-            "merge",
-            "https://github.com/acme/repo/pull/1",
-            "--merge",
-            "--match-head-commit",
-            "abc123",
-        ]
-    );
-}
-
-#[test]
-fn gitlab_mr_merge_args_lock_head_commit_without_deleting_branch() {
-    assert_eq!(
-        build_gitlab_mr_merge_args("feature-branch", "abc123"),
-        vec!["mr", "merge", "feature-branch", "--sha", "abc123", "--yes",]
-    );
-}
-
-#[test]
-fn generated_branch_names_only_keeps_rn_branches() {
-    let branches = generated_branch_names(["rn/req/task", "main", "feature/x"].into_iter());
-    assert_eq!(
-        branches.into_iter().collect::<Vec<_>>(),
-        vec!["rn/req/task"]
-    );
-}
-
-#[tokio::test]
-async fn origin_configuration_selects_remote_publication() {
-    let temp = tempfile::tempdir().unwrap();
-    init_repo(temp.path()).await;
-    assert!(!repository_has_origin(temp.path()).await);
-
-    super::git(
-        temp.path(),
-        &["remote", "add", "origin", "https://example.com/repo.git"],
-    )
-    .await
-    .unwrap();
-
-    assert!(repository_has_origin(temp.path()).await);
-}
-
-#[tokio::test]
-async fn local_merge_uses_clean_current_branch() {
-    let temp = tempfile::tempdir().unwrap();
-    init_repo(temp.path()).await;
-    let base = local_merge_base(temp.path()).await.unwrap();
-    super::git(temp.path(), &["checkout", "-b", "rn/req/merge-review"])
-        .await
-        .unwrap();
-    tokio::fs::write(temp.path().join("feature.txt"), "done\n")
-        .await
-        .unwrap();
-    super::git(temp.path(), &["add", "feature.txt"])
-        .await
-        .unwrap();
-    super::git(temp.path(), &["commit", "-m", "feature"])
-        .await
-        .unwrap();
-    super::git(temp.path(), &["checkout", &base]).await.unwrap();
-
-    merge_local_branch(temp.path(), "rn/req/merge-review")
-        .await
-        .unwrap();
-
-    assert_eq!(local_merge_base(temp.path()).await.unwrap(), base);
-    assert_eq!(
-        tokio::fs::read_to_string(temp.path().join("feature.txt"))
-            .await
-            .unwrap(),
-        "done\n"
-    );
-}
-
-#[tokio::test]
-async fn local_merge_rejects_dirty_or_detached_root() {
-    let temp = tempfile::tempdir().unwrap();
-    init_repo(temp.path()).await;
-    tokio::fs::write(temp.path().join("dirty.txt"), "dirty\n")
-        .await
-        .unwrap();
-    assert!(
-        local_merge_base(temp.path())
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("未提交改动")
-    );
-    tokio::fs::remove_file(temp.path().join("dirty.txt"))
-        .await
-        .unwrap();
-    super::git(temp.path(), &["checkout", "--detach"])
-        .await
-        .unwrap();
-    assert!(
-        local_merge_base(temp.path())
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("detached HEAD")
-    );
-}
-
-#[tokio::test]
-async fn local_merge_aborts_conflicts_without_losing_base_changes() {
-    let temp = tempfile::tempdir().unwrap();
-    init_repo(temp.path()).await;
-    let base = local_merge_base(temp.path()).await.unwrap();
-    super::git(temp.path(), &["checkout", "-b", "rn/req/merge-review"])
-        .await
-        .unwrap();
-    tokio::fs::write(temp.path().join("README.md"), "feature\n")
-        .await
-        .unwrap();
-    super::git(temp.path(), &["commit", "-am", "feature"])
-        .await
-        .unwrap();
-    super::git(temp.path(), &["checkout", &base]).await.unwrap();
-    tokio::fs::write(temp.path().join("README.md"), "base\n")
-        .await
-        .unwrap();
-    super::git(temp.path(), &["commit", "-am", "base"])
-        .await
-        .unwrap();
-
-    assert!(
-        merge_local_branch(temp.path(), "rn/req/merge-review")
-            .await
-            .is_err()
-    );
-    assert_eq!(
-        tokio::fs::read_to_string(temp.path().join("README.md"))
-            .await
-            .unwrap(),
-        "base\n"
-    );
-    assert!(
-        super::git(temp.path(), &["rev-parse", "--verify", "MERGE_HEAD"])
-            .await
-            .is_err()
-    );
-    assert!(
-        super::git(temp.path(), &["status", "--porcelain"])
-            .await
-            .unwrap()
-            .trim()
-            .is_empty()
-    );
-}
-
-#[tokio::test]
-async fn remote_base_sync_only_fast_forwards_the_checked_out_branch() {
-    let temp = tempfile::tempdir().unwrap();
-    let repo = temp.path().join("repo");
-    let remote = temp.path().join("origin.git");
-    let writer = temp.path().join("writer");
-    tokio::fs::create_dir(&repo).await.unwrap();
-    tokio::fs::create_dir(&remote).await.unwrap();
-    init_repo(&repo).await;
-    super::git(&remote, &["init", "--bare"]).await.unwrap();
-    let base = local_merge_base(&repo).await.unwrap();
-    super::git(
-        &repo,
-        &["remote", "add", "origin", remote.to_str().unwrap()],
-    )
-    .await
-    .unwrap();
-    super::git(&repo, &["push", "-u", "origin", &base])
-        .await
-        .unwrap();
-    super::git(
-        temp.path(),
-        &["clone", remote.to_str().unwrap(), writer.to_str().unwrap()],
-    )
-    .await
-    .unwrap();
-    super::git(&writer, &["config", "user.email", "test@example.com"])
-        .await
-        .unwrap();
-    super::git(&writer, &["config", "user.name", "Test"])
-        .await
-        .unwrap();
-    super::git(&writer, &["checkout", &base]).await.unwrap();
-    tokio::fs::write(writer.join("remote.txt"), "remote\n")
-        .await
-        .unwrap();
-    super::git(&writer, &["add", "remote.txt"]).await.unwrap();
-    super::git(&writer, &["commit", "-m", "remote"])
-        .await
-        .unwrap();
-    super::git(&writer, &["push", "origin", &base])
-        .await
-        .unwrap();
-
-    sync_checked_out_remote_base(&repo, &base).await.unwrap();
-
-    assert_eq!(
-        super::git(&repo, &["rev-parse", "HEAD"])
-            .await
-            .unwrap()
-            .trim(),
-        super::git(&repo, &["rev-parse", &format!("origin/{base}")])
-            .await
-            .unwrap()
-            .trim()
-    );
-}
-
-#[test]
 fn wait_only_finishes_on_final_agent_end() {
     assert!(!is_terminal_agent_end(
         &serde_json::json!({ "type": "turn_end" })
@@ -321,6 +157,36 @@ fn wait_only_finishes_on_final_agent_end() {
     assert!(is_terminal_agent_end(
         &serde_json::json!({ "type": "agent_end" })
     ));
+}
+
+#[test]
+fn terminal_settle_waits_for_compaction_and_overflow_retry() {
+    let agent_end = serde_json::json!({ "type": "agent_end", "willRetry": false });
+    let mut pending = next_terminal_pending(false, &agent_end, true);
+    assert!(pending);
+
+    pending = next_terminal_pending(
+        pending,
+        &serde_json::json!({ "type": "compaction_start", "reason": "overflow" }),
+        false,
+    );
+    assert!(!pending);
+    pending = next_terminal_pending(
+        pending,
+        &serde_json::json!({
+            "type": "compaction_end",
+            "reason": "overflow",
+            "willRetry": true
+        }),
+        false,
+    );
+    assert!(!pending);
+    pending = next_terminal_pending(
+        pending,
+        &serde_json::json!({ "type": "agent_end", "willRetry": false }),
+        true,
+    );
+    assert!(pending);
 }
 
 #[test]
@@ -345,15 +211,34 @@ fn event_activity_detects_output_content() {
             "content": [{"text": "running tests"}]
         }
     })));
+    assert!(event_has_output_activity(&serde_json::json!({
+        "type": "compaction_start",
+        "reason": "threshold"
+    })));
+    assert!(event_has_output_activity(&serde_json::json!({
+        "type": "compaction_end",
+        "reason": "threshold",
+        "aborted": false
+    })));
+    assert!(event_has_output_activity(&serde_json::json!({
+        "type": "tool_execution_start",
+        "toolName": "bash"
+    })));
+    assert!(event_has_output_activity(&serde_json::json!({
+        "type": "turn_end"
+    })));
+    assert!(event_has_output_activity(&serde_json::json!({
+        "type": "auto_retry_start"
+    })));
 }
 
 #[test]
-fn event_activity_ignores_response_and_empty_lifecycle_events() {
+fn event_activity_ignores_response_and_empty_deltas() {
     assert!(!event_has_output_activity(&serde_json::json!({
         "type": "response",
         "success": true
     })));
-    assert!(!event_has_output_activity(&serde_json::json!({
+    assert!(event_has_output_activity(&serde_json::json!({
         "type": "agent_start"
     })));
     assert!(!event_has_output_activity(&serde_json::json!({
@@ -363,6 +248,31 @@ fn event_activity_ignores_response_and_empty_lifecycle_events() {
             "delta": "   "
         }
     })));
+}
+
+#[test]
+fn runtime_observation_records_non_enforcing_budget_warning() {
+    let trace = Some(serde_json::json!({
+        "type": "pi_trace",
+        "version": 2,
+        "trace": {}
+    }));
+    let mut observation = OperationRuntimeObservation::new(
+        Duration::from_secs(120),
+        Duration::from_secs(600),
+        Some(250_000),
+    );
+    observation.observed_input = 281_178;
+    observation.budget_warning_emitted = true;
+    observation.activity_count = 42;
+    observation.termination_reason = "completed";
+
+    let trace = attach_runtime_observation(trace, &observation).unwrap();
+    assert_eq!(trace["trace"]["budget"]["exceeded"], true);
+    assert_eq!(trace["trace"]["budget"]["enforced"], false);
+    assert_eq!(trace["trace"]["budget"]["observed"], 281_178);
+    assert_eq!(trace["trace"]["runtime"]["absoluteTimeout"], false);
+    assert_eq!(trace["trace"]["runtime"]["activityCount"], 42);
 }
 
 #[test]
@@ -405,6 +315,80 @@ fn session_stats_are_normalized_into_trace_usage() {
 }
 
 #[test]
+fn compaction_events_are_normalized_without_summary_or_billing_usage() {
+    let events = vec![
+        serde_json::json!({ "type": "compaction_start", "reason": "overflow" }),
+        serde_json::json!({
+            "type": "compaction_end",
+            "reason": "overflow",
+            "result": {
+                "summary": "sensitive summary",
+                "tokensBefore": 12_000,
+                "estimatedTokensAfter": 4_500
+            },
+            "aborted": false,
+            "willRetry": true
+        }),
+        serde_json::json!({ "type": "compaction_start", "reason": "threshold" }),
+        serde_json::json!({
+            "type": "compaction_end",
+            "reason": "threshold",
+            "aborted": true,
+            "willRetry": false
+        }),
+    ];
+    let trace =
+        attach_compaction_observability(Some(serde_json::json!({ "trace": {} })), &events).unwrap();
+    let compaction = &trace["trace"]["compaction"];
+
+    assert_eq!(compaction["count"], 2);
+    assert_eq!(compaction["completed"], 1);
+    assert_eq!(compaction["aborted"], 1);
+    assert_eq!(compaction["overflowRetries"], 1);
+    assert_eq!(compaction["estimatedTokensSaved"], 7_500);
+    assert_eq!(compaction["usageKnown"], false);
+    assert_eq!(compaction["events"][0]["status"], "completed");
+    assert_eq!(compaction["events"][0]["estimatedTokensAfter"], 4_500);
+    assert!(!trace.to_string().contains("sensitive summary"));
+}
+
+#[test]
+fn auto_compaction_state_records_pi_setting_without_changing_it() {
+    let trace = attach_auto_compaction_state(Some(serde_json::json!({ "trace": {} })), Some(false))
+        .unwrap();
+
+    assert_eq!(trace["trace"]["compaction"]["autoEnabled"], false);
+    assert_eq!(trace["trace"]["compaction"]["count"], 0);
+    assert_eq!(trace["trace"]["compaction"]["usageKnown"], false);
+}
+
+#[test]
+fn compaction_failure_preserves_reason_and_error_without_estimates() {
+    let trace = attach_compaction_observability(
+        Some(serde_json::json!({ "trace": {} })),
+        &[serde_json::json!({
+            "type": "compaction_end",
+            "reason": "threshold",
+            "result": null,
+            "aborted": false,
+            "willRetry": false,
+            "errorMessage": "Auto-compaction failed: provider unavailable"
+        })],
+    )
+    .unwrap();
+    let event = &trace["trace"]["compaction"]["events"][0];
+
+    assert_eq!(trace["trace"]["compaction"]["failed"], 1);
+    assert_eq!(event["reason"], "threshold");
+    assert_eq!(event["status"], "failed");
+    assert_eq!(
+        event["error"],
+        "Auto-compaction failed: provider unavailable"
+    );
+    assert!(event.get("estimatedTokensAfter").is_none());
+}
+
+#[test]
 fn session_stats_use_operation_delta_when_baseline_is_available() {
     let trace = attach_session_usage(
         Some(serde_json::json!({ "trace": {} })),
@@ -427,119 +411,65 @@ fn session_stats_use_operation_delta_when_baseline_is_available() {
 }
 
 #[test]
-fn dependency_branches_follow_task_dependency_order() {
-    let mut task_a = test_task(Path::new("/tmp/a"));
-    task_a.id = "task-a".to_owned();
-    task_a.branch_name = Some("branch-a".to_owned());
-    let mut task_b = test_task(Path::new("/tmp/b"));
-    task_b.id = "task-b".to_owned();
-    task_b.branch_name = Some("branch-b".to_owned());
-    let mut task_c = test_task(Path::new("/tmp/c"));
-    task_c.id = "task-c".to_owned();
-    task_c.depends_on = vec!["task-b".to_owned(), "task-a".to_owned()];
-    let plan = RequirementExecutionPlan {
-        trace: None,
-        summary: "plan".to_owned(),
-        tasks: vec![task_a, task_b, task_c.clone()],
-    };
+fn failure_trace_counts_assistant_operation_usage() {
+    let events = vec![serde_json::json!({
+        "type": "message_end",
+        "message": {
+            "role": "assistant",
+            "usage": { "input": 120, "output": 30, "cacheRead": 40, "cacheWrite": 5 }
+        }
+    })];
 
-    assert_eq!(
-        super::dependency_branches_for_task(&task_c, &plan),
-        vec!["branch-b", "branch-a"]
-    );
+    assert_eq!(assistant_message_input(&events[0]), 120);
+    let trace = build_failure_trace(&events, true).unwrap();
+    assert_eq!(trace["trace"]["usage"]["scope"], "operation");
+    assert_eq!(trace["trace"]["usage"]["input"], 120);
+    assert_eq!(trace["trace"]["usage"]["cacheRead"], 40);
+    assert!(trace["trace"]["operationId"].as_str().is_some());
 }
 
 #[tokio::test]
-async fn implementation_no_diff_can_complete_with_no_op_reason() {
+async fn task_git_state_allows_unstaged_code_edits_but_rejects_staged_changes() {
     let temp = tempfile::tempdir().unwrap();
     init_repo(temp.path()).await;
-    let task = test_task(temp.path());
-    let mut output = test_output(Some(false), Some("前置节点已完整实现"));
+    let state = TaskGitState::capture(temp.path()).await.unwrap();
 
-    stage_task_changes(&task, &mut output).await.unwrap();
-
-    let head = super::git(temp.path(), &["rev-parse", "HEAD"])
+    tokio::fs::write(temp.path().join("README.md"), "unstaged\n")
         .await
         .unwrap();
-    let status = super::git(temp.path(), &["status", "--porcelain"])
+    state.verify(temp.path()).await.unwrap();
+
+    super::git(temp.path(), &["add", "README.md"])
         .await
         .unwrap();
-    assert!(status.trim().is_empty());
-    assert!(!head.trim().is_empty());
-    assert_eq!(
-        output.execution_warning.as_deref(),
-        Some("未产生新改动：前置节点已完整实现。按 no-op 完成并进入审核。")
-    );
+    let error = state.verify(temp.path()).await.unwrap_err();
+    assert!(error.to_string().contains("修改了暂存区"));
 }
 
 #[tokio::test]
-async fn implementation_no_diff_without_no_op_reason_still_fails() {
+async fn task_git_state_rejects_head_and_branch_changes() {
     let temp = tempfile::tempdir().unwrap();
     init_repo(temp.path()).await;
-    let task = test_task(temp.path());
-    let mut output = test_output(None, None);
+    let head_state = TaskGitState::capture(temp.path()).await.unwrap();
 
-    let error = stage_task_changes(&task, &mut output).await.unwrap_err();
-
-    assert!(error.to_string().contains("没有产生可提交改动"));
-}
-
-#[tokio::test]
-async fn fixing_implementation_requires_a_new_commit() {
-    let temp = tempfile::tempdir().unwrap();
-    init_repo(temp.path()).await;
-    let old_commit = super::git(temp.path(), &["rev-parse", "HEAD"])
-        .await
-        .unwrap()
-        .trim()
-        .to_owned();
-    let mut task = test_task(temp.path());
-    task.status = RequirementTaskStatus::Fixing;
-    let mut output = test_output(Some(false), Some("无需修改"));
-
-    let error = stage_task_changes(&task, &mut output).await.unwrap_err();
-    assert!(error.to_string().contains("必须产生实际代码改动"));
-
-    tokio::fs::write(temp.path().join("README.md"), "fixed\n")
+    tokio::fs::write(temp.path().join("README.md"), "committed\n")
         .await
         .unwrap();
-    let mut output = test_output(Some(true), None);
-    stage_task_changes(&task, &mut output).await.unwrap();
-    commit_staged_changes(temp.path(), "raccoon_node: 实现功能")
+    super::git(temp.path(), &["add", "README.md"])
         .await
         .unwrap();
-    let new_commit = super::git(temp.path(), &["rev-parse", "HEAD"])
+    super::git(temp.path(), &["commit", "-m", "bypass"])
         .await
-        .unwrap()
-        .trim()
-        .to_owned();
-    assert_ne!(new_commit, old_commit);
-}
+        .unwrap();
+    let error = head_state.verify(temp.path()).await.unwrap_err();
+    assert!(error.to_string().contains("修改了 HEAD"));
 
-#[tokio::test]
-async fn staged_changes_are_ready_for_review() {
-    let temp = tempfile::tempdir().unwrap();
-    init_repo(temp.path()).await;
-    let task = test_task(temp.path());
-    let mut output = test_output(Some(true), None);
-
-    tokio::fs::write(temp.path().join("README.md"), "staged\n")
+    let branch_state = TaskGitState::capture(temp.path()).await.unwrap();
+    super::git(temp.path(), &["switch", "-c", "other"])
         .await
         .unwrap();
-    stage_task_changes(&task, &mut output).await.unwrap();
-
-    let status = super::git(temp.path(), &["status", "--porcelain"])
-        .await
-        .unwrap();
-    let diff = super::git(temp.path(), &["diff", "--cached"])
-        .await
-        .unwrap();
-    let log_count = super::git(temp.path(), &["rev-list", "--count", "HEAD"])
-        .await
-        .unwrap();
-    assert!(!status.trim().is_empty());
-    assert!(diff.contains("staged"));
-    assert_eq!(log_count.trim(), "1");
+    let error = branch_state.verify(temp.path()).await.unwrap_err();
+    assert!(error.to_string().contains("修改了当前分支"));
 }
 
 async fn init_repo(path: &Path) {
@@ -558,64 +488,4 @@ async fn init_repo(path: &Path) {
         .unwrap();
     super::git(path, &["add", "README.md"]).await.unwrap();
     super::git(path, &["commit", "-m", "init"]).await.unwrap();
-}
-
-fn test_task(path: &Path) -> crate::models::RequirementExecutionTask {
-    crate::models::RequirementExecutionTask {
-        id: "task-1".to_owned(),
-        title: "实现功能".to_owned(),
-        description: "只做当前功能".to_owned(),
-        depends_on: Vec::new(),
-        kind: RequirementTaskKind::Implementation,
-        model_tier: RequirementModelTier::Medium,
-        timeout_seconds: 60,
-        pi_session_file: None,
-        branch_name: None,
-        worktree_path: Some(path.to_string_lossy().to_string()),
-        review_for: None,
-        review_angle: None,
-        review_status: RequirementReviewStatus::Pending,
-        review_history: Vec::new(),
-        attempt: 0,
-        execution_failure_count: 0,
-        review_rejection_count: 0,
-        recovery_stage: crate::models::RequirementRecoveryStage::None,
-        failure_summary: None,
-        recovery_guidance: None,
-        high_tier_execution_used: false,
-        last_review_feedback: None,
-        last_review_fix_instructions: None,
-        pull_request_url: None,
-        merged_into: None,
-        cleanup_summary: None,
-        execution_warning: None,
-        trace: None,
-        status: RequirementTaskStatus::Running,
-        target_files: Vec::new(),
-        result_summary: None,
-        error: None,
-    }
-}
-
-fn test_output(
-    changed: Option<bool>,
-    no_op_reason: Option<&str>,
-) -> RequirementTaskExecutionOutput {
-    RequirementTaskExecutionOutput {
-        result_summary: "完成".to_owned(),
-        pi_session_file: None,
-        branch_name: None,
-        worktree_path: None,
-        review_status: None,
-        review_feedback: None,
-        fix_instructions: None,
-        pull_request_url: None,
-        merged_into: None,
-        cleanup_summary: None,
-        execution_warning: None,
-        changed,
-        no_op_reason: no_op_reason.map(str::to_owned),
-        recovery_guidance: None,
-        trace: Some(serde_json::json!({ "type": "pi_trace" })),
-    }
 }

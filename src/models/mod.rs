@@ -210,15 +210,13 @@ pub struct Requirement {
     pub clarification_round: u32,
     #[serde(default)]
     pub clarifications: Vec<RequirementClarification>,
-    pub draft: Option<RequirementDraft>,
+    pub draft: Option<ChangeSpec>,
     #[serde(default)]
     pub analysis_revision: u32,
     #[serde(default)]
     pub active_prompt: Option<RequirementPromptState>,
     #[serde(default)]
     pub clarification_history: Vec<RequirementClarificationRound>,
-    #[serde(default)]
-    pub execution_plan: Option<RequirementExecutionPlan>,
     #[serde(skip_serializing)]
     pub pi_session_file: Option<String>,
     pub error: Option<String>,
@@ -273,10 +271,29 @@ pub enum RequirementMessageRole {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RequirementDraft {
-    pub title: String,
-    pub summary: String,
-    pub acceptance_criteria: Vec<String>,
+pub struct ChangeSpec {
+    pub intent: String,
+    pub acceptance_scenarios: Vec<AcceptanceScenario>,
+    #[serde(default)]
+    pub explicit_constraints: Vec<ExplicitConstraint>,
+    #[serde(default)]
+    pub non_goals: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AcceptanceScenario {
+    pub id: String,
+    pub given: String,
+    pub when: String,
+    pub then: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExplicitConstraint {
+    pub id: String,
+    pub statement: String,
+    pub source_message_id: String,
+    pub source_quote: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -291,7 +308,7 @@ pub enum RequirementPromptState {
     Confirmation {
         prompt_id: String,
         revision: u32,
-        draft: RequirementDraft,
+        draft: ChangeSpec,
     },
 }
 
@@ -306,119 +323,6 @@ pub struct RequirementClarificationRound {
     #[serde(default)]
     pub answered_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RequirementExecutionPlan {
-    pub summary: String,
-    pub tasks: Vec<RequirementExecutionTask>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace: Option<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RequirementExecutionTask {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    #[serde(default)]
-    pub depends_on: Vec<String>,
-    #[serde(default)]
-    pub kind: RequirementTaskKind,
-    #[serde(default)]
-    pub model_tier: RequirementModelTier,
-    #[serde(default = "default_task_timeout_seconds")]
-    pub timeout_seconds: u64,
-    #[serde(default)]
-    pub pi_session_file: Option<String>,
-    #[serde(default)]
-    pub branch_name: Option<String>,
-    #[serde(default)]
-    pub worktree_path: Option<String>,
-    #[serde(default)]
-    pub review_for: Option<String>,
-    #[serde(default)]
-    pub review_angle: Option<String>,
-    #[serde(default)]
-    pub review_status: RequirementReviewStatus,
-    #[serde(default)]
-    pub review_history: Vec<RequirementReviewRound>,
-    #[serde(default)]
-    pub attempt: u32,
-    #[serde(default)]
-    pub execution_failure_count: u32,
-    #[serde(default)]
-    pub review_rejection_count: u32,
-    #[serde(default)]
-    pub recovery_stage: RequirementRecoveryStage,
-    #[serde(default)]
-    pub failure_summary: Option<String>,
-    #[serde(default)]
-    pub recovery_guidance: Option<String>,
-    #[serde(default)]
-    pub high_tier_execution_used: bool,
-    #[serde(default)]
-    pub last_review_feedback: Option<String>,
-    #[serde(default)]
-    pub last_review_fix_instructions: Option<Vec<String>>,
-    #[serde(default)]
-    pub pull_request_url: Option<String>,
-    #[serde(default)]
-    pub merged_into: Option<String>,
-    #[serde(default)]
-    pub cleanup_summary: Option<String>,
-    #[serde(default)]
-    pub execution_warning: Option<String>,
-    #[serde(default)]
-    pub trace: Option<Value>,
-    pub status: RequirementTaskStatus,
-    #[serde(default)]
-    pub target_files: Vec<String>,
-    pub result_summary: Option<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RequirementReviewRound {
-    pub round: u32,
-    pub implementation_attempt: u32,
-    pub implementation_summary: String,
-    pub status: RequirementReviewRoundStatus,
-    pub started_at: DateTime<Utc>,
-    #[serde(default)]
-    pub completed_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub reviews: Vec<RequirementReviewStep>,
-    #[serde(default)]
-    pub summary_conclusion: Option<RequirementReviewStatus>,
-    #[serde(default)]
-    pub summary: Option<String>,
-    #[serde(default)]
-    pub failure_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RequirementReviewStep {
-    pub task_id: String,
-    pub angle: String,
-    pub status: RequirementReviewStatus,
-    pub summary: String,
-    #[serde(default)]
-    pub failure_reason: Option<String>,
-    pub completed_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum RequirementReviewRoundStatus {
-    #[default]
-    Reviewing,
-    Approved,
-    Rejected,
-}
-
-fn default_task_timeout_seconds() -> u64 {
-    90
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -452,58 +356,12 @@ pub struct PromptReferenceContext {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum RequirementTaskKind {
-    #[default]
-    Implementation,
-    Review,
-    ReviewSummary,
-    ReviewSubAgent,
-    BranchMerge,
-    MergeReview,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RequirementModelTier {
     Low,
     #[default]
     Medium,
     High,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum RequirementRecoveryStage {
-    #[default]
-    None,
-    AutoRetry,
-    GuidedRetry,
-    HighTierExecution,
-    Exhausted,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum RequirementReviewStatus {
-    #[default]
-    Pending,
-    Approved,
-    Rejected,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum RequirementTaskStatus {
-    Pending,
-    Running,
-    AwaitingReview,
-    Fixing,
-    Completed,
-    Failed,
-    Skipped,
-    Approved,
-    Rejected,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -545,14 +403,8 @@ pub struct ProjectCanvasResponse {
     pub active_requirement: Option<Requirement>,
     pub queued_requirements: Vec<Requirement>,
     pub completed_requirements: Vec<Requirement>,
+    pub workflow_runs: Vec<crate::workflow::WorkflowSnapshot>,
     pub token_usage: Option<ProjectTokenUsage>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequirementTaskDetailResponse {
-    pub task: RequirementExecutionTask,
-    pub reviews: Vec<RequirementExecutionTask>,
-    pub dependencies: Vec<RequirementExecutionTask>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -577,27 +429,82 @@ pub struct SessionEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubagentReviewResult {
-    pub approved: bool,
-    pub feedback: String,
-    pub result_summary: String,
+    #[serde(default)]
+    pub findings: Vec<SubagentReviewFinding>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentReviewFinding {
+    pub priority: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub location: String,
+    #[serde(default)]
+    pub summary: String,
+    pub evidence: String,
+    #[serde(default)]
+    pub reproduction: Option<String>,
+    #[serde(default)]
+    pub remediation: Option<String>,
+    #[serde(default)]
+    pub scenario_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SubagentReviewUsage {
+    #[serde(default)]
     pub input: u64,
+    #[serde(default)]
     pub output: u64,
+    #[serde(default, alias = "cache_read")]
     pub cache_read: u64,
+    #[serde(default, alias = "cache_write")]
     pub cache_write: u64,
+    #[serde(default)]
+    pub context: Option<SubagentReviewContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentReviewContext {
+    pub tokens: u64,
+    pub window: u64,
+    pub percent: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubagentReview {
     pub angle: String,
-    pub ok: bool,
+    pub transport_status: String,
     #[serde(default)]
     pub error: Option<String>,
     pub result: Option<SubagentReviewResult>,
     pub usage: Option<SubagentReviewUsage>,
+    #[serde(default)]
+    pub events: Vec<Value>,
+    #[serde(default)]
+    pub turns: u32,
+    #[serde(default)]
+    pub retry_count: u32,
+    #[serde(default)]
+    pub submission_correction_count: u32,
+    #[serde(default)]
+    pub duration_ms: u64,
+    #[serde(default)]
+    pub runtime: Option<Value>,
+    #[serde(default, alias = "contextMode")]
+    pub context_mode: Option<String>,
+    #[serde(default, alias = "contextHash")]
+    pub context_hash: Option<String>,
+    #[serde(default, alias = "contextBytes")]
+    pub context_bytes: Option<u64>,
+    #[serde(default)]
+    pub session_persisted: bool,
+    #[serde(default, alias = "eventsTruncated")]
+    pub events_truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -623,6 +530,22 @@ pub enum SessionContentBlock {
     },
     Subagents {
         reviews: Vec<SubagentReview>,
+        #[serde(default)]
+        selection: Option<Value>,
+    },
+    Compaction {
+        reason: Option<String>,
+        status: String,
+        tokens_before: Option<u64>,
+        estimated_tokens_after: Option<u64>,
+        estimated_tokens_saved: Option<u64>,
+        first_kept_entry_id: Option<String>,
+        from_hook: bool,
+        read_file_count: usize,
+        modified_file_count: usize,
+        will_retry: bool,
+        error: Option<String>,
+        usage_known: bool,
     },
     Unknown {
         block_type: String,
@@ -764,6 +687,19 @@ pub struct ProjectTokenUsage {
     pub roles: Vec<TokenUsageRole>,
     #[serde(default)]
     pub sources: Vec<PromptSourceUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<TokenCompactionUsage>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TokenCompactionUsage {
+    pub count: u64,
+    pub completed: u64,
+    pub aborted: u64,
+    pub failed: u64,
+    pub overflow_retries: u64,
+    pub estimated_tokens_saved: u64,
+    pub usage_known: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -772,6 +708,8 @@ pub struct TokenUsageHotspot {
     pub role: String,
     pub usage: TokenUsageCategory,
     pub context_percent: f64,
+    #[serde(default)]
+    pub budget_exceeded: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -858,7 +796,7 @@ pub enum RequirementConversationPrompt {
         revision: Option<u32>,
     },
     Confirmation {
-        draft: RequirementDraft,
+        draft: ChangeSpec,
         #[serde(skip_serializing_if = "Option::is_none")]
         prompt_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -957,10 +895,15 @@ pub type ModelProviderFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<PiModel>, AppError>> + Send + 'a>>;
 pub type RequirementAnalysisFuture<'a> =
     Pin<Box<dyn Future<Output = Result<RequirementAnalysisOutput, AppError>> + Send + 'a>>;
-pub type RequirementPlanFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<RequirementExecutionPlan, AppError>> + Send + 'a>>;
-pub type RequirementTaskExecutionFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<RequirementTaskExecutionOutput, AppError>> + Send + 'a>>;
+pub type WorkflowPlanFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<crate::workflow::WorkflowPlanOutput, AppError>> + Send + 'a>,
+>;
+pub type WorkflowAttemptFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<crate::workflow::WorkflowAgentOutput, AppError>> + Send + 'a>,
+>;
+pub type WorkflowReviewFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<crate::workflow::WorkflowReviewOutput, AppError>> + Send + 'a>,
+>;
 pub type ProjectChatFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ProjectChatOutput, AppError>> + Send + 'a>>;
 pub type ProjectChatBranchFuture<'a> =
@@ -975,16 +918,27 @@ pub trait ModelProvider: Send + Sync {
         input: RequirementAnalysisInput,
         events: Option<RequirementEventEmitter>,
     ) -> RequirementAnalysisFuture<'_>;
-    fn plan_requirement_execution(
+    fn plan_workflow(
         &self,
-        input: RequirementPlanInput,
-        events: Option<RequirementEventEmitter>,
-    ) -> RequirementPlanFuture<'_>;
-    fn execute_requirement_task(
+        _input: crate::workflow::WorkflowPlanInput,
+        _events: Option<RequirementEventEmitter>,
+    ) -> WorkflowPlanFuture<'_> {
+        Box::pin(async { Err(AppError::internal("WorkflowRun 规划暂不可用")) })
+    }
+    fn execute_workflow_attempt(
         &self,
-        input: RequirementTaskExecutionInput,
-        events: Option<RequirementEventEmitter>,
-    ) -> RequirementTaskExecutionFuture<'_>;
+        _input: crate::workflow::WorkflowAgentInput,
+        _events: Option<RequirementEventEmitter>,
+    ) -> WorkflowAttemptFuture<'_> {
+        Box::pin(async { Err(AppError::internal("WorkflowRun 执行暂不可用")) })
+    }
+    fn review_workflow_checkpoint(
+        &self,
+        _input: crate::workflow::WorkflowReviewInput,
+        _events: Option<RequirementEventEmitter>,
+    ) -> WorkflowReviewFuture<'_> {
+        Box::pin(async { Err(AppError::internal("WorkflowRun 审核暂不可用")) })
+    }
     fn ask_project_chat(
         &self,
         _input: ProjectChatInput,
@@ -1051,7 +1005,7 @@ pub struct RequirementAnalysisInput {
     pub reference_context: Option<PromptReferenceContext>,
     pub prompt_images: Vec<PromptImage>,
     pub clarifications: Vec<RequirementClarification>,
-    pub draft: Option<RequirementDraft>,
+    pub draft: Option<ChangeSpec>,
     pub model_settings: ModelSettings,
     pub pi_session_file: Option<String>,
 }
@@ -1062,44 +1016,9 @@ pub struct RequirementAnalysisOutput {
     pub assistant_message: String,
     pub progress: String,
     pub clarifications: Vec<RequirementClarification>,
-    pub draft: Option<RequirementDraft>,
+    pub draft: Option<ChangeSpec>,
     pub pi_session_file: Option<String>,
     pub error: Option<String>,
-    pub trace: Option<Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RequirementPlanInput {
-    pub project: Project,
-    pub requirement: Requirement,
-    pub model_settings: ModelSettings,
-}
-
-#[derive(Debug, Clone)]
-pub struct RequirementTaskExecutionInput {
-    pub project: Project,
-    pub requirement: Requirement,
-    pub plan: RequirementExecutionPlan,
-    pub task: RequirementExecutionTask,
-    pub model_settings: ModelSettings,
-}
-
-#[derive(Debug, Clone)]
-pub struct RequirementTaskExecutionOutput {
-    pub result_summary: String,
-    pub pi_session_file: Option<String>,
-    pub branch_name: Option<String>,
-    pub worktree_path: Option<String>,
-    pub review_status: Option<RequirementReviewStatus>,
-    pub review_feedback: Option<String>,
-    pub fix_instructions: Option<Vec<String>>,
-    pub pull_request_url: Option<String>,
-    pub merged_into: Option<String>,
-    pub cleanup_summary: Option<String>,
-    pub execution_warning: Option<String>,
-    pub changed: Option<bool>,
-    pub no_op_reason: Option<String>,
-    pub recovery_guidance: Option<String>,
     pub trace: Option<Value>,
 }
 
@@ -1303,7 +1222,6 @@ mod tests {
             analysis_revision: 0,
             active_prompt: None,
             clarification_history: Vec::new(),
-            execution_plan: None,
             pi_session_file: Some("/secret/session.json".to_owned()),
             error: None,
             queued_at: None,
@@ -1312,20 +1230,5 @@ mod tests {
         };
         let json = serde_json::to_value(&requirement).unwrap();
         assert!(json.get("pi_session_file").is_none());
-    }
-
-    #[test]
-    fn execution_task_without_review_history_remains_compatible() {
-        let task: RequirementExecutionTask = serde_json::from_value(serde_json::json!({
-            "id": "task-1",
-            "title": "实现",
-            "description": "实现功能",
-            "status": "pending",
-            "result_summary": null,
-            "error": null
-        }))
-        .unwrap();
-
-        assert!(task.review_history.is_empty());
     }
 }

@@ -342,30 +342,6 @@ pub async fn git(dir: &Path, args: &[&str]) -> Result<String, AppError> {
     )))
 }
 
-pub async fn commit_staged_changes(worktree: &Path, message: &str) -> Result<(), AppError> {
-    let status = git(worktree, &["status", "--porcelain"]).await?;
-    if status.trim().is_empty() {
-        return Ok(());
-    }
-    git(worktree, &["commit", "-m", message]).await?;
-    Ok(())
-}
-
-pub fn effective_model_tier(
-    kind: crate::models::RequirementTaskKind,
-) -> crate::models::RequirementModelTier {
-    use crate::models::{RequirementModelTier, RequirementTaskKind};
-    match kind {
-        RequirementTaskKind::Implementation | RequirementTaskKind::ReviewSummary => {
-            RequirementModelTier::Low
-        }
-        RequirementTaskKind::Review
-        | RequirementTaskKind::ReviewSubAgent
-        | RequirementTaskKind::BranchMerge => RequirementModelTier::Medium,
-        RequirementTaskKind::MergeReview => RequirementModelTier::High,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{normalize_local_path, normalize_windows_path_value, resolve_git_root};

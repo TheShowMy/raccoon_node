@@ -16,7 +16,7 @@
 ## 目录
 
 - 后端入口：`src/main.rs`
-- 后端模块：根 crate `raccoon-node` 的内部模块位于 `src/api/`、`src/store/`、`src/pi/`、`src/requirement/` 等目录，不再依赖单独发布的内部 crates。
+- 后端模块：根 crate `raccoon-node` 的内部模块位于 `src/api/`、`src/store/`、`src/pi/`、`src/requirement/`、`src/workflow/` 等目录，不再依赖单独发布的内部 crates。
 - 前端入口：`frontend/src/main.tsx`；`App.tsx` 只编排领域 hooks 与主画布，画布、聊天、
   工作台和共享 UI 分模块实现，六个外围工作台通过动态 import 按需加载。
 - 前端样式：`frontend/src/styles/index.css`，使用 Astryx 预构建 CSS 与普通 CSS，
@@ -30,10 +30,44 @@
 - JSONL 会话查看：后端按需解析 session 文件并分页返回，原始记录不复制进 SQLite。
 - 对话传输：HTTP 接受项目问答、需求分析和停止操作；只读 WebSocket 推送统一增量
   事件。前端先订阅并缓冲事件，再拉取 SQLite 快照并回放缓冲事件；重连后重新对账。
-- 任务传输：需求进入执行阶段后继续使用现有 SSE，不与对话 WebSocket 混用。
+- Workflow 传输：需求事件 SSE 只承载实时通知；运行事实通过 Workflow 快照与只追加事件
+  API 对账，不与对话 WebSocket 混用。
 - 每日滚动日志（最多 7 个文件）：`<git_root>/.raccoon-node/logs/`
 - 内置受管 Pi extension：`<git_root>/.raccoon-node/extensions/`
-- 代码审核：每个实现任务只有一个持久 Review 父 session；受管 extension 在父会话工具内并发启动三个 `pi --mode rpc --no-session` 只读子代理，子代理上下文隔离且不产生 session 文件。
+- OpenSpec 规格：确认结果是 `ChangeSpec(intent, acceptance_scenarios,
+  explicit_constraints, non_goals)`。行为场景只保存 Given/When/Then 用户可观察结果；具体
+  文件、函数、API、组件、CSS 和命令只能在用户明确指定并带原消息 ID、原文摘录时进入
+  `explicit_constraints`。Planner 的 `DesignNotes` 是带仓库证据的可修订技术设计，不参与
+  机械验收。
+- WorkflowRun v5：WorkPlan 只包含行为切片、场景引用、依赖、非约束范围线索和验证目标，
+  不存在 Stage、Review、Fix、Merge 或 Recovery 伪任务。执行器在单个 integration worktree
+  上默认串行完成低档实现、低档修复和高档修复；全部切片完成后才执行最终验证和审核。
+- 仓库原生验证：启动时确定性生成 `RepositoryValidationCatalog` 并在 base HEAD 建立基线；
+  最终只把“基线通过、最终失败”视为硬回归。命令缺失或无法建立基线标记为 unverified，
+  既有失败未恶化只展示。Agent 自创 grep、字符串计数等只属于 observation，不能成为 gate。
+- 代码审核：`raccoon:parallel-review:v5` 对 base commit 到当前受管 worktree 的完整 diff
+  自适应选择 1–3 个独立内存 `AgentSession`。正确性只看 ChangeSpec、固定 diff 和中性验证；
+  质量/测试与安全完全盲审，不接收任务标题、DesignNotes、实现总结或其他角度结论。子 Agent
+  只开放仓库只读工具和 `submit_review_result`，不启动额外 Pi CLI、不写子 session 文件。
+  finding 使用 P0–P3；仅 P0/P1 阻断，后端按角度、类别、路径和位置归并，固定生成总体摘要。
+  非法结构在同一子会话中按精确 JSON 路径修正两次，再失败只重试该角度一次；技术失败进入
+  `paused_technical`，不触发代码修复或 Rescue。
+- 增量复审：首次审核按完整 diff 选择角度；集成修复后只复审正确性、仍有 P0/P1 的角度和
+  本次修复实际改动新触发的安全角度。审核传输状态使用 `transport_status`，不得与业务通过混淆。
+- 外部恢复：语义实现链和唯一一次高档集成修复仍不收敛时，每个 WorkflowRun 仅允许一次
+  全新高档 Rescue。Rescue 只接收 ChangeSpec、最终 diff、未关闭 P0/P1、验证差异和精简失败链；
+  原生 gate 首次失败时只向同一 Rescue session 反馈一次短证据。数据库、协议、Pi 进程、审核
+  持久化等技术失败暂停并可恢复，不消耗 Rescue。
+- 受管任务运行时：含 `bash` 的角色加载 `raccoon:task-runtime:v3` extension。模型仍可
+  直接执行 `git status`、`git diff`、`git log` 等只读命令；extension 在 `tool_call`
+  阶段拦截 Git 写操作并返回明确错误。实现类任务在模型运行前后额外核对当前 worktree
+  的 HEAD、分支 ref 和 staged diff 指纹，异常变化按技术失败处理。规划、任务与恢复结果
+  通过 `raccoon:workflow-output:v3` 结构化工具提交，不再依赖文本 JSON repair。
+- Pi 原生 compaction：不修改 `autoCompactionEnabled`。项目聊天、需求分析、任务和 Review
+  父会话记录压缩原因、结果与估算节省量；压缩事件刷新空闲计时。估算值标记
+  `usageKnown=false`，不计入供应商计费 token，也不把摘要正文复制到 SQLite。
+- 运行看门狗：token 预算仅告警并写入 trace，不终止任务。普通 Agent 连续 600 秒、
+  审核内存子 Agent 连续 300 秒没有有效活动才判定空闲超时；总运行时长和轮次不设硬上限。
 - 任务 worktree：`<git_root>/.raccoon-node/worktrees/`
 - 附件：`<git_root>/.raccoon-node/attachments/`
 - 本地打包输出：`build/bin/raccoon`（Windows 为 `raccoon.exe`）
@@ -60,8 +94,14 @@
 - 所有 LLM、模型列表、模型选择和后续 Agent 能力必须基于 Pi Agent RPC。
 - 需求澄清和确认草案必须通过内置受管 Pi extension 的结构化工具提交；不得恢复
   文本 JSON 提取。
-- 业务状态只以 SQLite 为准；Pi session 只保存完整模型历史，不承担 FIFO、DAG、
-  worktree 或恢复状态。
+- 执行规划、任务结果与恢复指导必须通过受管工作流工具提交；协议缺失、重复提交或类型
+  不匹配均作为技术失败，不回退文本 JSON。Git 写限制由受管 extension 和状态复核实现，
+  不写入任务 Prompt。Planner 和工作项结果结构不合法时，只在原 session 中发送一次短
+  schema 纠正；仍不合法才形成技术失败。
+- 业务状态只以 SQLite v5 为准；`workflow_runs`、`workflow_work_items`、attempt、validation、
+  checkpoint、finding 和只追加 event 是执行事实，不再存在 `workflow_stages`。Pi session 只
+  保存完整模型历史，不承担 FIFO、租约、worktree 或恢复状态。检测到 v4 数据库时先按字节
+  归档再创建全新 v5；运行时不保留旧 Workflow 执行器或协议兼容分支。
 - 项目聊天始终持有父 Pi session。`/需求生成` 只在用户提交非空补充说明后执行：
   完整父问答通过 Pi RPC `clone` 派生 child session；无完整上下文时创建独立需求。
   `ProjectChat.pi_session_file` 与 `Requirement.pi_session_file` 分别保存主/分支引用，

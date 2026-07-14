@@ -18,7 +18,6 @@ use axum::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tokio::task::JoinSet;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 
 use crate::api::AppState;
@@ -33,11 +32,11 @@ use crate::models::{
     ProjectFileContent, ProjectFileTreeEntry, RequirementAnalysisInput, RequirementClarification,
     RequirementConfirmRequest, RequirementConversationResponse, RequirementEvent,
     RequirementEventEmitter, RequirementMessageRequest, RequirementOrigin, RequirementStatus,
-    RequirementTaskDetailResponse, RequirementTaskExecutionInput, RpcStatus, SessionTranscriptPage,
-    TerminalAccessRequest, TerminalAccessStatus, TerminalClientMessage, TerminalCommandProfile,
-    TerminalCommandProfilesUpdate, TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
+    RpcStatus, SessionTranscriptPage, TerminalAccessRequest, TerminalAccessStatus,
+    TerminalClientMessage, TerminalCommandProfile, TerminalCommandProfilesUpdate,
+    TerminalLaunchRequest, TerminalServerMessage, TerminalSession,
 };
-use crate::store::{ProjectScheduleAction, TaskExecutionDisposition};
+use crate::store::ProjectScheduleAction;
 use crate::{
     config::{CommitMode, THEME_PACKS},
     error::AppError,
@@ -275,33 +274,78 @@ pub async fn get_project_canvas(
     let store = state.store.read().await;
     Ok(Json(store.project_canvas_for_view(
         &id,
-        query.dag_requirement_id.as_deref(),
+        query.workflow_requirement_id.as_deref(),
     )?))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ProjectCanvasQuery {
-    dag_requirement_id: Option<String>,
+    workflow_requirement_id: Option<String>,
 }
 
-pub async fn get_requirement_task(
+pub async fn get_requirement_workflow_run(
     State(state): State<AppState>,
-    AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
-) -> Result<Json<RequirementTaskDetailResponse>, AppError> {
+    AxumPath(requirement_id): AxumPath<String>,
+) -> Result<Json<crate::workflow::WorkflowSnapshot>, AppError> {
     let store = state.store.read().await;
-    Ok(Json(
-        store.requirement_task_detail(&requirement_id, &task_id)?,
-    ))
+    let snapshot = store
+        .db
+        .active_workflow_for_requirement(&requirement_id)?
+        .ok_or_else(|| AppError::not_found("需求尚未创建 WorkflowRun"))?;
+    Ok(Json(snapshot))
 }
 
-pub async fn get_requirement_task_session(
+pub async fn get_workflow_run(
     State(state): State<AppState>,
-    AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
+    AxumPath(run_id): AxumPath<String>,
+) -> Result<Json<crate::workflow::WorkflowSnapshot>, AppError> {
+    let store = state.store.read().await;
+    Ok(Json(store.db.workflow_snapshot(&run_id)?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkflowEventsQuery {
+    #[serde(default)]
+    after: i64,
+    limit: Option<usize>,
+}
+
+pub async fn get_workflow_events(
+    State(state): State<AppState>,
+    AxumPath(run_id): AxumPath<String>,
+    Query(query): Query<WorkflowEventsQuery>,
+) -> Result<Json<crate::workflow::WorkflowEventPage>, AppError> {
+    let store = state.store.read().await;
+    Ok(Json(store.db.workflow_events(
+        &run_id,
+        query.after,
+        query.limit,
+    )?))
+}
+
+pub async fn resume_workflow_run(
+    State(state): State<AppState>,
+    AxumPath(run_id): AxumPath<String>,
+) -> Result<Json<crate::workflow::WorkflowSnapshot>, AppError> {
+    let project_id = {
+        let store = state.store.read().await;
+        let snapshot = store.db.workflow_snapshot(&run_id)?;
+        store.db.resume_workflow_run(&run_id)?;
+        snapshot.run.project_id
+    };
+    spawn_project_scheduler(state.clone(), project_id);
+    let store = state.store.read().await;
+    Ok(Json(store.db.workflow_snapshot(&run_id)?))
+}
+
+pub async fn get_workflow_attempt_session(
+    State(state): State<AppState>,
+    AxumPath((run_id, attempt_id)): AxumPath<(String, String)>,
     Query(query): Query<SessionPageQuery>,
 ) -> Result<Json<SessionTranscriptPage>, AppError> {
     let sources = {
         let store = state.store.read().await;
-        store.requirement_task_session_sources(&requirement_id, &task_id)?
+        store.workflow_attempt_session_sources(&run_id, &attempt_id)?
     };
     read_session_page(sources, query).await
 }
@@ -1176,7 +1220,7 @@ fn conversation_event_frame(
     let event_type = match (event, pi_type) {
         ("pi_event", Some("extension_error")) => "session.error",
         ("pi_event", _) => "agent.event",
-        ("coordinator_time_warning", _) => "notice.append",
+        ("coordinator_time_warning" | "coordinator_token_budget_warning", _) => "notice.append",
         (
             "project_chat_started"
             | "project_chat_completed"
@@ -1224,7 +1268,7 @@ pub async fn confirm_requirement(
     Ok(Json(store.project_canvas(&project_id)?))
 }
 
-pub async fn plan_requirement_execution(
+pub async fn start_requirement_workflow(
     State(state): State<AppState>,
     AxumPath(requirement_id): AxumPath<String>,
 ) -> Result<Json<ProjectCanvasResponse>, AppError> {
@@ -1235,23 +1279,6 @@ pub async fn plan_requirement_execution(
     let project_id = {
         let mut store = state.store.write().await;
         store.requeue_failed_planning(&requirement_id).await?
-    };
-    spawn_project_scheduler(state.clone(), project_id.clone());
-    let store = state.store.read().await;
-    Ok(Json(store.project_canvas(&project_id)?))
-}
-
-pub async fn recover_task_group(
-    State(state): State<AppState>,
-    AxumPath((requirement_id, task_id)): AxumPath<(String, String)>,
-) -> Result<Json<ProjectCanvasResponse>, AppError> {
-    {
-        let readiness = state.publication_readiness.read().await;
-        ensure_publication_ready(&readiness)?;
-    }
-    let project_id = {
-        let mut store = state.store.write().await;
-        store.recover_task_group(&requirement_id, &task_id).await?
     };
     spawn_project_scheduler(state.clone(), project_id.clone());
     let store = state.store.read().await;
@@ -1625,9 +1652,8 @@ fn spawn_project_chat_response(
 pub fn spawn_startup_requirement_scheduler(state: AppState) {
     tokio::spawn(async move {
         // ponytail: startup recovery resumes persisted requirements automatically.
-        // Publication readiness is enforced at the user action boundary
-        // (confirm/plan/recover), not here, so a stale gh/glab login does not leave
-        // interrupted tasks frozen after restart.
+        // Publication readiness is enforced at the user action boundary, not here,
+        // so stale remote credentials do not freeze an interrupted WorkflowRun.
         let project_ids = {
             let mut pending = state.pending_startup_requirement_ids.lock().await;
             std::mem::take(&mut *pending)
@@ -1691,34 +1717,34 @@ async fn run_project_scheduler(state: AppState, project_id: String) {
                     task_id: None,
                     bus: state.requirement_events.clone(),
                 };
-                emitter.emit("execution_planning_started", "开始拆分执行 DAG。");
+                emitter.emit("workflow_planning_started", "开始生成分阶段 WorkPlan。");
                 let output = state
                     .model_provider
-                    .plan_requirement_execution(*input, Some(emitter.clone()))
+                    .plan_workflow(*input, Some(emitter.clone()))
                     .await;
                 let succeeded = output.is_ok();
                 {
                     let mut store = state.store.write().await;
-                    if let Err(error) = store
-                        .apply_requirement_execution_plan(&requirement_id, output)
-                        .await
-                    {
+                    if let Err(error) = store.apply_workflow_plan(&requirement_id, output).await {
                         emitter.emit(
-                            "execution_plan_failed",
-                            &format!("保存执行 DAG 失败：{error}"),
+                            "workflow_plan_failed",
+                            &format!("保存 WorkPlan 失败：{error}"),
                         );
                         return;
                     }
                 }
                 if succeeded {
-                    emitter.emit("execution_plan_ready", "执行 DAG 已生成。");
+                    emitter.emit("workflow_plan_ready", "WorkPlan 已生成。");
                 } else {
-                    emitter.emit("execution_plan_failed", "执行 DAG 生成失败。");
+                    emitter.emit("workflow_plan_failed", "WorkPlan 生成失败。");
                     return;
                 }
             }
-            Some(ProjectScheduleAction::Execute { requirement_id }) => {
-                if run_requirement_execution(state.clone(), requirement_id).await
+            Some(ProjectScheduleAction::Execute {
+                requirement_id,
+                run_id,
+            }) => {
+                if run_workflow_execution(state.clone(), requirement_id, run_id).await
                     != RequirementStatus::Completed
                 {
                     return;
@@ -1729,71 +1755,16 @@ async fn run_project_scheduler(state: AppState, project_id: String) {
     }
 }
 
-async fn run_requirement_execution(state: AppState, requirement_id: String) -> RequirementStatus {
+async fn run_workflow_execution(
+    state: AppState,
+    requirement_id: String,
+    run_id: String,
+) -> RequirementStatus {
     let Some(execution_guard) = ExecutionGuard::acquire(&requirement_id) else {
         return current_requirement_status(&state, &requirement_id).await;
     };
     let _execution_guard = execution_guard;
-    let emitter = RequirementEventEmitter {
-        requirement_id: requirement_id.clone(),
-        task_id: None,
-        bus: state.requirement_events.clone(),
-    };
-    emitter.emit("execution_started", "开始按 DAG 执行任务。");
-    let mut running_tasks = JoinSet::new();
-
-    loop {
-        let inputs = {
-            let mut store = state.store.write().await;
-            match store
-                .prepare_runnable_execution_tasks(&requirement_id)
-                .await
-            {
-                Ok(inputs) => inputs,
-                Err(error) => {
-                    let _ = store
-                        .fail_requirement_execution(&requirement_id, error)
-                        .await;
-                    emitter.emit("execution_failed", "执行 DAG 依赖检查失败。");
-                    return RequirementStatus::Failed;
-                }
-            }
-        };
-
-        spawn_execution_tasks(&mut running_tasks, inputs, state.clone(), &requirement_id);
-
-        if running_tasks.is_empty() {
-            let mut status = current_requirement_status(&state, &requirement_id).await;
-            if status == RequirementStatus::Running {
-                let mut store = state.store.write().await;
-                let _ = store
-                    .fail_requirement_execution(
-                        &requirement_id,
-                        AppError::internal("执行 DAG 没有可继续执行的任务"),
-                    )
-                    .await;
-                status = RequirementStatus::Failed;
-            }
-            match status {
-                RequirementStatus::Completed => {
-                    emitter.emit("execution_completed", "需求执行完成。")
-                }
-                RequirementStatus::Failed => emitter.emit("execution_failed", "需求执行失败。"),
-                _ => emitter.emit("execution_failed", "执行 DAG 没有可继续执行的任务。"),
-            }
-            return status;
-        }
-
-        match running_tasks.join_next().await {
-            Some(Ok(
-                TaskExecutionDisposition::Continue | TaskExecutionDisposition::FinalFailure,
-            )) => {}
-            Some(Err(error)) => {
-                tracing::error!(requirement_id, %error, "task execution join failed");
-            }
-            None => {}
-        }
-    }
+    super::workflow_runtime::run_workflow_execution_v5(state, requirement_id, run_id).await
 }
 
 async fn current_requirement_status(state: &AppState, requirement_id: &str) -> RequirementStatus {
@@ -1801,68 +1772,6 @@ async fn current_requirement_status(state: &AppState, requirement_id: &str) -> R
     store
         .requirement_status(requirement_id)
         .unwrap_or(RequirementStatus::Failed)
-}
-
-fn spawn_execution_tasks(
-    running_tasks: &mut JoinSet<TaskExecutionDisposition>,
-    inputs: Vec<RequirementTaskExecutionInput>,
-    state: AppState,
-    requirement_id: &str,
-) {
-    for input in inputs {
-        let task_id = input.task.id.clone();
-        let task_title = input.task.title.clone();
-        let state = state.clone();
-        let emitter = RequirementEventEmitter {
-            requirement_id: requirement_id.to_owned(),
-            task_id: Some(task_id.clone()),
-            bus: state.requirement_events.clone(),
-        };
-        let requirement_id = requirement_id.to_owned();
-        emitter.emit(
-            "execution_task_started",
-            &format!("开始执行任务：{}", task_title),
-        );
-        running_tasks.spawn(async move {
-            let output = state
-                .model_provider
-                .execute_requirement_task(input, Some(emitter.clone()))
-                .await;
-            let succeeded = output.is_ok();
-            let guidance_generated = output
-                .as_ref()
-                .ok()
-                .is_some_and(|output| output.recovery_guidance.is_some());
-            let disposition;
-            {
-                let mut store = state.store.write().await;
-                disposition = match store
-                    .apply_task_execution_result(&requirement_id, &task_id, output)
-                    .await
-                {
-                    Ok(disposition) => disposition,
-                    Err(error) => {
-                        emitter.emit(
-                            "execution_task_failed",
-                            &format!("保存任务结果失败：{error}"),
-                        );
-                        return TaskExecutionDisposition::FinalFailure;
-                    }
-                };
-            }
-
-            if guidance_generated {
-                emitter.emit("execution_task_guided", "高档模型恢复方案已生成。");
-            } else if succeeded {
-                emitter.emit("execution_task_completed", "任务执行完成。");
-            } else if disposition == TaskExecutionDisposition::Continue {
-                emitter.emit("execution_task_retrying", "任务执行失败，已安排自动恢复。");
-            } else {
-                emitter.emit("execution_task_failed", "任务执行失败。");
-            }
-            disposition
-        });
-    }
 }
 
 #[cfg(test)]
@@ -1891,7 +1800,7 @@ mod event_filter_tests {
             &query,
         ));
         assert!(requirement_event_matches(
-            &event("execution_task_started", Some("task-1")),
+            &event("work_item_attempt_started", Some("work-item-1")),
             "requirement-1",
             &query,
         ));
@@ -1962,5 +1871,15 @@ mod event_filter_tests {
         .unwrap();
         assert_eq!(notice["type"], "notice.append");
         assert_eq!(notice["payload"]["message"], "分析耗时较长，是否继续等待？");
+
+        let budget_notice = conversation_event_frame(
+            "coordinator_token_budget_warning",
+            "已超观测预算，任务继续运行。",
+            None,
+            None,
+            serde_json::json!({"requirement_id": "requirement-1"}),
+        )
+        .unwrap();
+        assert_eq!(budget_notice["type"], "notice.append");
     }
 }

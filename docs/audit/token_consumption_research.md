@@ -1,6 +1,6 @@
 # Token 消耗优化调研报告
 
-> **实施状态（2026-07-12）**：本报告中的原始建议已结合当前代码修订并落地。项目问答原本已经在 session 复用时省略历史；Pi 原本已经提供真实 session usage/cache。当前实现进一步使用 operation 差值避免重复累计，并将新任务的外部 3 个 ReviewSubAgent + 1 个 ReviewSummary 收敛为一个 Review 父 session。父 session 内通过受管 Pi RPC 工具并发运行三个无持久化、上下文隔离的审核子代理。
+> **实施状态（2026-07-13）**：本报告只保留为历史调研，不再描述当前执行架构。当前主线是 `ChangeSpec -> WorkPlan -> WorkflowRun v5`：ChangeSpec 只保存行为规格；WorkPlan 只包含行为切片和可修订 DesignNotes；全部实现完成后才运行仓库原生基线/最终验证与完整 diff 审核；质量与安全使用需求隔离的盲审子 Agent；技术失败进入可恢复暂停且不消耗唯一 Rescue。结构化输出协议为 `raccoon:workflow-output:v3`，Git 写限制由 `raccoon:task-runtime:v3` extension 承担，审核协议为 `raccoon:parallel-review:v5`，token 预算只告警，Pi compaction 保持用户设置。以下旧问题与建议不得作为当前接口或节点设计依据。
 
 > 调研范围：`raccoon_node` 后端提示词组装、Pi Agent RPC 调用、需求/任务/聊天流程。
 > 目标：定位当前不合理的 token 消耗点，参考社区实践，给出可落地的优化建议。本报告不修改代码。
@@ -8,14 +8,14 @@
 ## 1. 摘要
 
 当前 `raccoon_node` 通过持久 Pi Agent RPC 子进程与 LLM 交互。提示词由 `src/prompt` 模块的
-`PromptRenderer` 将多个 source（Global / Skill / Contract / RequirementContext / TaskContext /
+`PromptRenderer` 将多个 source（Global / Skill / RequirementContext / TaskContext /
 ExecutionContext / ReferenceContext / InlinePolicy）拼接成单一大段 markdown 后一次性注入。
 
 主要问题：
 
 1. **首次提示词体积大**：每个阶段都把 Global、Skill、Contract 等稳定内容与动态上下文一起全量发送。
 2. **多轮澄清重复发送**：需求分析每轮都把原始需求、上一版确认草案、全部澄清答案重新拼进 prompt。
-3. **修复轮次重载完整上下文**：任务进入 `Fixing` 状态时，仍重新注入完整任务描述、Skill、Contract。
+3. **修复轮次曾重载完整上下文**：旧流程在 `Fixing` 时继续恢复实现 session 并注入稳定内容；当前已改为新的 attempt session 和最小修复 prompt。
 4. **前置任务输出未摘要**：Review / Merge / ReviewSummary 节点把依赖任务的完整 `result_summary` 拼入。
 5. **缺乏真实 token 估算与监控**：当前使用 `chars / 4` 的粗糙 heuristic，难以精确预算。
 
@@ -39,23 +39,23 @@ ExecutionContext / ReferenceContext / InlinePolicy）拼接成单一大段 markd
 
 ### 2.2 已识别的 Token“大户”
 
-| # | 位置 | 触发场景 | 当前行为 | 主要问题 |
-|---|------|----------|----------|----------|
-| 1 | `src/requirement/analysis.rs:16` `build_requirement_prompt` | 需求分析/澄清每轮 | 发送 `GLOBAL_PROMPT` + `requirement_coordinator skill` + 完整 `requirement_context` + `reference_context` | 原始需求、上一版草案、已有澄清等半静态内容被重复发送 |
-| 2 | `src/requirement/execution.rs:179` `build_requirement_task_prompt` | 每个任务节点执行 | 发送 `GLOBAL_PROMPT` + skill/role + JSON contract + `context_sections` + `current_task` + `failure_context` | 修复轮次仍重发完整任务描述与 contract |
-| 3 | `src/requirement/execution.rs:319` `build_context_sections` | Review / ReviewSummary / BranchMerge / MergeReview | 包含完整需求草案 + 所有直接依赖任务的完整 `result_summary` | 前置输出未摘要，随 DAG 增长 |
-| 4 | `src/requirement/execution.rs:435` `build_json_repair_prompt` | JSON 解析失败后的同会话修复 | 重发完整 JSON contract + 4000 字符输出摘录 | contract 在同 session 已存在，重复发送 |
-| 5 | `src/chat/mod.rs:3` `build_project_chat_prompt` | 项目问答新 session | 发送完整历史消息 | 未做滑动窗口或摘要 |
-| 6 | `src/prompt/sources.rs:84` `estimate_tokens` | 所有 prompt | `chars / 4` | 估算误差大，无法精确预算 |
+| #   | 位置                                                               | 触发场景                                           | 当前行为                                                                                                    | 主要问题                                             |
+| --- | ------------------------------------------------------------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| 1   | `src/requirement/analysis.rs:16` `build_requirement_prompt`        | 需求分析/澄清每轮                                  | 发送 `GLOBAL_PROMPT` + `requirement_coordinator skill` + 完整 `requirement_context` + `reference_context`   | 原始需求、上一版草案、已有澄清等半静态内容被重复发送 |
+| 2   | `src/requirement/execution.rs:179` `build_requirement_task_prompt` | 每个任务节点执行                                   | 发送 `GLOBAL_PROMPT` + skill/role + JSON contract + `context_sections` + `current_task` + `failure_context` | 修复轮次仍重发完整任务描述与 contract                |
+| 3   | `src/requirement/execution.rs:319` `build_context_sections`        | Review / ReviewSummary / BranchMerge / MergeReview | 包含完整需求草案 + 所有直接依赖任务的完整 `result_summary`                                                  | 前置输出未摘要，随 DAG 增长                          |
+| 4   | `src/requirement/execution.rs:435` `build_json_repair_prompt`      | JSON 解析失败后的同会话修复                        | 重发完整 JSON contract + 4000 字符输出摘录                                                                  | contract 在同 session 已存在，重复发送               |
+| 5   | `src/chat/mod.rs:3` `build_project_chat_prompt`                    | 项目问答新 session                                 | 发送完整历史消息                                                                                            | 未做滑动窗口或摘要                                   |
+| 6   | `src/prompt/sources.rs:84` `estimate_tokens`                       | 所有 prompt                                        | `chars / 4`                                                                                                 | 估算误差大，无法精确预算                             |
 
 ### 2.3 Session 复用现状
 
-| 流程 | Session 复用情况 | 是否每轮仍发完整 prompt |
-|------|------------------|------------------------|
-| 需求分析 | `project_clients` 缓存 PiRpcClient，session 可复用 | 是 |
-| 执行规划 | 每次调用 `new_session`（`src/pi/mod.rs:932`） | 是（且无法复用） |
-| 任务执行 | `restore_or_new_session` 复用 task 的 session file | 是 |
-| 项目问答 | `restore_or_new_session` 复用 session | `session_reused=false` 时发完整历史 |
+| 流程     | Session 复用情况                                   | 是否每轮仍发完整 prompt             |
+| -------- | -------------------------------------------------- | ----------------------------------- |
+| 需求分析 | `project_clients` 缓存 PiRpcClient，session 可复用 | 是                                  |
+| 执行规划 | 每次调用 `new_session`（`src/pi/mod.rs:932`）      | 是（且无法复用）                    |
+| 任务执行 | `restore_or_new_session` 复用 task 的 session file | 是                                  |
+| 项目问答 | `restore_or_new_session` 复用 session              | `session_reused=false` 时发完整历史 |
 
 结论：**session 复用机制已存在，但 prompt 组装策略没有利用这一点做“增量发送”**。
 
@@ -147,10 +147,10 @@ ExecutionContext / ReferenceContext / InlinePolicy）拼接成单一大段 markd
 
 #### 4.1.2 修复轮次轻量 Prompt
 
-- 当 `task.status == Fixing` 且 Pi session 可复用时：
-  - 不重发完整 `implementation_runner` skill 和 JSON contract。
-  - 只发送：`当前处于修复模式` + `审核反馈` + `最小边界提示`。
-- 依赖：Pi session 已保存了之前的完整上下文。
+- 当 `task.status == Fixing` 时创建新的 attempt session，不恢复上轮实现上下文：
+  - 不重发完整需求、依赖输出和上一轮工具历史；
+  - 只发送审核反馈、恢复指导、任务边界、Git 限制和输出契约；
+  - 旧 session 保留为只读历史，继续由任务 session API 合并展示。
 - **预期收益**：修复轮次输入 token 降低 40–60%。
 
 #### 4.1.3 前置任务输出摘要
@@ -223,17 +223,17 @@ ExecutionContext / ReferenceContext / InlinePolicy）拼接成单一大段 markd
 
 ## 5. 优先级矩阵
 
-| 优先级 | 建议 | 难度 | 预期收益 | 依赖 |
-|--------|------|------|----------|------|
-| P0 | 需求分析多轮去重 | 低 | 高 | 无 |
-| P0 | 修复轮次轻量 prompt | 低 | 高 | 无 |
-| P1 | 前置任务输出摘要 | 低 | 中 | 无 |
-| P1 | JSON repair 去 contract | 低 | 中 | 无 |
-| P1 | 项目聊天历史滑动窗口 | 低 | 中 | 无 |
-| P2 | PromptRenderer stability 标记 | 中 | 中（长期） | 无 |
-| P2 | 真实 token 估算/监控 | 中 | 中 | 可选 tiktoken-rs |
-| P3 | Pi cache_control / 结构化消息 | 高 | 很高 | 需 Pi Agent 协议支持 |
-| P3 | 工具输出压缩 | 中 | 高（大输出场景） | 需 Pi Agent 或低档模型 |
+| 优先级 | 建议                          | 难度 | 预期收益         | 依赖                   |
+| ------ | ----------------------------- | ---- | ---------------- | ---------------------- |
+| P0     | 需求分析多轮去重              | 低   | 高               | 无                     |
+| P0     | 修复轮次轻量 prompt           | 低   | 高               | 无                     |
+| P1     | 前置任务输出摘要              | 低   | 中               | 无                     |
+| P1     | JSON repair 去 contract       | 低   | 中               | 无                     |
+| P1     | 项目聊天历史滑动窗口          | 低   | 中               | 无                     |
+| P2     | PromptRenderer stability 标记 | 中   | 中（长期）       | 无                     |
+| P2     | 真实 token 估算/监控          | 中   | 中               | 可选 tiktoken-rs       |
+| P3     | Pi cache_control / 结构化消息 | 高   | 很高             | 需 Pi Agent 协议支持   |
+| P3     | 工具输出压缩                  | 中   | 高（大输出场景） | 需 Pi Agent 或低档模型 |
 
 ## 6. 结论
 
@@ -246,12 +246,18 @@ ExecutionContext / ReferenceContext / InlinePolicy）拼接成单一大段 markd
 ## 7. 已采用的实现边界
 
 - 引用文件最多 8 个；单文件 32 KiB、总计 128 KiB 内联，超出大小只传安全仓库相对路径，由 Agent 按需读取。图片最多 3 张、总计 10 MiB。
-- DependencyOutput、ReviewFeedback、RecoveryGuidance 和 JSON repair excerpt 使用集中预算；PromptSource 记录 bytes 和 inline/path_only，但不保存正文 preview。
-- 需求、项目问答和 Fixing 在恢复 session 后只发送本轮 delta；新 session 仍发送完整业务上下文。
-- usage 使用调用前后 `get_session_stats` 差值，父 Review usage 合并三个临时子代理 usage；Token 工作台显示实际调用热点和估算 source 贡献。
+- DependencyOutput、ReviewFeedback 和 RecoveryGuidance 使用集中预算；PromptSource 记录 bytes 和 inline/path_only，但不保存正文 preview。运行时工作流结果改为结构化工具提交，已删除相应 JSON schema 与常规 JSON repair。
+- 需求和项目问答在恢复 session 后只发送本轮 delta；实现任务每轮 Fixing 创建新的 attempt session，并发送不依赖旧历史的最小修复 prompt。
+- usage 以 operation trace 保存并聚合，失败操作也写入 trace；父 Review usage 合并父会话操作与所有选中内存子代理 usage。Token 工作台显示实际调用热点、超预算标记和估算 source 贡献。
+- WorkflowRun 最终审核使用一个持久父 session。受管 `raccoon:parallel-review:v5` 工具根据 base 到当前 worktree 的完整 diff 风险，在同一 Pi 进程内并行创建 1–3 个完全隔离的内存 AgentSession，不启动额外 `pi` CLI，不写子 session 文件。正确性获得 ChangeSpec，质量与安全只获得中性验证和固定 diff；P0/P1 才进入集成修复，技术失败进入可恢复暂停。
+- v4 以稳定 finding ID 维护跨轮 ledger；普通迟到问题降为 advisory，实现约束可在仓库事实冲突时 supersede，用户可见行为冲突必须停止并重新澄清。SQLite 只保存紧凑 finding 投影和 usage，完整 verdict 留在父 session。
+- 审核子 Agent 不使用 Pi 内置文件工具；受管读取/列举/搜索工具将路径限制在当前 worktree，并拒绝内部目录和符号链接。选中角度共享批次启动时生成的一份 staged diff 快照，避免分页或并发审核期间看到不同版本。
+- 含 `bash` 的角色通过 `raccoon:task-runtime:v1` 拦截 Git 写操作；只读 Git 命令继续原样执行。实现类任务前后复核 HEAD、当前分支 ref 与 staged diff，Prompt 不再携带 Git 禁令。
+- 尊重 Pi 的 `autoCompactionEnabled`；trace 与 session UI 展示压缩原因、结果和估算节省量，但不持久化摘要正文，也不把估算混入计费 token。
+- 任务 input token 阈值只做告警和热点标记；超出不再终止。任务与审核只使用活动续期的空闲看门狗，不使用总时长或轮次硬上限。
 - 不新增 Plan Auditor、rolling-summary LLM 调用、review profile 或角色级 thinking 覆盖。
 
 ---
 
-*报告生成时间：2026-07-12*
-*范围：后端提示词组装与 Pi RPC 调用；不涉及前端、构建、发布流程。*
+_报告生成时间：2026-07-12_
+_范围：后端提示词组装与 Pi RPC 调用；不涉及前端、构建、发布流程。_

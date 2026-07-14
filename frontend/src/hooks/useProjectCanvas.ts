@@ -2,8 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectCanvasData, Requirement } from "../types/api";
 import {
   getProjectCanvas,
-  planRequirementExecution,
-  recoverTaskGroup as apiRecoverTaskGroup,
+  startRequirementWorkflow,
   cancelRequirementAnalysis as apiCancelRequirementAnalysis,
   deleteRequirement as apiDeleteRequirement,
 } from "../api/client";
@@ -16,38 +15,7 @@ function hasSameRequirementRevision(
   return (
     current?.id === next?.id &&
     current?.status === next?.status &&
-    current?.updated_at === next?.updated_at &&
-    hasSameExecutionPlanRevision(
-      current?.execution_plan ?? null,
-      next?.execution_plan ?? null,
-    )
-  );
-}
-
-function hasSameExecutionPlanRevision(
-  current: Requirement["execution_plan"],
-  next: Requirement["execution_plan"],
-) {
-  if (!current || !next) return current === next;
-  return (
-    current.summary === next.summary &&
-    current.tasks.length === next.tasks.length &&
-    current.tasks.every((task, index) => {
-      const candidate = next.tasks[index];
-      return (
-        task.id === candidate.id &&
-        task.status === candidate.status &&
-        task.review_status === candidate.review_status &&
-        task.attempt === candidate.attempt &&
-        task.recovery_stage === candidate.recovery_stage &&
-        task.result_summary === candidate.result_summary &&
-        task.error === candidate.error &&
-        Boolean(task.trace) === Boolean(candidate.trace) &&
-        task.review_history.length === candidate.review_history.length &&
-        task.target_files.length === candidate.target_files.length &&
-        Boolean(task.worktree_path) === Boolean(candidate.worktree_path)
-      );
-    })
+    current?.updated_at === next?.updated_at
   );
 }
 
@@ -81,7 +49,30 @@ function hasSameProjectCanvasRevision(
     hasSameRequirementRevisions(
       current?.completed_requirements ?? [],
       next?.completed_requirements ?? [],
+    ) &&
+    hasSameWorkflowRevisions(
+      current?.workflow_runs ?? [],
+      next?.workflow_runs ?? [],
     )
+  );
+}
+
+function hasSameWorkflowRevisions(
+  current: NonNullable<ProjectCanvasData["workflow_runs"]>,
+  next: NonNullable<ProjectCanvasData["workflow_runs"]>,
+) {
+  return (
+    current.length === next.length &&
+    current.every((workflow, index) => {
+      const candidate = next[index];
+      return (
+        candidate !== undefined &&
+        workflow.run.id === candidate.run.id &&
+        workflow.run.version === candidate.run.version &&
+        workflow.run.status === candidate.run.status &&
+        workflow.last_event_sequence === candidate.last_event_sequence
+      );
+    })
   );
 }
 
@@ -98,37 +89,31 @@ export function useProjectCanvas(
       ),
     [],
   );
-  const [selectedDagRequirementId, setSelectedDagRequirementId] = useState<
-    string | null
-  >(null);
-  const [collapsedTaskGroups, setCollapsedTaskGroups] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [selectedWorkflowRequirementId, setSelectedWorkflowRequirementId] =
+    useState<string | null>(null);
   const [requirementActionBusyId, setRequirementActionBusyId] = useState<
     string | null
   >(null);
-  const [recoveringTaskGroupIds, setRecoveringTaskGroupIds] = useState<
-    Set<string>
-  >(() => new Set());
   const [requirementActionError, setRequirementActionError] = useState<
     string | null
   >(null);
   const projectCanvasRequest = useRef<{
     projectId: string;
-    dagRequirementId: string | null;
+    workflowRequirementId: string | null;
     promise: Promise<ProjectCanvasData>;
   } | null>(null);
 
   const loadProjectCanvas = useCallback(
-    (projectId: string, dagRequirementId: string | null = null) => {
+    (projectId: string, workflowRequirementId: string | null = null) => {
       if (
         projectCanvasRequest.current?.projectId === projectId &&
-        projectCanvasRequest.current.dagRequirementId === dagRequirementId
+        projectCanvasRequest.current.workflowRequirementId ===
+          workflowRequirementId
       ) {
         return projectCanvasRequest.current.promise;
       }
 
-      const promise = getProjectCanvas(projectId, dagRequirementId)
+      const promise = getProjectCanvas(projectId, workflowRequirementId)
         .then((data) => {
           if (projectCanvasRequest.current?.promise === promise) {
             setProjectCanvas(data);
@@ -142,7 +127,7 @@ export function useProjectCanvas(
         });
       projectCanvasRequest.current = {
         projectId,
-        dagRequirementId,
+        workflowRequirementId,
         promise,
       };
       return promise;
@@ -153,9 +138,8 @@ export function useProjectCanvas(
   useEffect(() => {
     if (!selectedProjectId) {
       setProjectCanvas(null);
-      setSelectedDagRequirementId(null);
+      setSelectedWorkflowRequirementId(null);
       setRequirementActionBusyId(null);
-      setRecoveringTaskGroupIds(new Set());
       setRequirementActionError(null);
       return;
     }
@@ -179,22 +163,6 @@ export function useProjectCanvas(
     };
   }, [loadProjectCanvas, selectedProjectId, setError]);
 
-  const toggleTaskGroupCollapsed = useCallback(
-    (requirementId: string, taskId: string) => {
-      const key = `${requirementId}:${taskId}`;
-      setCollapsedTaskGroups((current) => {
-        const next = new Set(current);
-        if (next.has(key)) {
-          next.delete(key);
-        } else {
-          next.add(key);
-        }
-        return next;
-      });
-    },
-    [],
-  );
-
   const allProjectRequirements = useMemo(() => {
     const requirements = [
       ...(projectCanvas?.active_requirement
@@ -210,11 +178,12 @@ export function useProjectCanvas(
   }, [projectCanvas]);
 
   const activeRequirementId = projectCanvas?.active_requirement?.id ?? null;
-  const selectedDagRequirement =
+  const selectedWorkflowRequirement =
     allProjectRequirements.find(
-      (requirement) => requirement.id === selectedDagRequirementId,
+      (requirement) => requirement.id === selectedWorkflowRequirementId,
     ) ?? null;
-  const observedRequirementId = selectedDagRequirementId ?? activeRequirementId;
+  const observedRequirementId =
+    selectedWorkflowRequirementId ?? activeRequirementId;
   const planningBlocked = projectCanvas?.queued_requirements.some(
     (requirement) => requirement.status === "failed",
   );
@@ -232,14 +201,15 @@ export function useProjectCanvas(
     }
 
     const timer = window.setInterval(() => {
-      void loadProjectCanvas(selectedProjectId, selectedDagRequirementId).catch(
-        (reason) => setError(readError(reason)),
-      );
+      void loadProjectCanvas(
+        selectedProjectId,
+        selectedWorkflowRequirementId,
+      ).catch((reason) => setError(readError(reason)));
     }, 15_000);
     return () => window.clearInterval(timer);
   }, [
     loadProjectCanvas,
-    selectedDagRequirementId,
+    selectedWorkflowRequirementId,
     selectedProjectId,
     setError,
     shouldPollProjectCanvas,
@@ -247,20 +217,20 @@ export function useProjectCanvas(
 
   useEffect(() => {
     if (
-      selectedDagRequirementId &&
+      selectedWorkflowRequirementId &&
       projectCanvas &&
       !allProjectRequirements.some(
-        (requirement) => requirement.id === selectedDagRequirementId,
+        (requirement) => requirement.id === selectedWorkflowRequirementId,
       )
     ) {
-      setSelectedDagRequirementId(null);
+      setSelectedWorkflowRequirementId(null);
     }
-  }, [allProjectRequirements, projectCanvas, selectedDagRequirementId]);
+  }, [allProjectRequirements, projectCanvas, selectedWorkflowRequirementId]);
 
-  const selectDagRequirement = useCallback(
+  const selectWorkflowRequirement = useCallback(
     (requirement: Requirement) => {
       setRequirementActionError(null);
-      setSelectedDagRequirementId(requirement.id);
+      setSelectedWorkflowRequirementId(requirement.id);
       if (selectedProjectId) {
         void loadProjectCanvas(selectedProjectId, requirement.id).catch(
           (reason) => setRequirementActionError(readError(reason)),
@@ -270,9 +240,9 @@ export function useProjectCanvas(
     [loadProjectCanvas, selectedProjectId],
   );
 
-  const closeDag = useCallback(() => {
+  const closeWorkflow = useCallback(() => {
     setRequirementActionError(null);
-    setSelectedDagRequirementId(null);
+    setSelectedWorkflowRequirementId(null);
     if (selectedProjectId) {
       void loadProjectCanvas(selectedProjectId).catch((reason) =>
         setRequirementActionError(readError(reason)),
@@ -282,10 +252,10 @@ export function useProjectCanvas(
 
   const planRequirement = useCallback(
     async (requirement: Requirement) => {
-      setSelectedDagRequirementId(requirement.id);
+      setSelectedWorkflowRequirementId(requirement.id);
       setRequirementActionBusyId(requirement.id);
       try {
-        const data = await planRequirementExecution(requirement.id);
+        const data = await startRequirementWorkflow(requirement.id);
         setProjectCanvas(data);
         if (selectedProjectId) {
           await loadProjectCanvas(selectedProjectId, requirement.id);
@@ -297,31 +267,6 @@ export function useProjectCanvas(
       }
     },
     [loadProjectCanvas, selectedProjectId, setError],
-  );
-
-  const recoverTaskGroup = useCallback(
-    async (requirementId: string, taskId: string) => {
-      const key = `${requirementId}:${taskId}`;
-      setRecoveringTaskGroupIds((current) => new Set(current).add(key));
-      setRequirementActionError(null);
-      try {
-        const data = await apiRecoverTaskGroup(requirementId, taskId);
-        setProjectCanvas(data);
-        setSelectedDagRequirementId(requirementId);
-        if (selectedProjectId) {
-          await loadProjectCanvas(selectedProjectId, requirementId);
-        }
-      } catch (reason) {
-        setRequirementActionError(readError(reason));
-      } finally {
-        setRecoveringTaskGroupIds((current) => {
-          const next = new Set(current);
-          next.delete(key);
-          return next;
-        });
-      }
-    },
-    [loadProjectCanvas, selectedProjectId],
   );
 
   const cancelRequirementAnalysis = useCallback(
@@ -340,7 +285,7 @@ export function useProjectCanvas(
     try {
       const data = await apiDeleteRequirement(requirementId);
       setProjectCanvas(data);
-      setSelectedDagRequirementId(null);
+      setSelectedWorkflowRequirementId(null);
     } catch (reason) {
       setRequirementActionError(readError(reason));
     }
@@ -350,21 +295,17 @@ export function useProjectCanvas(
     projectCanvas,
     setProjectCanvas,
     loadProjectCanvas,
-    selectedDagRequirementId,
-    setSelectedDagRequirementId,
-    selectedDagRequirement,
+    selectedWorkflowRequirementId,
+    setSelectedWorkflowRequirementId,
+    selectedWorkflowRequirement,
     observedRequirementId,
     activeRequirementId,
     allProjectRequirements,
-    collapsedTaskGroups,
-    toggleTaskGroupCollapsed,
     requirementActionBusyId,
-    recoveringTaskGroupIds,
     requirementActionError,
-    selectDagRequirement,
-    closeDag,
+    selectWorkflowRequirement,
+    closeWorkflow,
     planRequirement,
-    recoverTaskGroup,
     cancelRequirementAnalysis,
     abandonRequirement,
   };

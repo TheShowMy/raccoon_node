@@ -9,6 +9,22 @@ import RequirementPrompt from "./RequirementPrompt";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 
+function changeSpec(intent: string, result: string) {
+  return {
+    intent,
+    acceptance_scenarios: [
+      {
+        id: "scenario-1",
+        given: "用户已进入相关流程",
+        when: "用户执行操作",
+        then: result,
+      },
+    ],
+    explicit_constraints: [],
+    non_goals: [],
+  };
+}
+
 function data(overrides: Partial<ChatData> = {}): ChatData {
   return {
     kind: "requirement-chat",
@@ -95,12 +111,7 @@ describe("RequirementPrompt", () => {
       messages: [],
       clarification_round: 0,
       clarifications: [],
-      draft: {
-        title: "登录改造",
-        summary: "更新登录流程",
-        acceptance_criteria: ["登录测试通过"],
-      },
-      execution_plan: null,
+      draft: changeSpec("登录改造", "更新登录流程"),
       error: null,
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",
@@ -146,7 +157,6 @@ describe("RequirementPrompt", () => {
         clarificationFixture("q2", "第二题"),
       ],
       draft: null,
-      execution_plan: null,
       error: null,
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",
@@ -196,7 +206,6 @@ describe("RequirementPrompt", () => {
         clarificationFixture("q2", "第二题"),
       ],
       draft: null,
-      execution_plan: null,
       error: null,
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",
@@ -254,7 +263,6 @@ describe("RequirementPrompt", () => {
         clarificationFixture("q2", "第二题"),
       ],
       draft: null,
-      execution_plan: null,
       error: null,
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",
@@ -323,7 +331,6 @@ describe("RequirementPrompt", () => {
         },
       ],
       draft: null,
-      execution_plan: null,
       error: null,
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",

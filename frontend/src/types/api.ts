@@ -140,105 +140,198 @@ export type ImageAttachment = {
   path: string;
 };
 
-export type RequirementDraft = {
-  title: string;
-  summary: string;
-  acceptance_criteria: string[];
-};
-
-export type RequirementTaskStatus =
-  | "pending"
-  | "running"
-  | "awaiting_review"
-  | "fixing"
-  | "completed"
-  | "failed"
-  | "skipped"
-  | "approved"
-  | "rejected";
-
-export type RequirementTaskKind =
-  | "implementation"
-  | "review"
-  | "review_summary"
-  | "review_sub_agent"
-  | "branch_merge"
-  | "merge_review";
-
-export type RequirementReviewStatus = "pending" | "approved" | "rejected";
-
-export type RequirementRecoveryStage =
-  | "none"
-  | "auto_retry"
-  | "guided_retry"
-  | "high_tier_execution"
-  | "exhausted";
-
-export type RequirementReviewHistoryStep = {
-  task_id: string;
-  angle: string;
-  status: RequirementReviewStatus;
-  summary: string;
-  failure_reason: string | null;
-  completed_at: string;
-};
-
-export type RequirementReviewHistoryRound = {
-  round: number;
-  implementation_attempt: number;
-  implementation_summary: string;
-  status: "reviewing" | "approved" | "rejected";
-  started_at: string;
-  completed_at: string | null;
-  reviews: RequirementReviewHistoryStep[];
-  summary: string | null;
-  summary_conclusion: RequirementReviewStatus | null;
-  failure_reason: string | null;
-};
-
-export type RequirementExecutionTask = {
+export type AcceptanceScenario = {
   id: string;
-  title: string;
-  description: string;
-  depends_on: string[];
-  kind: RequirementTaskKind;
-  model_tier: ModelTierKey;
-  timeout_seconds: number;
-  pi_session_file: string | null;
-  branch_name: string | null;
-  worktree_path: string | null;
-  review_for: string | null;
-  review_angle: string | null;
-  review_status: RequirementReviewStatus;
-  attempt: number;
-  execution_failure_count: number;
-  review_rejection_count: number;
-  recovery_stage: RequirementRecoveryStage;
-  failure_summary: string | null;
-  recovery_guidance: string | null;
-  high_tier_execution_used: boolean;
-  last_review_feedback: string | null;
-  pull_request_url: string | null;
-  merged_into: string | null;
-  cleanup_summary: string | null;
-  execution_warning: string | null;
-  trace: TraceMetadata | null;
-  status: RequirementTaskStatus;
-  target_files: string[];
-  result_summary: string | null;
-  error: string | null;
-  review_history: RequirementReviewHistoryRound[];
+  given: string;
+  when: string;
+  then: string;
 };
 
-export type RequirementExecutionPlan = {
+export type ExplicitConstraint = {
+  id: string;
+  statement: string;
+  source_message_id: string;
+  source_quote: string;
+};
+
+export type ChangeSpec = {
+  intent: string;
+  acceptance_scenarios: AcceptanceScenario[];
+  explicit_constraints: ExplicitConstraint[];
+  non_goals: string[];
+};
+
+export type WorkflowRunStatus =
+  | "planning"
+  | "running"
+  | "validating"
+  | "reviewing"
+  | "fixing"
+  | "rescuing"
+  | "paused_technical"
+  | "blocked"
+  | "completed"
+  | "cancelled";
+
+export type WorkItemStatus =
+  | "pending"
+  | "leased"
+  | "running"
+  | "accepted"
+  | "blocked"
+  | "cancelled";
+
+export type ReviewAngle = "correctness" | "quality" | "security";
+
+export type WorkflowRun = {
+  id: string;
+  requirement_id: string;
+  project_id: string;
+  status: WorkflowRunStatus;
+  change_spec: ChangeSpec;
+  design_notes: Array<{
+    id: string;
+    statement: string;
+    evidence: string[];
+    rationale: string;
+  }>;
+  plan_summary: string;
+  source_revision: number;
+  base_head?: string | null;
+  integration_branch?: string | null;
+  integration_worktree?: string | null;
+  final_commit?: string | null;
+  rescue_used: boolean;
+  rescue_attempt_id?: string | null;
+  blocked_reason?: string | null;
+  paused_operation?: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+};
+
+export type WorkItem = {
+  id: string;
+  run_id: string;
+  position: number;
+  objective: string;
+  scenario_refs: string[];
+  group?: string | null;
+  scope_hints: string[];
+  verification_goals: string[];
+  status: WorkItemStatus;
+  attempt_count: number;
+  accepted_attempt_id?: string | null;
+  lease_owner?: string | null;
+  lease_expires_at?: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkflowAttempt = {
+  id: string;
+  run_id: string;
+  work_item_id?: string | null;
+  kind: "implementation" | "fix" | "integration_fix" | "rescue";
+  ordinal: number;
+  status: "running" | "succeeded" | "failed" | "cancelled";
+  model_tier: string;
+  worktree_fingerprint?: string | null;
+  result_summary?: string | null;
+  failure_class?: string | null;
+  failure_message?: string | null;
+  usage?: unknown;
+  started_at: string;
+  completed_at?: string | null;
+};
+
+export type WorkflowCheckpoint = {
+  id: string;
+  run_id: string;
+  kind: "security_precheck" | "final" | "rescue";
+  revision: number;
+  status:
+    | "pending"
+    | "reviewing"
+    | "approved"
+    | "rejected"
+    | "technical_failure"
+    | "cancelled";
+  snapshot_sha: string;
+  required_angles: ReviewAngle[];
+  summary?: string | null;
+  review_details?: unknown;
+  usage?: unknown;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+};
+
+export type WorkflowFinding = {
+  id: string;
+  checkpoint_id: string;
+  angle: ReviewAngle;
+  priority: "P0" | "P1" | "P2" | "P3";
+  status: "open" | "resolved";
+  category: string;
+  path?: string | null;
+  location?: string | null;
   summary: string;
-  tasks: RequirementExecutionTask[];
+  evidence: string;
+  reproduction?: string | null;
+  remediation?: string | null;
+  scenario_ref?: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
-export type RequirementTaskDetail = {
-  task: RequirementExecutionTask;
-  reviews: RequirementExecutionTask[];
-  dependencies: RequirementExecutionTask[];
+export type WorkflowSnapshot = {
+  run: WorkflowRun;
+  work_items: WorkItem[];
+  dependencies: Array<{ work_item_id: string; depends_on_id: string }>;
+  attempts: WorkflowAttempt[];
+  checkpoints: WorkflowCheckpoint[];
+  validations: Array<{
+    id: string;
+    run_id: string;
+    attempt_id?: string | null;
+    checkpoint_id?: string | null;
+    command: string;
+    source: "repository_catalog" | "agent_observation";
+    gating: boolean;
+    baseline_status:
+      | "pending"
+      | "passed"
+      | "failed"
+      | "unavailable"
+      | "skipped";
+    final_status: "pending" | "passed" | "failed" | "unavailable" | "skipped";
+    baseline_exit_code?: number | null;
+    final_exit_code?: number | null;
+    output_summary?: string | null;
+    worktree_fingerprint: string;
+    created_at: string;
+    completed_at?: string | null;
+  }>;
+  findings: WorkflowFinding[];
+  last_event_sequence: number;
+};
+
+export type WorkflowEvent = {
+  sequence: number;
+  run_id: string;
+  entity_type: string;
+  entity_id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
+export type WorkflowEventPage = {
+  events: WorkflowEvent[];
+  next_after: number | null;
 };
 
 export type SessionTranscriptPage = {
@@ -280,20 +373,76 @@ export type SessionContentBlock =
       type: "subagents";
       reviews: Array<{
         angle: string;
-        ok: boolean;
+        transport_status: string;
         error?: string | null;
         result?: {
-          approved: boolean;
-          feedback: string;
-          result_summary: string;
+          findings: Array<{
+            priority: "P0" | "P1" | "P2" | "P3";
+            category: string;
+            path: string;
+            location: string;
+            summary: string;
+            evidence: string;
+            reproduction?: string | null;
+            remediation?: string;
+            scenario_ref?: string | null;
+          }>;
         } | null;
         usage?: {
           input: number;
           output: number;
           cacheRead: number;
           cacheWrite: number;
+          context?: {
+            tokens: number;
+            window: number;
+            percent: number;
+          } | null;
         };
+        events?: Array<Record<string, unknown>>;
+        turns?: number;
+        retry_count?: number;
+        submission_correction_count?: number;
+        duration_ms?: number;
+        runtime?: {
+          warningAfterMs: number;
+          idleTimeoutMs: number;
+          activityCount: number;
+          idleWarningCount: number;
+          maxIdleMs: number;
+          absoluteTimeout: false;
+        } | null;
+        context_mode?: "contract" | "blind" | string | null;
+        context_hash?: string | null;
+        context_bytes?: number | null;
+        session_persisted?: boolean;
+        events_truncated?: boolean;
       }>;
+      selection?: {
+        classification: string;
+        angles: string[];
+        skippedAngles: string[];
+        reasons: string[];
+        focus: string;
+        fileCount: number;
+        changedLines: number;
+        diffBytes: number;
+      } | null;
+    }
+  | {
+      type: "compaction";
+      reason: "manual" | "threshold" | "overflow" | string | null;
+      status: "running" | "completed" | "aborted" | "failed" | string;
+      tokens_before: number | null;
+      estimated_tokens_after: number | null;
+      estimated_tokens_saved: number | null;
+      first_kept_entry_id: string | null;
+      from_hook: boolean;
+      read_file_count: number;
+      modified_file_count: number;
+      will_retry: boolean;
+      error: string | null;
+      usage_known: boolean;
     }
   | { type: "unknown"; block_type: string; raw: unknown };
 
@@ -360,8 +509,7 @@ export type Requirement = {
   messages: RequirementMessage[];
   clarification_round: number;
   clarifications: RequirementClarification[];
-  draft: RequirementDraft | null;
-  execution_plan: RequirementExecutionPlan | null;
+  draft: ChangeSpec | null;
   error: string | null;
   queued_at?: string | null;
   created_at: string;
@@ -409,7 +557,7 @@ export type RequirementConversationPrompt =
     }
   | {
       type: "confirmation";
-      draft: RequirementDraft;
+      draft: ChangeSpec;
       prompt_id?: string;
       revision?: number;
     };
@@ -447,6 +595,7 @@ export type ProjectCanvasData = {
   active_requirement: Requirement | null;
   queued_requirements: Requirement[];
   completed_requirements: Requirement[];
+  workflow_runs?: WorkflowSnapshot[];
   token_usage?: ProjectTokenUsage | null;
 };
 
@@ -468,6 +617,7 @@ export type ProjectTokenUsage = {
     role: string;
     usage: TokenUsageCategory;
     context_percent: number;
+    budget_exceeded?: boolean;
   }>;
   roles?: Array<{ role: string; usage: TokenUsageCategory }>;
   sources?: Array<{
@@ -476,6 +626,15 @@ export type ProjectTokenUsage = {
     chars: number;
     estimated_tokens: number;
   }>;
+  compaction?: {
+    count: number;
+    completed: number;
+    aborted: number;
+    failed: number;
+    overflow_retries: number;
+    estimated_tokens_saved: number;
+    usage_known: boolean;
+  } | null;
 };
 
 export type ProjectChatMessage = {
@@ -609,6 +768,60 @@ export type TraceData = {
   tools: TraceTool[];
   statuses: Array<{ type: string; message: string }>;
   usage?: TraceUsage;
+  compaction?: TraceCompaction;
+  budget?: TraceBudget;
+  runtime?: TraceRuntime;
+  parallelReviewSelection?: {
+    classification: string;
+    angles: string[];
+    skippedAngles: string[];
+    reasons: string[];
+    focus: string;
+    fileCount: number;
+    changedLines: number;
+    diffBytes: number;
+  };
+};
+
+export type TraceBudget = {
+  limit: number;
+  observed: number;
+  ratio: number;
+  exceeded: boolean;
+  enforced: false;
+  warningEmitted: boolean;
+};
+
+export type TraceRuntime = {
+  warningAfterSeconds: number;
+  idleTimeoutSeconds: number;
+  maxIdleMilliseconds: number;
+  activityCount: number;
+  idleWarningCount: number;
+  terminationReason: string;
+  absoluteTimeout: false;
+};
+
+export type TraceCompaction = {
+  autoEnabled?: boolean;
+  usageKnown: false;
+  estimated: true;
+  count: number;
+  completed: number;
+  aborted: number;
+  failed: number;
+  overflowRetries: number;
+  estimatedTokensSaved: number;
+  events: Array<{
+    reason: "manual" | "threshold" | "overflow" | string;
+    status: "running" | "completed" | "aborted" | "failed" | string;
+    tokensBefore?: number;
+    estimatedTokensAfter?: number;
+    estimatedTokensSaved?: number;
+    willRetry: boolean;
+    usageKnown: false;
+    error?: string;
+  }>;
 };
 
 export type TraceUsage = {
@@ -726,6 +939,7 @@ export type StartNodeData =
       kind: "requirement-list";
       pendingRequirements: Requirement[];
       completedRequirements: Requirement[];
+      workflowRequirementIds: Set<string>;
       selectedRequirementId: string | null;
       busyRequirementId: string | null;
       onSelectRequirement: (requirement: Requirement) => void;
@@ -815,30 +1029,16 @@ export type StartNodeData =
       onAction: (action: GitAction, result: string) => Promise<boolean>;
     }
   | {
-      kind: "requirement-dag";
+      kind: "workflow-run";
       requirement: Requirement;
+      workflowRun?: WorkflowSnapshot | null;
       actionError: string | null;
       onClose: () => void;
     }
   | {
-      kind: "requirement-task";
-      nodeRole?:
-        | "group"
-        | "code"
-        | "review_summary"
-        | "review_sub_agent"
-        | "external";
-      requirementId: string;
-      task: RequirementExecutionTask;
-      reviews: RequirementExecutionTask[];
-      dependencies: RequirementExecutionTask[];
-      busy: boolean;
-      collapsed?: boolean;
-      onToggleCollapsed?: (requirementId: string, taskId: string) => void;
-      onRecoverTaskGroup: (
-        requirementId: string,
-        taskId: string,
-      ) => Promise<void>;
+      kind: "workflow-item";
+      workflow: WorkflowSnapshot;
+      item: WorkItem;
     }
   | {
       kind: "token-usage";

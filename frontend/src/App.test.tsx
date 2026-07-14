@@ -219,12 +219,12 @@ describe("App", () => {
       data: {} as never,
     };
     const group = {
-      id: "requirement-task-group-task-1",
+      id: "workflow-stage-stage-1",
       position: { x: 1870, y: 4 },
       data: {} as never,
     };
     const child = {
-      id: "requirement-task-task-1",
+      id: "workflow-item-task-1",
       parentId: group.id,
       position: { x: 24, y: 96 },
       data: {} as never,

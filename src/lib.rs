@@ -15,3 +15,4 @@ pub mod setup;
 pub mod store;
 pub mod tui;
 pub mod utils;
+pub mod workflow;

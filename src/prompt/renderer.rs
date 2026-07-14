@@ -10,7 +10,6 @@ pub struct RenderedPrompt {
 #[derive(Debug, Clone)]
 pub(crate) struct PromptRenderer {
     role: String,
-    contract_id: Option<String>,
     parts: Vec<PromptPart>,
 }
 
@@ -24,14 +23,8 @@ impl PromptRenderer {
     pub(crate) fn new(role: impl Into<String>) -> Self {
         Self {
             role: role.into(),
-            contract_id: None,
             parts: Vec::new(),
         }
-    }
-
-    pub(crate) fn contract_id(mut self, contract_id: impl Into<String>) -> Self {
-        self.contract_id = Some(contract_id.into());
-        self
     }
 
     pub(crate) fn add_source(
@@ -86,8 +79,7 @@ impl PromptRenderer {
             }
             sources.push(part.source);
         }
-        let diagnostics =
-            PromptDiagnostics::new(self.role, self.contract_id, &markdown, sources.clone());
+        let diagnostics = PromptDiagnostics::new(self.role, None, &markdown, sources.clone());
         RenderedPrompt {
             markdown,
             sources,

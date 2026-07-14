@@ -18,12 +18,12 @@ const HANDLES_BY_KIND: Record<
     { id: "requirement-list-left", position: Position.Left, type: "target" },
     { id: "requirement-list-right", position: Position.Right, type: "source" },
   ],
-  "requirement-dag": [
-    { id: "requirement-dag-left", position: Position.Left, type: "target" },
+  "workflow-run": [
+    { id: "workflow-run-left", position: Position.Left, type: "target" },
   ],
-  "requirement-task": [
-    { id: "requirement-task-left", position: Position.Left, type: "target" },
-    { id: "requirement-task-right", position: Position.Right, type: "source" },
+  "workflow-item": [
+    { id: "workflow-item-left", position: Position.Left, type: "target" },
+    { id: "workflow-item-right", position: Position.Right, type: "source" },
   ],
   "project-settings": [],
   "project-terminal": [],

@@ -11,7 +11,6 @@ import type {
   Requirement,
   RequirementConversation,
   RequirementTimelineBranch,
-  RequirementExecutionTask,
   ConversationEvent,
   ProjectChatResponse,
   TerminalCommandProfile,
@@ -30,17 +29,7 @@ import type {
   PiModel,
   SettingsPage,
 } from "../types/api";
-import { buildRequirementDagEdges } from "./edges";
-import {
-  DAG_NODE_POSITION,
-  DAG_NODE_SIZE,
-  getTaskGroupChildSize,
-  getTaskGroupLayout,
-  getTaskLayout,
-  getTaskNodeSize,
-  TASK_BASE_POSITION,
-  type TaskPosition,
-} from "./layout";
+import { WORKFLOW_RUN_NODE_POSITION, WORKFLOW_RUN_NODE_SIZE } from "./layout";
 
 function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
   return nodes.map((node) => {
@@ -63,8 +52,8 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
       "requirement-chat": { width: 960, height: 760 },
       "project-terminal": { width: 960, height: 44 },
       "project-git": { width: 360, height: 44 },
-      "requirement-dag": DAG_NODE_SIZE,
-      "requirement-task": { width: 252, height: 134 },
+      "workflow-run": WORKFLOW_RUN_NODE_SIZE,
+      "workflow-item": { width: 340, height: 220 },
       "token-usage": { width: 360, height: 44 },
     };
 
@@ -80,18 +69,14 @@ function withDimensions(nodes: Node<StartNodeData>[]): Node<StartNodeData>[] {
 export interface BuildProjectNodesParams {
   projectCanvas: ProjectCanvasData | null;
   project: Project | null;
-  selectedDagRequirement: Requirement | null;
-  selectedDagRequirementId: string | null;
-  collapsedTaskGroups: Set<string>;
+  selectedWorkflowRequirement: Requirement | null;
+  selectedWorkflowRequirementId: string | null;
   requirementActionBusyId: string | null;
-  recoveringTaskGroupIds: Set<string>;
   requirementActionError: string | null;
   tokenUsageExpanded: boolean;
-  closeDag: () => void;
-  selectDagRequirement: (requirement: Requirement) => void;
+  closeWorkflow: () => void;
+  selectWorkflowRequirement: (requirement: Requirement) => void;
   planRequirement: (requirement: Requirement) => Promise<void>;
-  recoverTaskGroup: (requirementId: string, taskId: string) => Promise<void>;
-  toggleTaskGroupCollapsed: (requirementId: string, taskId: string) => void;
   onToggleTokenUsageExpanded: () => void;
 }
 
@@ -225,18 +210,14 @@ export interface BuildProjectChatNodeParams {
 export function buildProjectNodes({
   projectCanvas,
   project: currentProject,
-  selectedDagRequirement,
-  selectedDagRequirementId,
-  collapsedTaskGroups,
+  selectedWorkflowRequirement,
+  selectedWorkflowRequirementId,
   requirementActionBusyId,
-  recoveringTaskGroupIds,
   requirementActionError,
   tokenUsageExpanded,
-  closeDag,
-  selectDagRequirement,
+  closeWorkflow,
+  selectWorkflowRequirement,
   planRequirement,
-  recoverTaskGroup,
-  toggleTaskGroupCollapsed,
   onToggleTokenUsageExpanded,
 }: BuildProjectNodesParams): Node<StartNodeData>[] {
   const project = projectCanvas?.project ?? currentProject;
@@ -244,39 +225,12 @@ export function buildProjectNodes({
     return [];
   }
 
-  const taskLayout = getTaskLayout(
-    selectedDagRequirement?.execution_plan?.tasks ?? [],
-  );
-  const selectedTasks = selectedDagRequirement?.execution_plan?.tasks ?? [];
-  const reviewTasksByTarget = new Map<string, RequirementExecutionTask[]>();
-  for (const reviewTask of selectedTasks) {
-    if (
-      (reviewTask.kind !== "review" &&
-        reviewTask.kind !== "review_summary" &&
-        reviewTask.kind !== "review_sub_agent") ||
-      !reviewTask.review_for
-    ) {
-      continue;
-    }
-    const reviews = reviewTasksByTarget.get(reviewTask.review_for) ?? [];
-    reviews.push(reviewTask);
-    reviewTasksByTarget.set(reviewTask.review_for, reviews);
-  }
-  const implementationTasks = selectedTasks.filter(
-    (task) => task.kind === "implementation",
-  );
-  const standaloneExecutionTasks = selectedTasks.filter(
-    (task) => task.kind === "branch_merge" || task.kind === "merge_review",
-  );
-  const recoveryBusy = (taskId: string) =>
-    selectedDagRequirement !== null &&
-    recoveringTaskGroupIds.has(`${selectedDagRequirement.id}:${taskId}`);
-  const taskPosition = (
-    taskId: string,
-    fallback: TaskPosition = TASK_BASE_POSITION,
-  ): TaskPosition => {
-    return taskLayout.get(taskId) ?? fallback;
-  };
+  const selectedWorkflow = selectedWorkflowRequirement
+    ? ((projectCanvas?.workflow_runs ?? []).find(
+        (workflow) =>
+          workflow.run.requirement_id === selectedWorkflowRequirement.id,
+      ) ?? null)
+    : null;
 
   return withDimensions([
     {
@@ -288,9 +242,14 @@ export function buildProjectNodes({
         kind: "requirement-list",
         pendingRequirements: projectCanvas?.queued_requirements ?? [],
         completedRequirements: projectCanvas?.completed_requirements ?? [],
-        selectedRequirementId: selectedDagRequirementId,
+        workflowRequirementIds: new Set(
+          (projectCanvas?.workflow_runs ?? []).map(
+            (workflow) => workflow.run.requirement_id,
+          ),
+        ),
+        selectedRequirementId: selectedWorkflowRequirementId,
         busyRequirementId: requirementActionBusyId,
-        onSelectRequirement: selectDagRequirement,
+        onSelectRequirement: selectWorkflowRequirement,
         onPlanRequirement: planRequirement,
       },
     },
@@ -311,155 +270,40 @@ export function buildProjectNodes({
         onToggleExpanded: onToggleTokenUsageExpanded,
       },
     },
-    ...(selectedDagRequirement
+    ...(selectedWorkflowRequirement
       ? [
           {
-            id: "requirement-dag",
+            id: "workflow-run",
             type: "startNode" as const,
-            position: DAG_NODE_POSITION,
+            position: WORKFLOW_RUN_NODE_POSITION,
             data: {
-              kind: "requirement-dag" as const,
-              requirement: selectedDagRequirement,
+              kind: "workflow-run" as const,
+              requirement: selectedWorkflowRequirement,
+              workflowRun: selectedWorkflow,
               actionError: requirementActionError,
-              onClose: closeDag,
+              onClose: closeWorkflow,
             },
           },
-          ...implementationTasks.flatMap((task) => {
-            const reviews = reviewTasksByTarget.get(task.id) ?? [];
-            const summary = reviews.find(
-              (review) => review.kind === "review_summary",
-            );
-            const subAgents = reviews.filter(
-              (review) =>
-                review.kind === "review_sub_agent" || review.kind === "review",
-            );
-            const groupId = `requirement-task-group-${task.id}`;
-            const collapsed = collapsedTaskGroups.has(
-              `${selectedDagRequirement.id}:${task.id}`,
-            );
-            const groupLayout = getTaskGroupLayout(task, reviews);
-            return [
-              {
-                id: groupId,
+          ...(selectedWorkflow
+            ? selectedWorkflow.work_items.map((item) => ({
+                id: `workflow-item-${item.id}`,
                 type: "startNode" as const,
-                position: taskPosition(task.id),
-                style: {
-                  width: groupLayout.width,
-                  height: collapsed ? 76 : groupLayout.height,
+                position: {
+                  x:
+                    WORKFLOW_RUN_NODE_POSITION.x +
+                    WORKFLOW_RUN_NODE_SIZE.width +
+                    120 +
+                    item.position * 400,
+                  y: 40,
                 },
+                style: { width: 340, height: 220 },
                 data: {
-                  kind: "requirement-task" as const,
-                  nodeRole: "group" as const,
-                  requirementId: selectedDagRequirement.id,
-                  task,
-                  reviews,
-                  dependencies: [],
-                  collapsed,
-                  busy: recoveryBusy(task.id),
-                  onToggleCollapsed: toggleTaskGroupCollapsed,
-                  onRecoverTaskGroup: recoverTaskGroup,
+                  kind: "workflow-item" as const,
+                  workflow: selectedWorkflow,
+                  item,
                 },
-              },
-              ...(collapsed
-                ? []
-                : [
-                    {
-                      id: `requirement-task-${task.id}`,
-                      type: "startNode" as const,
-                      parentId: groupId,
-                      extent: "parent" as const,
-                      position: groupLayout.positions.get(task.id) ?? {
-                        x: 20,
-                        y: 96,
-                      },
-                      style: getTaskGroupChildSize(task),
-                      data: {
-                        kind: "requirement-task" as const,
-                        nodeRole: "code" as const,
-                        requirementId: selectedDagRequirement.id,
-                        task,
-                        reviews,
-                        dependencies: [],
-                        busy: recoveryBusy(task.id),
-                        onRecoverTaskGroup: recoverTaskGroup,
-                      },
-                    },
-                    ...(summary
-                      ? [
-                          {
-                            id: `requirement-task-${summary.id}`,
-                            type: "startNode" as const,
-                            parentId: groupId,
-                            extent: "parent" as const,
-                            position: groupLayout.positions.get(summary.id) ?? {
-                              x: 20,
-                              y: 96,
-                            },
-                            style: getTaskGroupChildSize(summary),
-                            data: {
-                              kind: "requirement-task" as const,
-                              nodeRole: "review_summary" as const,
-                              requirementId: selectedDagRequirement.id,
-                              task: summary,
-                              reviews: subAgents,
-                              dependencies: [],
-                              busy: recoveryBusy(task.id),
-                              onRecoverTaskGroup: recoverTaskGroup,
-                            },
-                          },
-                        ]
-                      : []),
-                    ...subAgents.map((review) => ({
-                      id: `requirement-task-${review.id}`,
-                      type: "startNode" as const,
-                      parentId: groupId,
-                      extent: "parent" as const,
-                      position: groupLayout.positions.get(review.id) ?? {
-                        x: 20,
-                        y: 96,
-                      },
-                      style: getTaskGroupChildSize(review),
-                      data: {
-                        kind: "requirement-task" as const,
-                        nodeRole: "review_sub_agent" as const,
-                        requirementId: selectedDagRequirement.id,
-                        task: review,
-                        reviews: [],
-                        dependencies: [],
-                        busy: recoveryBusy(task.id),
-                        onRecoverTaskGroup: recoverTaskGroup,
-                      },
-                    })),
-                  ]),
-            ];
-          }),
-          ...standaloneExecutionTasks.map((task) => {
-            const size = getTaskNodeSize(task, selectedTasks);
-            return {
-              id: `requirement-task-${task.id}`,
-              type: "startNode" as const,
-              position: taskPosition(task.id),
-              style: {
-                width: size.width,
-                height: size.height,
-              },
-              data: {
-                kind: "requirement-task" as const,
-                nodeRole: "external" as const,
-                requirementId: selectedDagRequirement.id,
-                task,
-                reviews: [],
-                dependencies: task.depends_on.flatMap((dependencyId) => {
-                  const dependency = selectedTasks.find(
-                    (candidate) => candidate.id === dependencyId,
-                  );
-                  return dependency ? [dependency] : [];
-                }),
-                busy: recoveryBusy(task.id),
-                onRecoverTaskGroup: recoverTaskGroup,
-              },
-            };
-          }),
+              }))
+            : []),
         ]
       : []),
   ]);
@@ -539,6 +383,8 @@ export function buildProjectChatNode({
     },
   ])[0];
 }
+
+export { buildWorkflowRunEdges } from "./edges";
 
 export function buildProjectSettingsNode({
   projectCanvas,
@@ -754,5 +600,3 @@ export function mergeProjectNodes(
     ...extraNodes.filter((node): node is Node<StartNodeData> => Boolean(node)),
   ];
 }
-
-export { buildRequirementDagEdges };

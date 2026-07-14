@@ -16,13 +16,6 @@ type RequirementListItem =
   | RequirementListData["completedRequirements"][number];
 type RequirementTab = "pending" | "completed";
 
-function requirementTaskProgress(requirement: RequirementListItem) {
-  const tasks = requirement.execution_plan?.tasks ?? [];
-  if (tasks.length === 0) return null;
-  const completed = tasks.filter((task) => task.status === "completed").length;
-  return `${completed}/${tasks.length} 个任务`;
-}
-
 function requirementStatusColor(
   status: RequirementListItem["status"],
 ): "default" | "red" | "green" | "blue" | "purple" | "orange" {
@@ -90,14 +83,14 @@ export default function RequirementListNode({
       ) : (
         <Stack className="nodrag nowheel" padding={3} gap={1} isScrollable>
           {requirements.map((requirement) => {
-            const taskProgress = requirementTaskProgress(requirement);
             const isSelected = data.selectedRequirementId === requirement.id;
             const isBusy = data.busyRequirementId === requirement.id;
+            const hasWorkflow = data.workflowRequirementIds.has(requirement.id);
             const canPlan =
               activeTab === "pending" &&
               requirement.status === "failed" &&
-              !requirement.execution_plan;
-            const canView = Boolean(requirement.execution_plan);
+              !hasWorkflow;
+            const canView = hasWorkflow;
             return (
               <Item
                 key={requirement.id}
@@ -118,12 +111,9 @@ export default function RequirementListNode({
                       color={requirementStatusColor(requirement.status)}
                       size="sm"
                     />
-                    {taskProgress ? (
-                      <Token label={taskProgress} color="purple" size="sm" />
-                    ) : null}
                     {canPlan ? (
                       <Button
-                        label={isBusy ? "生成中…" : "重新生成 DAG"}
+                        label={isBusy ? "生成中…" : "重新生成 WorkPlan"}
                         size="sm"
                         variant="ghost"
                         icon={
@@ -141,7 +131,7 @@ export default function RequirementListNode({
                       />
                     ) : canView ? (
                       <Token
-                        label="查看 DAG"
+                        label="查看 WorkflowRun"
                         icon={<Eye size={13} />}
                         color="gray"
                         size="sm"

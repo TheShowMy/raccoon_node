@@ -2,55 +2,14 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  Requirement,
-  RequirementExecutionTask,
-  StartNodeData,
-} from "../../types/api";
+import type { Requirement, StartNodeData } from "../../types/api";
 import RequirementListNode from "./RequirementListNode";
 
 const now = "2026-06-25T00:00:00Z";
 
-function task(): RequirementExecutionTask {
-  return {
-    id: "task-1",
-    title: "task",
-    description: "task",
-    depends_on: [],
-    kind: "implementation",
-    model_tier: "medium",
-    timeout_seconds: 60,
-    pi_session_file: null,
-    branch_name: null,
-    worktree_path: null,
-    review_for: null,
-    review_angle: null,
-    review_status: "pending",
-    attempt: 0,
-    execution_failure_count: 0,
-    review_rejection_count: 0,
-    recovery_stage: "none",
-    failure_summary: null,
-    recovery_guidance: null,
-    high_tier_execution_used: false,
-    last_review_feedback: null,
-    pull_request_url: null,
-    merged_into: null,
-    cleanup_summary: null,
-    execution_warning: null,
-    trace: null,
-    status: "completed",
-    target_files: [],
-    result_summary: null,
-    error: null,
-    review_history: [],
-  };
-}
-
 function requirement(
   status: Requirement["status"],
   error: string | null = null,
-  hasPlan = false,
 ): Requirement {
   return {
     id: status,
@@ -63,7 +22,6 @@ function requirement(
     clarification_round: 0,
     clarifications: [],
     draft: null,
-    execution_plan: hasPlan ? { summary: "plan", tasks: [task()] } : null,
     error,
     created_at: now,
     updated_at: now,
@@ -73,11 +31,13 @@ function requirement(
 function data(
   pendingRequirements: Requirement[],
   completedRequirements: Requirement[] = [],
+  workflowRequirementIds = new Set<string>(),
 ) {
   return {
     kind: "requirement-list",
     pendingRequirements,
     completedRequirements,
+    workflowRequirementIds,
     selectedRequirementId: null,
     busyRequirementId: null,
     onSelectRequirement: vi.fn(),
@@ -90,7 +50,7 @@ describe("RequirementListNode", () => {
     render(<RequirementListNode data={data([requirement("queued")])} />);
 
     expect(
-      screen.queryByRole("button", { name: /生成 DAG/ }),
+      screen.queryByRole("button", { name: /生成 WorkPlan/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -100,7 +60,7 @@ describe("RequirementListNode", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "重新生成 DAG" }),
+      screen.getByRole("button", { name: "重新生成 WorkPlan" }),
     ).toBeInTheDocument();
   });
 
@@ -109,7 +69,8 @@ describe("RequirementListNode", () => {
       <RequirementListNode
         data={data(
           [requirement("queued")],
-          [requirement("completed", null, true)],
+          [requirement("completed", null)],
+          new Set(["completed"]),
         )}
       />,
     );
@@ -117,7 +78,7 @@ describe("RequirementListNode", () => {
     expect(screen.getByText("queued requirement")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "已完成 1" }));
     expect(screen.getByText("completed requirement")).toBeInTheDocument();
-    expect(screen.getByText("查看 DAG")).toBeInTheDocument();
+    expect(screen.getByText("查看 WorkflowRun")).toBeInTheDocument();
   });
 
   it("shows separate empty states for each tab", () => {

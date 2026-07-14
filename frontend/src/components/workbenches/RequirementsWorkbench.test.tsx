@@ -37,7 +37,7 @@ describe("RequirementsWorkbench", () => {
     vi.clearAllMocks();
   });
 
-  it("keeps the nested DAG camera interactive", () => {
+  it("keeps the nested Workflow camera interactive", () => {
     render(<RequirementsWorkbench nodes={[]} edges={[]} />);
     expect(reactFlowProps).toHaveBeenCalledWith(
       expect.objectContaining({

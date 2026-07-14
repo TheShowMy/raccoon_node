@@ -1,124 +1,69 @@
 import { MarkerType, type Edge } from "@xyflow/react";
-import type { Requirement } from "../types/api";
-import {
-  externalNodeId,
-  getTaskGroupDependencies,
-  isExternalDagTask,
-} from "./layout";
+import type { Requirement, WorkflowSnapshot } from "../types/api";
 
 const ENTRY_EDGE_COLOR = "var(--color-accent)";
 const DEPENDENCY_EDGE_COLOR = "var(--color-border-emphasized)";
-const REVIEW_EDGE_COLOR = "var(--color-border-blue)";
 
-export function buildRequirementDagEdges(
-  requirement: Requirement,
-  collapsedTaskGroups: Set<string>,
+export function buildWorkflowRunEdges(
+  _requirement: Requirement,
+  workflow: WorkflowSnapshot | null,
 ): Edge[] {
-  const flowEdges: Edge[] = [];
-  flowEdges.push({
-    id: "requirements-to-requirement-dag",
-    source: "requirements",
-    sourceHandle: "requirement-list-right",
-    target: "requirement-dag",
-    targetHandle: "requirement-dag-left",
-    type: "smoothstep",
-    animated: true,
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      color: ENTRY_EDGE_COLOR,
+  const edges: Edge[] = [
+    {
+      id: "requirements-to-workflow-run",
+      source: "requirements",
+      sourceHandle: "requirement-list-right",
+      target: "workflow-run",
+      targetHandle: "workflow-run-left",
+      type: "smoothstep",
+      animated: true,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: ENTRY_EDGE_COLOR,
+      },
+      style: { stroke: ENTRY_EDGE_COLOR, strokeWidth: 2 },
     },
-    style: {
-      stroke: ENTRY_EDGE_COLOR,
-      strokeWidth: 2,
-    },
-  });
+  ];
+  if (!workflow) return edges;
 
-  const tasks = requirement.execution_plan?.tasks ?? [];
-  const taskById = new Map(tasks.map((task) => [task.id, task]));
-  const externalTasks = tasks.filter(isExternalDagTask);
-
-  for (const task of externalTasks) {
-    const externalDependencies = task.depends_on.filter((dependency) =>
-      isExternalDagTask(taskById.get(dependency)),
-    );
-
-    if (externalDependencies.length === 0) {
-      flowEdges.push({
-        id: `requirement-dag-to-task-${task.id}`,
-        source: "requirement-dag",
-        sourceHandle: "requirement-dag-entry",
-        target: externalNodeId(task),
-        targetHandle: "requirement-task-left",
+  const dependencies = new Map<string, string[]>();
+  for (const dependency of workflow.dependencies) {
+    const values = dependencies.get(dependency.work_item_id) ?? [];
+    values.push(dependency.depends_on_id);
+    dependencies.set(dependency.work_item_id, values);
+  }
+  for (const item of workflow.work_items) {
+    const sources = dependencies.get(item.id) ?? [];
+    if (sources.length === 0) {
+      edges.push({
+        id: `workflow-entry-${item.id}`,
+        source: "workflow-run",
+        sourceHandle: "workflow-run-entry",
+        target: `workflow-item-${item.id}`,
+        targetHandle: "workflow-item-left",
         type: "smoothstep",
-        animated: task.status === "running",
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: ENTRY_EDGE_COLOR,
-        },
-        style: {
-          stroke: ENTRY_EDGE_COLOR,
-          strokeWidth: 2,
-        },
+        animated: item.status === "running",
+        markerEnd: { type: MarkerType.ArrowClosed, color: ENTRY_EDGE_COLOR },
+        style: { stroke: ENTRY_EDGE_COLOR, strokeWidth: 2 },
       });
+      continue;
     }
-
-    for (const dependency of externalDependencies) {
-      const dependencyTask = taskById.get(dependency);
-      if (!dependencyTask) continue;
-      flowEdges.push({
-        id: `requirement-task-${dependency}-to-${task.id}`,
-        source: externalNodeId(dependencyTask),
-        sourceHandle: "requirement-task-right",
-        target: externalNodeId(task),
-        targetHandle: "requirement-task-left",
+    for (const source of sources) {
+      edges.push({
+        id: `workflow-${source}-to-${item.id}`,
+        source: `workflow-item-${source}`,
+        sourceHandle: "workflow-item-right",
+        target: `workflow-item-${item.id}`,
+        targetHandle: "workflow-item-left",
         type: "smoothstep",
-        animated: task.status === "running",
+        animated: ["leased", "running"].includes(item.status),
         markerEnd: {
           type: MarkerType.ArrowClosed,
           color: DEPENDENCY_EDGE_COLOR,
         },
-        style: {
-          stroke: DEPENDENCY_EDGE_COLOR,
-          strokeWidth: 2,
-        },
+        style: { stroke: DEPENDENCY_EDGE_COLOR, strokeWidth: 2 },
       });
     }
   }
-
-  for (const task of tasks.filter((task) => task.kind === "implementation")) {
-    if (collapsedTaskGroups.has(`${requirement.id}:${task.id}`)) continue;
-    const reviews = tasks.filter((review) => review.review_for === task.id);
-    const dependencies = getTaskGroupDependencies(task, reviews);
-    const children = [task, ...reviews];
-    const childById = new Map(children.map((child) => [child.id, child]));
-
-    for (const target of reviews) {
-      for (const dependency of dependencies.get(target.id) ?? []) {
-        if (!childById.has(dependency)) continue;
-        const color =
-          target.kind === "review_sub_agent" || target.kind === "review"
-            ? REVIEW_EDGE_COLOR
-            : DEPENDENCY_EDGE_COLOR;
-        flowEdges.push({
-          id: `requirement-task-${dependency}-to-${target.id}`,
-          source: `requirement-task-${dependency}`,
-          sourceHandle: "requirement-task-right",
-          target: `requirement-task-${target.id}`,
-          targetHandle: "requirement-task-left",
-          type: "straight",
-          animated: target.status === "running",
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            color,
-          },
-          style: {
-            stroke: color,
-            strokeWidth: 1.4,
-          },
-        });
-      }
-    }
-  }
-
-  return flowEdges;
+  return edges;
 }

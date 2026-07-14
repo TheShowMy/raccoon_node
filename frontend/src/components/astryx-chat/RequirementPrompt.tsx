@@ -118,7 +118,7 @@ export default function RequirementPrompt({ data }: { data: ChatData }) {
           padding={0}
           header={
             <LayoutHeader hasDivider padding={3}>
-              <Heading level={3}>{prompt.draft.title}</Heading>
+              <Heading level={3}>{prompt.draft.intent}</Heading>
             </LayoutHeader>
           }
           content={
@@ -129,18 +129,42 @@ export default function RequirementPrompt({ data }: { data: ChatData }) {
               style={{ overscrollBehavior: "contain" }}
             >
               <VStack gap={3} width="100%">
-                <MultilineText>{prompt.draft.summary}</MultilineText>
                 <List>
-                  {prompt.draft.acceptance_criteria.map((criterion, index) => (
+                  {prompt.draft.acceptance_scenarios.map((scenario, index) => (
                     <ListItem
-                      key={criterion}
-                      label={<MultilineText>{criterion}</MultilineText>}
+                      key={scenario.id}
+                      label={<MultilineText>{scenario.then}</MultilineText>}
+                      description={`Given ${scenario.given} · When ${scenario.when}`}
                       startContent={
                         <Badge label={String(index + 1)} variant="neutral" />
                       }
                     />
                   ))}
                 </List>
+                {prompt.draft.explicit_constraints.length ? (
+                  <List>
+                    {prompt.draft.explicit_constraints.map((constraint) => (
+                      <ListItem
+                        key={constraint.id}
+                        label={
+                          <MultilineText>{constraint.statement}</MultilineText>
+                        }
+                        description={`用户显式约束 · ${constraint.source_message_id}`}
+                      />
+                    ))}
+                  </List>
+                ) : null}
+                {prompt.draft.non_goals.length ? (
+                  <List>
+                    {prompt.draft.non_goals.map((nonGoal) => (
+                      <ListItem
+                        key={nonGoal}
+                        label={<MultilineText>{nonGoal}</MultilineText>}
+                        description="不在本次范围"
+                      />
+                    ))}
+                  </List>
+                ) : null}
               </VStack>
             </LayoutContent>
           }

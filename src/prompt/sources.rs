@@ -19,7 +19,6 @@ pub enum PromptSourceKind {
     TaskContext,
     ReferenceContext,
     InlinePolicy,
-    JsonRepairExcerpt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

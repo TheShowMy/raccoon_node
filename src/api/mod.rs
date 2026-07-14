@@ -12,6 +12,7 @@ pub mod git;
 pub mod handlers;
 pub mod publication;
 pub mod terminal;
+mod workflow_runtime;
 
 async fn api_not_found() -> StatusCode {
     StatusCode::NOT_FOUND
@@ -24,12 +25,13 @@ use crate::api::handlers::{
     delete_project_terminal, delete_requirement, get_basic_settings, get_current_project,
     get_model_settings, get_project_attachment, get_project_canvas, get_project_chat,
     get_project_chat_session, get_project_file_content, get_project_file_tree, get_project_files,
-    get_requirement_conversation, get_requirement_session, get_requirement_task,
-    get_requirement_task_session, get_terminal_access_status, get_terminal_command_profiles,
-    list_project_terminals, plan_requirement_execution, project_chat_events, put_basic_settings,
-    put_model_settings, put_terminal_command_profiles, recover_task_group, reload_model_settings,
+    get_requirement_conversation, get_requirement_session, get_requirement_workflow_run,
+    get_terminal_access_status, get_terminal_command_profiles, get_workflow_attempt_session,
+    get_workflow_events, get_workflow_run, list_project_terminals, project_chat_events,
+    put_basic_settings, put_model_settings, put_terminal_command_profiles, reload_model_settings,
     requirement_conversation_events, requirement_events, reset_project_chat, restart_system,
-    retry_requirement_analysis, send_project_chat_message, spawn_startup_requirement_scheduler,
+    resume_workflow_run, retry_requirement_analysis, send_project_chat_message,
+    spawn_startup_requirement_scheduler, start_requirement_workflow,
     submit_requirement_clarifications, terminal_websocket, unlock_terminal_access,
     upload_project_attachment,
 };
@@ -280,18 +282,16 @@ fn build_app_with_startup_requirements(
             post(retry_requirement_analysis),
         )
         .route("/requirements/{id}/confirm", post(confirm_requirement))
-        .route("/requirements/{id}/plan", post(plan_requirement_execution))
         .route(
-            "/requirements/{id}/tasks/{task_id}",
-            get(get_requirement_task),
+            "/requirements/{id}/workflow-run",
+            get(get_requirement_workflow_run).post(start_requirement_workflow),
         )
+        .route("/workflow-runs/{run_id}", get(get_workflow_run))
+        .route("/workflow-runs/{run_id}/events", get(get_workflow_events))
+        .route("/workflow-runs/{run_id}/resume", post(resume_workflow_run))
         .route(
-            "/requirements/{id}/tasks/{task_id}/session",
-            get(get_requirement_task_session),
-        )
-        .route(
-            "/requirements/{id}/tasks/{task_id}/recover",
-            post(recover_task_group),
+            "/workflow-runs/{run_id}/attempts/{attempt_id}/session",
+            get(get_workflow_attempt_session),
         )
         .route(
             "/requirements/{id}/cancel",

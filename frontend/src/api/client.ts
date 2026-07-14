@@ -14,7 +14,6 @@ import {
   type BasicSettings,
   type BasicSettingsUpdate,
   type RestartResponse,
-  type RequirementTaskDetail,
   type SessionTranscriptPage,
   type ProjectFileContent,
   type ProjectFileTreeEntry,
@@ -31,6 +30,8 @@ import {
   type ChatAccepted,
   type RequirementAccepted,
   type AcceptedOperation,
+  type WorkflowSnapshot,
+  type WorkflowEventPage,
 } from "../types/api";
 
 export async function getCurrentProject(): Promise<{
@@ -80,10 +81,10 @@ function isThemePack(value: unknown): value is ThemePack {
 
 export async function getProjectCanvas(
   projectId: string,
-  dagRequirementId?: string | null,
+  workflowRequirementId?: string | null,
 ): Promise<ProjectCanvasData> {
-  const query = dagRequirementId
-    ? `?dag_requirement_id=${encodeURIComponent(dagRequirementId)}`
+  const query = workflowRequirementId
+    ? `?workflow_requirement_id=${encodeURIComponent(workflowRequirementId)}`
     : "";
   const response = await fetch(
     `/api/projects/${encodeURIComponent(projectId)}/canvas${query}`,
@@ -97,20 +98,65 @@ export async function getProjectCanvas(
   return response.json();
 }
 
-export async function getRequirementTask(
+export async function getRequirementWorkflowRun(
   requirementId: string,
-  taskId: string,
-): Promise<RequirementTaskDetail> {
+): Promise<WorkflowSnapshot> {
   const response = await fetch(
-    `/api/requirements/${encodeURIComponent(requirementId)}/tasks/${encodeURIComponent(taskId)}`,
+    `/api/requirements/${encodeURIComponent(requirementId)}/workflow-run`,
   );
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
     } | null;
-    throw new Error(body?.message ?? "读取任务详情失败");
+    throw new Error(body?.message ?? "读取 WorkflowRun 失败");
   }
   return response.json();
+}
+
+export async function getWorkflowEvents(
+  runId: string,
+  after = 0,
+  limit = 100,
+): Promise<WorkflowEventPage> {
+  const response = await fetch(
+    `/api/workflow-runs/${encodeURIComponent(runId)}/events?after=${after}&limit=${limit}`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "读取 WorkflowRun 时间线失败");
+  }
+  return response.json();
+}
+
+export async function resumeWorkflowRun(
+  runId: string,
+): Promise<WorkflowSnapshot> {
+  const response = await fetch(
+    `/api/workflow-runs/${encodeURIComponent(runId)}/resume`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    throw new Error(body?.message ?? "恢复 WorkflowRun 失败");
+  }
+  return response.json();
+}
+
+export async function getWorkflowAttemptSession(
+  runId: string,
+  attemptId: string,
+  before?: number | null,
+): Promise<SessionTranscriptPage> {
+  const query = before == null ? "" : `?before=${before}`;
+  return sessionResponse(
+    await fetch(
+      `/api/workflow-runs/${encodeURIComponent(runId)}/attempts/${encodeURIComponent(attemptId)}/session${query}`,
+    ),
+  );
 }
 
 export async function getTaskSession(
@@ -667,35 +713,18 @@ export async function confirmRequirement(
   return response.json();
 }
 
-export async function planRequirementExecution(
+export async function startRequirementWorkflow(
   requirementId: string,
 ): Promise<ProjectCanvasData> {
   const response = await fetch(
-    `/api/requirements/${encodeURIComponent(requirementId)}/plan`,
+    `/api/requirements/${encodeURIComponent(requirementId)}/workflow-run`,
     { method: "POST" },
   );
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string;
     } | null;
-    throw new Error(body?.message ?? "生成执行 DAG 失败");
-  }
-  return response.json();
-}
-
-export async function recoverTaskGroup(
-  requirementId: string,
-  taskId: string,
-): Promise<ProjectCanvasData> {
-  const response = await fetch(
-    `/api/requirements/${encodeURIComponent(requirementId)}/tasks/${encodeURIComponent(taskId)}/recover`,
-    { method: "POST" },
-  );
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: string;
-    } | null;
-    throw new Error(body?.message ?? "恢复任务失败");
+    throw new Error(body?.message ?? "生成 WorkPlan 失败");
   }
   return response.json();
 }
