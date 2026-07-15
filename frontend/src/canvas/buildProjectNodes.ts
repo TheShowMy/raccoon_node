@@ -8,7 +8,6 @@ import type {
   ProjectCanvasData,
   Requirement,
   RequirementConversation,
-  RequirementTimelineBranch,
   RequirementNodeData,
   ConversationEvent,
   ProjectChatResponse,
@@ -70,8 +69,6 @@ export interface BuildProjectChatNodeParams {
   projectCanvas: ProjectCanvasData | null;
   project: Project | null;
   requirementConversation: RequirementConversation | null;
-  requirementTimeline: RequirementTimelineBranch[];
-  hasOlderRequirementHistory: boolean;
   requirementBusy: boolean;
   requirementOpeningId: string | null;
   requirementError: string | null;
@@ -93,7 +90,6 @@ export interface BuildProjectChatNodeParams {
   abortProjectChat?: () => Promise<void>;
   resetProjectChat: () => Promise<boolean>;
   openRequirement?: (requirementId: string) => void;
-  loadOlderRequirementHistory: () => Promise<boolean>;
   submitClarifications: (
     requirement: Requirement,
     answers: Record<string, DraftClarificationAnswer>,
@@ -160,6 +156,10 @@ export function buildProjectNodes({
             id: "workflow-run",
             type: "startNode" as const,
             position: positions["workflow-run"],
+            style: {
+              width: WORKFLOW_RUN_NODE_SIZE.width,
+              height: WORKFLOW_RUN_NODE_SIZE.height,
+            },
             data: {
               kind: "workflow-run" as const,
               requirement: selectedWorkflowRequirement,
@@ -192,8 +192,6 @@ export function buildProjectChatNode({
   projectCanvas,
   project: currentProject,
   requirementConversation,
-  requirementTimeline,
-  hasOlderRequirementHistory,
   requirementBusy,
   requirementOpeningId,
   requirementError,
@@ -209,7 +207,6 @@ export function buildProjectChatNode({
   abortProjectChat = async () => {},
   resetProjectChat,
   openRequirement = () => {},
-  loadOlderRequirementHistory,
   submitClarifications,
   confirmRequirement,
   retryRequirementAnalysis = async () => {},
@@ -234,8 +231,6 @@ export function buildProjectChatNode({
         project,
         requirement: projectCanvas?.active_requirement ?? null,
         conversation: requirementConversation,
-        requirementTimeline,
-        hasOlderRequirementHistory,
         promptDismissed:
           dismissedPromptRequirementId ===
           (projectCanvas?.active_requirement?.id ?? null),
@@ -253,7 +248,6 @@ export function buildProjectChatNode({
         onProjectChatAbort: abortProjectChat,
         onProjectChatReset: resetProjectChat,
         onOpenRequirement: openRequirement,
-        onLoadOlderRequirementHistory: loadOlderRequirementHistory,
         onSubmitClarifications: submitClarifications,
         onConfirm: confirmRequirement,
         onRetryAnalysis: retryRequirementAnalysis,

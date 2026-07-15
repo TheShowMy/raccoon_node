@@ -2162,10 +2162,10 @@ mod tests {
             .lock_connection()
             .execute(
                 "INSERT INTO requirements
-                 (id, title, status, messages,
+                 (id, title, status,
                   clarification_round, clarifications, analysis_revision,
                   clarification_history, created_at, updated_at, origin)
-                 VALUES ('requirement-1','test','running','[]',0,'[]',1,'[]',?1,?1,'standalone')",
+                 VALUES ('requirement-1','test','running',0,'[]',1,'[]',?1,?1,'standalone')",
                 [Utc::now().to_rfc3339()],
             )
             .unwrap();

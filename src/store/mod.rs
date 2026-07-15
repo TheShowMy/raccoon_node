@@ -481,9 +481,9 @@ impl Store {
         if self.data.project_chats[index].running {
             return Err(AppError::bad_request("项目问答正在回答，请稍后再发送"));
         }
-        if self.has_active_requirement() {
+        if self.data.project_chats[index].mode == crate::models::ProjectChatMode::Requirement {
             return Err(AppError::conflict(
-                "需求分支尚未确认或放弃，暂时无法继续普通会话",
+                "当前处于需求模式，请先确认或放弃需求后再继续普通会话",
             ));
         }
         let project_dir = self.project_dir();
@@ -498,6 +498,8 @@ impl Store {
             content: message,
             references,
             images,
+            source: crate::models::ProjectChatMessageSource::Qa,
+            requirement_id: None,
             metadata: None,
             created_at: now,
         });
@@ -539,6 +541,8 @@ impl Store {
                         content: content.to_owned(),
                         references: Vec::new(),
                         images: Vec::new(),
+                        source: crate::models::ProjectChatMessageSource::Qa,
+                        requirement_id: None,
                         metadata: output.trace,
                         created_at: now,
                     });
@@ -552,6 +556,8 @@ impl Store {
                         content: "项目问答失败过程".to_owned(),
                         references: Vec::new(),
                         images: Vec::new(),
+                        source: crate::models::ProjectChatMessageSource::Qa,
+                        requirement_id: None,
                         metadata: Some(trace),
                         created_at: now,
                     });
@@ -570,13 +576,17 @@ impl Store {
         if self.data.project_chats[index].running {
             return Err(AppError::bad_request("项目问答正在回答，暂时无法关闭会话"));
         }
-        if self.has_active_requirement() {
-            return Err(AppError::conflict(
-                "需求分支尚未确认或放弃，暂时无法新建普通会话",
-            ));
+        if self.data.project_chats[index].mode == crate::models::ProjectChatMode::Requirement
+            && let Some(requirement_id) =
+                self.data.project_chats[index].active_requirement_id.clone()
+            && let Ok(req_index) = self.requirement_index(&requirement_id)
+        {
+            self.data.requirements.remove(req_index);
         }
         let chat = &mut self.data.project_chats[index];
         chat.messages.clear();
+        chat.mode = crate::models::ProjectChatMode::Qa;
+        chat.active_requirement_id = None;
         chat.error = None;
         chat.pi_session_file = None;
         chat.updated_at = Utc::now();
@@ -660,6 +670,8 @@ impl Store {
         let now = Utc::now();
         self.data.project_chats.push(ProjectChat {
             messages: Vec::new(),
+            mode: crate::models::ProjectChatMode::Qa,
+            active_requirement_id: None,
             running: false,
             error: None,
             pi_session_file: None,
@@ -698,6 +710,7 @@ impl Store {
         pi_session_file: Option<String>,
     ) -> Result<(String, RequirementAnalysisInput), AppError> {
         self.refresh()?;
+        self.ensure_project_chat().await?;
         let origin = if pi_session_file.is_some() {
             crate::models::RequirementOrigin::ProjectChatBranch
         } else {
@@ -722,9 +735,9 @@ impl Store {
             status: RequirementStatus::Analyzing,
             messages: vec![RequirementMessage {
                 role: RequirementMessageRole::User,
-                content: message,
-                references,
-                images,
+                content: message.clone(),
+                references: references.clone(),
+                images: images.clone(),
                 metadata: None,
                 created_at: now,
             }],
@@ -742,6 +755,31 @@ impl Store {
             created_at: now,
             updated_at: now,
         };
+
+        let chat = &mut self.data.project_chats[0];
+        chat.mode = crate::models::ProjectChatMode::Requirement;
+        chat.active_requirement_id = Some(id.clone());
+        chat.messages.push(ProjectChatMessage {
+            role: ProjectChatMessageRole::System,
+            content: "已进入需求模式".to_owned(),
+            references: Vec::new(),
+            images: Vec::new(),
+            source: crate::models::ProjectChatMessageSource::Qa,
+            requirement_id: Some(id.clone()),
+            metadata: None,
+            created_at: now,
+        });
+        chat.messages.push(ProjectChatMessage {
+            role: ProjectChatMessageRole::User,
+            content: message,
+            references,
+            images,
+            source: crate::models::ProjectChatMessageSource::Requirement,
+            requirement_id: Some(id.clone()),
+            metadata: None,
+            created_at: now,
+        });
+        chat.updated_at = now;
 
         let input = RequirementAnalysisInput {
             project,
@@ -801,12 +839,26 @@ impl Store {
             requirement.updated_at = now;
             requirement.messages.push(RequirementMessage {
                 role: RequirementMessageRole::User,
-                content: message,
-                references,
-                images,
+                content: message.clone(),
+                references: references.clone(),
+                images: images.clone(),
                 metadata: None,
                 created_at: now,
             });
+        }
+
+        if let Some(chat) = self.data.project_chats.first_mut() {
+            chat.messages.push(ProjectChatMessage {
+                role: ProjectChatMessageRole::User,
+                content: message,
+                references,
+                images,
+                source: crate::models::ProjectChatMessageSource::Requirement,
+                requirement_id: Some(requirement_id.to_owned()),
+                metadata: None,
+                created_at: now,
+            });
+            chat.updated_at = now;
         }
 
         let requirement = self.data.requirements[index].clone();
@@ -1197,6 +1249,33 @@ impl Store {
         requirement.active_prompt = None;
         requirement.queued_at = Some(now);
         requirement.updated_at = now;
+        requirement.messages.push(RequirementMessage {
+            role: RequirementMessageRole::System,
+            content: "需求已确认，回到问答模式".to_owned(),
+            references: Vec::new(),
+            images: Vec::new(),
+            metadata: None,
+            created_at: now,
+        });
+
+        if let Some(chat) = self.data.project_chats.first_mut() {
+            if chat.active_requirement_id.as_deref() == Some(requirement_id) {
+                chat.mode = crate::models::ProjectChatMode::Qa;
+                chat.active_requirement_id = None;
+            }
+            chat.messages.push(ProjectChatMessage {
+                role: ProjectChatMessageRole::System,
+                content: "需求已确认，回到问答模式".to_owned(),
+                references: Vec::new(),
+                images: Vec::new(),
+                source: crate::models::ProjectChatMessageSource::Requirement,
+                requirement_id: Some(requirement_id.to_owned()),
+                metadata: None,
+                created_at: now,
+            });
+            chat.updated_at = now;
+        }
+
         self.write_persist().await?;
         Ok(String::new())
     }

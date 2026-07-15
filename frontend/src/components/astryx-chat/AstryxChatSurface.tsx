@@ -10,22 +10,23 @@ import { Toolbar } from "@astryxdesign/core/Toolbar";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import type { StartNodeData } from "../../types/api";
 import AstryxComposer from "./AstryxComposer";
-import AstryxMessages, { type AstryxTimelineItem } from "./AstryxMessages";
+import AstryxMessages from "./AstryxMessages";
 import { usePinnedChatScroll } from "./usePinnedChatScroll";
 import {
   buildLiveActivity,
   conversationEventsToStreamEvents,
   hasLiveContent,
   projectMessageEntries,
-  requirementItemEntries,
 } from "./model";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 
 function AstryxChatSurface({ data }: { data: ChatData }) {
   const interactiveRequirementId =
-    data.requirement?.id ?? data.requirementOpeningId;
-  const requirementMode = interactiveRequirementId !== null;
+    data.projectChat?.active_requirement_id ?? data.requirementOpeningId;
+  const requirementMode =
+    data.projectChat?.mode === "requirement" ||
+    interactiveRequirementId !== null;
   const chatScroll = usePinnedChatScroll();
 
   const projectActivity = useMemo(
@@ -49,44 +50,11 @@ function AstryxChatSurface({ data }: { data: ChatData }) {
     data.requirementOpeningId ||
     hasLiveContent(requirementActivity),
   );
-  const timeline = useMemo<AstryxTimelineItem[]>(() => {
-    const projectItems: AstryxTimelineItem[] = projectMessageEntries(
-      data.projectChat?.messages ?? [],
-    ).map((entry) => ({
-      kind: "project",
-      id: entry.id,
-      createdAt: entry.createdAt,
-      entry,
-    }));
-    const requirementItems: AstryxTimelineItem[] = data.requirementTimeline.map(
-      (branch) => {
-        return {
-          kind: "requirement",
-          id: `requirement-${branch.requirementId}`,
-          createdAt: branch.createdAt,
-          entries: requirementItemEntries(branch.conversation?.items ?? []),
-          running:
-            branch.opening ||
-            branch.loading ||
-            Boolean(branch.conversation?.running) ||
-            branch.requirement?.status === "analyzing",
-          error: branch.error ?? branch.conversation?.error ?? null,
-        };
-      },
-    );
-    return [...projectItems, ...requirementItems].sort((left, right) => {
-      const leftTime = Date.parse(left.createdAt);
-      const rightTime = Date.parse(right.createdAt);
-      return (
-        (Number.isNaN(leftTime) ? 0 : leftTime) -
-        (Number.isNaN(rightTime) ? 0 : rightTime)
-      );
-    });
-  }, [data.projectChat?.messages, data.requirementTimeline]);
-  const effectiveStreaming =
-    projectRunning ||
-    requirementRunning ||
-    timeline.some((item) => item.kind === "requirement" && item.running);
+  const entries = useMemo(
+    () => projectMessageEntries(data.projectChat?.messages ?? []),
+    [data.projectChat?.messages],
+  );
+  const effectiveStreaming = projectRunning || requirementRunning;
 
   return (
     <Layout
@@ -156,11 +124,11 @@ function AstryxChatSurface({ data }: { data: ChatData }) {
               />
             }
           >
-            {timeline.length ||
+            {entries.length ||
             effectiveStreaming ||
             projectActivity.notices.length ? (
               <AstryxMessages
-                timeline={timeline}
+                entries={entries}
                 projectActivity={projectActivity}
                 projectRunning={projectRunning}
                 interactiveRequirementId={interactiveRequirementId}
@@ -170,8 +138,6 @@ function AstryxChatSurface({ data }: { data: ChatData }) {
                 onContentChange={chatScroll.onContentChange}
                 prepareForPrepend={chatScroll.prepareForPrepend}
                 isPinned={chatScroll.isPinned}
-                hasOlderHistory={data.hasOlderRequirementHistory}
-                onLoadOlderHistory={data.onLoadOlderRequirementHistory}
               />
             ) : null}
           </ChatLayout>

@@ -10,6 +10,7 @@ import {
   buildWorkflowRunEdges,
   type BuildProjectNodesParams,
 } from "./buildProjectNodes";
+import { REQUIREMENT_LIST_NODE_SIZE, WORKFLOW_RUN_NODE_SIZE } from "./layout";
 
 const now = new Date(0).toISOString();
 
@@ -150,5 +151,35 @@ describe("buildProjectNodes WorkflowRun", () => {
     const nodes = buildProjectNodes(params(canvas));
     expect(nodes.some((node) => node.id === "requirements")).toBe(true);
     expect(nodes).toHaveLength(1);
+  });
+
+  it("declares explicit style dimensions for all DAG nodes", () => {
+    const selected = requirement();
+    const canvas: ProjectCanvasData = {
+      project: project(),
+      active_requirement: selected,
+      queued_requirements: [],
+      completed_requirements: [],
+      workflow_runs: [workflow()],
+    };
+    const nodes = buildProjectNodes(params(canvas));
+
+    const requirements = nodes.find((node) => node.id === "requirements");
+    expect(requirements?.style).toMatchObject({
+      width: REQUIREMENT_LIST_NODE_SIZE.width,
+      height: REQUIREMENT_LIST_NODE_SIZE.height,
+    });
+
+    const workflowRun = nodes.find((node) => node.id === "workflow-run");
+    expect(workflowRun?.style).toMatchObject({
+      width: WORKFLOW_RUN_NODE_SIZE.width,
+      height: WORKFLOW_RUN_NODE_SIZE.height,
+    });
+
+    const items = nodes.filter((node) => node.data.kind === "workflow-item");
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) {
+      expect(item.style).toMatchObject({ width: 340, height: 220 });
+    }
   });
 });

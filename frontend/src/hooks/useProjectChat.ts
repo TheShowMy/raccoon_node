@@ -111,11 +111,16 @@ export function useProjectChat() {
     }
   }, [applySnapshot, projectChat?.running, projectChatBusy]);
 
+  const mode = projectChat?.mode ?? "qa";
+  const activeRequirementId = projectChat?.active_requirement_id ?? null;
+
   return {
     projectChat,
     projectChatBusy,
     projectChatError,
     projectChatEvents,
+    mode,
+    activeRequirementId,
     sendProjectChat,
     abortProjectChat: abort,
     closeProjectChat,

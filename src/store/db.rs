@@ -7,8 +7,9 @@ use serde_json::{Map, Value};
 
 use crate::error::AppError;
 use crate::models::{
-    ModelSettings, ProjectChat, Requirement, RequirementFailureStage, RequirementStatus,
-    StoreState, SummaryNode, TerminalCommandProfile,
+    ModelSettings, ProjectChat, ProjectChatMessage, ProjectChatMessageRole,
+    ProjectChatMessageSource, Requirement, RequirementFailureStage, RequirementMessageRole,
+    RequirementStatus, StoreState, SummaryNode, TerminalCommandProfile,
 };
 
 pub struct Database {
@@ -54,9 +55,36 @@ impl Database {
         validate_schema_fingerprint(&conn)?;
 
         let settings = load_settings(&conn)?;
+        let mut requirements = load_requirements(&conn)?;
+        let project_chats = load_project_chats(&conn)?;
+        if let Some(chat) = project_chats.first() {
+            for requirement in &mut requirements {
+                requirement.messages = chat
+                    .messages
+                    .iter()
+                    .filter(|message| {
+                        message.source == ProjectChatMessageSource::Requirement
+                            && message.requirement_id.as_deref() == Some(requirement.id.as_str())
+                    })
+                    .map(|message| crate::models::RequirementMessage {
+                        role: match message.role {
+                            ProjectChatMessageRole::User => RequirementMessageRole::User,
+                            ProjectChatMessageRole::Assistant => RequirementMessageRole::Assistant,
+                            ProjectChatMessageRole::System => RequirementMessageRole::System,
+                            ProjectChatMessageRole::Trace => RequirementMessageRole::Trace,
+                        },
+                        content: message.content.clone(),
+                        references: message.references.clone(),
+                        images: message.images.clone(),
+                        metadata: message.metadata.clone(),
+                        created_at: message.created_at,
+                    })
+                    .collect();
+            }
+        }
         Ok(StoreState {
-            requirements: load_requirements(&conn)?,
-            project_chats: load_project_chats(&conn)?,
+            requirements,
+            project_chats,
             settings_summary: setting_or_default(
                 &settings,
                 "settings_summary",
@@ -98,6 +126,34 @@ impl Database {
             save_requirement,
         )?;
         tx.execute("DELETE FROM project_chats", [])?;
+        let mut next = next.clone();
+        if next.project_chats.is_empty() {
+            next.project_chats.push(ProjectChat::default());
+        }
+        if let Some(chat) = next.project_chats.first_mut() {
+            chat.messages
+                .retain(|message| message.source != ProjectChatMessageSource::Requirement);
+            for requirement in &next.requirements {
+                for message in &requirement.messages {
+                    chat.messages.push(ProjectChatMessage {
+                        role: match message.role {
+                            RequirementMessageRole::User => ProjectChatMessageRole::User,
+                            RequirementMessageRole::Assistant => ProjectChatMessageRole::Assistant,
+                            RequirementMessageRole::System => ProjectChatMessageRole::System,
+                            RequirementMessageRole::Trace => ProjectChatMessageRole::Trace,
+                        },
+                        content: message.content.clone(),
+                        references: message.references.clone(),
+                        images: message.images.clone(),
+                        source: ProjectChatMessageSource::Requirement,
+                        requirement_id: Some(requirement.id.clone()),
+                        metadata: message.metadata.clone(),
+                        created_at: message.created_at,
+                    });
+                }
+            }
+            chat.messages.sort_by_key(|message| message.created_at);
+        }
         for chat in &next.project_chats {
             save_project_chat(&tx, chat)?;
         }
@@ -234,24 +290,16 @@ fn primary_key(table: &str) -> &'static str {
 }
 
 fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(), AppError> {
-    let mut persisted = requirement.clone();
-    for message in &mut persisted.messages {
-        message.metadata = message
-            .metadata
-            .as_ref()
-            .map(|value| compact_trace(value).unwrap_or_else(|| value.clone()));
-    }
     tx.execute(
         "INSERT INTO requirements
-         (id, title, status, messages,
+         (id, title, status,
           clarification_round, clarifications, draft, analysis_revision, active_prompt,
           clarification_history, pi_session_file, error, failure_stage, failure_code,
           queued_at, created_at, updated_at, origin)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
            status = excluded.status,
-           messages = excluded.messages,
            clarification_round = excluded.clarification_round,
            clarifications = excluded.clarifications,
            draft = excluded.draft,
@@ -267,27 +315,26 @@ fn save_requirement(tx: &Transaction<'_>, requirement: &Requirement) -> Result<(
            updated_at = excluded.updated_at,
            origin = excluded.origin",
         params![
-            persisted.id,
-            persisted.title,
-            status_text(persisted.status)?,
-            serde_json::to_string(&persisted.messages)?,
-            persisted.clarification_round,
-            serde_json::to_string(&persisted.clarifications)?,
-            optional_json(&persisted.draft)?,
-            persisted.analysis_revision,
-            optional_json(&persisted.active_prompt)?,
-            serde_json::to_string(&persisted.clarification_history)?,
-            persisted.pi_session_file,
-            persisted.error,
-            persisted
+            requirement.id,
+            requirement.title,
+            status_text(requirement.status)?,
+            requirement.clarification_round,
+            serde_json::to_string(&requirement.clarifications)?,
+            optional_json(&requirement.draft)?,
+            requirement.analysis_revision,
+            optional_json(&requirement.active_prompt)?,
+            serde_json::to_string(&requirement.clarification_history)?,
+            requirement.pi_session_file,
+            requirement.error,
+            requirement
                 .failure_stage
                 .map(requirement_failure_stage_text)
                 .transpose()?,
-            persisted.failure_code,
-            persisted.queued_at.map(|value| value.to_rfc3339()),
-            persisted.created_at.to_rfc3339(),
-            persisted.updated_at.to_rfc3339(),
-            serde_json::to_string(&persisted.origin)?.trim_matches('"'),
+            requirement.failure_code,
+            requirement.queued_at.map(|value| value.to_rfc3339()),
+            requirement.created_at.to_rfc3339(),
+            requirement.updated_at.to_rfc3339(),
+            serde_json::to_string(&requirement.origin)?.trim_matches('"'),
         ],
     )?;
     Ok(())
@@ -317,10 +364,12 @@ fn save_project_chat(tx: &Transaction<'_>, chat: &ProjectChat) -> Result<(), App
     }
     tx.execute(
         "INSERT OR REPLACE INTO project_chats
-         (singleton_key, messages, running, error, pi_session_file, created_at, updated_at)
-         VALUES ('chat', ?1, ?2, ?3, ?4, ?5, ?6)",
+         (singleton_key, messages, mode, active_requirement_id, running, error, pi_session_file, created_at, updated_at)
+         VALUES ('chat', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             serde_json::to_string(&messages)?,
+            serde_json::to_string(&chat.mode)?.trim_matches('"'),
+            chat.active_requirement_id,
             i64::from(chat.running),
             chat.error,
             chat.pi_session_file,
@@ -346,7 +395,7 @@ fn save_setting<T: serde::Serialize>(
 #[allow(clippy::type_complexity)]
 fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
     let mut statement = conn.prepare(
-        "SELECT id, title, status, messages,
+        "SELECT id, title, status,
                 clarification_round, clarifications, draft, analysis_revision, active_prompt,
                 clarification_history, pi_session_file, error, failure_stage, failure_code,
                 queued_at, created_at, updated_at, origin
@@ -357,21 +406,20 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, u32>(4)?,
-            row.get::<_, String>(5)?,
-            row.get::<_, Option<String>>(6)?,
-            row.get::<_, u32>(7)?,
-            row.get::<_, Option<String>>(8)?,
-            row.get::<_, String>(9)?,
+            row.get::<_, u32>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, Option<String>>(5)?,
+            row.get::<_, u32>(6)?,
+            row.get::<_, Option<String>>(7)?,
+            row.get::<_, String>(8)?,
+            row.get::<_, Option<String>>(9)?,
             row.get::<_, Option<String>>(10)?,
             row.get::<_, Option<String>>(11)?,
             row.get::<_, Option<String>>(12)?,
             row.get::<_, Option<String>>(13)?,
-            row.get::<_, Option<String>>(14)?,
+            row.get::<_, String>(14)?,
             row.get::<_, String>(15)?,
             row.get::<_, String>(16)?,
-            row.get::<_, String>(17)?,
         ))
     })?;
     let mut requirements = Vec::new();
@@ -380,7 +428,6 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             id,
             title,
             status,
-            messages,
             clarification_round,
             clarifications,
             draft,
@@ -401,7 +448,7 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
             title,
             origin: parse_json(&format!("\"{origin}\""), "requirements.origin")?,
             status: parse_json(&format!("\"{status}\""), "requirements.status")?,
-            messages: parse_json(&messages, "requirements.messages")?,
+            messages: Vec::new(),
             clarification_round,
             clarifications: parse_json(&clarifications, "requirements.clarifications")?,
             draft: parse_optional_json(draft, "requirements.draft")?,
@@ -429,24 +476,37 @@ fn load_requirements(conn: &Connection) -> Result<Vec<Requirement>, AppError> {
 
 fn load_project_chats(conn: &Connection) -> Result<Vec<ProjectChat>, AppError> {
     let mut statement = conn.prepare(
-        "SELECT messages, running, error, pi_session_file, created_at, updated_at
+        "SELECT messages, mode, active_requirement_id, running, error, pi_session_file, created_at, updated_at
          FROM project_chats",
     )?;
     let rows = statement.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
+            row.get::<_, String>(1)?,
             row.get::<_, Option<String>>(2)?,
-            row.get::<_, Option<String>>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, String>(5)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, Option<String>>(5)?,
+            row.get::<_, String>(6)?,
+            row.get::<_, String>(7)?,
         ))
     })?;
     let mut chats = Vec::new();
     for row in rows {
-        let (messages, running, error, pi_session_file, created_at, updated_at) = row?;
+        let (
+            messages,
+            mode,
+            active_requirement_id,
+            running,
+            error,
+            pi_session_file,
+            created_at,
+            updated_at,
+        ) = row?;
         chats.push(ProjectChat {
             messages: parse_json(&messages, "project_chats.messages")?,
+            mode: parse_json(&format!("\"{mode}\""), "project_chats.mode")?,
+            active_requirement_id,
             running: running != 0,
             error,
             pi_session_file,

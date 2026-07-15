@@ -25,6 +25,8 @@ fn referenced_pi_session_paths(data: &StoreState, session_dir: &Path) -> HashSet
 fn project_chat_response_from(chat: &ProjectChat) -> ProjectChatResponse {
     ProjectChatResponse {
         messages: chat.messages.clone(),
+        mode: chat.mode,
+        active_requirement_id: chat.active_requirement_id.clone(),
         running: chat.running,
         error: chat.error.clone(),
         updated_at: chat.updated_at,

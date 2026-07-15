@@ -3,7 +3,6 @@ import type {
   FileReference,
   ImageAttachment,
   ProjectChatMessage,
-  RequirementConversationItem,
   StreamEvent,
   TraceBlock,
   TraceMetadata,
@@ -11,7 +10,7 @@ import type {
 
 export type AstryxChatEntry = {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "trace";
   text: string;
   createdAt: string;
   references: FileReference[];
@@ -76,38 +75,6 @@ export function projectMessageEntries(
     images: message.images ?? [],
     traceBlocks: traceBlocks(message.metadata),
   }));
-}
-
-export function requirementItemEntries(
-  items: RequirementConversationItem[],
-): AstryxChatEntry[] {
-  const entries: AstryxChatEntry[] = [];
-  for (const item of items) {
-    if (item.kind === "process") {
-      entries.push({
-        id: item.id,
-        role: "assistant",
-        text: "",
-        createdAt: item.created_at,
-        references: [],
-        images: [],
-        traceBlocks: traceBlocks(item.metadata),
-      });
-      continue;
-    }
-    entries.push({
-      id: item.id,
-      role:
-        item.kind === "notice" ? "system" : (item.kind as "user" | "assistant"),
-      text: item.text,
-      createdAt: item.created_at,
-      references: item.kind === "user" ? (item.references ?? []) : [],
-      images: item.kind === "user" ? (item.images ?? []) : [],
-      traceBlocks: [],
-      noticeLevel: item.kind === "notice" ? item.level : undefined,
-    });
-  }
-  return entries;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

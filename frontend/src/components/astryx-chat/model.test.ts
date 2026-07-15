@@ -3,7 +3,6 @@ import {
   buildLiveActivity,
   conversationEventsToStreamEvents,
   projectMessageEntries,
-  requirementItemEntries,
 } from "./model";
 
 describe("Astryx chat model", () => {
@@ -43,32 +42,6 @@ describe("Astryx chat model", () => {
         status: "done",
       },
     ]);
-  });
-
-  it("keeps requirement branch items independent from project messages", () => {
-    const entries = requirementItemEntries([
-      {
-        kind: "user",
-        id: "user-1",
-        text: "增加登录",
-        references: [{ path: "src/auth.ts" }],
-        created_at: "2026-07-10T00:00:00Z",
-      },
-      {
-        kind: "notice",
-        id: "notice-1",
-        level: "info",
-        text: "正在生成草案",
-        created_at: "2026-07-10T00:00:01Z",
-      },
-    ]);
-
-    expect(entries).toHaveLength(2);
-    expect(entries[0]).toMatchObject({
-      role: "user",
-      references: [{ path: "src/auth.ts" }],
-    });
-    expect(entries[1]).toMatchObject({ role: "system", noticeLevel: "info" });
   });
 
   it("normalizes live thinking, tools and output for Astryx components", () => {

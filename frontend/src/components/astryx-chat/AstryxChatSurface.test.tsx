@@ -10,7 +10,6 @@ import type { StartNodeData } from "../../types/api";
 import AstryxChatSurface from "./AstryxChatSurface";
 
 type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
-type TimelineBranch = ChatData["requirementTimeline"][number];
 
 function changeSpec(intent: string, result: string) {
   return {
@@ -25,28 +24,6 @@ function changeSpec(intent: string, result: string) {
     ],
     explicit_constraints: [],
     non_goals: [],
-  };
-}
-
-function branch(
-  requirement: TimelineBranch["requirement"],
-  conversation: TimelineBranch["conversation"],
-  overrides: Partial<TimelineBranch> = {},
-): TimelineBranch {
-  const requirementId =
-    requirement?.id ?? conversation?.id ?? "requirement-opening";
-  return {
-    requirementId,
-    requirement,
-    conversation,
-    loading: false,
-    error: null,
-    createdAt:
-      requirement?.created_at ??
-      conversation?.updated_at ??
-      "2026-07-10T00:00:00Z",
-    opening: false,
-    ...overrides,
   };
 }
 
@@ -76,8 +53,6 @@ function data(overrides: Partial<ChatData> = {}): ChatData {
     },
     requirement: null,
     conversation: null,
-    requirementTimeline: [],
-    hasOlderRequirementHistory: false,
     promptDismissed: false,
     busy: false,
     requirementOpeningId: null,
@@ -85,6 +60,8 @@ function data(overrides: Partial<ChatData> = {}): ChatData {
     streamEvents: [],
     projectChat: {
       messages: [],
+      mode: "qa" as const,
+      active_requirement_id: null,
       running: false,
       error: null,
       updated_at: "2026-07-10T00:00:00Z",
@@ -98,7 +75,6 @@ function data(overrides: Partial<ChatData> = {}): ChatData {
     onProjectChatAbort: vi.fn(async () => {}),
     onProjectChatReset: vi.fn(async () => true),
     onOpenRequirement: vi.fn(),
-    onLoadOlderRequirementHistory: vi.fn(async () => false),
     onSubmitClarifications: vi.fn(async () => true),
     onConfirm: vi.fn(async () => {}),
     onRetryAnalysis: vi.fn(async () => {}),
@@ -132,29 +108,21 @@ describe("AstryxChatSurface", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("renders long history in batches of 80", async () => {
-    const requirement = requirementFixture(
-      "requirement-history",
-      "2026-07-10T00:00:00Z",
-    );
-    const conversation = {
-      id: requirement.id,
-      title: requirement.title,
-      status: "completed" as const,
-      running: false,
-      items: Array.from({ length: 267 }, (_, index) => ({
-        kind: "assistant" as const,
-        id: `history-${index}`,
-        text: `history-${index}`,
-        created_at: `2026-07-10T00:${String(index % 60).padStart(2, "0")}:00Z`,
-      })),
-      prompt: null,
-      error: null,
-      updated_at: requirement.updated_at,
-    };
     render(
       <AstryxChatSurface
         data={data({
-          requirementTimeline: [branch(requirement, conversation)],
+          projectChat: {
+            messages: Array.from({ length: 267 }, (_, index) => ({
+              role: "assistant" as const,
+              content: `history-${index}`,
+              created_at: `2026-07-10T00:${String(index % 60).padStart(2, "0")}:00Z`,
+            })),
+            mode: "qa" as const,
+            active_requirement_id: null,
+            running: false,
+            error: null,
+            updated_at: "2026-07-10T00:00:00Z",
+          },
         })}
       />,
     );
@@ -225,46 +193,7 @@ describe("AstryxChatSurface", () => {
     expect(content).not.toHaveClass("xysyzu8");
   });
 
-  it("keeps project messages and restored requirement branches in one ordered message list", () => {
-    const firstRequirement = requirementFixture(
-      "requirement-1",
-      "2026-07-10T00:01:00Z",
-    );
-    const secondRequirement = requirementFixture(
-      "requirement-2",
-      "2026-07-10T00:03:00Z",
-    );
-    const firstConversation = {
-      id: firstRequirement.id,
-      title: firstRequirement.title,
-      status: "completed" as const,
-      running: false,
-      items: [
-        {
-          kind: "assistant" as const,
-          id: "requirement-message-1",
-          text: "第一段需求记录",
-          created_at: "2026-07-10T00:01:30Z",
-        },
-      ],
-      prompt: null,
-      error: null,
-      updated_at: "2026-07-10T00:02:00Z",
-    };
-    const secondConversation = {
-      ...firstConversation,
-      id: secondRequirement.id,
-      title: secondRequirement.title,
-      items: [
-        {
-          kind: "assistant" as const,
-          id: "requirement-message-2",
-          text: "第二段需求记录",
-          created_at: "2026-07-10T00:03:30Z",
-        },
-      ],
-      updated_at: "2026-07-10T00:04:00Z",
-    };
+  it("keeps project messages and requirement messages in one ordered list", () => {
     render(
       <AstryxChatSurface
         data={data({
@@ -273,22 +202,64 @@ describe("AstryxChatSurface", () => {
               {
                 role: "user",
                 content: "需求前的项目消息",
+                source: "qa" as const,
                 created_at: "2026-07-10T00:00:00Z",
+              },
+              {
+                role: "system",
+                content: "已进入需求模式",
+                source: "qa" as const,
+                requirement_id: "requirement-1",
+                created_at: "2026-07-10T00:01:00Z",
+              },
+              {
+                role: "user",
+                content: "第一段需求记录",
+                source: "requirement" as const,
+                requirement_id: "requirement-1",
+                created_at: "2026-07-10T00:01:30Z",
+              },
+              {
+                role: "assistant",
+                content: "第一段需求回复",
+                source: "requirement" as const,
+                requirement_id: "requirement-1",
+                created_at: "2026-07-10T00:02:00Z",
+              },
+              {
+                role: "system",
+                content: "需求已确认，回到问答模式",
+                source: "qa" as const,
+                requirement_id: "requirement-1",
+                created_at: "2026-07-10T00:02:30Z",
               },
               {
                 role: "assistant",
                 content: "两个需求之间的项目消息",
-                created_at: "2026-07-10T00:02:30Z",
+                source: "qa" as const,
+                created_at: "2026-07-10T00:02:45Z",
+              },
+              {
+                role: "system",
+                content: "已进入需求模式",
+                source: "qa" as const,
+                requirement_id: "requirement-2",
+                created_at: "2026-07-10T00:03:00Z",
+              },
+              {
+                role: "assistant",
+                content: "第二段需求记录",
+                source: "requirement" as const,
+                requirement_id: "requirement-2",
+                created_at: "2026-07-10T00:03:30Z",
               },
             ],
+            mode: "qa" as const,
+            active_requirement_id: null,
             running: false,
             error: null,
             updated_at: "2026-07-10T00:04:00Z",
           },
-          requirementTimeline: [
-            branch(firstRequirement, firstConversation),
-            branch(secondRequirement, secondConversation),
-          ],
         })}
       />,
     );
@@ -296,18 +267,21 @@ describe("AstryxChatSurface", () => {
     expect(screen.getAllByTestId("astryx-unified-message-list")).toHaveLength(
       1,
     );
-    expect(screen.getAllByText("需求分支")).toHaveLength(2);
     const projectBefore = screen.getByText("需求前的项目消息");
-    const firstBranch = screen.getByText("第一段需求记录");
+    const firstRequirementUser = screen.getByText("第一段需求记录");
+    const firstRequirementAssistant = screen.getByText("第一段需求回复");
     const projectMiddle = screen.getByText("两个需求之间的项目消息");
-    const secondBranch = screen.getByText("第二段需求记录");
-    expect(projectBefore.compareDocumentPosition(firstBranch)).toBe(
+    const secondRequirement = screen.getByText("第二段需求记录");
+    expect(projectBefore.compareDocumentPosition(firstRequirementUser)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    expect(firstBranch.compareDocumentPosition(projectMiddle)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
-    expect(projectMiddle.compareDocumentPosition(secondBranch)).toBe(
+    expect(
+      firstRequirementUser.compareDocumentPosition(firstRequirementAssistant),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(
+      firstRequirementAssistant.compareDocumentPosition(projectMiddle),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(projectMiddle.compareDocumentPosition(secondRequirement)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
     expect(
@@ -350,7 +324,22 @@ describe("AstryxChatSurface", () => {
         data={data({
           requirement,
           conversation,
-          requirementTimeline: [branch(requirement, conversation)],
+          projectChat: {
+            messages: [
+              {
+                role: "system",
+                content: "已进入需求模式",
+                source: "qa" as const,
+                requirement_id: requirement.id,
+                created_at: "2026-07-10T00:00:00Z",
+              },
+            ],
+            mode: "requirement" as const,
+            active_requirement_id: requirement.id,
+            running: false,
+            error: null,
+            updated_at: "2026-07-10T00:00:00Z",
+          },
           onConfirm,
         })}
       />,
@@ -359,7 +348,6 @@ describe("AstryxChatSurface", () => {
     expect(
       screen.getByRole("heading", { name: "项目对话" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("需求分支")).toBeInTheDocument();
     expect(screen.getByTestId("requirement-prompt-panel")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "放弃" })).toBeVisible();
     expect(screen.getByRole("button", { name: "继续补充" })).toBeVisible();
@@ -395,7 +383,14 @@ describe("AstryxChatSurface", () => {
         data={data({
           requirement,
           conversation,
-          requirementTimeline: [branch(requirement, conversation)],
+          projectChat: {
+            messages: [],
+            mode: "requirement" as const,
+            active_requirement_id: requirement.id,
+            running: false,
+            error: null,
+            updated_at: "2026-07-10T00:00:00Z",
+          },
           onContinueEditing,
         })}
       />,
@@ -439,7 +434,14 @@ describe("AstryxChatSurface", () => {
         data={data({
           requirement,
           conversation,
-          requirementTimeline: [branch(requirement, conversation)],
+          projectChat: {
+            messages: [],
+            mode: "requirement" as const,
+            active_requirement_id: requirement.id,
+            running: false,
+            error: null,
+            updated_at: "2026-07-10T00:00:00Z",
+          },
           promptDismissed: true,
           onContinueEditing,
         })}
@@ -485,6 +487,8 @@ describe("AstryxChatSurface", () => {
                 created_at: "2026-07-10T00:00:00Z",
               },
             ],
+            mode: "qa" as const,
+            active_requirement_id: null,
             running: false,
             error: null,
             updated_at: "2026-07-10T00:00:00Z",
@@ -546,13 +550,6 @@ describe("AstryxChatSurface", () => {
           requirement: null,
           conversation: null,
           requirementOpeningId: requirement.id,
-          requirementTimeline: [
-            branch(null, null, {
-              requirementId: requirement.id,
-              opening: true,
-              createdAt: requirement.created_at,
-            }),
-          ],
           projectChat: {
             messages: [
               {
@@ -561,6 +558,8 @@ describe("AstryxChatSurface", () => {
                 created_at: "2026-07-10T00:00:00Z",
               },
             ],
+            mode: "qa" as const,
+            active_requirement_id: null,
             running: false,
             error: null,
             updated_at: "2026-07-10T00:00:00Z",
@@ -580,7 +579,7 @@ describe("AstryxChatSurface", () => {
     );
   });
 
-  it("opens the requirement branch when live activity arrives before its snapshot", async () => {
+  it("shows requirement live activity before its snapshot arrives", async () => {
     const requirement = {
       id: "requirement-1",
       title: "登录改造",
@@ -599,7 +598,7 @@ describe("AstryxChatSurface", () => {
         data={data({
           requirement,
           conversation: null,
-          requirementTimeline: [branch(requirement, null)],
+          requirementOpeningId: requirement.id,
           streamEvents: [
             {
               requirement_id: requirement.id,
@@ -622,7 +621,6 @@ describe("AstryxChatSurface", () => {
     expect(
       screen.getByRole("heading", { name: "项目对话" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("需求分支")).toBeInTheDocument();
     expect(await screen.findByText("正在梳理需求")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "运行中" })).toBeInTheDocument();
   });
@@ -657,6 +655,8 @@ describe("AstryxChatSurface", () => {
         data={data({
           projectChat: {
             messages: [],
+            mode: "qa" as const,
+            active_requirement_id: null,
             running: true,
             error: null,
             updated_at: "2026-07-10T00:00:00Z",
@@ -731,6 +731,8 @@ describe("AstryxChatSurface", () => {
                 },
               },
             ],
+            mode: "qa" as const,
+            active_requirement_id: null,
             running: false,
             error: null,
             updated_at: "2026-07-10T00:00:01Z",
@@ -778,6 +780,8 @@ describe("AstryxChatSurface", () => {
                 },
               },
             ],
+            mode: "qa" as const,
+            active_requirement_id: null,
             running: false,
             error: null,
             updated_at: "2026-07-10T00:00:01Z",

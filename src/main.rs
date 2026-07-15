@@ -1334,7 +1334,15 @@ mod tests {
             parent
                 .messages
                 .iter()
-                .all(|message| message.role != ProjectChatMessageRole::System)
+                .any(|message| message.role == ProjectChatMessageRole::System
+                    && message.content == "已进入需求模式")
+        );
+        assert!(
+            parent
+                .messages
+                .iter()
+                .any(|message| message.role == ProjectChatMessageRole::User
+                    && message.content == "基于上文生成需求")
         );
     }
 

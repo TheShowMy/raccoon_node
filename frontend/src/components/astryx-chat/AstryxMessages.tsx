@@ -1,5 +1,4 @@
 import {
-  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -32,29 +31,7 @@ import type { TraceBlock } from "../../types/api";
 import type { AstryxChatEntry, AstryxLiveActivity } from "./model";
 import { toolTarget } from "./model";
 
-export type AstryxTimelineItem =
-  | {
-      kind: "project";
-      id: string;
-      createdAt: string;
-      entry: AstryxChatEntry;
-    }
-  | {
-      kind: "requirement";
-      id: string;
-      createdAt: string;
-      entries: AstryxChatEntry[];
-      running: boolean;
-      error: string | null;
-    };
-
 const HISTORY_BATCH_SIZE = 80;
-const EMPTY_ACTIVITY: AstryxLiveActivity = {
-  thinking: "",
-  output: "",
-  tools: [],
-  notices: [],
-};
 
 function attachmentUrl(path: string) {
   return `/api/attachments/${encodeURIComponent(path)}`;
@@ -181,6 +158,13 @@ function Entry({ entry }: { entry: AstryxChatEntry }) {
   if (entry.role === "system") {
     return <ChatSystemMessage>{entry.text || "状态已更新"}</ChatSystemMessage>;
   }
+  if (entry.role === "trace") {
+    return (
+      <ChatMessage sender="assistant" avatar={<AssistantIcon />}>
+        <TraceBlocks blocks={entry.traceBlocks} />
+      </ChatMessage>
+    );
+  }
   return (
     <ChatMessage
       sender={entry.role}
@@ -267,7 +251,7 @@ const MemoEntry = memo(Entry);
 const MemoLiveActivity = memo(LiveActivity);
 
 function AstryxMessages({
-  timeline,
+  entries,
   projectActivity,
   projectRunning,
   interactiveRequirementId,
@@ -277,10 +261,8 @@ function AstryxMessages({
   onContentChange,
   prepareForPrepend,
   isPinned,
-  hasOlderHistory,
-  onLoadOlderHistory,
 }: {
-  timeline: AstryxTimelineItem[];
+  entries: AstryxChatEntry[];
   projectActivity: AstryxLiveActivity;
   projectRunning: boolean;
   interactiveRequirementId: string | null;
@@ -290,23 +272,9 @@ function AstryxMessages({
   onContentChange: () => void;
   prepareForPrepend: () => void;
   isPinned: () => boolean;
-  hasOlderHistory: boolean;
-  onLoadOlderHistory: () => Promise<boolean>;
 }) {
   const [visibleCount, setVisibleCount] = useState(HISTORY_BATCH_SIZE);
-  const loadingOlderRef = useRef(false);
-  const totalPersistentRows = useMemo(
-    () =>
-      timeline.reduce(
-        (total, item) =>
-          total +
-          (item.kind === "project"
-            ? 1
-            : item.entries.length + (item.error ? 1 : 0)),
-        0,
-      ),
-    [timeline],
-  );
+  const totalPersistentRows = entries.length;
   const previousTotalRef = useRef(totalPersistentRows);
 
   useEffect(() => {
@@ -320,13 +288,6 @@ function AstryxMessages({
       return;
     }
     if (delta === 0) return;
-    if (loadingOlderRef.current) {
-      loadingOlderRef.current = false;
-      setVisibleCount((current) =>
-        Math.min(totalPersistentRows, current + HISTORY_BATCH_SIZE),
-      );
-      return;
-    }
     if (!isPinned()) {
       setVisibleCount((current) =>
         Math.min(totalPersistentRows, current + delta),
@@ -334,117 +295,41 @@ function AstryxMessages({
     }
   }, [isPinned, totalPersistentRows]);
 
-  const selection = useMemo(() => {
-    let remaining = visibleCount;
-    const projectIds = new Set<string>();
-    const requirementEntryIds = new Set<string>();
-    const requirementIds = new Set<string>();
-    const requirementErrorIds = new Set<string>();
-
-    for (
-      let index = timeline.length - 1;
-      index >= 0 && remaining > 0;
-      index -= 1
-    ) {
-      const item = timeline[index];
-      if (item.kind === "project") {
-        projectIds.add(item.id);
-        remaining -= 1;
-        continue;
-      }
-      if (item.error && remaining > 0) {
-        requirementIds.add(item.id);
-        requirementErrorIds.add(item.id);
-        remaining -= 1;
-      }
-      for (
-        let entryIndex = item.entries.length - 1;
-        entryIndex >= 0 && remaining > 0;
-        entryIndex -= 1
-      ) {
-        requirementIds.add(item.id);
-        requirementEntryIds.add(`${item.id}:${item.entries[entryIndex].id}`);
-        remaining -= 1;
-      }
-    }
-    return {
-      projectIds,
-      requirementEntryIds,
-      requirementIds,
-      requirementErrorIds,
-    };
-  }, [timeline, visibleCount]);
-
   const hiddenRows = Math.max(0, totalPersistentRows - visibleCount);
   const loadOlder = useCallback(async () => {
     prepareForPrepend();
-    if (hiddenRows > 0) {
-      setVisibleCount((current) =>
-        Math.min(totalPersistentRows, current + HISTORY_BATCH_SIZE),
-      );
-      return;
-    }
-    loadingOlderRef.current = true;
-    if (!(await onLoadOlderHistory())) {
-      loadingOlderRef.current = false;
-    }
-  }, [hiddenRows, onLoadOlderHistory, prepareForPrepend, totalPersistentRows]);
+    setVisibleCount((current) =>
+      Math.min(totalPersistentRows, current + HISTORY_BATCH_SIZE),
+    );
+  }, [prepareForPrepend, totalPersistentRows]);
+
+  const visibleEntries = useMemo(() => {
+    if (hiddenRows === 0) return entries;
+    return entries.slice(entries.length - visibleCount);
+  }, [entries, hiddenRows, visibleCount]);
 
   useLayoutEffect(() => {
     onContentChange();
-  }, [
-    onContentChange,
-    projectActivity,
-    projectRunning,
-    timeline,
-    visibleCount,
-  ]);
+  }, [onContentChange, projectActivity, projectRunning, entries, visibleCount]);
 
   return (
     <ChatMessageList
       density="balanced"
       gap={3}
       isStreaming={isStreaming}
-      scrollToTopAction={
-        hiddenRows > 0 || hasOlderHistory ? loadOlder : undefined
-      }
+      scrollToTopAction={hiddenRows > 0 ? loadOlder : undefined}
       data-testid="astryx-unified-message-list"
     >
-      {timeline.map((item) =>
-        item.kind === "project" ? (
-          selection.projectIds.has(item.id) ? (
-            <MemoEntry key={item.id} entry={item.entry} />
-          ) : null
-        ) : selection.requirementIds.has(item.id) ||
-          item.id === `requirement-${interactiveRequirementId}` ? (
-          <Fragment key={item.id}>
-            <ChatSystemMessage variant="divider">需求分支</ChatSystemMessage>
-            {item.entries.map((entry) =>
-              selection.requirementEntryIds.has(`${item.id}:${entry.id}`) ? (
-                <MemoEntry key={entry.id} entry={entry} />
-              ) : null,
-            )}
-            {item.error && selection.requirementErrorIds.has(item.id) ? (
-              <ChatSystemMessage>
-                需求记录加载失败：{item.error}
-              </ChatSystemMessage>
-            ) : null}
-            <MemoLiveActivity
-              activity={
-                item.id === `requirement-${interactiveRequirementId}`
-                  ? requirementActivity
-                  : EMPTY_ACTIVITY
-              }
-              running={
-                item.id === `requirement-${interactiveRequirementId}`
-                  ? requirementRunning
-                  : item.running
-              }
-              onContentChange={onContentChange}
-            />
-          </Fragment>
-        ) : null,
-      )}
+      {visibleEntries.map((entry) => (
+        <MemoEntry key={entry.id} entry={entry} />
+      ))}
+      {interactiveRequirementId ? (
+        <MemoLiveActivity
+          activity={requirementActivity}
+          running={requirementRunning}
+          onContentChange={onContentChange}
+        />
+      ) : null}
       <MemoLiveActivity
         activity={projectActivity}
         running={projectRunning}

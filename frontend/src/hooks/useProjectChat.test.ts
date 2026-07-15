@@ -21,6 +21,8 @@ vi.mock("../api/client", () => ({
 
 const response: ProjectChatResponse = {
   messages: [],
+  mode: "qa",
+  active_requirement_id: null,
   running: false,
   error: null,
   updated_at: "2026-06-25T00:00:00Z",

@@ -391,10 +391,8 @@ async fn resetting_project_chat_clears_context_and_rejects_running_chat() {
     chat.messages.push(ProjectChatMessage {
         role: ProjectChatMessageRole::User,
         content: "问题".to_owned(),
-        references: Vec::new(),
-        images: Vec::new(),
-        metadata: None,
         created_at: now,
+        ..Default::default()
     });
     chat.error = Some("旧错误".to_owned());
     chat.pi_session_file = Some("old.jsonl".to_owned());
@@ -431,18 +429,14 @@ async fn requirement_branch_input_distinguishes_fresh_clone_and_running_chat() {
     chat.messages.push(ProjectChatMessage {
         role: ProjectChatMessageRole::User,
         content: "现有项目上下文".to_owned(),
-        references: Vec::new(),
-        images: Vec::new(),
-        metadata: None,
         created_at: now,
+        ..Default::default()
     });
     chat.messages.push(ProjectChatMessage {
         role: ProjectChatMessageRole::Assistant,
         content: "已完成回复".to_owned(),
-        references: Vec::new(),
-        images: Vec::new(),
-        metadata: None,
         created_at: now,
+        ..Default::default()
     });
     store.persist().await.unwrap();
     let input = store
@@ -502,10 +496,8 @@ async fn complete_chat_without_parent_session_does_not_fall_back_to_standalone()
             .push(ProjectChatMessage {
                 role,
                 content: content.to_owned(),
-                references: Vec::new(),
-                images: Vec::new(),
-                metadata: None,
                 created_at: now,
+                ..Default::default()
             });
     }
     store.persist().await.unwrap();
@@ -529,6 +521,9 @@ async fn active_requirement_blocks_project_chat_send_and_reset() {
     let mut active = requirement("active");
     active.status = RequirementStatus::Clarifying;
     store.data.requirements.push(active);
+    store.project_chat_response().await.unwrap();
+    store.data.project_chats[0].mode = crate::models::ProjectChatMode::Requirement;
+    store.data.project_chats[0].active_requirement_id = Some("active".to_owned());
     store.persist().await.unwrap();
 
     assert!(
@@ -537,7 +532,7 @@ async fn active_requirement_blocks_project_chat_send_and_reset() {
             .await
             .is_err()
     );
-    assert!(store.reset_project_chat().await.is_err());
+    assert!(store.reset_project_chat().await.is_ok());
 }
 
 fn requirement(id: &str) -> Requirement {
@@ -595,19 +590,19 @@ fn project_chat_with_usage(usage: serde_json::Value) -> ProjectChat {
         messages: vec![ProjectChatMessage {
             role: ProjectChatMessageRole::Assistant,
             content: "回答".to_owned(),
-            references: Vec::new(),
-            images: Vec::new(),
             metadata: Some(serde_json::json!({
                 "type": "pi_trace",
                 "trace": { "usage": usage }
             })),
             created_at: now,
+            ..Default::default()
         }],
         running: false,
         error: None,
         pi_session_file: None,
         created_at: now,
         updated_at: now,
+        ..Default::default()
     }
 }
 

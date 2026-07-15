@@ -592,6 +592,10 @@ pub async fn create_requirement_branch(
             .await?;
     }
     let (requirement_id, input) = created?;
+    ProjectChatEventEmitter {
+        bus: state.project_chat_events.clone(),
+    }
+    .emit("message_append", "项目对话已更新。");
     RequirementEventEmitter {
         requirement_id: requirement_id.clone(),
         task_id: None,
@@ -637,6 +641,10 @@ pub async fn append_requirement_message(
             .await?
     };
 
+    ProjectChatEventEmitter {
+        bus: state.project_chat_events.clone(),
+    }
+    .emit("message_append", "项目对话已更新。");
     RequirementEventEmitter {
         requirement_id: requirement_id.clone(),
         task_id: None,
@@ -676,6 +684,10 @@ pub async fn submit_requirement_clarifications(
             .submit_requirement_clarifications(&requirement_id, prompt_id, revision, answers)
             .await?
     };
+    ProjectChatEventEmitter {
+        bus: state.project_chat_events.clone(),
+    }
+    .emit("message_append", "项目对话已更新。");
     spawn_requirement_analysis(state.clone(), requirement_id, input, analysis_guard);
     let store = state.store.read().await;
     Ok(Json(store.project_canvas()?))
@@ -1105,7 +1117,12 @@ pub async fn confirm_requirement(
             .await
     };
     match confirm_result {
-        Ok(_) => {}
+        Ok(_) => {
+            ProjectChatEventEmitter {
+                bus: state.project_chat_events.clone(),
+            }
+            .emit("message_append", "项目对话已更新。");
+        }
         Err(error) => {
             let is_change_spec_failure = {
                 let store = state.store.read().await;
@@ -1413,6 +1430,11 @@ fn spawn_requirement_analysis(
                 false
             }
         };
+
+        ProjectChatEventEmitter {
+            bus: state.project_chat_events.clone(),
+        }
+        .emit("message_append", "项目对话已更新。");
 
         if auto_resume {
             emitter.emit(

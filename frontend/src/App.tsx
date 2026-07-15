@@ -449,8 +449,6 @@ function AppCanvas() {
         projectCanvas: project.projectCanvas,
         project: current.project,
         requirementConversation: requirement.requirementConversation,
-        requirementTimeline: requirement.requirementTimeline,
-        hasOlderRequirementHistory: requirement.hasOlderRequirementHistory,
         requirementBusy: requirement.requirementBusy,
         requirementOpeningId: requirement.openingRequirementId,
         requirementError: requirement.requirementError,
@@ -476,7 +474,6 @@ function AppCanvas() {
           if (requirement) project.selectWorkflowRequirement(requirement);
           openMainPanel("requirements");
         },
-        loadOlderRequirementHistory: requirement.loadOlderRequirementHistory,
         submitClarifications: requirement.submitClarifications,
         confirmRequirement: requirement.confirmRequirement,
         retryRequirementAnalysis: requirement.retryRequirementAnalysis,
@@ -504,9 +501,6 @@ function AppCanvas() {
       requirement.requirementBusy,
       requirement.openingRequirementId,
       requirement.requirementConversation,
-      requirement.requirementTimeline,
-      requirement.hasOlderRequirementHistory,
-      requirement.loadOlderRequirementHistory,
       requirement.requirementError,
       requirement.requirementStreamEvents,
       requirement.startRequirement,

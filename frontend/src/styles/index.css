@@ -236,7 +236,7 @@
   .node-link-handle.react-flow__handle-right {
     right: 0;
     top: 50%;
-    transform: translate(-50%, -50%);
+    transform: translate(50%, -50%);
   }
 
   .node-link-handle.react-flow__handle-left {

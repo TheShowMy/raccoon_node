@@ -357,6 +357,11 @@ export default function AstryxComposer({
         }
         headerActions={
           <>
+            <Token
+              label={requirementMode ? "需求模式" : "问答模式"}
+              color={requirementMode ? "blue" : "gray"}
+              size="sm"
+            />
             <Button
               label="添加图片"
               tooltip="添加图片"

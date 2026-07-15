@@ -20,6 +20,7 @@ pub fn build_project_chat_prompt(input: &ProjectChatInput, session_reused: bool)
                     ProjectChatMessageRole::User => "用户",
                     ProjectChatMessageRole::Assistant => "助手",
                     ProjectChatMessageRole::System => "系统",
+                    ProjectChatMessageRole::Trace => "工具",
                 };
                 format!("{role}: {}", message.content.trim())
             })
@@ -101,6 +102,8 @@ mod tests {
                 content: "入口在哪里？".to_owned(),
                 references: Vec::new(),
                 images: Vec::new(),
+                source: crate::models::ProjectChatMessageSource::Qa,
+                requirement_id: None,
                 metadata: None,
                 created_at: Utc::now(),
             }],

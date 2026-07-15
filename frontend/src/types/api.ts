@@ -584,16 +584,6 @@ export type RequirementConversation = {
   updated_at: string;
 };
 
-export type RequirementTimelineBranch = {
-  requirementId: string;
-  requirement: Requirement | null;
-  conversation: RequirementConversation | null;
-  loading: boolean;
-  error: string | null;
-  createdAt: string;
-  opening: boolean;
-};
-
 export type ChatSubmission = {
   message: string;
   references: FileReference[];
@@ -648,8 +638,10 @@ export type ProjectTokenUsage = {
 };
 
 export type ProjectChatMessage = {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "trace";
   content: string;
+  source?: "qa" | "requirement";
+  requirement_id?: string | null;
   references?: FileReference[];
   images?: ImageAttachment[];
   metadata?: TraceMetadata | null;
@@ -658,6 +650,8 @@ export type ProjectChatMessage = {
 
 export type ProjectChatResponse = {
   messages: ProjectChatMessage[];
+  mode: "qa" | "requirement";
+  active_requirement_id: string | null;
   running: boolean;
   error: string | null;
   updated_at: string;
@@ -899,8 +893,6 @@ export type StartNodeData =
       project: Project;
       requirement: Requirement | null;
       conversation: RequirementConversation | null;
-      requirementTimeline: RequirementTimelineBranch[];
-      hasOlderRequirementHistory: boolean;
       promptDismissed: boolean;
       busy: boolean;
       requirementOpeningId: string | null;
@@ -922,7 +914,6 @@ export type StartNodeData =
       onProjectChatAbort: () => Promise<void>;
       onProjectChatReset: () => Promise<boolean>;
       onOpenRequirement?: (requirementId: string) => void;
-      onLoadOlderRequirementHistory: () => Promise<boolean>;
       onSubmitClarifications: (
         requirement: Requirement,
         answers: Record<string, DraftClarificationAnswer>,

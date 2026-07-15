@@ -47,12 +47,32 @@ pub struct ProjectChat {
     #[serde(default)]
     pub messages: Vec<ProjectChatMessage>,
     #[serde(default)]
+    pub mode: ProjectChatMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_requirement_id: Option<String>,
+    #[serde(default)]
     pub running: bool,
     pub error: Option<String>,
     #[serde(skip_serializing)]
     pub pi_session_file: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl Default for ProjectChat {
+    fn default() -> Self {
+        let now = Utc::now();
+        Self {
+            messages: Vec::new(),
+            mode: ProjectChatMode::Qa,
+            active_requirement_id: None,
+            running: false,
+            error: None,
+            pi_session_file: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -63,9 +83,28 @@ pub struct ProjectChatMessage {
     pub references: Vec<FileReference>,
     #[serde(default)]
     pub images: Vec<ImageAttachment>,
+    #[serde(default)]
+    pub source: ProjectChatMessageSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirement_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
     pub created_at: DateTime<Utc>,
+}
+
+impl Default for ProjectChatMessage {
+    fn default() -> Self {
+        Self {
+            role: ProjectChatMessageRole::User,
+            content: String::new(),
+            references: Vec::new(),
+            images: Vec::new(),
+            source: ProjectChatMessageSource::Qa,
+            requirement_id: None,
+            metadata: None,
+            created_at: Utc::now(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -74,11 +113,30 @@ pub enum ProjectChatMessageRole {
     User,
     Assistant,
     System,
+    Trace,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectChatMessageSource {
+    #[default]
+    Qa,
+    Requirement,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectChatMode {
+    #[default]
+    Qa,
+    Requirement,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ProjectChatResponse {
     pub messages: Vec<ProjectChatMessage>,
+    pub mode: ProjectChatMode,
+    pub active_requirement_id: Option<String>,
     pub running: bool,
     pub error: Option<String>,
     pub updated_at: DateTime<Utc>,
@@ -196,6 +254,7 @@ pub struct Requirement {
     #[serde(default)]
     pub origin: RequirementOrigin,
     pub status: RequirementStatus,
+    #[serde(default, skip_serializing)]
     pub messages: Vec<RequirementMessage>,
     #[serde(default)]
     pub clarification_round: u32,

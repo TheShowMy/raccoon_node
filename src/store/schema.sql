@@ -6,7 +6,6 @@ CREATE TABLE requirements (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     status TEXT NOT NULL,
-    messages TEXT NOT NULL DEFAULT '[]',
     clarification_round INTEGER NOT NULL DEFAULT 0,
     clarifications TEXT NOT NULL DEFAULT '[]',
     draft TEXT,
@@ -31,6 +30,8 @@ CREATE TABLE settings (
 CREATE TABLE project_chats (
     singleton_key TEXT PRIMARY KEY CHECK (singleton_key = 'chat'),
     messages TEXT NOT NULL DEFAULT '[]',
+    mode TEXT NOT NULL DEFAULT 'qa',
+    active_requirement_id TEXT,
     running INTEGER NOT NULL DEFAULT 0,
     error TEXT,
     pi_session_file TEXT,
