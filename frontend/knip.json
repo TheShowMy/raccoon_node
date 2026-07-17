@@ -1,8 +1,0 @@
-{
-  "$schema": "https://unpkg.com/knip@5/schema.json",
-  "entry": ["src/**/*.test.{ts,tsx}"],
-  "project": ["src/**/*.{ts,tsx}!"],
-  "ignore": ["src/test/setup.ts"],
-  "ignoreDependencies": ["@astryxdesign/cli"],
-  "ignoreExportsUsedInFile": true
-}
