@@ -1,0 +1,79 @@
+/* 全局基础样式：像素语言只在组件层表达，这里只做底色、字体与可访问焦点。 */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--px-bg);
+  color: var(--px-ink);
+  font-family: var(--px-font-body);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.px-font-pixel {
+  font-family: var(--px-font-pixel);
+  letter-spacing: 0;
+}
+
+.px-font-mono {
+  font-family: var(--px-font-mono);
+}
+
+/* 像素图标与宠物素材禁用平滑缩放 */
+.px-icon,
+img[data-pixel] {
+  image-rendering: pixelated;
+}
+
+/* 阶梯切角：像素风的标志性轮廓（border 随形体被切，阴影改用 drop-shadow 跟随 alpha） */
+.px-cut {
+  clip-path: polygon(
+    0 var(--px-cut),
+    var(--px-cut) var(--px-cut),
+    var(--px-cut) 0,
+    calc(100% - var(--px-cut)) 0,
+    calc(100% - var(--px-cut)) var(--px-cut),
+    100% var(--px-cut),
+    100% calc(100% - var(--px-cut)),
+    calc(100% - var(--px-cut)) calc(100% - var(--px-cut)),
+    calc(100% - var(--px-cut)) 100%,
+    var(--px-cut) 100%,
+    var(--px-cut) calc(100% - var(--px-cut)),
+    0 calc(100% - var(--px-cut))
+  );
+}
+
+.px-shadowed {
+  filter: drop-shadow(var(--px-shadow) var(--px-border-ink));
+}
+
+.px-shadowed-sm {
+  filter: drop-shadow(var(--px-shadow-sm) var(--px-border-ink));
+}
+
+/* 键盘焦点必须可见（WCAG 2.2 AA） */
+:focus-visible {
+  outline: var(--px-border-width) solid var(--px-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

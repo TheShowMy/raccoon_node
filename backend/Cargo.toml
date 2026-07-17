@@ -1,0 +1,14 @@
+[package]
+name = "raccoon-node"
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.96"
+description = "Local-first, fully node-based requirement-to-code delivery for a single Git repository"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "raccoon"
+path = "src/main.rs"
+
+[dependencies]

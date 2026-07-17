@@ -7,14 +7,12 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
-import { Card } from "@astryxdesign/core/Card";
-import type { StartNodeData } from "../../types/api";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import {
-  deriveGrayDangoPresentation,
   GRAYDANGO_DRAG_ANIMATIONS,
   grayDangoDirectionCell,
   type GrayDangoDirectionCell,
+  type GrayDangoPresentation,
 } from "./graydangoModel";
 import {
   DEFAULT_GRAYDANGO_POSITION,
@@ -26,8 +24,8 @@ import {
   type GrayDangoDragDirection,
   type GrayDangoPosition,
 } from "./graydangoPosition";
+import "./graydango.css";
 
-type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
 type SpriteStyle = CSSProperties & {
   "--graydango-x": string;
   "--graydango-y": string;
@@ -64,13 +62,12 @@ function savePosition(position: GrayDangoPosition) {
 }
 
 function GrayDangoPet({
-  data,
+  presentation,
   containerRef,
 }: {
-  data: ChatData;
+  presentation: GrayDangoPresentation;
   containerRef: RefObject<HTMLElement | null>;
 }) {
-  const presentation = deriveGrayDangoPresentation(data);
   const [position, setPosition] = useState(loadPosition);
   const positionRef = useRef(position);
   const pendingPositionRef = useRef<GrayDangoPosition | null>(null);
@@ -241,8 +238,8 @@ function GrayDangoPet({
   const visibleFrame = dragAnimation ? frame : (lookDirection?.column ?? frame);
 
   const spriteStyle: SpriteStyle = {
-    "--graydango-x": `calc(var(--spacing-1) * ${visibleFrame * -24})`,
-    "--graydango-y": `calc(var(--spacing-1) * ${visibleRow * -26})`,
+    "--graydango-x": `calc(${visibleFrame * -24}px * var(--graydango-scale))`,
+    "--graydango-y": `calc(${visibleRow * -26}px * var(--graydango-scale))`,
   };
   const petStyle: CSSProperties = {
     left: `${position.x * 100}%`,
@@ -260,13 +257,13 @@ function GrayDangoPet({
       style={petStyle}
     >
       {presentation.bubble ? (
-        <Card
-          padding={2}
+        <output
           className="graydango-pet__bubble"
           data-tone={presentation.tone}
+          aria-live="polite"
         >
-          <output aria-live="polite">{presentation.bubble}</output>
-        </Card>
+          {presentation.bubble}
+        </output>
       ) : null}
       <span
         ref={spriteRef}

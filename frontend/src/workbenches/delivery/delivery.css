@@ -1,0 +1,608 @@
+/* 需求交付子画布：全部使用 --px-* token（02 §10）；依赖边区分不只靠颜色（FE-RUN-004） */
+
+.delivery-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── 依赖边：串行实线 / 合并双线 / 阻断红色虚线 / 关系链灰实线 ── */
+
+.react-flow__edge.de-chain path {
+  stroke: var(--px-muted);
+  stroke-width: 2;
+}
+
+.react-flow__edge.de-serial path {
+  stroke: var(--px-ink);
+  stroke-width: 2;
+}
+
+/* 合并任务：双线（主线 + 像素偏移第二线） */
+.react-flow__edge.de-merge path {
+  stroke: var(--px-primary);
+  stroke-width: 2;
+  filter: drop-shadow(0 3px 0 var(--px-primary));
+}
+
+.react-flow__edge.de-blocked path {
+  stroke: var(--px-danger);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+/* ── 节点基础 ── */
+
+.dnode {
+  padding: var(--px-space-2) var(--px-space-3);
+  background: var(--px-surface-raised);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  font-size: 13px;
+}
+
+.dnode--danger {
+  border-color: var(--px-danger);
+}
+
+.dnode__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--px-space-2);
+  margin-bottom: var(--px-space-2);
+}
+
+.dnode__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--px-space-1);
+  font-size: 9px;
+  color: var(--px-primary);
+}
+
+.dnode__chip {
+  padding: 0 var(--px-space-1);
+  font-size: 10px;
+  font-style: normal;
+  border: var(--px-border-width) solid currentcolor;
+  border-radius: var(--px-radius);
+}
+
+.dnode__chip[data-tone="green"] {
+  color: var(--px-success);
+}
+
+.dnode__chip[data-tone="yellow"] {
+  color: var(--px-warning);
+}
+
+.dnode__chip[data-tone="red"] {
+  color: var(--px-danger);
+}
+
+.dnode__chip[data-tone="cyan"] {
+  color: var(--px-info);
+}
+
+.dnode__chip[data-tone="gray"] {
+  color: var(--px-muted);
+}
+
+.dnode__meta {
+  margin: var(--px-space-1) 0 0;
+  font-size: 11px;
+  color: var(--px-muted);
+}
+
+.dnode__text {
+  margin: var(--px-space-1) 0;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dnode__text--merge {
+  border-left: 3px solid var(--px-primary);
+  padding-left: var(--px-space-2);
+}
+
+.dnode__warning {
+  margin: var(--px-space-1) 0;
+  padding: var(--px-space-1) var(--px-space-2);
+  color: var(--px-danger);
+  background: color-mix(in srgb, var(--px-danger) 10%, transparent);
+  border: var(--px-border-width) dashed var(--px-danger);
+  font-size: 12px;
+}
+
+.dnode__quote {
+  margin: var(--px-space-1) 0;
+  padding-left: var(--px-space-2);
+  border-left: 3px solid var(--px-muted);
+  color: var(--px-muted);
+  font-size: 12px;
+}
+
+.dnode__answer {
+  margin: var(--px-space-1) 0;
+  padding: var(--px-space-1) var(--px-space-2);
+  background: color-mix(in srgb, var(--px-success) 10%, transparent);
+  border: var(--px-border-width) solid var(--px-success);
+  font-size: 12px;
+}
+
+.dnode__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--px-space-2);
+  margin-top: var(--px-space-2);
+}
+
+.dnode__chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--px-space-1);
+}
+
+.dnode__option {
+  padding: 2px var(--px-space-2);
+  font-size: 12px;
+  background: var(--px-surface);
+  color: var(--px-ink);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+.dnode__option:hover {
+  background: var(--px-ink);
+  color: var(--px-bg);
+}
+
+.dnode__inline-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--px-space-2);
+  margin-top: var(--px-space-2);
+}
+
+.dnode__input,
+.dnode__textarea {
+  width: 100%;
+  padding: var(--px-space-1) var(--px-space-2);
+  font: inherit;
+  font-size: 12px;
+  color: var(--px-ink);
+  background: var(--px-surface);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+}
+
+.dnode__textarea {
+  font-family: var(--px-font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.dnode__tag {
+  padding: 0 var(--px-space-1);
+  font-family: var(--px-font-mono);
+  font-size: 10px;
+  background: var(--px-surface);
+  border: var(--px-border-width) solid var(--px-muted);
+  border-radius: var(--px-radius);
+}
+
+.dnode__lines {
+  margin: var(--px-space-1) 0;
+  padding-left: var(--px-space-4);
+  font-size: 12px;
+}
+
+.dnode__lines--alert {
+  color: var(--px-danger);
+}
+
+.dnode__sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--px-space-2);
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.dnode__sections h5 {
+  margin: 0 0 2px;
+  font-family: var(--px-font-pixel);
+  font-size: 8px;
+  color: var(--px-muted);
+}
+
+.dnode__scenario {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--px-space-2);
+  margin-bottom: var(--px-space-1);
+  font-size: 12px;
+}
+
+.dnode__scenario-edit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--px-space-1);
+  margin-bottom: var(--px-space-2);
+}
+
+.dnode__source {
+  color: var(--px-muted);
+  font-size: 11px;
+}
+
+.dnode__rev-tabs {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.dnode__rev-tabs button {
+  padding: 0 var(--px-space-1);
+  font-family: var(--px-font-mono);
+  font-size: 10px;
+  background: var(--px-surface);
+  color: var(--px-muted);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+.dnode__rev-tabs button[data-active] {
+  background: var(--px-ink);
+  color: var(--px-bg);
+}
+
+/* ── 需求列表 ── */
+
+.req-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--px-space-2);
+  max-height: 560px;
+}
+
+.req-list__controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--px-space-1);
+}
+
+.req-list__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.req-list__filters button {
+  padding: 0 var(--px-space-1);
+  font-size: 10px;
+  background: var(--px-surface);
+  color: var(--px-muted);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+.req-list__filters button[data-active] {
+  background: var(--px-ink);
+  color: var(--px-bg);
+}
+
+.req-list__scroll {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--px-space-2);
+}
+
+.req-list__group-title {
+  margin: 0 0 var(--px-space-1);
+  font-family: var(--px-font-pixel);
+  font-size: 8px;
+  color: var(--px-primary);
+}
+
+.req-list__items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--px-space-1);
+}
+
+.req-list__item-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.req-list__item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--px-space-1) var(--px-space-2);
+  text-align: left;
+  font: inherit;
+  background: var(--px-surface);
+  color: var(--px-ink);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+.req-list__item[data-selected] {
+  border-color: var(--px-primary);
+  background: color-mix(in srgb, var(--px-primary) 12%, var(--px-surface));
+}
+
+.req-list__item-title {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.req-list__item-meta {
+  font-size: 10px;
+  color: var(--px-muted);
+}
+
+.req-list__moves {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.req-list__moves button {
+  flex: 1;
+  padding: 0 var(--px-space-1);
+  background: var(--px-surface);
+  color: var(--px-ink);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+.req-list__moves button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Run 阶段轨道 ── */
+
+.dnode__rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0 0 var(--px-space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.dnode__rail li {
+  padding: 0 var(--px-space-1);
+  font-size: 10px;
+  color: var(--px-muted);
+  border: var(--px-border-width) solid var(--px-muted);
+  border-radius: var(--px-radius);
+}
+
+.dnode__rail li[data-done] {
+  color: var(--px-success);
+  border-color: var(--px-success);
+}
+
+.dnode__rail li[data-current] {
+  color: var(--px-bg);
+  background: var(--px-ink);
+  border-color: var(--px-ink);
+}
+
+/* ── 工作项 attempt 历史 ── */
+
+.dnode__attempts {
+  margin: var(--px-space-1) 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+}
+
+.dnode__attempts li {
+  padding: var(--px-space-1);
+  border-left: 3px solid var(--px-muted);
+  margin-bottom: 2px;
+}
+
+.dnode__attempts li[data-status="completed"] {
+  border-left-color: var(--px-success);
+}
+
+.dnode__attempts li[data-status="failed"] {
+  border-left-color: var(--px-danger);
+}
+
+.dnode__attempts li[data-status="running"] {
+  border-left-color: var(--px-info);
+}
+
+.dnode__upgraded {
+  padding: 0 var(--px-space-1);
+  font-style: normal;
+  font-size: 10px;
+  color: var(--px-warning);
+  border: var(--px-border-width) solid var(--px-warning);
+  border-radius: var(--px-radius);
+}
+
+/* ── Diff ── */
+
+.dnode__diff {
+  margin: 0;
+  padding: var(--px-space-2);
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--px-font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  background: var(--px-surface);
+  border: var(--px-border-width) solid var(--px-border-ink);
+}
+
+.dnode__diff code {
+  display: block;
+  white-space: pre;
+}
+
+.dnode__diff code[data-kind="add"] {
+  color: var(--px-success);
+  background: color-mix(in srgb, var(--px-success) 10%, transparent);
+}
+
+.dnode__diff code[data-kind="del"] {
+  color: var(--px-danger);
+  background: color-mix(in srgb, var(--px-danger) 10%, transparent);
+}
+
+.dnode__diff code[data-kind="hunk"] {
+  color: var(--px-info);
+}
+
+/* ── 验证 / 审核 ── */
+
+.dnode__validations,
+.dnode__angles,
+.dnode__findings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--px-space-2);
+}
+
+.dnode__validations li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--px-space-1) var(--px-space-2);
+  border: var(--px-border-width) solid var(--px-muted);
+  border-radius: var(--px-radius);
+  font-size: 11px;
+}
+
+.dnode__validations li[data-verdict="new_regression"] {
+  border-color: var(--px-danger);
+}
+
+.dnode__validations li[data-verdict="baseline_issues_only"] {
+  border-color: var(--px-warning);
+  background: color-mix(in srgb, var(--px-warning) 8%, transparent);
+}
+
+.dnode__validations li[data-verdict="clean"] {
+  border-color: var(--px-success);
+}
+
+.dnode__validation-results {
+  display: flex;
+  flex-direction: column;
+  color: var(--px-muted);
+}
+
+.dnode__angle-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--px-space-2);
+  font-size: 12px;
+}
+
+.dnode__findings li {
+  padding: var(--px-space-1) var(--px-space-2);
+  border-left: 3px solid var(--px-muted);
+  font-size: 11px;
+}
+
+.dnode__findings li[data-blocking] {
+  border-left-color: var(--px-danger);
+}
+
+.dnode__findings li[data-resolved] {
+  opacity: 0.65;
+  text-decoration: line-through;
+}
+
+.dnode__findings i {
+  color: var(--px-muted);
+}
+
+/* ── 演示控制台 ── */
+
+.dev-scenario {
+  position: absolute;
+  /* 停靠右下角：默认视口下该区域（ROW2 列 x≥1980 之外）无投影内容，避免遮挡链上节点 */
+  right: var(--px-space-2);
+  bottom: var(--px-space-2);
+  z-index: 10;
+  width: 260px;
+  padding: var(--px-space-2);
+  background: var(--px-surface);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  font-size: 11px;
+}
+
+.dev-scenario__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--px-space-2);
+}
+
+.dev-scenario__head .px-font-pixel {
+  font-size: 8px;
+  color: var(--px-primary);
+}
+
+.dev-scenario__mode {
+  color: var(--px-muted);
+  font-size: 10px;
+}
+
+.dev-scenario__row {
+  display: flex;
+  gap: var(--px-space-1);
+  margin-bottom: var(--px-space-2);
+}
+
+.dev-scenario__flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.dev-scenario__flag {
+  padding: 0 var(--px-space-1);
+  font-size: 10px;
+  background: var(--px-surface-raised);
+  color: var(--px-muted);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+.dev-scenario__flag[data-on] {
+  background: var(--px-ink);
+  color: var(--px-bg);
+}

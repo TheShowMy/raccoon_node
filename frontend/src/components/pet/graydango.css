@@ -1,0 +1,123 @@
+.graydango-pet {
+  /* 帧几何：spritesheet 1536×2288 = 基础网格 24×26 的 8 倍分辨率；scale 为显示倍数 */
+  --graydango-scale: 4;
+
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--px-space-2);
+  pointer-events: none;
+}
+
+.graydango-pet__bubble {
+  pointer-events: auto;
+  max-width: 240px;
+  margin: 0;
+  padding: var(--px-space-2) var(--px-space-3);
+  background: var(--px-surface-raised);
+  color: var(--px-ink);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  box-shadow: var(--px-shadow-sm) var(--px-border-ink);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.graydango-pet__bubble[data-tone="warning"] {
+  border-color: var(--px-warning);
+}
+
+.graydango-pet__bubble[data-tone="error"] {
+  border-color: var(--px-danger);
+  color: var(--px-danger);
+}
+
+.graydango-pet__sprite {
+  pointer-events: auto;
+  display: block;
+  width: calc(24px * var(--graydango-scale));
+  height: calc(26px * var(--graydango-scale));
+  background-image: url("/pets/graydango/spritesheet.webp");
+  background-size: calc(192px * var(--graydango-scale)) auto;
+  background-position: var(--graydango-x, 0px) var(--graydango-y, 0px);
+  image-rendering: pixelated;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.graydango-pet[data-dragging] .graydango-pet__sprite {
+  cursor: grabbing;
+}
+
+/* ── 通知队列气泡（FE-PET-005：前后浏览 / 位置 / 确认 / 定位） ── */
+
+.graydango-queue {
+  position: absolute;
+  right: var(--px-space-4);
+  bottom: 132px;
+  z-index: 31;
+  width: 300px;
+  padding: var(--px-space-2) var(--px-space-3);
+  background: var(--px-surface-raised);
+  color: var(--px-ink);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  font-size: 12px;
+}
+
+.graydango-queue[data-severity="error"] {
+  border-color: var(--px-danger);
+}
+
+.graydango-queue[data-severity="action_required"],
+.graydango-queue[data-severity="warning"] {
+  border-color: var(--px-warning);
+}
+
+.graydango-queue__message {
+  margin: 0 0 var(--px-space-2);
+  line-height: 1.5;
+}
+
+.graydango-queue__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--px-space-2);
+}
+
+.graydango-queue__controls > button {
+  min-width: 24px;
+  padding: 0 var(--px-space-1);
+  font: inherit;
+  background: var(--px-surface);
+  color: var(--px-ink);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+.graydango-queue__controls > button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.graydango-queue-indicator {
+  position: absolute;
+  right: var(--px-space-4);
+  bottom: 132px;
+  z-index: 31;
+  min-width: 28px;
+  height: 28px;
+  font-family: var(--px-font-pixel);
+  font-size: 10px;
+  background: var(--px-danger);
+  color: var(--px-bg);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  box-shadow: var(--px-shadow-sm) var(--px-border-ink);
+  cursor: pointer;
+}

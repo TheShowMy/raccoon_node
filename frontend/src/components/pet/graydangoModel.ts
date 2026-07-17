@@ -1,18 +1,5 @@
-import type { StartNodeData } from "../../types/api";
-import {
-  buildLiveActivity,
-  conversationEventsToStreamEvents,
-} from "../astryx-chat/model";
-
-type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
-
 export type GrayDangoAnimation =
-  | "idle"
-  | "waving"
-  | "failed"
-  | "waiting"
-  | "running"
-  | "review";
+  "idle" | "waving" | "failed" | "waiting" | "running" | "review";
 
 export type GrayDangoPresentation = {
   animation: GrayDangoAnimation;
@@ -21,6 +8,18 @@ export type GrayDangoPresentation = {
   bubble: string | null;
   tone: "neutral" | "warning" | "error";
 };
+
+/** v2：GrayDango 的呈现由通知队列顶部与当前活动驱动（PRD-NOTIFY、FE-PET）。 */
+export type GrayDangoQueueTop = {
+  severity: "error" | "action_required" | "warning" | "success" | "info";
+  message: string;
+} | null;
+
+export type GrayDangoActivity =
+  | { kind: "idle" }
+  | { kind: "thinking" }
+  | { kind: "responding" }
+  | { kind: "tool"; name: string };
 
 export type GrayDangoDirectionCell = { row: 9 | 10; column: number };
 
@@ -66,62 +65,44 @@ export function grayDangoDirectionCell(
   return index < 8 ? { row: 9, column: index } : { row: 10, column: index - 8 };
 }
 
-export function deriveGrayDangoPresentation(
-  data: ChatData,
-): GrayDangoPresentation {
-  const error = data.error ?? data.projectChatError ?? data.projectChat?.error;
-  if (error) {
-    return presentation("failed", compact(error, "遇到问题了"), "error");
+export function deriveGrayDangoPresentation(input: {
+  top: GrayDangoQueueTop;
+  activity: GrayDangoActivity;
+}): GrayDangoPresentation {
+  const { top, activity } = input;
+
+  if (top?.severity === "error") {
+    return presentation("failed", compact(top.message, "遇到问题了"), "error");
   }
 
-  const requirementActivity = buildLiveActivity(data.streamEvents);
-  const projectActivity = buildLiveActivity(
-    conversationEventsToStreamEvents(data.projectChatEvents),
-  );
-  const requirementRunning = Boolean(
-    data.busy ||
-    data.conversation?.running ||
-    data.requirementOpeningId ||
-    data.requirement?.status === "analyzing" ||
-    data.requirement?.status === "planning" ||
-    data.requirement?.status === "running",
-  );
-  const projectRunning = Boolean(
-    data.projectChatBusy || data.projectChat?.running,
-  );
-  const activity = requirementRunning ? requirementActivity : projectActivity;
-  const activeTool = [...activity.tools]
-    .reverse()
-    .find((tool) => tool.status === "running" || tool.status === "pending");
-
-  if (activeTool) {
-    const reviewing = /review|审核|检查|validate|test/i.test(activeTool.name);
+  if (activity.kind === "tool") {
+    const reviewing = /review|审核|检查|validate|test/i.test(activity.name);
     return presentation(
       reviewing ? "review" : "running",
-      compact(activeTool.name, "正在处理任务"),
+      compact(activity.name, "正在处理任务"),
     );
   }
-  if (requirementRunning || projectRunning) {
-    if (activity.thinking.trim()) {
-      return presentation("running", "正在思考…");
-    }
-    if (activity.output.trim()) {
-      return presentation("running", "正在回复…");
-    }
-    return presentation("running", "正在处理…");
+  if (activity.kind === "thinking") {
+    return presentation("running", "正在思考…");
+  }
+  if (activity.kind === "responding") {
+    return presentation("running", "正在回复…");
   }
 
-  switch (data.requirement?.status) {
-    case "clarifying":
-      return presentation("waiting", "需要你补充信息", "warning");
-    case "draft_ready":
-      return presentation("waiting", "草案准备好了，等你确认", "warning");
-    case "queued":
-      return presentation("waiting", "已加入执行队列", "warning");
-    case "completed":
-      return presentation("waving", "任务完成啦");
-    case "failed":
-      return presentation("failed", "任务执行失败", "error");
+  if (!top) return presentation("idle", null);
+  switch (top.severity) {
+    case "action_required":
+      return presentation(
+        "waiting",
+        compact(top.message, "需要你处理"),
+        "warning",
+      );
+    case "warning":
+      return presentation("waiting", compact(top.message, "有警告"), "warning");
+    case "success":
+      return presentation("waving", compact(top.message, "完成啦"));
+    case "info":
+      return presentation("idle", compact(top.message, ""));
     default:
       return presentation("idle", null);
   }

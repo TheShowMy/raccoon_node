@@ -1,78 +1,83 @@
 import { describe, expect, it } from "vitest";
-import type { StartNodeData } from "../../types/api";
 import {
   deriveGrayDangoPresentation,
   GRAYDANGO_DRAG_ANIMATIONS,
   grayDangoDirectionCell,
 } from "./graydangoModel";
 
-type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
-
-function chatData(overrides: Partial<ChatData> = {}): ChatData {
-  return {
-    kind: "requirement-chat",
-    project: { name: "repo", git_url: "", local_path: "/repo" },
-    requirement: null,
-    conversation: null,
-    promptDismissed: false,
-    busy: false,
-    requirementOpeningId: null,
-    error: null,
-    streamEvents: [],
-    projectChat: null,
-    projectChatBusy: false,
-    projectChatError: null,
-    projectChatEvents: [],
-    onSend: async () => true,
-    onStartRequirement: async () => true,
-    onProjectChatSend: async () => true,
-    onProjectChatAbort: async () => {},
-    onProjectChatReset: async () => true,
-    onSubmitClarifications: async () => true,
-    onConfirm: async () => {},
-    onContinueEditing: () => {},
-    onCancel: () => {},
-    onAbandon: () => {},
-    ...overrides,
-  };
-}
-
 describe("deriveGrayDangoPresentation", () => {
-  it("rests without a bubble while the project is idle", () => {
-    expect(deriveGrayDangoPresentation(chatData())).toMatchObject({
-      animation: "idle",
-      row: 0,
-      bubble: null,
-    });
+  it("rests without a bubble while idle and the queue is empty", () => {
+    expect(
+      deriveGrayDangoPresentation({ top: null, activity: { kind: "idle" } }),
+    ).toMatchObject({ animation: "idle", row: 0, bubble: null });
   });
 
-  it("waits with the Codex-style confirmation bubble", () => {
+  it("surfaces action-required notifications as a waiting bubble", () => {
     expect(
-      deriveGrayDangoPresentation(
-        chatData({ requirement: { status: "draft_ready" } as never }),
-      ),
+      deriveGrayDangoPresentation({
+        top: {
+          severity: "action_required",
+          message: "草案准备好了，等你确认",
+        },
+        activity: { kind: "idle" },
+      }),
     ).toMatchObject({
       animation: "waiting",
       row: 6,
       bubble: "草案准备好了，等你确认",
+      tone: "warning",
     });
   });
 
-  it("uses the focused-work row while chat is running", () => {
+  it("uses the focused-work row while a tool is running", () => {
     expect(
-      deriveGrayDangoPresentation(chatData({ projectChatBusy: true })),
-    ).toMatchObject({ animation: "running", row: 7, bubble: "正在处理…" });
+      deriveGrayDangoPresentation({
+        top: null,
+        activity: { kind: "tool", name: "apply_patch" },
+      }),
+    ).toMatchObject({ animation: "running", row: 7, bubble: "apply_patch" });
   });
 
-  it("shows failures immediately", () => {
+  it("uses the review row for review-like tools", () => {
     expect(
-      deriveGrayDangoPresentation(chatData({ projectChatError: "连接失败" })),
+      deriveGrayDangoPresentation({
+        top: null,
+        activity: { kind: "tool", name: "review diff 审核" },
+      }),
+    ).toMatchObject({ animation: "review", row: 8 });
+  });
+
+  it("shows errors before any activity", () => {
+    expect(
+      deriveGrayDangoPresentation({
+        top: { severity: "error", message: "连接失败" },
+        activity: { kind: "thinking" },
+      }),
     ).toMatchObject({
       animation: "failed",
       row: 5,
       bubble: "连接失败",
       tone: "error",
     });
+  });
+
+  it("celebrates success notifications", () => {
+    expect(
+      deriveGrayDangoPresentation({
+        top: { severity: "success", message: "任务完成啦" },
+        activity: { kind: "idle" },
+      }),
+    ).toMatchObject({ animation: "waving", row: 3, bubble: "任务完成啦" });
+  });
+
+  it("compacts long messages", () => {
+    const long = "很长的错误 ".repeat(20);
+    const result = deriveGrayDangoPresentation({
+      top: { severity: "error", message: long },
+      activity: { kind: "idle" },
+    });
+    expect(result.bubble).toHaveLength(53);
+    expect(result.bubble).toMatch(/…$/);
   });
 });
 

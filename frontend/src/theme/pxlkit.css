@@ -1,0 +1,5 @@
+/* pxlkit 基础组件样式集成（02 §2.1）：ui-kit 的 styles.css 是 Tailwind v4
+   CSS-first 配置；node_modules 不在 Tailwind 自动内容探测范围内，
+   需要显式 @source 指向 ui-kit 产物以生成组件用到的工具类。 */
+@import "@pxlkit/ui-kit/styles.css";
+@source "../../../node_modules/@pxlkit/ui-kit";

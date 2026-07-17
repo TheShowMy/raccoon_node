@@ -1,40 +1,25 @@
 import { createRef } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { StartNodeData } from "../../types/api";
 import GrayDangoPet from "./GrayDangoPet";
+import type { GrayDangoPresentation } from "./graydangoModel";
 import { GRAYDANGO_POSITION_STORAGE_KEY } from "./graydangoPosition";
 
-type ChatData = Extract<StartNodeData, { kind: "requirement-chat" }>;
+const IDLE: GrayDangoPresentation = {
+  animation: "idle",
+  row: 0,
+  frames: 6,
+  bubble: null,
+  tone: "neutral",
+};
 
-function chatData(overrides: Partial<ChatData> = {}): ChatData {
-  return {
-    kind: "requirement-chat",
-    project: { name: "repo", git_url: "", local_path: "/repo" },
-    requirement: null,
-    conversation: null,
-    promptDismissed: false,
-    busy: false,
-    requirementOpeningId: null,
-    error: null,
-    streamEvents: [],
-    projectChat: null,
-    projectChatBusy: false,
-    projectChatError: null,
-    projectChatEvents: [],
-    onSend: async () => true,
-    onStartRequirement: async () => true,
-    onProjectChatSend: async () => true,
-    onProjectChatAbort: async () => {},
-    onProjectChatReset: async () => true,
-    onSubmitClarifications: async () => true,
-    onConfirm: async () => {},
-    onContinueEditing: () => {},
-    onCancel: () => {},
-    onAbandon: () => {},
-    ...overrides,
-  };
-}
+const BUSY: GrayDangoPresentation = {
+  animation: "running",
+  row: 7,
+  frames: 6,
+  bubble: "正在处理…",
+  tone: "neutral",
+};
 
 function rect(left: number, top: number, width: number, height: number) {
   return {
@@ -89,12 +74,12 @@ describe("GrayDangoPet", () => {
     vi.restoreAllMocks();
   });
 
-  function renderPet(data = chatData()) {
+  function renderPet(presentation: GrayDangoPresentation = IDLE) {
     const containerRef = createRef<HTMLElement>();
     const parentPointerMove = vi.fn();
     render(
       <section ref={containerRef} onPointerMove={parentPointerMove}>
-        <GrayDangoPet data={data} containerRef={containerRef} />
+        <GrayDangoPet presentation={presentation} containerRef={containerRef} />
       </section>,
     );
     const pet = screen.getByLabelText("GrayDango 项目助手");
@@ -206,7 +191,7 @@ describe("GrayDangoPet", () => {
   });
 
   it("does not start dragging from the status bubble", () => {
-    const { pet } = renderPet(chatData({ projectChatBusy: true }));
+    const { pet } = renderPet(BUSY);
     fireEvent.pointerDown(screen.getByText("正在处理…"), {
       pointerId: 10,
       pointerType: "mouse",
@@ -224,7 +209,7 @@ describe("GrayDangoPet", () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     }));
-    const { sprite } = renderPet(chatData({ projectChatBusy: true }));
+    const { sprite } = renderPet(BUSY);
     fireEvent.pointerDown(sprite, {
       pointerId: 9,
       pointerType: "mouse",

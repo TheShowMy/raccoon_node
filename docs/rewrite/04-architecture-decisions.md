@@ -95,6 +95,10 @@
 - `@pxlkit/ui-kit` 的 WCAG 2.1 AA 覆盖保留了 PRD-NFR-006 的可访问性基线；自研组件必须达到同等 ARIA/键盘标准（axe + 手工键盘验收把关）。
 - 首个前端里程碑必须先建立像素 token、字体方案、节点语法和状态语义。
 - pxlkit 图标包的署名义务进入发布检查；如需免署名商用再单独评估其付费条款。
+- 实现事实（P1 发现）：`@pxlkit/ui-kit` 的 `styles.css` 是 Tailwind v4 CSS-first 配置，
+  组件样式由 Tailwind 工具类生成，因此 `tailwindcss` + `@tailwindcss/vite` 作为**构建期**
+  依赖引入（MIT）。这不改变运行时 token 体系（CSS variables 仍是唯一 token 来源），
+  业务代码不直接使用 Tailwind 工具类。
 
 ### Rejected
 

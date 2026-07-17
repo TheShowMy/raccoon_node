@@ -1,0 +1,49 @@
+fail_fast: false
+# 基础版提交检查：tsc / clippy / knip / 构建等重型检查随功能扩展再启用。
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: fix-byte-order-marker
+        name: 修复字节顺序标记
+      - id: check-case-conflict
+        name: 检查文件名大小写冲突
+      - id: check-merge-conflict
+        name: 检查合并冲突标记
+      - id: check-symlinks
+        name: 检查符号链接
+      - id: check-yaml
+        name: 检查 YAML 文件格式
+      - id: check-toml
+        name: 检查 TOML 文件格式
+      - id: check-json
+        name: 检查 JSON 文件格式
+      - id: end-of-file-fixer
+        name: 修复文件末尾换行符
+      - id: mixed-line-ending
+        name: 修复混合行尾符
+      - id: trailing-whitespace
+        name: 删除行尾多余空格
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.47.0
+    hooks:
+      - id: typos
+        name: 检查拼写错误
+
+  - repo: local
+    hooks:
+      - id: prettier
+        name: 使用 Prettier 检查 TS/TSX/CSS 文件
+        entry: npm --prefix frontend run format:check
+        language: system
+        files: ^frontend/.*\.(ts|tsx|css)$
+        pass_filenames: false
+
+      # 随功能扩展（前端骨架稳定后启用）：
+      # - id: tsc
+      #   name: TypeScript 类型检查
+      #   entry: npm --prefix frontend run check
+      #   language: system
+      #   files: ^frontend/.*\.(ts|tsx)$
+      #   pass_filenames: false

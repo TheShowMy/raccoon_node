@@ -1,0 +1,64 @@
+/* 像素设计 token：唯一 token 来源（02 文档 §2.1、ADR-002）。
+   明/暗双套 retro 调色板（清新向）；硬边框、步进像素阴影、零圆角。 */
+
+:root {
+  color-scheme: light;
+
+  /* 调色板：淡青纸面 + 深绿墨 + 清新绿主色 */
+  --px-bg: #eaf1e3;
+  --px-surface: #f5f9ef;
+  --px-surface-raised: #fdfff9;
+  --px-ink: #263425;
+  --px-muted: #6d7d68;
+  --px-border-ink: #263425;
+
+  --px-primary: #2e9e5b;
+  --px-success: #2e9e5b;
+  --px-warning: #d99a17;
+  --px-danger: #d24545;
+  --px-info: #3b82d6;
+
+  /* 画布像素网格点 */
+  --px-grid-dot: rgb(38 52 37 / 0.1);
+
+  /* 几何：硬边框 + 步进像素阴影 + 阶梯切角 */
+  --px-border-width: 2px;
+  --px-shadow: 4px 4px 0 0;
+  --px-shadow-sm: 2px 2px 0 0;
+  --px-radius: 0;
+  --px-cut: 6px;
+
+  /* 字体：位图字体仅标题/标签；正文与代码高可读 */
+  --px-font-pixel: "Press Start 2P", monospace;
+  --px-font-body:
+    system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  --px-font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* 间距 */
+  --px-space-1: 4px;
+  --px-space-2: 8px;
+  --px-space-3: 12px;
+  --px-space-4: 16px;
+  --px-space-6: 24px;
+  --px-space-8: 32px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --px-bg: #151c17;
+  --px-surface: #1c2620;
+  --px-surface-raised: #243128;
+  --px-ink: #e2efe0;
+  --px-muted: #8ba189;
+  --px-border-ink: #e2efe0;
+
+  --px-primary: #4fce7d;
+  --px-success: #4fce7d;
+  --px-warning: #ffbf3f;
+  --px-danger: #ff6b6b;
+  --px-info: #5b9dff;
+
+  --px-grid-dot: rgb(226 239 224 / 0.08);
+}

@@ -1,0 +1,382 @@
+/* 主画布 / 工作台 / 对话图样式：全部使用 --px-* token（02 §10） */
+
+.main-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--px-bg);
+  /* 像素点阵网格：复古画布质感 */
+  background-image: radial-gradient(var(--px-grid-dot) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── 环绕能力概览卡 ── */
+
+.capability-node {
+  width: 100%;
+  height: 100%;
+  padding: var(--px-space-2) var(--px-space-3);
+  background: var(--px-surface);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.capability-node:hover {
+  background: var(--px-surface-raised);
+}
+
+.capability-node__title {
+  display: flex;
+  align-items: center;
+  gap: var(--px-space-2);
+  margin: 0 0 var(--px-space-2);
+  font-size: 10px;
+  color: var(--px-primary);
+}
+
+.capability-node__lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--px-muted);
+}
+
+/* 工作台打开时：主场景其他节点低对比且不可交互（FE-CANVAS-012） */
+[data-dimmed] {
+  opacity: 0.35;
+  filter: grayscale(0.6);
+  pointer-events: none;
+}
+
+/* ── 中央对话宿主 ── */
+
+.central-node {
+  width: 100%;
+  height: 100%;
+  background: var(--px-surface);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  overflow: hidden;
+}
+
+.conversation-graph {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.chat-toolbar {
+  position: absolute;
+  top: var(--px-space-2);
+  left: var(--px-space-2);
+  z-index: 10;
+  display: flex;
+  gap: var(--px-space-1);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.chat-toolbar__branch {
+  padding: 2px var(--px-space-2);
+  font-family: var(--px-font-pixel);
+  font-size: 8px;
+  background: var(--px-surface);
+  color: var(--px-muted);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+.chat-toolbar__branch[data-active] {
+  background: var(--px-ink);
+  color: var(--px-bg);
+}
+
+.chat-toolbar__connection {
+  font-size: 11px;
+  color: var(--px-warning);
+}
+
+.chat-follow {
+  position: absolute;
+  right: var(--px-space-3);
+  bottom: var(--px-space-3);
+  z-index: 10;
+  padding: var(--px-space-1) var(--px-space-3);
+  font-size: 12px;
+  background: var(--px-surface-raised);
+  color: var(--px-ink);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+/* ── 对话节点 ── */
+
+.chat-node {
+  padding: var(--px-space-2) var(--px-space-3);
+  background: var(--px-surface-raised);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  font-size: 13px;
+}
+
+.chat-node--composer {
+  background: var(--px-surface);
+  border-color: var(--px-primary);
+}
+
+.chat-node__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--px-space-2);
+  margin-bottom: var(--px-space-2);
+}
+
+.chat-node__label {
+  font-size: 9px;
+}
+
+.chat-node__intent {
+  font-size: 11px;
+  color: var(--px-muted);
+}
+
+.chat-node__intent[data-ambiguous] {
+  color: var(--px-warning);
+}
+
+.chat-node__chip {
+  padding: 0 var(--px-space-1);
+  font-size: 10px;
+  border: var(--px-border-width) solid currentcolor;
+  border-radius: var(--px-radius);
+}
+
+.chat-node__chip[data-state="streaming"],
+.chat-node__chip[data-state="running"] {
+  color: var(--px-info);
+}
+
+.chat-node__chip[data-state="completed"] {
+  color: var(--px-success);
+}
+
+.chat-node__chip[data-state="failed"] {
+  color: var(--px-danger);
+}
+
+.chat-node__chip[data-state="aborted"] {
+  color: var(--px-warning);
+}
+
+.chat-node__content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+}
+
+.chat-node__content--scroll {
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.chat-node__shell {
+  margin: 0;
+  color: var(--px-muted);
+  font-style: italic;
+}
+
+.chat-node__meta {
+  margin: var(--px-space-1) 0 0;
+  font-size: 11px;
+  color: var(--px-muted);
+}
+
+.chat-node__summary {
+  margin: var(--px-space-1) 0 0;
+  font-size: 11px;
+  color: var(--px-muted);
+  border-top: 1px dashed var(--px-muted);
+  padding-top: var(--px-space-1);
+}
+
+.chat-node__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--px-space-2);
+  margin-top: var(--px-space-2);
+}
+
+.chat-node__override {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.chat-node__override-option {
+  padding: 0 var(--px-space-1);
+  font-size: 10px;
+  background: var(--px-surface);
+  color: var(--px-muted);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+.chat-node__override-option[data-active] {
+  background: var(--px-ink);
+  color: var(--px-bg);
+}
+
+/* Composer 引用与附件 chips（FE-CHAT-001：文件引用 ≤8、图片 ≤3） */
+.chat-node__refs {
+  margin: 0 0 var(--px-space-2);
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--px-space-1);
+}
+
+.chat-node__ref {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--px-space-1);
+  padding: 0 var(--px-space-1);
+  font-size: 10px;
+  background: var(--px-surface-raised);
+  border: var(--px-border-width) solid var(--px-info);
+  color: var(--px-ink);
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.chat-node__ref--image {
+  border-color: var(--px-warning);
+}
+
+.chat-node__ref button {
+  padding: 0 2px;
+  background: none;
+  border: none;
+  color: var(--px-danger);
+  cursor: pointer;
+  font: inherit;
+}
+
+.chat-node__attach {
+  padding: 0 var(--px-space-1);
+  font-size: 10px;
+  background: var(--px-surface);
+  color: var(--px-muted);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+.chat-node__attach:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 语义缩放：远景只保留类型/阶段摘要（FE-CHAT-013） */
+.conversation-graph[data-compact] .chat-node__content,
+.conversation-graph[data-compact] .chat-node__summary,
+.conversation-graph[data-compact] .chat-node__meta,
+.conversation-graph[data-compact] .chat-node__actions,
+.conversation-graph[data-compact] .chat-node__shell {
+  display: none;
+}
+
+/* ── 射线工作台节点 ── */
+
+.workbench-node {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--px-surface);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  overflow: hidden;
+}
+
+.workbench-node__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--px-space-2) var(--px-space-3);
+  border-bottom: var(--px-border-width) solid var(--px-border-ink);
+}
+
+.workbench-node__title {
+  margin: 0;
+  font-size: 11px;
+}
+
+.workbench-node__body {
+  flex: 1;
+  padding: var(--px-space-4);
+  overflow: auto;
+}
+
+/* FE-DELIVERY-001：全铺满子画布（无内边距，内部 React Flow 占满） */
+.workbench-node__body[data-fill] {
+  padding: 0;
+  overflow: hidden;
+}
+
+.workbench-node__placeholder {
+  margin: 0;
+  color: var(--px-muted);
+}
+
+/* ── 启动画面 ── */
+
+.boot-screen {
+  display: grid;
+  place-items: center;
+  height: 100%;
+}
+
+.boot-screen__card {
+  padding: var(--px-space-8);
+  text-align: center;
+  background: var(--px-surface);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+}
+
+.boot-screen__card h1 {
+  margin: 0 0 var(--px-space-3);
+  font-size: 16px;
+}
+
+.boot-screen__card button {
+  padding: var(--px-space-1) var(--px-space-4);
+  font: inherit;
+  background: var(--px-surface-raised);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
