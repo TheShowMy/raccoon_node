@@ -18,7 +18,7 @@
 | 编号    | 决策                                                    | 状态     |
 | ------- | ------------------------------------------------------- | -------- |
 | ADR-001 | `rig-core = 0.40.0` 位于自有模型与 Agent 适配层后       | Accepted |
-| ADR-002 | React 19 + React Flow + Material UI（MUI）+ 自有主题    | Accepted |
+| ADR-002 | React 19 + React Flow + 像素风格设计系统（pxlkit + 自研） | Accepted |
 | ADR-003 | 单仓前后端独立构建，生产发布为单二进制                  | Accepted |
 | ADR-004 | REST 命令与快照 + HTTP NDJSON 业务事件 + WebSocket 终端 | Accepted |
 | ADR-005 | JSONL Event Store + 单一 `state.json`                   | Accepted |
@@ -67,38 +67,40 @@
 - **直接暴露 Rig 类型**：breaking changes 会进入事件、快照和前端。
 - **使用 langchainrust 或 AutoAgents 作为主框架**：当前稳定性、文档或采用度不如 Rig。
 
-## 4. ADR-002：MUI 基础控件与自有节点视觉
+## 4. ADR-002：像素风格设计系统（pxlkit 基础 + 自研节点视觉）
 
 ### Context
 
-前端需要成熟的表单、选择、菜单、提示、可访问性和主题能力，同时必须高度定制能力地图、ConversationGraph、需求、Diff、验证与发布节点。
+产品的设计语言确定为**像素风格（Pixel / Retro）**，与 GrayDango 像素宠物（16×16 spritesheet）同源统一。通用企业级组件库（MUI、Ant Design）的默认视觉与像素语言冲突，深度覆写成本高于直接采用像素系基础库。
 
-MUI 提供 React 19 支持和完整主题覆盖。[MUI installation](https://mui.com/material-ui/getting-started/installation/) · [MUI theming](https://mui.com/material-ui/customization/theming/)
+现有像素系 React 生态：
 
-Radix 提供低层可访问 primitive，但完整表单组合、密集数据和设计系统需要较多自建。[Radix Primitives](https://www.radix-ui.com/primitives/docs/overview/introduction)
-
-Ant Design 覆盖成熟，但默认语气偏企业后台，节点空间仍需大幅重写。[Ant Design](https://ant.design/docs/react/introduce/)
+- [`@pxlkit/ui-kit`](https://github.com/Joangeldelarosa/pxlkit)：111 个复古组件（表单、Modal、Tooltip、Dropdown、Tabs、Accordion、数据展示等），pixel/linear 双 surface 与暗色模式，WCAG 2.1 AA；`@pxlkit/core` 提供像素图标渲染、16×16 网格工具、PixelToast 与动画原语。两者均 MIT。
+- [RetroUI（`pixel-retroui`，BSD-3）](https://github.com/Dksie09/RetroUI)：9 个像素基础组件与位图字体，体量小，适合作为风格与实现参考。
+- 许可注意：pxlkit 的图标包（gamification/feedback/social/weather/ui/effects/parallax）为 source-available（免费需署名，付费免署名），只有 core/ui-kit/voxel 是 MIT。
 
 ### Decision
 
-- 使用 React 19、TypeScript、Vite、`@xyflow/react` 和 Material UI（`@mui/material`）+ Emotion 样式引擎。
-- MUI Theme/CSS variables 统一 token，不并行引入第二套通用组件体系。
-- MUI 只用于节点内部的基础输入、选择、提示和可访问原语。
-- ConversationGraph、工作台节点、规格、Run、Diff、验证、审核、发布和 GrayDango 自研。
-- MUI 不承担顶层导航、全局通知、业务状态覆盖或危险操作确认。
+- 使用 React 19、TypeScript、Vite、`@xyflow/react`；基础控件以 `@pxlkit/ui-kit` + `@pxlkit/core` 为基线，RetroUI 作为风格参考。
+- 像素设计 token（调色板、硬边框、像素阴影、位图字体、间距）以 CSS variables 承载，是唯一 token 来源；不引入 MUI/Emotion 等第二套通用组件体系。
+- 库中不存在的组件一律按相同像素风格自研：ConversationGraph、工作台节点、规格、Run、Diff、验证、审核、发布、终端和 GrayDango；自研组件复用 `@pxlkit/core` 的网格/调色板工具与 token。
+- 位图字体只用于标题、标签与强调；正文、代码和 Diff 使用高可读字体。
+- 图标策略：优先自绘 16×16 像素图标（与 pxlkit 网格格式兼容）；使用 pxlkit 图标包素材时必须在 `THIRD_PARTY_NOTICES` 与关于页署名。
+- 基础组件库不承担顶层导航、全局通知、业务状态覆盖或危险操作确认。
 - TanStack Query 管理 REST 状态，Zustand 只管理画布导航、本地草稿和外观偏好。
 
 ### Consequences
 
-- 避免完全自研基础可访问组件，同时不让通用页面模板改变节点产品语言。
-- 首个前端里程碑必须先建立主题、密度、节点语法和状态语义。
-- 不把 MUI X 付费能力设为 v1 必需项。
+- 像素语言从宠物扩展到全产品，形成统一且高辨识度的视觉；无需与通用组件库的默认视觉对抗。
+- `@pxlkit/ui-kit` 的 WCAG 2.1 AA 覆盖保留了 PRD-NFR-006 的可访问性基线；自研组件必须达到同等 ARIA/键盘标准（axe + 手工键盘验收把关）。
+- 首个前端里程碑必须先建立像素 token、字体方案、节点语法和状态语义。
+- pxlkit 图标包的署名义务进入发布检查；如需免署名商用再单独评估其付费条款。
 
 ### Rejected
 
-- **完全自研**：无障碍和基础控件维护成本过高。
-- **Radix + 全自定义**：自由度高，但 v1 基础建设量过大。
-- **Ant Design**：组件丰富，但页面范式和视觉气质不匹配。
+- **Material UI / Ant Design**：默认视觉与像素语言冲突，覆写成本高于收益。
+- **Radix + 全自定义像素皮肤**：可行但失去 pxlkit 的现成组件覆盖与 a11y 基线，v1 建设量过大。
+- **RetroUI 作为唯一基础库**：组件数量不足（9 个），缺口过大。
 - **继续 Astryx**：成熟度和可预测性不足，并会继承当前实现约束。
 
 ## 5. ADR-003：单仓前后端独立构建与单二进制
@@ -350,7 +352,7 @@ Raccoon Node 只服务当前一个 Git 仓库。现有“环绕节点 → 射线
 
 ### Milestone 1：基础启动、事件存储与模型
 
-- 建立单仓前后端、三平台 CI、生成契约、MUI 主题、静态资源嵌入和单二进制链路。
+- 建立单仓前后端、三平台 CI、生成契约、像素 token 与组件基线、静态资源嵌入和单二进制链路。
 - 完成 Git 根、运行目录、单写入器、JSONL 分段、`state.json`、重放、只读诊断、鉴权、Provider Registry、密钥库和角色配置。
 - 交付标准：空仓库可启动；事件落盘后强杀可恢复；可配置并探测一个 Provider。
 
@@ -385,4 +387,4 @@ Raccoon Node 只服务当前一个 Git 仓库。现有“环绕节点 → 射线
 
 - 依赖主版本、公开 API、事件权威、Agent 权限、发布语义、Provider 范围、全画布交互或平台范围变化时必须更新或新增 ADR。
 - 实现发现决策不可行时，先记录事实、替代方案和影响，再修改需求，禁止在代码中静默偏离。
-- Rig、MUI、事件格式和跨平台文件依赖升级必须重新运行契约、浏览器、重放和平台测试，并更新决策基线日期。
+- Rig、pxlkit、事件格式和跨平台文件依赖升级必须重新运行契约、浏览器、重放和平台测试，并更新决策基线日期。
