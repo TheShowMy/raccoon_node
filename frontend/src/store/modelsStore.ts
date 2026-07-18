@@ -5,8 +5,14 @@ import type { ModelRef, ModelRole } from "../api/types";
 type RoleDraft = { primary: ModelRef | null; fallback: ModelRef | null };
 
 type ModelsStore = {
+  selectedProviderId: string | null;
+  selectedModelId: string | null;
+  compactPane: "providers" | "models" | "detail";
   drafts: Partial<Record<ModelRole, RoleDraft>>;
   credentialInputs: Record<string, string>;
+  selectProvider: (providerId: string) => void;
+  selectModel: (modelId: string) => void;
+  setCompactPane: (pane: "providers" | "models" | "detail") => void;
   setDraft: (role: ModelRole, patch: Partial<RoleDraft>) => void;
   clearDraft: (role: ModelRole) => void;
   setCredentialInput: (providerId: string, secret: string) => void;
@@ -14,8 +20,21 @@ type ModelsStore = {
 };
 
 export const useModelsStore = create<ModelsStore>()((set) => ({
+  selectedProviderId: null,
+  selectedModelId: null,
+  compactPane: "providers",
   drafts: {},
   credentialInputs: {},
+  selectProvider: (selectedProviderId) =>
+    set((state) => ({
+      ...state,
+      selectedProviderId,
+      selectedModelId: null,
+      compactPane: "models",
+    })),
+  selectModel: (selectedModelId) =>
+    set((state) => ({ ...state, selectedModelId, compactPane: "detail" })),
+  setCompactPane: (compactPane) => set((state) => ({ ...state, compactPane })),
   setDraft: (role, patch) =>
     set((state) => ({
       ...state,

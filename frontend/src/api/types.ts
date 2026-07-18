@@ -34,7 +34,7 @@ export type NotificationSeverity =
 export type NotificationLifecycle = "active" | "acknowledged" | "resolved";
 
 export type WorkbenchKind =
-  "delivery" | "files" | "git" | "terminal" | "models" | "settings";
+  "delivery" | "files" | "git" | "terminal" | "usage" | "settings";
 
 export type NotificationSourceWorkbench =
   WorkbenchKind | "conversation" | "system";
@@ -68,6 +68,10 @@ export type ConversationNode = {
   completed_at: string | null;
   requirement_id: string | null;
   requirement_revision: number | null;
+  /** 澄清节点绑定的稳定轮次；其他节点为 null。 */
+  clarification_round_id: string | null;
+  /** 经来源节点确认链删除可见正文的时间；图结构和节点 ID 保留。 */
+  redacted_at: string | null;
   tool_activity: ToolActivity | null;
 };
 
@@ -80,10 +84,26 @@ export type ConversationBranch = {
   created_at: string;
 };
 
+export type ConversationSession = {
+  id: string;
+  graph_id: string;
+  root_branch_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConversationGraphSnapshot = {
+  graph_id: string;
+  root_branch_id: string;
+  nodes: ConversationNode[];
+  branches: ConversationBranch[];
+};
+
 export type Requirement = {
   id: string;
   title: string;
   state: RequirementState;
+  source_session_id: string | null;
   source_branch_id: string | null;
   /** 来源对话节点（整理为需求时关联的证据节点，PRD-SPEC-008） */
   source_node_ids: string[];
@@ -112,14 +132,31 @@ export type Notification = {
 
 /* ── 澄清与规格（01 §7.3、03 §5） ── */
 
-/** 一次一个澄清问题（PRD-SPEC-004）：推荐选项 + 自定义输入 */
+export type ClarificationMode =
+  "single_choice" | "multiple_choice" | "free_text";
+
+export type ClarificationOption = {
+  id: string;
+  label: string;
+  description: string | null;
+  recommended: boolean;
+};
+
+export type ClarificationAnswer = {
+  selected_option_ids: string[];
+  custom_text: string | null;
+};
+
+/** 一次一个澄清问题（PRD-SPEC-004）：分类型选项或自由文本 */
 export type ClarificationRound = {
   id: string;
   requirement_id: string;
   question: string;
-  options: string[];
-  answer: string | null;
-  state: "pending" | "answered";
+  mode: ClarificationMode;
+  options: ClarificationOption[];
+  allow_custom: boolean;
+  answer: ClarificationAnswer | null;
+  state: "pending" | "answered" | "cancelled";
   asked_at: string;
   answered_at: string | null;
 };
@@ -163,7 +200,11 @@ export type RequirementRevision = {
   source_graph_id: string;
   source_branch_id: string | null;
   source_node_ids: string[];
-  confirmation: { revision: number; confirmed_at: string } | null;
+  confirmation: {
+    revision: number;
+    confirmed_at: string;
+    task_budget_usd: number;
+  } | null;
 };
 
 /* ── Run、WorkPlan 与工作项（01 §7.4、§8.2） ── */
@@ -201,6 +242,8 @@ export type Run = {
   /** Run 启动时冻结的发布路径与原因（PRD-PUB-003，运行期间不改变） */
   publication_path: PublicationPath;
   publication_frozen_reason: string;
+  /** 需求确认时确定、Run 创建后冻结的任务软预算。 */
+  task_budget_usd: number;
   created_at: string;
   updated_at: string;
 };
@@ -412,7 +455,7 @@ export type TerminalSession = {
   created_at: string;
 };
 
-/* ── 模型与用量（01 §7.6：五角色、能力校验、软阈值、用量完整性） ── */
+/* ── 模型配置与用量（01 §7.6：五角色、能力校验、任务归属与完整性） ── */
 
 export type ModelRole =
   "qa" | "clarifier" | "planner" | "implementer" | "reviewer";
@@ -458,6 +501,7 @@ export type RoleProfile = {
 export type UsageEntry = {
   id: string;
   run_id: string | null;
+  occurred_at: string;
   role: ModelRole;
   provider_id: string;
   model_id: string;
@@ -471,7 +515,6 @@ export type UsageEntry = {
 
 export type UsageState = {
   entries: UsageEntry[];
-  soft_threshold_usd: number;
 };
 
 export type RoleAssignResult = {
@@ -487,7 +530,8 @@ export type NetworkPolicy =
 
 export type AppSettings = {
   network_policy: NetworkPolicy;
-  soft_threshold_usd: number;
+  /** 新需求确认时带入的默认值；已确认需求与已启动 Run 不受后续修改影响。 */
+  default_task_budget_usd: number;
   listen_host: string;
   listen_port: number;
   /** 保存后需重启才生效的键（FE-SET-002：保存和重启是两个动作） */
@@ -502,7 +546,7 @@ export type DiagnosticsInfo = {
   archive_hint: string;
 };
 
-/* ── 工作台危险操作确认链（FE-CANVAS-019：来源节点 → 确认节点 → 结果节点） ── */
+/* ── 工作台危险操作确认链（画布为节点链，普通工作台为来源内确认条） ── */
 
 export type WorkbenchActionKind =
   | "git_commit"
@@ -512,7 +556,9 @@ export type WorkbenchActionKind =
   | "git_switch_branch"
   | "git_create_branch"
   | "git_discard"
-  | "terminal_close";
+  | "terminal_close"
+  | "conversation_redact"
+  | "conversation_new_session";
 
 export type WorkbenchAction = {
   id: string;
@@ -521,7 +567,7 @@ export type WorkbenchAction = {
   /** 影响、目标与不可逆性说明 */
   impact: string;
   irreversible: boolean;
-  /** 绑定来源节点（确认节点连接在来源节点之后） */
+  /** 仅画布来源操作绑定节点；普通工作台操作为 null。 */
   source_node_id: string | null;
   /** 命令参数（如 commit message、分支名） */
   payload: Record<string, string>;
@@ -530,6 +576,7 @@ export type WorkbenchAction = {
   state: "awaiting" | "confirmed" | "cancelled";
   result: { ok: boolean; message: string } | null;
   created_at: string;
+  updated_at: string;
 };
 
 /* ── 危险操作确认链（FE-CANVAS-019：来源节点 → 确认节点 → 结果节点） ── */
@@ -556,9 +603,11 @@ export type PendingAction = {
 export const EVENT_SCHEMA_VERSION = 1;
 
 export type EventType =
+  | "conversation.session.created"
   | "conversation.node.created"
   | "conversation.node.delta"
   | "conversation.node.state_changed"
+  | "conversation.node.redacted"
   | "conversation.branch.created"
   | "notification.raised"
   | "notification.acknowledged"
@@ -567,6 +616,7 @@ export type EventType =
   | "requirement.updated"
   | "requirement.clarification_asked"
   | "requirement.clarification_answered"
+  | "requirement.clarification_cancelled"
   | "requirement.revision_created"
   | "requirement.queue_reordered"
   | "run.updated"
@@ -579,10 +629,16 @@ export type EventType =
   | "git.updated"
   | "terminal.session_updated"
   | "models.updated"
+  | "usage.updated"
   | "settings.updated"
   | "system.resync_required";
 
 export type DomainEventPayload = {
+  "conversation.session.created": {
+    session: ConversationSession;
+    graph: ConversationGraphSnapshot;
+    active: true;
+  };
   "conversation.node.created": { node: ConversationNode };
   "conversation.node.delta": {
     node_id: string;
@@ -594,6 +650,10 @@ export type DomainEventPayload = {
     state: ConversationNodeState;
     completed_at?: string | null;
     tool_activity?: ToolActivity;
+  };
+  "conversation.node.redacted": {
+    node_id: string;
+    redacted_at: string;
   };
   "conversation.branch.created": {
     branch: ConversationBranch;
@@ -611,6 +671,7 @@ export type DomainEventPayload = {
   "requirement.updated": { requirement: Requirement };
   "requirement.clarification_asked": { round: ClarificationRound };
   "requirement.clarification_answered": { round: ClarificationRound };
+  "requirement.clarification_cancelled": { round: ClarificationRound };
   "requirement.revision_created": { revision: RequirementRevision };
   "requirement.queue_reordered": { requirement_ids: string[] };
   /** Run 创建与一切 phase/outcome/活动变化（全量携带实体） */
@@ -627,13 +688,13 @@ export type DomainEventPayload = {
   "git.updated": { state: GitRepoState };
   /** 终端会话生命周期（正文不进入事件，FE-TERM-002）；closed=true 表示会话已移除 */
   "terminal.session_updated": { session: TerminalSession; closed?: boolean };
-  /** Provider/角色配置/用量全量投影 */
+  /** Provider 与角色配置全量投影。 */
   "models.updated": {
     providers: ProviderInfo[];
     roles: RoleProfile[];
-    usage: UsageState;
     last_result: RoleAssignResult;
   };
+  "usage.updated": { usage: UsageState };
   "settings.updated": { settings: AppSettings };
   "system.resync_required": { reason: string; min_sequence?: number };
 };
@@ -647,6 +708,7 @@ export type EventAggregateType =
   | "git"
   | "terminal"
   | "models"
+  | "usage"
   | "settings"
   | "system";
 
@@ -670,10 +732,9 @@ export type ApplicationSnapshot = {
   state_hash: string;
   state: {
     conversation: {
-      graph_id: string;
-      root_branch_id: string;
-      nodes: ConversationNode[];
-      branches: ConversationBranch[];
+      active_session_id: string;
+      sessions: ConversationSession[];
+      graphs: ConversationGraphSnapshot[];
     };
     notifications: Notification[];
     requirements: Requirement[];
@@ -691,9 +752,9 @@ export type ApplicationSnapshot = {
     models: {
       providers: ProviderInfo[];
       roles: RoleProfile[];
-      usage: UsageState;
       last_result: RoleAssignResult;
     };
+    usage: UsageState;
     settings: AppSettings;
   };
 };

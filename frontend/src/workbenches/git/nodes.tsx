@@ -1,5 +1,4 @@
 import { PixelButton } from "@pxlkit/ui-kit";
-import type { NodeProps } from "@xyflow/react";
 import { memo, useState } from "react";
 import { CHANGE_STATUS_LABELS, groupChanges } from "../../api/git";
 import type {
@@ -8,129 +7,167 @@ import type {
   WorkbenchActionKind,
 } from "../../api/types";
 import { DiffView } from "../../components/DiffView";
-import { DNode } from "../../components/DNode";
 import { useDomainStore } from "../../store/domainStore";
 import { useGitStore } from "../../store/gitStore";
-import { gitNodeId } from "./projection";
 
 function requestGit(
   kind: WorkbenchActionKind,
   payload: Record<string, string>,
-  source: string,
 ) {
   void useDomainStore
     .getState()
-    .requestWorkbenchAction({ kind, payload, source_node_id: source });
+    .requestWorkbenchAction({ kind, payload, source_node_id: null });
 }
 
-/* ── 仓库节点（FE-GIT-001：分支、ahead/behind、写锁） ── */
-
-export const RepoNode = memo(function RepoNode() {
-  const git = useDomainStore((state) => state.git);
-  if (!git) return null;
+export const GitToolbarContent = memo(function GitToolbarContent({
+  git,
+  activeSourceKey,
+}: {
+  git: GitRepoState;
+  activeSourceKey: string | null;
+}) {
   const current = git.branches.find((branch) => branch.current);
+  const locked = git.write_lock.locked;
   return (
-    <DNode
-      icon="git"
-      label="仓库"
-      chip={git.write_lock.locked ? "写锁占用" : "写锁空闲"}
-      chipTone={git.write_lock.locked ? "red" : "green"}
-      width={300}
-      ariaLabel="Git 仓库"
-    >
-      <p className="dnode__text px-font-mono">{git.root}</p>
-      <p className="dnode__text">
-        当前分支：<strong>{current?.name}</strong>（ahead {current?.ahead ?? 0}{" "}
-        / behind {current?.behind ?? 0}）
-      </p>
-      {git.write_lock.locked ? (
-        <p className="dnode__warning">
-          writer lease 由 Run {git.write_lock.owner_run_id} 持有，Git
-          写操作暂不可用（409）。
-        </p>
-      ) : null}
-      {git.last_commit ? (
-        <p className="dnode__meta">最近提交：{git.last_commit}</p>
-      ) : null}
-    </DNode>
+    <>
+      <div className="git-toolbar__identity">
+        <strong className="px-font-mono">{git.root.split("/").at(-1)}</strong>
+        <span className="git-toolbar__branch">⑂ {current?.name ?? "—"}</span>
+        <span className="git-toolbar__tracking">
+          ahead {current?.ahead ?? 0} / behind {current?.behind ?? 0}
+        </span>
+        <span className="git-toolbar__lock" data-locked={locked || undefined}>
+          {locked ? "写锁占用" : "写锁空闲"}
+        </span>
+      </div>
+      <div className="git-toolbar__actions">
+        <PixelButton
+          size="sm"
+          variant="outline"
+          disabled={locked}
+          onClick={() => requestGit("git_fetch", {})}
+          data-action-source="git_fetch"
+          data-action-source-active={
+            activeSourceKey === "git_fetch" || undefined
+          }
+        >
+          Fetch
+        </PixelButton>
+        <PixelButton
+          size="sm"
+          variant="outline"
+          disabled={locked || (current?.behind ?? 0) === 0}
+          onClick={() => requestGit("git_pull", {})}
+          data-action-source="git_pull"
+          data-action-source-active={
+            activeSourceKey === "git_pull" || undefined
+          }
+        >
+          Pull
+        </PixelButton>
+        <PixelButton
+          size="sm"
+          tone="cyan"
+          variant="outline"
+          disabled={locked || (current?.ahead ?? 0) === 0}
+          onClick={() => requestGit("git_push", {})}
+          data-action-source="git_push"
+          data-action-source-active={
+            activeSourceKey === "git_push" || undefined
+          }
+        >
+          Push
+        </PixelButton>
+      </div>
+    </>
   );
 });
 
-/* ── 分支节点 ── */
-
-export const BranchesNode = memo(function BranchesNode({ data }: NodeProps) {
-  const { git } = data as { git: GitRepoState };
+export const RepositoryContent = memo(function RepositoryContent({
+  git,
+  activeSourceKey,
+}: {
+  git: GitRepoState;
+  activeSourceKey: string | null;
+}) {
   const newBranchName = useGitStore((state) => state.newBranchName);
   const locked = git.write_lock.locked;
   return (
-    <DNode
-      icon="merge"
-      label="分支"
-      chip={`${git.branches.length} 个`}
-      width={320}
-      ariaLabel="分支列表"
-      actions={
-        <PixelButton
-          size="sm"
-          tone="green"
-          variant="outline"
-          disabled={locked || !newBranchName.trim()}
-          onClick={() =>
-            requestGit(
-              "git_create_branch",
-              { branch: newBranchName.trim() },
-              gitNodeId.branches(),
-            )
-          }
-        >
-          创建并切换
-        </PixelButton>
-      }
-    >
-      <ul className="dnode__lines" aria-label="分支列表">
-        {git.branches.map((branch) => (
-          <li key={branch.name}>
-            {branch.current ? "● " : "○ "}
-            <span className="px-font-mono">{branch.name}</span>（ahead{" "}
-            {branch.ahead} / behind {branch.behind}）{" "}
-            {!branch.current ? (
-              <PixelButton
-                size="sm"
-                variant="outline"
-                disabled={locked}
+    <>
+      <button type="button" className="git-nav-item" data-active>
+        <span>▣ Local Changes</span>
+        <strong>{git.changes.length}</strong>
+      </button>
+      <div className="git-nav-section">
+        <h4 className="tool-section-title">Branches</h4>
+        <ul className="git-branch-list" aria-label="分支列表">
+          {git.branches.map((branch) => (
+            <li key={branch.name} data-current={branch.current || undefined}>
+              <button
+                type="button"
+                disabled={locked || branch.current}
                 onClick={() =>
-                  requestGit(
-                    "git_switch_branch",
-                    { branch: branch.name },
-                    gitNodeId.branches(),
-                  )
+                  requestGit("git_switch_branch", { branch: branch.name })
+                }
+                data-action-source="git_switch_branch"
+                data-action-source-active={
+                  activeSourceKey === "git_switch_branch" || undefined
                 }
               >
-                切换
-              </PixelButton>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-      <div className="dnode__inline-form nodrag nowheel">
+                <span>{branch.current ? "●" : "○"}</span>
+                <span className="px-font-mono">{branch.name}</span>
+                <small>
+                  {branch.ahead}/{branch.behind}
+                </small>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="git-new-branch">
+        <label htmlFor="git-new-branch">新分支</label>
         <input
+          id="git-new-branch"
           className="dnode__input"
-          aria-label="新分支名"
           placeholder="feat/new-branch"
           value={newBranchName}
           onChange={(event) =>
             useGitStore.getState().setNewBranchName(event.target.value)
           }
         />
+        <PixelButton
+          size="sm"
+          tone="green"
+          variant="outline"
+          disabled={locked || !newBranchName.trim()}
+          onClick={() =>
+            requestGit("git_create_branch", { branch: newBranchName.trim() })
+          }
+          data-action-source="git_create_branch"
+          data-action-source-active={
+            activeSourceKey === "git_create_branch" || undefined
+          }
+        >
+          创建并切换
+        </PixelButton>
       </div>
-      <p className="dnode__meta">切换与创建走确认节点（FE-GIT-003）。</p>
-    </DNode>
+      <div className="git-repo-meta">
+        <span className="px-font-mono">{git.root}</span>
+        {git.last_commit ? <span>最近提交：{git.last_commit}</span> : null}
+      </div>
+    </>
   );
 });
 
-/* ── 变更节点（FE-GIT-002：staged/unstaged/untracked/conflicted 分组） ── */
-
-function ChangeRow({ change, locked }: { change: GitChange; locked: boolean }) {
+function ChangeRow({
+  change,
+  locked,
+  activeSourceKey,
+}: {
+  change: GitChange;
+  locked: boolean;
+  activeSourceKey: string | null;
+}) {
   const [error, setError] = useState<string | null>(null);
   const run = async (
     fn: () => Promise<{ ok: boolean; message: string | null }>,
@@ -139,157 +176,137 @@ function ChangeRow({ change, locked }: { change: GitChange; locked: boolean }) {
     setError(result.ok ? null : result.message);
   };
   return (
-    <li>
-      <button
-        type="button"
-        className="gchange__path px-font-mono"
-        aria-label={`查看 ${change.path} 的 Diff`}
-        onClick={() => useGitStore.getState().selectChange(change.path)}
-      >
-        {change.path}
-      </button>
-      <span className="gchange__ops">
-        {change.status === "unstaged" ? (
-          <PixelButton
-            size="sm"
-            variant="outline"
-            disabled={locked}
-            onClick={() =>
-              void run(() => useDomainStore.getState().stageChange(change.path))
-            }
-          >
-            暂存
-          </PixelButton>
-        ) : null}
-        {change.status === "staged" ? (
-          <PixelButton
-            size="sm"
-            variant="outline"
-            disabled={locked}
-            onClick={() =>
-              void run(() =>
-                useDomainStore.getState().unstageChange(change.path),
-              )
-            }
-          >
-            取消暂存
-          </PixelButton>
-        ) : null}
-        {change.status !== "conflicted" ? (
-          <PixelButton
-            size="sm"
-            tone="red"
-            variant="outline"
-            disabled={locked}
-            onClick={() =>
-              requestGit(
-                "git_discard",
-                { path: change.path },
-                gitNodeId.changes(),
-              )
-            }
-          >
-            丢弃
-          </PixelButton>
-        ) : null}
-      </span>
+    <li
+      className="git-change-row"
+      data-selected={
+        useGitStore.getState().selectedChangePath === change.path || undefined
+      }
+      data-action-source={`git_discard:${change.path}`}
+      data-action-source-active={
+        activeSourceKey === `git_discard:${change.path}` || undefined
+      }
+    >
+      <div className="git-change-row__line">
+        <span
+          className="git-change-row__status"
+          data-status={change.status}
+          aria-hidden="true"
+        >
+          {change.status === "staged"
+            ? "S"
+            : change.status === "unstaged"
+              ? "M"
+              : change.status === "untracked"
+                ? "?"
+                : "!"}
+        </span>
+        <button
+          type="button"
+          className="git-change-row__path px-font-mono"
+          aria-label={`查看 ${change.path} 的 Diff`}
+          title={change.path}
+          onClick={() => useGitStore.getState().selectChange(change.path)}
+        >
+          {change.path}
+        </button>
+        <span className="git-change-row__ops">
+          {change.status === "unstaged" ? (
+            <button
+              type="button"
+              className="git-change-row__action"
+              disabled={locked}
+              aria-label={`暂存 ${change.path}`}
+              onClick={() =>
+                void run(() =>
+                  useDomainStore.getState().stageChange(change.path),
+                )
+              }
+            >
+              暂存
+            </button>
+          ) : null}
+          {change.status === "staged" ? (
+            <button
+              type="button"
+              className="git-change-row__action"
+              disabled={locked}
+              aria-label={`取消暂存 ${change.path}`}
+              onClick={() =>
+                void run(() =>
+                  useDomainStore.getState().unstageChange(change.path),
+                )
+              }
+            >
+              取消暂存
+            </button>
+          ) : null}
+          {change.status !== "conflicted" ? (
+            <button
+              type="button"
+              className="git-change-row__action git-change-row__action--danger"
+              disabled={locked}
+              aria-label={`丢弃 ${change.path}`}
+              onClick={() => requestGit("git_discard", { path: change.path })}
+            >
+              丢弃
+            </button>
+          ) : null}
+        </span>
+      </div>
       {error ? <p className="dnode__warning">{error}</p> : null}
     </li>
   );
 }
 
-export const ChangesNode = memo(function ChangesNode({ data }: NodeProps) {
-  const { git } = data as { git: GitRepoState };
+export const ChangesContent = memo(function ChangesContent({
+  git,
+  activeSourceKey,
+}: {
+  git: GitRepoState;
+  activeSourceKey: string | null;
+}) {
   const groups = groupChanges(git.changes);
   const locked = git.write_lock.locked;
-  return (
-    <DNode
-      icon="diff"
-      label="变更"
-      chip={`${git.changes.length} 个`}
-      chipTone={git.changes.length > 0 ? "yellow" : "green"}
-      width={340}
-      ariaLabel="工作区变更"
-    >
-      {groups.length === 0 ? (
-        <p className="dnode__text">工作区干净。</p>
-      ) : (
-        groups.map((group) => (
-          <section key={group.status}>
-            <h5 className="gchange__group-title">
-              {CHANGE_STATUS_LABELS[group.status]}（{group.changes.length}）
-            </h5>
-            <ul className="gchange__list" aria-label={`${group.label}变更`}>
-              {group.changes.map((change) => (
-                <ChangeRow key={change.path} change={change} locked={locked} />
-              ))}
-            </ul>
-          </section>
-        ))
-      )}
-      <p className="dnode__meta">点击路径查看 Diff；丢弃修改走确认节点。</p>
-    </DNode>
-  );
-});
-
-/* ── Diff 节点（复用共享 DiffView） ── */
-
-export const GitDiffNode = memo(function GitDiffNode({ data }: NodeProps) {
-  const { change } = data as { change: GitChange };
-  return (
-    <DNode
-      icon="diff"
-      label="Diff"
-      chip={CHANGE_STATUS_LABELS[change.status]}
-      width={420}
-      ariaLabel={`${change.path} 的 Diff`}
-    >
-      <p className="dnode__meta px-font-mono">{change.path}</p>
-      {change.diff ? (
-        <DiffView diff={change.diff} ariaLabel="Diff 内容" />
-      ) : (
-        <p className="dnode__text">未跟踪文件暂无 diff（加入暂存后可见）。</p>
-      )}
-    </DNode>
-  );
-});
-
-/* ── 提交节点 ── */
-
-export const CommitNode = memo(function CommitNode({ data }: NodeProps) {
-  const { git } = data as { git: GitRepoState };
   const message = useGitStore((state) => state.commitMessage);
   const staged = git.changes.filter((change) => change.status === "staged");
-  const locked = git.write_lock.locked;
   return (
-    <DNode
-      icon="confirm"
-      label="提交"
-      chip={`暂存 ${staged.length}`}
-      chipTone={staged.length > 0 ? "cyan" : "gray"}
-      width={320}
-      ariaLabel="创建提交"
-      actions={
-        <PixelButton
-          size="sm"
-          tone="green"
-          disabled={locked || staged.length === 0 || !message.trim()}
-          onClick={() =>
-            requestGit(
-              "git_commit",
-              { message: message.trim() },
-              gitNodeId.commit(),
-            )
-          }
-        >
-          提交（需确认）
-        </PixelButton>
-      }
-    >
-      <div className="dnode__inline-form nodrag nowheel">
+    <div className="git-changes-layout">
+      <div className="git-change-list" data-scroll-key="git-change-list">
+        {groups.length === 0 ? (
+          <p className="tool-empty-state">工作区干净。</p>
+        ) : (
+          groups.map((group) => (
+            <section key={group.status} className="git-change-group">
+              <h4 className="tool-section-title">
+                {CHANGE_STATUS_LABELS[group.status]}（{group.changes.length}）
+              </h4>
+              <ul aria-label={`${group.label}变更`}>
+                {group.changes.map((change) => (
+                  <ChangeRow
+                    key={change.path}
+                    change={change}
+                    locked={locked}
+                    activeSourceKey={activeSourceKey}
+                  />
+                ))}
+              </ul>
+            </section>
+          ))
+        )}
+      </div>
+      <div
+        className="git-commit-composer"
+        data-action-source="git_commit"
+        data-action-source-active={
+          activeSourceKey === "git_commit" || undefined
+        }
+      >
+        <label htmlFor="git-commit-message">
+          提交消息 · 暂存 {staged.length}
+        </label>
         <textarea
+          id="git-commit-message"
           className="dnode__textarea"
-          aria-label="提交消息"
           placeholder="feat: 描述本次变更"
           rows={3}
           value={message}
@@ -297,67 +314,38 @@ export const CommitNode = memo(function CommitNode({ data }: NodeProps) {
             useGitStore.getState().setCommitMessage(event.target.value)
           }
         />
+        <PixelButton
+          size="sm"
+          tone="green"
+          disabled={locked || staged.length === 0 || !message.trim()}
+          onClick={() => requestGit("git_commit", { message: message.trim() })}
+        >
+          提交（需确认）
+        </PixelButton>
       </div>
-      {staged.length === 0 ? (
-        <p className="dnode__meta">先在变更节点暂存文件。</p>
-      ) : (
-        <p className="dnode__meta">
-          提交消息为 confirmed 语义，执行走确认节点。
-        </p>
-      )}
-    </DNode>
+    </div>
   );
 });
 
-/* ── 同步节点 ── */
-
-export const SyncNode = memo(function SyncNode({ data }: NodeProps) {
-  const { git } = data as { git: GitRepoState };
-  const current = git.branches.find((branch) => branch.current);
-  const locked = git.write_lock.locked;
+export const GitDiffContent = memo(function GitDiffContent({
+  change,
+}: {
+  change: GitChange | null;
+}) {
+  if (!change) {
+    return <p className="tool-empty-state">选择一个变更查看 Diff。</p>;
+  }
   return (
-    <DNode
-      icon="publish"
-      label="同步"
-      chip={`ahead ${current?.ahead ?? 0} / behind ${current?.behind ?? 0}`}
-      width={320}
-      ariaLabel="远端同步"
-      actions={
-        <>
-          <PixelButton
-            size="sm"
-            variant="outline"
-            disabled={locked}
-            onClick={() => requestGit("git_fetch", {}, gitNodeId.sync())}
-          >
-            fetch
-          </PixelButton>
-          <PixelButton
-            size="sm"
-            variant="outline"
-            disabled={locked || (current?.behind ?? 0) === 0}
-            onClick={() => requestGit("git_pull", {}, gitNodeId.sync())}
-          >
-            pull
-          </PixelButton>
-          <PixelButton
-            size="sm"
-            tone="cyan"
-            variant="outline"
-            disabled={locked || (current?.ahead ?? 0) === 0}
-            onClick={() => requestGit("git_push", {}, gitNodeId.sync())}
-          >
-            push
-          </PixelButton>
-        </>
-      }
-    >
-      <p className="dnode__text">
-        与 origin 同步；push / pull / fetch 均走确认节点。
-      </p>
-      <p className="dnode__meta">
-        发布（PR/MR）由需求交付 Run 独占执行，不在此操作。
-      </p>
-    </DNode>
+    <div className="git-diff-content">
+      <div className="git-diff-content__path">
+        <span className="px-font-mono">{change.path}</span>
+        <span>{CHANGE_STATUS_LABELS[change.status]}</span>
+      </div>
+      {change.diff ? (
+        <DiffView diff={change.diff} ariaLabel="Diff 内容" />
+      ) : (
+        <p className="tool-empty-state">未跟踪文件暂无 Diff，暂存后可见。</p>
+      )}
+    </div>
   );
 });

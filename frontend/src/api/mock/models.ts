@@ -3,7 +3,6 @@ import {
   checkRoleCapability,
   ROLE_LABELS,
 } from "../modelCaps";
-import { evaluateSoftThreshold } from "../usage";
 import type {
   DomainEventPayload,
   EventAggregateType,
@@ -12,12 +11,9 @@ import type {
   ModelInfo,
   ModelRef,
   ModelRole,
-  NotificationSeverity,
-  NotificationSourceWorkbench,
   ProviderInfo,
   RoleAssignResult,
   RoleProfile,
-  UsageState,
 } from "../types";
 
 type Emit = <T extends EventType>(
@@ -26,13 +22,6 @@ type Emit = <T extends EventType>(
   eventType: T,
   payload: DomainEventPayload[T],
 ) => void;
-
-type Notify = (
-  severity: NotificationSeverity,
-  message: string,
-  sourceWorkbench: NotificationSourceWorkbench,
-  sourceNodeId: string | null,
-) => string;
 
 const now = () => new Date().toISOString();
 
@@ -54,9 +43,9 @@ const model = (
 ): ModelInfo => ({ id, provider_id, label, capabilities });
 
 /**
- * 模型与用量模块（假数据层）：
+ * 模型配置模块（假数据层）：
  * Provider/模型/五角色配置与能力校验（PRD-MODEL-003/004）、
- * 凭据只新建替换不回显（PRD-MODEL-005）、用量与软阈值告警（PRD-USAGE-002/003）。
+ * 凭据只新建替换不回显（PRD-MODEL-005）。
  */
 export class ModelsModule {
   private providers: ProviderInfo[] = [
@@ -121,74 +110,11 @@ export class ModelsModule {
     { role: "reviewer", primary: "fake-large/fake-large-a", fallback: null },
   ];
 
-  private usage: UsageState = {
-    soft_threshold_usd: 25,
-    entries: [
-      {
-        id: "u-1",
-        run_id: null,
-        role: "qa",
-        provider_id: "fake-chat",
-        model_id: "fake-chat-pro",
-        input_tokens: 42_300,
-        output_tokens: 8_120,
-        cache_tokens: 12_000,
-        cost_usd: 3.42,
-      },
-      {
-        id: "u-2",
-        run_id: null,
-        role: "planner",
-        provider_id: "fake-large",
-        model_id: "fake-large-a",
-        input_tokens: 96_400,
-        output_tokens: 11_800,
-        cache_tokens: 40_200,
-        cost_usd: 9.87,
-      },
-      {
-        id: "u-3",
-        run_id: null,
-        role: "implementer",
-        provider_id: "fake-large",
-        model_id: "fake-large-a",
-        input_tokens: 181_200,
-        output_tokens: 33_400,
-        cache_tokens: 61_900,
-        cost_usd: 7.66,
-      },
-      {
-        id: "u-4",
-        run_id: null,
-        role: "reviewer",
-        provider_id: "fake-large",
-        model_id: "fake-large-a",
-        input_tokens: 58_900,
-        output_tokens: 6_700,
-        cache_tokens: 21_300,
-        cost_usd: 0.9,
-      },
-      {
-        id: "u-5",
-        run_id: null,
-        role: "clarifier",
-        provider_id: "fake-chat",
-        model_id: "fake-chat-mini",
-        input_tokens: 12_400,
-        output_tokens: 3_100,
-        cache_tokens: null,
-        cost_usd: null,
-      },
-    ],
-  };
-
   private lastResult: RoleAssignResult = null;
-  private thresholdAlerted = false;
 
   constructor(
     private readonly deps: {
       emit: Emit;
-      notify: Notify;
       latency: () => Promise<void>;
     },
   ) {}
@@ -197,7 +123,6 @@ export class ModelsModule {
     this.deps.emit("models", "registry", "models.updated", {
       providers: this.providers,
       roles: this.roles,
-      usage: this.usage,
       last_result: this.lastResult,
     });
   }
@@ -206,24 +131,8 @@ export class ModelsModule {
     return {
       providers: this.providers,
       roles: this.roles,
-      usage: this.usage,
       last_result: this.lastResult,
     };
-  }
-
-  /** 首次访问时评估软阈值（80% 演示告警：GrayDango warning，PRD-USAGE-002） */
-  evaluateThresholdOnce() {
-    if (this.thresholdAlerted) return;
-    this.thresholdAlerted = true;
-    const alert = evaluateSoftThreshold(this.usage);
-    if (alert) {
-      this.deps.notify(
-        "warning",
-        `用量软阈值告警：累计 $${alert.total.toFixed(2)} 已达阈值 $${alert.threshold.toFixed(2)} 的 ${(alert.ratio * 100).toFixed(0)}%（软告警，不自动暂停或换模）。`,
-        "models",
-        null,
-      );
-    }
   }
 
   private findModel(ref: ModelRef): ModelInfo | null {
@@ -285,18 +194,12 @@ export class ModelsModule {
     return { ok: true, message };
   }
 
-  setSoftThreshold(usd: number) {
-    this.usage = { ...this.usage, soft_threshold_usd: usd };
-    this.publish();
-  }
-
   summaryLines(): string[] {
     const missing = this.roles.filter((profile) => !profile.primary).length;
-    const alert = evaluateSoftThreshold(this.usage);
     return [
       `Provider ${this.providers.length} · 模型 ${this.providers.reduce((n, p) => n + p.models.length, 0)}`,
       missing > 0 ? `角色缺口 ${missing}` : "五角色已配置",
-      alert ? `软告警：${(alert.ratio * 100).toFixed(0)}%` : "软告警：未触发",
+      "模型配置已并入设置",
     ];
   }
 }

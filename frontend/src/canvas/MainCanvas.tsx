@@ -146,12 +146,33 @@ function MainCanvasScene({
   useEffect(() => {
     const element = containerRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;
+    let frame: number | null = null;
+    let pendingSize: { width: number; height: number } | null = null;
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
-      if (rect) setSize({ width: rect.width, height: rect.height });
+      if (!rect) return;
+      pendingSize = {
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      };
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        if (!pendingSize) return;
+        const next = pendingSize;
+        pendingSize = null;
+        setSize((current) =>
+          current.width === next.width && current.height === next.height
+            ? current
+            : next,
+        );
+      });
     });
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
   }, [containerRef]);
 
   const parallax = useParallax(containerRef, mode === "overview");
@@ -355,6 +376,7 @@ function MainCanvasScene({
       zoomOnDoubleClick={false}
       nodesDraggable={false}
       nodesConnectable={false}
+      nodesFocusable={false}
       elementsSelectable={false}
       proOptions={{ hideAttribution: true }}
       aria-label="主画布"

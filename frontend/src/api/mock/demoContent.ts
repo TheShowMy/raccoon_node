@@ -22,8 +22,6 @@ export const DEMO_MODEL_ROLES = [
   { role: "reviewer", model: "fake-large" },
 ];
 
-export const DEMO_SOFT_THRESHOLD = "全局软阈值 80%：仅告警，不自动暂停/换模";
-
 export const DEMO_SCENARIOS: AcceptanceScenario[] = [
   {
     id: "SC-1",

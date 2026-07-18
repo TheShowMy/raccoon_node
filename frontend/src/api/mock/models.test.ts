@@ -1,18 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type {
-  EventEnvelope,
-  NotificationSeverity,
-  NotificationSourceWorkbench,
-} from "../types";
+import type { EventEnvelope } from "../types";
 import { ModelsModule } from "./models";
 
 function makeModels() {
   const events: EventEnvelope[] = [];
-  const notifications: {
-    severity: NotificationSeverity;
-    message: string;
-    source: NotificationSourceWorkbench;
-  }[] = [];
   const module = new ModelsModule({
     emit: (aggregateType, aggregateId, eventType, payload) => {
       events.push({
@@ -26,13 +17,9 @@ function makeModels() {
         payload,
       } as EventEnvelope);
     },
-    notify: (severity, message, source) => {
-      notifications.push({ severity, message, source });
-      return `ntf-${notifications.length}`;
-    },
     latency: () => Promise.resolve(),
   });
-  return { module, events, notifications };
+  return { module, events };
 }
 
 describe("模型角色能力校验（FE-MODEL-002、PRD-MODEL-004）", () => {
@@ -95,7 +82,7 @@ describe("模型角色能力校验（FE-MODEL-002、PRD-MODEL-004）", () => {
   });
 });
 
-describe("凭据与软阈值", () => {
+describe("模型凭据", () => {
   it("凭据只新建/替换不回显", async () => {
     const { module } = makeModels();
     await module.setProviderCredential({
@@ -108,15 +95,5 @@ describe("凭据与软阈值", () => {
     expect(provider?.credential).toBe("configured");
     // 快照不含密钥内容
     expect(JSON.stringify(module.snapshotState())).not.toContain("sk-demo");
-  });
-
-  it("软阈值 80% 演示告警只发一次（GrayDango warning）", () => {
-    const { module, notifications } = makeModels();
-    module.evaluateThresholdOnce();
-    module.evaluateThresholdOnce();
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0].severity).toBe("warning");
-    expect(notifications[0].source).toBe("models");
-    expect(notifications[0].message).toContain("软阈值");
   });
 });

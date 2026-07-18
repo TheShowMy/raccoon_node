@@ -6,7 +6,9 @@ import type {
 import { semanticHash } from "../specHash";
 import type {
   Attempt,
+  ClarificationAnswer,
   ClarificationRound,
+  ConversationNodeKind,
   DomainEventPayload,
   EventAggregateType,
   EventType,
@@ -35,7 +37,6 @@ import {
   DEMO_COMMIT,
   DEMO_MODEL_ROLES,
   DEMO_PR_URL,
-  DEMO_SOFT_THRESHOLD,
   demoReviewAngles,
   demoSpec,
   demoValidationEntries,
@@ -61,11 +62,54 @@ const now = () => new Date().toISOString();
 
 const GRAPH_ID = "g-main";
 
-/** 演示澄清问题（PRD-SPEC-004：一次一个关键问题，推荐选项 + 自定义输入） */
+/** 演示澄清问题：默认直接展示清晰的单选节点。 */
 const DEMO_CLARIFICATION = {
   question: "这个需求主要影响哪部分行为？回答将决定验收场景的侧重。",
-  options: ["工作流执行语义", "画布交互与展示", "两者都涉及"],
+  mode: "single_choice" as const,
+  allow_custom: true,
+  options: [
+    {
+      id: "workflow",
+      label: "工作流执行语义",
+      description: "侧重计划、运行、验证与发布行为。",
+      recommended: false,
+    },
+    {
+      id: "canvas",
+      label: "画布交互与展示",
+      description: "侧重节点关系、布局、定位与操作反馈。",
+      recommended: false,
+    },
+    {
+      id: "both",
+      label: "两者都涉及",
+      description: "同时覆盖执行语义和画布体验。",
+      recommended: true,
+    },
+  ],
 };
+
+export function clarificationAnswerText(
+  round: ClarificationRound,
+  answer: ClarificationAnswer,
+): string | null {
+  const customText = answer.custom_text?.trim() || null;
+  const optionIds = [...new Set(answer.selected_option_ids)];
+  const validOptions = new Map(
+    round.options.map((option) => [option.id, option] as const),
+  );
+  if (optionIds.some((id) => !validOptions.has(id))) return null;
+  if (round.mode === "free_text") {
+    return optionIds.length === 0 && customText ? customText : null;
+  }
+  if (round.mode === "single_choice" && optionIds.length > 1) return null;
+  if (!round.allow_custom && customText) return null;
+  if (optionIds.length === 0 && !customText) return null;
+  return [
+    ...optionIds.map((id) => validOptions.get(id)!.label),
+    ...(customText ? [customText] : []),
+  ].join("；");
+}
 
 /**
  * 需求交付模块（假数据层）：需求生命周期、澄清、规格 revision、队列、
@@ -94,6 +138,7 @@ export class DeliveryModule {
   /** runId → 阻断通知 id（解除时发 notification.resolved，PRD-NOTIFY-007） */
   private readonly blockedNotifications = new Map<string, string>();
   private readonly pauseRequested = new Set<string>();
+  private readonly budgetWarnings = new Set<string>();
 
   constructor(
     private readonly deps: {
@@ -102,6 +147,30 @@ export class DeliveryModule {
       notify: Notify;
       resolveNotification: (notificationId: string) => void;
       nodeContent: (nodeId: string) => string | null;
+      appendConversationNode: (input: {
+        branch_id: string;
+        kind: Extract<
+          ConversationNodeKind,
+          | "clarification_question"
+          | "clarification_answer"
+          | "requirement_spec"
+          | "requirement_confirmation"
+        >;
+        content: string;
+        requirement_id: string;
+        requirement_revision?: number | null;
+        clarification_round_id?: string | null;
+      }) => string;
+      defaultTaskBudget: () => number;
+      recordRunUsage: (input: {
+        run_id: string;
+        role: "planner" | "implementer" | "reviewer";
+        input_tokens: number;
+        output_tokens: number;
+        cache_tokens: number | null;
+        cost_usd: number | null;
+        budget_usd: number;
+      }) => { warning: boolean; ratio: number; known_cost_usd: number };
       latency: () => Promise<void>;
     },
   ) {}
@@ -152,9 +221,7 @@ export class DeliveryModule {
     const active = [...this.runs.values()].filter(
       (run) => run.phase !== "terminal",
     );
-    const pendingClarification = [...this.rounds.values()].filter(
-      (round) => round.state === "pending",
-    ).length;
+    const blocked = active.filter((run) => run.phase === "blocked").length;
     const lastDelivered = [...this.runs.values()]
       .filter((run) => run.outcome === "delivered")
       .at(-1);
@@ -166,7 +233,7 @@ export class DeliveryModule {
         })
       : "暂无交付";
     return [
-      `队列 ${queued} · 活动 Run ${active.length} · 待澄清 ${pendingClarification}`,
+      `排队 ${queued} · 执行 ${active.length - blocked} · 阻断 ${blocked}`,
       `最近结论：${conclusion}`,
       active.length > 0
         ? `当前：${active.map((run) => `${run.id} ${run.phase}`).join("、")}`
@@ -177,11 +244,22 @@ export class DeliveryModule {
   /* ── 需求与澄清 ── */
 
   async createRequirementFromChat(input: {
+    session_id: string;
     branch_id: string;
     node_ids: string[];
     title?: string;
   }): Promise<{ requirement_id: string }> {
     await this.deps.latency();
+    // 一个分支同一时间只有一个引导式需求输入所有者。
+    const activeOnBranch = [...this.requirements.values()].find(
+      (requirement) =>
+        requirement.source_branch_id === input.branch_id &&
+        (requirement.state === "drafting" ||
+          requirement.state === "clarifying" ||
+          requirement.state === "spec_ready"),
+    );
+    if (activeOnBranch) return { requirement_id: activeOnBranch.id };
+
     // 同一来源节点的未取消需求去重（change 自动创建 + 手动整理可能重复）
     const shared = new Set(input.node_ids);
     const existing = [...this.requirements.values()].find(
@@ -202,6 +280,7 @@ export class DeliveryModule {
       id: this.nextId("req"),
       title,
       state: "clarifying",
+      source_session_id: input.session_id,
       source_branch_id: input.branch_id,
       source_node_ids: input.node_ids,
       latest_revision: 0,
@@ -219,7 +298,9 @@ export class DeliveryModule {
       id: this.nextId("clr"),
       requirement_id: requirement.id,
       question: DEMO_CLARIFICATION.question,
+      mode: DEMO_CLARIFICATION.mode,
       options: DEMO_CLARIFICATION.options,
+      allow_custom: DEMO_CLARIFICATION.allow_custom,
       answer: null,
       state: "pending",
       asked_at: now(),
@@ -232,11 +313,18 @@ export class DeliveryModule {
       "requirement.clarification_asked",
       { round },
     );
+    const clarificationNodeId = this.deps.appendConversationNode({
+      branch_id: requirement.source_branch_id ?? "b-main",
+      kind: "clarification_question",
+      content: round.question,
+      requirement_id: requirement.id,
+      clarification_round_id: round.id,
+    });
     this.deps.notify(
       "info",
-      `需求《${title}》已进入澄清：请在需求交付工作台回答 1 个关键问题。`,
-      "delivery",
-      requirement.id,
+      `需求《${title}》已进入澄清：请在当前对话中回答 1 个关键问题。`,
+      "conversation",
+      clarificationNodeId,
     );
     return { requirement_id: requirement.id };
   }
@@ -244,12 +332,14 @@ export class DeliveryModule {
   async answerClarification(input: {
     requirement_id: string;
     round_id: string;
-    answer: string;
+    answer: ClarificationAnswer;
   }): Promise<void> {
     await this.deps.latency();
     const round = this.rounds.get(input.round_id);
     const requirement = this.requirements.get(input.requirement_id);
     if (!round || !requirement || round.state !== "pending") return;
+    const answerText = clarificationAnswerText(round, input.answer);
+    if (!answerText) return;
     const answered: ClarificationRound = {
       ...round,
       answer: input.answer,
@@ -263,12 +353,53 @@ export class DeliveryModule {
       "requirement.clarification_answered",
       { round: answered },
     );
+    this.deps.appendConversationNode({
+      branch_id: requirement.source_branch_id ?? "b-main",
+      kind: "clarification_answer",
+      content: answerText,
+      requirement_id: requirement.id,
+      clarification_round_id: round.id,
+    });
     // 澄清完成 → 生成规格 revision 1（PRD-SPEC-001）
-    const spec = demoSpec(requirement.title, input.answer);
+    const spec = demoSpec(requirement.title, answerText);
     this.appendRevision(requirement, spec);
     this.patchRequirement(requirement.id, {
       state: "spec_ready",
       latest_revision: 1,
+    });
+  }
+
+  async cancelRequirement(requirementId: string): Promise<void> {
+    await this.deps.latency();
+    const requirement = this.requirements.get(requirementId);
+    if (
+      !requirement ||
+      (requirement.state !== "drafting" &&
+        requirement.state !== "clarifying" &&
+        requirement.state !== "spec_ready")
+    ) {
+      return;
+    }
+    for (const [roundId, round] of this.rounds) {
+      if (round.requirement_id !== requirementId || round.state !== "pending") {
+        continue;
+      }
+      const cancelled: ClarificationRound = {
+        ...round,
+        state: "cancelled",
+        answered_at: now(),
+      };
+      this.rounds.set(roundId, cancelled);
+      this.deps.emit(
+        "requirement",
+        requirementId,
+        "requirement.clarification_cancelled",
+        { round: cancelled },
+      );
+    }
+    this.patchRequirement(requirementId, {
+      state: "cancelled",
+      queue_position: null,
     });
   }
 
@@ -296,6 +427,20 @@ export class DeliveryModule {
       "requirement.revision_created",
       { revision },
     );
+    this.deps.appendConversationNode({
+      branch_id: requirement.source_branch_id ?? "b-main",
+      kind: "requirement_spec",
+      content: revision.spec.goal,
+      requirement_id: requirement.id,
+      requirement_revision: revision.revision,
+    });
+    this.deps.appendConversationNode({
+      branch_id: requirement.source_branch_id ?? "b-main",
+      kind: "requirement_confirmation",
+      content: `等待确认规格 r${revision.revision}`,
+      requirement_id: requirement.id,
+      requirement_revision: revision.revision,
+    });
     return revision;
   }
 
@@ -373,7 +518,8 @@ export class DeliveryModule {
         ? "当前远端 ready：预计创建并合并 GitHub PR（Run 启动时冻结）。"
         : "当前远端未 ready：预计 fast-forward 本地主分支（Run 启动时冻结）。",
       model_roles: DEMO_MODEL_ROLES,
-      soft_threshold: DEMO_SOFT_THRESHOLD,
+      default_task_budget_usd: this.deps.defaultTaskBudget(),
+      effective_task_budget_usd: this.deps.defaultTaskBudget(),
       workspace_dirty: dirty,
       workspace_note: dirty
         ? "主工作区存在未提交修改：需求可入队，Run 将停在 waiting_workspace（PRD-PROJ-005）。"
@@ -384,13 +530,16 @@ export class DeliveryModule {
   async confirmRequirement(input: {
     requirement_id: string;
     revision: number;
+    task_budget_usd: number;
   }): Promise<{ run_id: string | null; conflict: boolean }> {
     await this.deps.latency();
     const requirement = this.requirements.get(input.requirement_id);
     if (!requirement) return { run_id: null, conflict: true };
     if (
       input.revision !== requirement.latest_revision ||
-      requirement.state !== "spec_ready"
+      requirement.state !== "spec_ready" ||
+      !Number.isFinite(input.task_budget_usd) ||
+      input.task_budget_usd <= 0
     ) {
       return { run_id: null, conflict: true };
     }
@@ -407,7 +556,11 @@ export class DeliveryModule {
     if (latest) {
       const confirmed: RequirementRevision = {
         ...latest,
-        confirmation: { revision: latest.revision, confirmed_at: now() },
+        confirmation: {
+          revision: latest.revision,
+          confirmed_at: now(),
+          task_budget_usd: input.task_budget_usd,
+        },
       };
       this.revisions.set(requirement.id, [...list.slice(0, -1), confirmed]);
       this.deps.emit(
@@ -454,6 +607,11 @@ export class DeliveryModule {
     if (!head) return;
     const requirement = this.requirements.get(head.id)!;
     const revision = requirement.confirmed_revision!;
+    const frozenBudget =
+      this.revisions
+        .get(requirement.id)
+        ?.find((entry) => entry.revision === revision)?.confirmation
+        ?.task_budget_usd ?? this.deps.defaultTaskBudget();
     // Run 启动时冻结发布路径（PRD-PUB-003）
     const runId = this.nextId("run");
     const path = this.director.flag("remote_ready")
@@ -471,6 +629,7 @@ export class DeliveryModule {
       current_activity: "已获得仓库写锁，即将进入 planning。",
       publication_path: path,
       publication_frozen_reason: frozenReason(path),
+      task_budget_usd: frozenBudget,
       created_at: now(),
       updated_at: now(),
     };
@@ -563,7 +722,10 @@ export class DeliveryModule {
     run_id: string;
     item_id: string;
     patch: Partial<
-      Pick<WorkItem, "title" | "scenario_ids" | "verification_target">
+      Pick<
+        WorkItem,
+        "title" | "scenario_ids" | "verification_target" | "depends_on"
+      >
     >;
   }): Promise<{ plan_revision: number }> {
     await this.deps.latency();
@@ -588,6 +750,9 @@ export class DeliveryModule {
       items,
       validation: validateWorkPlan(items, revisionDoc?.spec.scenarios ?? []),
     };
+    if (!next.validation.ok) {
+      return { plan_revision: plan.revision };
+    }
     this.plans.set(input.run_id, next);
     this.deps.emit("run", input.run_id, "plan.updated", { plan: next });
     return { plan_revision: next.revision };
@@ -719,6 +884,35 @@ export class DeliveryModule {
     this.deps.emit("run", id, "run.updated", { run: next });
   }
 
+  private recordUsage(
+    runId: string,
+    role: "planner" | "implementer" | "reviewer",
+    inputTokens: number,
+    outputTokens: number,
+    costUsd: number | null,
+  ) {
+    const run = this.runs.get(runId);
+    if (!run) return;
+    const status = this.deps.recordRunUsage({
+      run_id: runId,
+      role,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      cache_tokens: Math.round(inputTokens * 0.22),
+      cost_usd: costUsd,
+      budget_usd: run.task_budget_usd,
+    });
+    if (status.warning && !this.budgetWarnings.has(runId)) {
+      this.budgetWarnings.add(runId);
+      this.deps.notify(
+        "warning",
+        `任务预算软告警：Run 已知费用 $${status.known_cost_usd.toFixed(2)}，达到冻结预算 $${run.task_budget_usd.toFixed(2)} 的 ${(status.ratio * 100).toFixed(0)}%。执行继续，不暂停或换模。`,
+        "delivery",
+        runId,
+      );
+    }
+  }
+
   private patchPlan(runId: string, mutate: (plan: WorkPlan) => WorkPlan) {
     const current = this.plans.get(runId);
     if (!current) return;
@@ -829,6 +1023,7 @@ export class DeliveryModule {
     });
     await this.director.gate(runId, "planning");
     const plan = buildDemoPlan(this.nextId("plan"), runId, 1);
+    this.recordUsage(runId, "planner", 72_000, 8_400, 4);
     this.plans.set(runId, plan);
     this.deps.emit("run", runId, "plan.updated", { plan });
     this.patchRun(runId, {
@@ -926,6 +1121,7 @@ export class DeliveryModule {
     this.finishAttempt(runId, wi2, "completed", {
       artifact_summary: "queue.ts 队列投影按计划序排序。",
     });
+    this.recordUsage(runId, "implementer", 188_000, 31_000, 16);
     await this.maybePause(runId);
     // 显式合并任务（PRD-RUN-006）：冲突由 implementer 在 integration worktree 解决
     this.patchRun(runId, {
@@ -1126,6 +1322,7 @@ export class DeliveryModule {
 
   /** @returns true 表示 Run 已终态（abandon） */
   private async phaseReviewing(runId: string): Promise<boolean> {
+    this.recordUsage(runId, "reviewer", 54_000, 6_500, null);
     this.patchRun(runId, {
       phase: "reviewing",
       current_activity:

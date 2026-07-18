@@ -128,6 +128,15 @@
   cursor: pointer;
 }
 
+.chat-new-session {
+  position: absolute;
+  top: var(--px-space-2);
+  right: var(--px-space-2);
+  z-index: 10;
+  font-family: var(--px-font-pixel);
+  font-size: 8px;
+}
+
 /* ── 对话节点 ── */
 
 .chat-node {
@@ -141,6 +150,10 @@
 .chat-node--composer {
   background: var(--px-surface);
   border-color: var(--px-primary);
+}
+
+.chat-node__composer-input {
+  resize: none;
 }
 
 .chat-node__header {
@@ -275,6 +288,13 @@
   border-color: var(--px-warning);
 }
 
+.chat-node__ref--image img {
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  image-rendering: auto;
+}
+
 .chat-node__ref button {
   padding: 0 2px;
   background: none;
@@ -297,6 +317,111 @@
 .chat-node__attach:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.chat-node__file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.chat-node__attachment-error,
+.chat-node__redacted {
+  margin: var(--px-space-1) 0 0;
+  color: var(--px-danger);
+  font-size: 11px;
+}
+
+.chat-node[data-selected] {
+  outline: 3px solid var(--px-info);
+  outline-offset: 3px;
+}
+
+.chat-node__clarification,
+.chat-node__spec-editor,
+.chat-node__spec-detail {
+  display: grid;
+  gap: var(--px-space-2);
+  margin-top: var(--px-space-2);
+}
+
+.chat-node__inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--px-space-1);
+}
+
+.chat-node__clarification-options {
+  display: grid;
+  gap: 2px;
+}
+
+.chat-node__clarification-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--px-space-2);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--px-space-2);
+  text-align: left;
+  color: var(--px-ink);
+  background: var(--px-surface);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.chat-node__clarification-option:hover,
+.chat-node__clarification-option:focus-visible,
+.chat-node__clarification-option[data-active] {
+  color: var(--px-primary);
+  background: color-mix(in srgb, var(--px-primary) 10%, var(--px-surface));
+  border-color: var(--px-primary);
+  outline: none;
+}
+
+.chat-node__clarification-marker,
+.chat-node__recommended {
+  font-family: var(--px-font-pixel);
+  font-size: 9px;
+}
+
+.chat-node__clarification-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.chat-node__clarification-copy strong {
+  font-size: 12px;
+}
+
+.chat-node__clarification-copy small {
+  overflow: hidden;
+  color: var(--px-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.chat-node__recommended {
+  padding: 2px 4px;
+  color: var(--px-success);
+  border: 1px solid currentcolor;
+}
+
+.chat-node__clarification-input {
+  resize: none;
+}
+
+.chat-node__facts {
+  margin: var(--px-space-2) 0 0;
+  padding-left: 18px;
+  color: var(--px-muted);
+  font-size: 11px;
 }
 
 /* 语义缩放：远景只保留类型/阶段摘要（FE-CHAT-013） */
@@ -335,12 +460,13 @@
 }
 
 .workbench-node__body {
+  container-type: inline-size;
   flex: 1;
   padding: var(--px-space-4);
   overflow: auto;
 }
 
-/* FE-DELIVERY-001：全铺满子画布（无内边距，内部 React Flow 占满） */
+/* 工作台内容无宿主内边距；普通工作台是连续工具页，需求工作台是子画布。 */
 .workbench-node__body[data-fill] {
   padding: 0;
   overflow: hidden;

@@ -1,16 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { PixelButton } from "@pxlkit/ui-kit";
-import type { NodeProps } from "@xyflow/react";
 import { memo, useState } from "react";
 import { getApi } from "../../api";
 import type { FileEntry, FilePreview } from "../../api/types";
-import { DNode } from "../../components/DNode";
 import { useCanvasStore } from "../../store/canvasStore";
-import { MAX_FILE_REFS, useComposerStore } from "../../store/composerStore";
+import {
+  MAX_FILE_REFS,
+  composerScopeKey,
+  useComposerStore,
+} from "../../store/composerStore";
 import { useDomainStore } from "../../store/domainStore";
 import { useFilesStore } from "../../store/filesStore";
-
-/* ── 目录节点（FE-FILE-001：按需展开子目录；受限路径显示明确结果） ── */
 
 function DirRow({ entry, depth }: { entry: FileEntry; depth: number }) {
   const expanded = useFilesStore((state) =>
@@ -25,30 +25,30 @@ function DirRow({ entry, depth }: { entry: FileEntry; depth: number }) {
   return (
     <>
       <div className="ftree__row" style={{ paddingLeft: depth * 14 }}>
-        {entry.kind === "directory" ? (
-          <button
-            type="button"
-            className="ftree__item"
-            aria-expanded={expanded}
-            aria-label={`${expanded ? "折叠" : "展开"}目录 ${entry.path}`}
-            onClick={() => useFilesStore.getState().toggleDir(entry.path)}
-          >
-            <span aria-hidden>{expanded ? "▾" : "▸"}</span> 📁 {entry.name}
-            {entry.restricted ? (
-              <em className="ftree__restricted">受限</em>
-            ) : null}
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="ftree__item"
-            data-selected={selectedPath === entry.path || undefined}
-            aria-label={`预览文件 ${entry.path}`}
-            onClick={() => useFilesStore.getState().selectPath(entry.path)}
-          >
-            📄 {entry.name}
-          </button>
-        )}
+        <button
+          type="button"
+          className="ftree__item"
+          data-selected={selectedPath === entry.path || undefined}
+          aria-expanded={entry.kind === "directory" ? expanded : undefined}
+          aria-label={
+            entry.kind === "directory"
+              ? `${expanded ? "折叠" : "展开"}目录 ${entry.path}`
+              : `预览文件 ${entry.path}`
+          }
+          onClick={() =>
+            entry.kind === "directory"
+              ? useFilesStore.getState().toggleDir(entry.path)
+              : useFilesStore.getState().selectPath(entry.path)
+          }
+        >
+          <span aria-hidden>
+            {entry.kind === "directory" ? (expanded ? "▾" : "▸") : "·"}
+          </span>
+          <span>{entry.name}</span>
+          {entry.restricted ? (
+            <em className="ftree__restricted">受限</em>
+          ) : null}
+        </button>
       </div>
       {expanded && entry.restricted ? (
         <div
@@ -67,53 +67,34 @@ function DirRow({ entry, depth }: { entry: FileEntry; depth: number }) {
   );
 }
 
-export const DirectoryNode = memo(function DirectoryNode() {
+export const DirectoryContent = memo(function DirectoryContent() {
   const rootQuery = useQuery({
     queryKey: ["file-dir", ""],
     queryFn: () => getApi().listDirectory(""),
   });
   return (
-    <DNode
-      icon="files"
-      label="目录"
-      chip="按需展开"
-      chipTone="cyan"
-      width={340}
-      ariaLabel="仓库目录"
-    >
-      <div className="ftree nodrag nowheel" role="tree" aria-label="仓库文件树">
-        {(rootQuery.data ?? []).map((entry) => (
-          <DirRow key={entry.path} entry={entry} depth={0} />
-        ))}
-        {rootQuery.isLoading ? <p className="dnode__meta">加载目录…</p> : null}
-      </div>
-    </DNode>
+    <div className="ftree" role="tree" aria-label="仓库文件树">
+      {(rootQuery.data ?? []).map((entry) => (
+        <DirRow key={entry.path} entry={entry} depth={0} />
+      ))}
+      {rootQuery.isLoading ? <p className="dnode__meta">加载目录…</p> : null}
+    </div>
   );
 });
 
-/* ── 查询节点（FE-FILE-001：搜索不清空目录状态） ── */
-
-export const SearchNode = memo(function SearchNode() {
+export const SearchContent = memo(function SearchContent() {
   const searchText = useFilesStore((state) => state.searchText);
+  const submittedQuery = useFilesStore((state) => state.submittedQuery);
   const submit = () => useFilesStore.getState().submitSearch();
+  const resultsQuery = useQuery({
+    queryKey: ["file-search", submittedQuery],
+    queryFn: () => getApi().searchFiles(submittedQuery ?? ""),
+    enabled: Boolean(submittedQuery),
+  });
+  const results = resultsQuery.data ?? [];
   return (
-    <DNode
-      icon="diag"
-      label="搜索"
-      width={340}
-      ariaLabel="文件搜索"
-      actions={
-        <PixelButton
-          size="sm"
-          tone="cyan"
-          disabled={!searchText.trim()}
-          onClick={submit}
-        >
-          搜索
-        </PixelButton>
-      }
-    >
-      <div className="dnode__inline-form nodrag nowheel">
+    <div className="files-search-layout">
+      <div className="files-search-form">
         <input
           className="dnode__input"
           aria-label="搜索关键字"
@@ -126,31 +107,16 @@ export const SearchNode = memo(function SearchNode() {
             if (event.key === "Enter") submit();
           }}
         />
-        <p className="dnode__meta">搜索产生结果节点，不影响目录展开状态。</p>
+        <PixelButton
+          size="sm"
+          tone="cyan"
+          disabled={!searchText.trim()}
+          onClick={submit}
+        >
+          搜索
+        </PixelButton>
       </div>
-    </DNode>
-  );
-});
-
-/* ── 结果节点 ── */
-
-export const ResultsNode = memo(function ResultsNode({ data }: NodeProps) {
-  const { query } = data as { query: string };
-  const resultsQuery = useQuery({
-    queryKey: ["file-search", query],
-    queryFn: () => getApi().searchFiles(query),
-  });
-  const results = resultsQuery.data ?? [];
-  return (
-    <DNode
-      icon="requirement"
-      label="搜索结果"
-      chip={`${results.length} 条`}
-      chipTone="cyan"
-      width={340}
-      ariaLabel={`搜索「${query}」的结果`}
-    >
-      <ul className="fresults nodrag nowheel" aria-label="搜索结果列表">
+      <ul className="fresults" aria-label="搜索结果列表">
         {results.map((result, index) => (
           <li key={`${result.path}:${result.line}:${index}`}>
             <button
@@ -167,15 +133,13 @@ export const ResultsNode = memo(function ResultsNode({ data }: NodeProps) {
             </button>
           </li>
         ))}
-        {resultsQuery.data && results.length === 0 ? (
+        {submittedQuery && resultsQuery.data && results.length === 0 ? (
           <li className="dnode__meta">无匹配结果（受限路径不进入搜索）。</li>
         ) : null}
       </ul>
-    </DNode>
+    </div>
   );
 });
-
-/* ── 预览节点（FE-FILE-002/003：行号、复制路径、引用到 Composer；明确结果） ── */
 
 const PREVIEW_KIND_LABELS: Record<FilePreview["kind"], string> = {
   text: "文本",
@@ -192,7 +156,8 @@ function useAddRef(path: string) {
     const branchId =
       useCanvasStore.getState().activeConversationBranchId ??
       domain.conversation.root_branch_id;
-    const ok = useComposerStore.getState().addFileRef(branchId, path);
+    const key = composerScopeKey(domain.activeConversationSessionId, branchId);
+    const ok = useComposerStore.getState().addFileRef(key, path);
     setFeedback(
       ok ? "已加入 Composer" : `引用已满（最多 ${MAX_FILE_REFS} 个）`,
     );
@@ -200,16 +165,22 @@ function useAddRef(path: string) {
   return { feedback, add };
 }
 
-export const PreviewNode = memo(function PreviewNode({ data }: NodeProps) {
-  const { path } = data as { path: string };
+export const PreviewContent = memo(function PreviewContent({
+  path,
+}: {
+  path: string | null;
+}) {
   const previewQuery = useQuery({
     queryKey: ["file-preview", path],
-    queryFn: () => getApi().getFilePreview(path),
+    queryFn: () => getApi().getFilePreview(path ?? ""),
+    enabled: Boolean(path),
   });
   const preview = previewQuery.data;
-  const { feedback, add } = useAddRef(path);
+  const { feedback, add } = useAddRef(path ?? "");
   const [copied, setCopied] = useState(false);
-
+  if (!path) {
+    return <p className="tool-empty-state">从目录或搜索结果中选择文件。</p>;
+  }
   const copyPath = async () => {
     try {
       await navigator.clipboard.writeText(path);
@@ -218,33 +189,26 @@ export const PreviewNode = memo(function PreviewNode({ data }: NodeProps) {
       setCopied(false);
     }
   };
-
   return (
-    <DNode
-      icon="spec"
-      label="文件预览"
-      chip={preview ? PREVIEW_KIND_LABELS[preview.kind] : "加载中"}
-      chipTone={preview && preview.kind !== "text" ? "yellow" : "cyan"}
-      width={420}
-      ariaLabel={`预览 ${path}`}
-      actions={
-        <>
-          <PixelButton
-            size="sm"
-            variant="outline"
-            onClick={() => void copyPath()}
-          >
-            {copied ? "已复制" : "复制路径"}
-          </PixelButton>
-          <PixelButton size="sm" tone="green" variant="outline" onClick={add}>
-            引用到 Composer
-          </PixelButton>
-        </>
-      }
-    >
-      <p className="dnode__meta px-font-mono">{path}</p>
+    <div className="file-preview-layout">
+      <div className="file-preview-toolbar">
+        <span className="px-font-mono">{path}</span>
+        <span className="file-preview-toolbar__kind">
+          {preview ? PREVIEW_KIND_LABELS[preview.kind] : "加载中"}
+        </span>
+        <PixelButton
+          size="sm"
+          variant="outline"
+          onClick={() => void copyPath()}
+        >
+          {copied ? "已复制" : "复制路径"}
+        </PixelButton>
+        <PixelButton size="sm" tone="green" variant="outline" onClick={add}>
+          引用到 Composer
+        </PixelButton>
+      </div>
       {preview?.kind === "text" && preview.lines ? (
-        <pre className="fpreview nodrag nowheel" aria-label="文件内容">
+        <pre className="fpreview" aria-label="文件内容">
           {preview.lines.map((line, index) => (
             <code key={index}>
               <span className="fpreview__lineno">{index + 1}</span>
@@ -263,6 +227,6 @@ export const PreviewNode = memo(function PreviewNode({ data }: NodeProps) {
         <p className="dnode__meta">{preview.note}</p>
       ) : null}
       {feedback ? <p className="dnode__meta">{feedback}</p> : null}
-    </DNode>
+    </div>
   );
 });

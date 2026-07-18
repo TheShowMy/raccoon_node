@@ -1,19 +1,10 @@
 import { PixelButton } from "@pxlkit/ui-kit";
-import type { NodeProps } from "@xyflow/react";
-import { memo } from "react";
 import {
   CAPABILITY_LABELS,
   requiredCapabilities,
   ROLE_LABELS,
   SUPPORT_LABELS,
 } from "../../api/modelCaps";
-import {
-  evaluateSoftThreshold,
-  formatCost,
-  formatTokens,
-  totalCost,
-  usageEntryComplete,
-} from "../../api/usage";
 import type {
   CapabilityName,
   ModelInfo,
@@ -22,9 +13,7 @@ import type {
   ProviderInfo,
   RoleAssignResult,
   RoleProfile,
-  UsageState,
 } from "../../api/types";
-import { DNode } from "../../components/DNode";
 import { useDomainStore } from "../../store/domainStore";
 import { useModelsStore } from "../../store/modelsStore";
 
@@ -43,81 +32,131 @@ const CREDENTIAL_LABELS: Record<ProviderInfo["credential"], string> = {
   invalid: "无效",
 };
 
-/* ── Provider 节点（FE-MODEL-001：鉴权字段由 Registry 描述；凭据不回显） ── */
+export function ProviderList({ providers }: { providers: ProviderInfo[] }) {
+  const selectedProviderId = useModelsStore(
+    (state) => state.selectedProviderId,
+  );
+  return (
+    <ul className="model-master-list" aria-label="Provider 列表">
+      {providers.map((provider) => (
+        <li key={provider.id}>
+          <button
+            type="button"
+            data-active={selectedProviderId === provider.id || undefined}
+            onClick={() =>
+              useModelsStore.getState().selectProvider(provider.id)
+            }
+          >
+            <span>
+              <strong>{provider.label}</strong>
+              <small>{provider.models.length} 个模型</small>
+            </span>
+            <em data-state={provider.credential}>
+              {CREDENTIAL_LABELS[provider.credential]}
+            </em>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
-export const ProviderNode = memo(function ProviderNode({ data }: NodeProps) {
-  const { provider } = data as { provider: ProviderInfo };
+export function ProviderModelContent({
+  provider,
+}: {
+  provider: ProviderInfo | null;
+}) {
   const secret = useModelsStore(
-    (state) => state.credentialInputs[provider.id] ?? "",
+    (state) => (provider ? state.credentialInputs[provider.id] : "") ?? "",
   );
+  const selectedModelId = useModelsStore((state) => state.selectedModelId);
+  if (!provider) {
+    return <div className="workbench-empty">选择一个 Provider 查看模型。</div>;
+  }
   return (
-    <DNode
-      icon="models"
-      label={provider.label}
-      chip={CREDENTIAL_LABELS[provider.credential]}
-      chipTone={
-        provider.credential === "configured"
-          ? "green"
-          : provider.credential === "invalid"
-            ? "red"
-            : "yellow"
-      }
-      width={320}
-      ariaLabel={`Provider ${provider.label}`}
-      actions={
-        <PixelButton
-          size="sm"
-          tone="green"
-          variant="outline"
-          disabled={!secret.trim()}
-          onClick={() => {
-            void useDomainStore.getState().setProviderCredential({
-              provider_id: provider.id,
-              secret,
-            });
-            useModelsStore.getState().clearCredentialInput(provider.id);
-          }}
-        >
-          {provider.credential === "configured" ? "替换凭据" : "保存凭据"}
-        </PixelButton>
-      }
+    <div className="model-provider-detail">
+      <section
+        className="model-credential"
+        aria-label={`${provider.label} 凭据`}
+      >
+        <div className="workbench-section-heading">
+          <span>凭据</span>
+          <em>{CREDENTIAL_LABELS[provider.credential]}</em>
+        </div>
+        <p className="dnode__meta">
+          鉴权字段：{provider.auth_fields.join("、")}；密钥只写系统密钥库。
+        </p>
+        <div className="dnode__inline-form nodrag nowheel">
+          <input
+            className="dnode__input"
+            type="password"
+            aria-label={`${provider.label} 凭据`}
+            placeholder="只新建或替换，不回显"
+            value={secret}
+            onChange={(event) =>
+              useModelsStore
+                .getState()
+                .setCredentialInput(provider.id, event.target.value)
+            }
+          />
+          <PixelButton
+            size="sm"
+            tone="green"
+            variant="outline"
+            disabled={!secret.trim()}
+            onClick={() => {
+              void useDomainStore.getState().setProviderCredential({
+                provider_id: provider.id,
+                secret,
+              });
+              useModelsStore.getState().clearCredentialInput(provider.id);
+            }}
+          >
+            {provider.credential === "configured" ? "替换" : "保存"}
+          </PixelButton>
+        </div>
+      </section>
+      <section className="model-list-section" aria-label="模型列表">
+        <div className="workbench-section-heading">
+          <span>模型</span>
+          <em>{provider.models.length}</em>
+        </div>
+        <ul className="model-master-list">
+          {provider.models.map((model) => (
+            <li key={model.id}>
+              <button
+                type="button"
+                data-active={selectedModelId === model.id || undefined}
+                onClick={() => useModelsStore.getState().selectModel(model.id)}
+              >
+                <span>
+                  <strong>{model.label}</strong>
+                  <small className="px-font-mono">{model.id}</small>
+                </span>
+                <em>{SUPPORT_LABELS[model.capabilities.tools]}</em>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+export function ModelCapabilityContent({ model }: { model: ModelInfo | null }) {
+  if (!model) {
+    return <p className="dnode__meta">选择模型后显示能力矩阵。</p>;
+  }
+  return (
+    <section
+      className="model-capabilities"
+      aria-label={`${model.label} 能力矩阵`}
     >
-      <p className="dnode__meta">鉴权字段：{provider.auth_fields.join("、")}</p>
-      <div className="dnode__inline-form nodrag nowheel">
-        <input
-          className="dnode__input"
-          type="password"
-          aria-label={`${provider.label} 凭据`}
-          placeholder="只新建/替换，不回显"
-          value={secret}
-          onChange={(event) =>
-            useModelsStore
-              .getState()
-              .setCredentialInput(provider.id, event.target.value)
-          }
-        />
+      <div className="workbench-section-heading">
+        <span>{model.label}</span>
+        <em className="px-font-mono">{model.id}</em>
       </div>
-      <p className="dnode__meta">凭据保存在系统密钥库，状态文件只保存引用。</p>
-    </DNode>
-  );
-});
-
-/* ── 模型节点（能力矩阵） ── */
-
-export const ModelNode = memo(function ModelNode({ data }: NodeProps) {
-  const { model, providerLabel } = data as {
-    model: ModelInfo;
-    providerLabel: string;
-  };
-  return (
-    <DNode
-      icon="models"
-      label={model.label}
-      chip={providerLabel}
-      width={340}
-      ariaLabel={`模型 ${model.label}`}
-    >
-      <ul className="caplist" aria-label="能力矩阵">
+      <ul className="caplist">
         {CAPABILITY_ORDER.map((name) => {
           const support = model.capabilities[name];
           return (
@@ -128,11 +167,9 @@ export const ModelNode = memo(function ModelNode({ data }: NodeProps) {
           );
         })}
       </ul>
-    </DNode>
+    </section>
   );
-});
-
-/* ── 角色节点（五角色 primary + fallback；能力不匹配保存被阻止） ── */
+}
 
 const ALL_ROLES: ModelRole[] = [
   "qa",
@@ -161,13 +198,8 @@ function RoleRow({
   options: { ref: ModelRef; label: string }[];
 }) {
   const draft = useModelsStore((state) => state.drafts[profile.role]);
-  const primary =
-    draft?.primary !== undefined ? draft.primary : profile.primary;
-  const fallback =
-    draft?.fallback !== undefined ? draft.fallback : profile.fallback;
-  const dirty =
-    (draft?.primary !== undefined && draft.primary !== profile.primary) ||
-    (draft?.fallback !== undefined && draft.fallback !== profile.fallback);
+  const primary = draft?.primary ?? profile.primary;
+  const fallback = draft?.fallback ?? profile.fallback;
   const required = requiredCapabilities(profile.role)
     .map((name) => CAPABILITY_LABELS[name])
     .join("、");
@@ -182,7 +214,7 @@ function RoleRow({
   };
 
   return (
-    <li className="role-row" data-dirty={dirty || undefined}>
+    <li className="role-row">
       <div className="role-row__head">
         <strong>{ROLE_LABELS[profile.role]}</strong>
         <em className="role-row__required">要求：{required}</em>
@@ -235,14 +267,15 @@ function RoleRow({
   );
 }
 
-export const RoleProfilesNode = memo(function RoleProfilesNode({
-  data,
-}: NodeProps) {
-  const { roles, providers } = data as {
-    roles: RoleProfile[];
-    providers: ProviderInfo[];
-    roleOrder: ModelRole[];
-  };
+export function RoleProfilesContent({
+  roles,
+  providers,
+  result,
+}: {
+  roles: RoleProfile[];
+  providers: ProviderInfo[];
+  result: RoleAssignResult | null;
+}) {
   const options = modelOptions(providers);
   const sorted = ALL_ROLES.map(
     (role) =>
@@ -253,120 +286,17 @@ export const RoleProfilesNode = memo(function RoleProfilesNode({
       },
   );
   return (
-    <DNode
-      icon="models"
-      label="模型角色"
-      chip="5 角色"
-      width={360}
-      ariaLabel="模型角色配置"
-    >
+    <>
+      {result ? (
+        <div className="model-result-strip" role="status" data-ok={result.ok}>
+          {result.message}
+        </div>
+      ) : null}
       <ul className="role-list nodrag nowheel" aria-label="五角色配置">
         {sorted.map((profile) => (
           <RoleRow key={profile.role} profile={profile} options={options} />
         ))}
       </ul>
-      <p className="dnode__meta">
-        保存即校验能力；不匹配时保存被阻止并生成结果节点（FE-MODEL-002）。
-      </p>
-    </DNode>
+    </>
   );
-});
-
-/* ── 保存结果节点 ── */
-
-export const ModelResultNode = memo(function ModelResultNode({
-  data,
-}: NodeProps) {
-  const { result } = data as { result: NonNullable<RoleAssignResult> };
-  return (
-    <DNode
-      icon="result"
-      label="保存结果"
-      chip={result.ok ? "成功" : "已阻止"}
-      chipTone={result.ok ? "green" : "red"}
-      width={360}
-      ariaLabel="角色保存结果"
-      className={result.ok ? undefined : "dnode--danger"}
-    >
-      <p className="dnode__text">{result.message}</p>
-    </DNode>
-  );
-});
-
-/* ── 用量节点（FE-USAGE-001：token/费用/完整性与软阈值） ── */
-
-export const UsageNode = memo(function UsageNode({ data }: NodeProps) {
-  const { usage } = data as { usage: UsageState };
-  const total = totalCost(usage);
-  const alert = evaluateSoftThreshold(usage);
-  const ratio =
-    total !== null && usage.soft_threshold_usd > 0
-      ? Math.min(1, total / usage.soft_threshold_usd)
-      : null;
-  return (
-    <DNode
-      icon="validation"
-      label="用量"
-      chip={alert ? `软告警 ${(alert.ratio * 100).toFixed(0)}%` : "正常"}
-      chipTone={alert ? "yellow" : "green"}
-      width={460}
-      ariaLabel="模型用量与费用"
-    >
-      <table className="usage-table nodrag nowheel" aria-label="用量明细">
-        <thead>
-          <tr>
-            <th>角色</th>
-            <th>模型</th>
-            <th>输入</th>
-            <th>输出</th>
-            <th>缓存</th>
-            <th>费用</th>
-          </tr>
-        </thead>
-        <tbody>
-          {usage.entries.map((entry) => (
-            <tr
-              key={entry.id}
-              data-incomplete={!usageEntryComplete(entry) || undefined}
-            >
-              <td>{ROLE_LABELS[entry.role]}</td>
-              <td className="px-font-mono">{entry.model_id}</td>
-              <td>{formatTokens(entry.input_tokens)}</td>
-              <td>{formatTokens(entry.output_tokens)}</td>
-              <td>{formatTokens(entry.cache_tokens)}</td>
-              <td>{formatCost(entry.cost_usd)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="dnode__meta">
-        合计：
-        {total === null
-          ? "不完整（存在未知价格，不估造）"
-          : `$${total.toFixed(2)}`}{" "}
-        · 软阈值 ${usage.soft_threshold_usd.toFixed(2)}
-      </p>
-      {ratio !== null ? (
-        <div
-          className="usage-meter"
-          role="meter"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(ratio * 100)}
-          aria-label="软阈值使用率"
-        >
-          <span
-            style={{ width: `${ratio * 100}%` }}
-            data-alert={alert ? true : undefined}
-          />
-        </div>
-      ) : null}
-      {alert ? (
-        <p className="dnode__warning">
-          已达软阈值 {(alert.ratio * 100).toFixed(0)}
-          %：仅告警，不自动暂停、取消或换模。
-        </p>
-      ) : null}
-    </DNode>
-  );
-});
+}

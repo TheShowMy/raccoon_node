@@ -4,70 +4,42 @@ import type { Requirement, Run } from "./types";
  * 需求列表分组投影（FE-DELIVERY-002、01 §8.1，纯函数）：
  * 分组由 RequirementState 与关联最新 Run 联合投影。
  */
-export type RequirementGroupKey =
-  | "drafting"
-  | "pending_confirm"
-  | "queued"
-  | "running"
-  | "delivered"
-  | "blocked"
-  | "closed";
+export type RequirementGroupKey = "queued" | "active" | "blocked" | "history";
 
 export const REQUIREMENT_GROUP_LABELS: Record<RequirementGroupKey, string> = {
-  drafting: "草拟",
-  pending_confirm: "待确认",
-  queued: "排队",
-  running: "运行",
-  delivered: "交付",
+  queued: "执行队列",
+  active: "进行中",
   blocked: "阻断",
-  closed: "已取消",
+  history: "历史",
 };
 
-/** 六分组展示顺序（closed 置于底部，不参与队列语义） */
+/** 需求工作台只接收曾经确认的需求；历史默认置底。 */
 export const REQUIREMENT_GROUP_ORDER: RequirementGroupKey[] = [
-  "drafting",
-  "pending_confirm",
   "queued",
-  "running",
-  "delivered",
+  "active",
   "blocked",
-  "closed",
+  "history",
 ];
-
-const TERMINAL_OUTCOME_TO_GROUP: Partial<
-  Record<NonNullable<Run["outcome"]>, RequirementGroupKey>
-> = {
-  delivered: "delivered",
-  blocked: "blocked",
-  failed: "blocked",
-};
 
 export function groupRequirement(
   requirement: Requirement,
   latestRun: Run | null,
-): RequirementGroupKey {
-  if (requirement.state === "cancelled" || requirement.state === "superseded") {
-    return "closed";
-  }
+): RequirementGroupKey | null {
   if (latestRun) {
-    // 关联 Run 非终态 → 运行（含 waiting_workspace，PRD §8.1）
-    if (latestRun.phase !== "terminal") return "running";
-    const terminalGroup = latestRun.outcome
-      ? TERMINAL_OUTCOME_TO_GROUP[latestRun.outcome]
-      : undefined;
-    // cancelled 的 Run 不决定分组（语义修改取消后需求回 spec_ready，PRD-SPEC-007）
-    if (terminalGroup) return terminalGroup;
+    if (latestRun.phase === "blocked") return "blocked";
+    if (latestRun.phase !== "terminal") return "active";
+    return "history";
   }
-  switch (requirement.state) {
-    case "drafting":
-    case "clarifying":
-      return "drafting";
-    case "spec_ready":
-      return "pending_confirm";
-    case "confirmed":
-    case "queued":
-      return "queued";
+  if (
+    (requirement.state === "confirmed" || requirement.state === "queued") &&
+    requirement.confirmed_revision !== null
+  ) {
+    return "queued";
   }
+  if (requirement.state === "cancelled" || requirement.state === "superseded") {
+    return requirement.confirmed_revision !== null ? "history" : null;
+  }
+  return null;
 }
 
 export type GroupedRequirements = {
@@ -93,6 +65,7 @@ export function groupRequirements(
       ? (runsById[requirement.latest_run_id] ?? null)
       : null;
     const key = groupRequirement(requirement, latestRun);
+    if (!key) continue;
     const list = groups.get(key) ?? [];
     list.push(requirement);
     groups.set(key, list);

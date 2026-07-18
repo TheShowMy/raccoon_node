@@ -71,6 +71,66 @@ export class GitModule {
     },
     { path: "docs/rewrite/TODO.md", status: "untracked", diff: null },
     { path: "src/merge.rs", status: "conflicted", diff: DEMO_DIFF_CONFLICT },
+    {
+      path: "frontend/src/App.tsx",
+      status: "unstaged",
+      diff: DEMO_DIFF_CANVAS,
+    },
+    {
+      path: "frontend/src/api/types.ts",
+      status: "staged",
+      diff: DEMO_DIFF_TOKENS,
+    },
+    {
+      path: "frontend/src/api/mock/backend.ts",
+      status: "unstaged",
+      diff: DEMO_DIFF_CANVAS,
+    },
+    {
+      path: "frontend/src/canvas/layout.ts",
+      status: "staged",
+      diff: DEMO_DIFF_TOKENS,
+    },
+    {
+      path: "frontend/src/chat/ConversationGraph.tsx",
+      status: "unstaged",
+      diff: DEMO_DIFF_CANVAS,
+    },
+    {
+      path: "frontend/src/store/domainStore.ts",
+      status: "unstaged",
+      diff: DEMO_DIFF_CANVAS,
+    },
+    {
+      path: "frontend/src/workbenches/git/GitWorkbench.tsx",
+      status: "staged",
+      diff: DEMO_DIFF_TOKENS,
+    },
+    {
+      path: "frontend/src/workbenches/settings/SettingsWorkbench.tsx",
+      status: "unstaged",
+      diff: DEMO_DIFF_CANVAS,
+    },
+    {
+      path: "frontend/src/workbenches/usage/UsageWorkbench.tsx",
+      status: "untracked",
+      diff: null,
+    },
+    {
+      path: "frontend/src/events/connect.ts",
+      status: "staged",
+      diff: DEMO_DIFF_TOKENS,
+    },
+    {
+      path: "frontend/src/components/pet/GrayDangoHost.tsx",
+      status: "unstaged",
+      diff: DEMO_DIFF_CANVAS,
+    },
+    {
+      path: "docs/rewrite/02-frontend-requirements.md",
+      status: "unstaged",
+      diff: DEMO_DIFF_CANVAS,
+    },
   ];
   private lastCommit: string | null = "c3d9e21 feat: 射线工作台与视口恢复";
 

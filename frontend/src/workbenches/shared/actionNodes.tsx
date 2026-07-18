@@ -12,36 +12,44 @@ import { useDomainStore } from "../../store/domainStore";
 export const WorkbenchActionConfirmationNode = memo(
   function WorkbenchActionConfirmationNode({ data }: NodeProps) {
     const { action } = data as { action: WorkbenchAction };
+    const awaiting = action.state === "awaiting";
+    const sessionSwitch = action.kind === "conversation_new_session";
     return (
       <DNode
         icon="action"
         label="操作确认"
-        chip={action.irreversible ? "不可逆" : "两阶段"}
-        chipTone="red"
+        chip={
+          sessionSwitch ? "会话切换" : action.irreversible ? "不可逆" : "两阶段"
+        }
+        chipTone={sessionSwitch ? "cyan" : "red"}
         width={340}
-        ariaLabel={`危险操作确认:${action.title}`}
-        className="dnode--danger"
+        ariaLabel={`${sessionSwitch ? "会话操作" : "危险操作"}确认:${action.title}`}
+        className={sessionSwitch ? undefined : "dnode--danger"}
         actions={
-          <>
-            <PixelButton
-              size="sm"
-              tone="red"
-              onClick={() =>
-                void useDomainStore.getState().confirmWorkbenchAction(action)
-              }
-            >
-              确认执行
-            </PixelButton>
-            <PixelButton
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                void useDomainStore.getState().cancelWorkbenchAction(action.id)
-              }
-            >
-              取消
-            </PixelButton>
-          </>
+          awaiting ? (
+            <>
+              <PixelButton
+                size="sm"
+                tone={sessionSwitch ? "cyan" : "red"}
+                onClick={() =>
+                  void useDomainStore.getState().confirmWorkbenchAction(action)
+                }
+              >
+                确认执行
+              </PixelButton>
+              <PixelButton
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  void useDomainStore
+                    .getState()
+                    .cancelWorkbenchAction(action.id)
+                }
+              >
+                取消
+              </PixelButton>
+            </>
+          ) : undefined
         }
       >
         <p className="dnode__text">
@@ -49,7 +57,13 @@ export const WorkbenchActionConfirmationNode = memo(
         </p>
         <p className="dnode__text">{action.impact}</p>
         <p className="dnode__meta">
-          prepare/confirm 两阶段；确认 token 绑定本次操作。
+          {awaiting
+            ? sessionSwitch
+              ? "确认后停止当前生成并切换到独立空白会话。"
+              : "prepare/confirm 两阶段；确认 token 绑定本次操作。"
+            : action.state === "confirmed"
+              ? "已确认；结果节点保留本次执行事实。"
+              : "已取消；没有执行来源操作。"}
         </p>
       </DNode>
     );

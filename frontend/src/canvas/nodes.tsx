@@ -1,15 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { PixelButton } from "@pxlkit/ui-kit";
 import type { NodeProps } from "@xyflow/react";
-import { memo, type ComponentType } from "react";
+import { memo, useEffect, useRef, type ComponentType } from "react";
 import { getApi } from "../api";
 import type { WorkbenchKind } from "../api/types";
+import { persistScrollPosition, restoreScrollPositions } from "./nodeScroll";
 import { ConversationGraph } from "../chat/ConversationGraph";
 import { DeliveryWorkbench } from "../workbenches/delivery/DeliveryWorkbench";
 import "../workbenches/delivery/delivery.css";
 import { FilesWorkbench } from "../workbenches/files/FilesWorkbench";
 import { GitWorkbench } from "../workbenches/git/GitWorkbench";
-import { ModelsWorkbench } from "../workbenches/models/ModelsWorkbench";
+import { UsageWorkbench } from "../workbenches/usage/UsageWorkbench";
 import { SettingsWorkbench } from "../workbenches/settings/SettingsWorkbench";
 import { TerminalWorkbench } from "../workbenches/terminal/TerminalWorkbench";
 import "../workbenches/workbench.css";
@@ -91,18 +92,8 @@ const WORKBENCH_CONTENT: Record<WorkbenchKind, ComponentType> = {
   files: FilesWorkbench,
   git: GitWorkbench,
   terminal: TerminalWorkbench,
-  models: ModelsWorkbench,
+  usage: UsageWorkbench,
   settings: SettingsWorkbench,
-};
-
-/** 设置是表单密集型常规布局（02 §2.2 不强行画布化）；其余为全铺满子画布 */
-const FULL_FILL: Record<WorkbenchKind, boolean> = {
-  delivery: true,
-  files: true,
-  git: true,
-  terminal: true,
-  models: true,
-  settings: false,
 };
 
 export type WorkbenchNodeData = {
@@ -116,6 +107,15 @@ export const CanvasWorkbenchNode = memo(function CanvasWorkbenchNode({
   const { kind, onClose } = data as WorkbenchNodeData;
   const title = CAPABILITY_LABELS[kind];
   const Content = WORKBENCH_CONTENT[kind];
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (bodyRef.current) {
+        restoreScrollPositions(bodyRef.current, `workbench:${kind}`);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [kind]);
   return (
     <section
       className="workbench-node px-cut px-shadowed"
@@ -134,10 +134,14 @@ export const CanvasWorkbenchNode = memo(function CanvasWorkbenchNode({
           关闭 Esc
         </PixelButton>
       </header>
-      {/* FE-DELIVERY-001：需求工作台扣除最小标题栏后内部 React Flow 铺满 */}
+      {/* 工作台内容铺满宿主；只有需求工作台在内部继续使用 React Flow。 */}
       <div
+        ref={bodyRef}
         className="workbench-node__body nodrag nowheel"
-        data-fill={FULL_FILL[kind] ? true : undefined}
+        data-fill
+        onScrollCapture={(event) =>
+          persistScrollPosition(event.target, `workbench:${kind}`)
+        }
       >
         <Content />
       </div>

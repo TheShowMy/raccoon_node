@@ -1,12 +1,7 @@
-import {
-  applyNodeChanges,
-  ReactFlow,
-  ReactFlowProvider,
-  useReactFlow,
-  type NodeChange,
-} from "@xyflow/react";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import { useMatch } from "react-router-dom";
+import { groupRequirements } from "../../api/groups";
 import { useCanvasStore, type Viewport } from "../../store/canvasStore";
 import { useDeliveryStore } from "../../store/deliveryStore";
 import { useDomainStore } from "../../store/domainStore";
@@ -14,16 +9,15 @@ import { DevScenarioBar } from "./DevScenarioBar";
 import {
   ActionConfirmationNode,
   ActionResultNode,
-  ClarificationNode,
-  ConfirmationNode,
   DiffNode,
   DiagnosticsNode,
+  PlanInvalidNode,
   PublicationNode,
   RequirementListNode,
+  RequirementSummaryNode,
   ReviewNode,
   RunNode,
-  SourceRefNode,
-  SpecNode,
+  StageBandNode,
   ValidationNode,
   WorkItemNode,
   WorkPlanNode,
@@ -36,12 +30,11 @@ import {
 
 const nodeTypes = {
   requirement_list: RequirementListNode,
-  source_ref: SourceRefNode,
-  clarification: ClarificationNode,
-  spec: SpecNode,
-  confirmation: ConfirmationNode,
+  requirement_summary: RequirementSummaryNode,
   run: RunNode,
   work_plan: WorkPlanNode,
+  plan_invalid: PlanInvalidNode,
+  stage_band: StageBandNode,
   work_item: WorkItemNode,
   diff: DiffNode,
   validation: ValidationNode,
@@ -62,7 +55,6 @@ const DEFAULT_VIEWPORT: Viewport = { x: 24, y: 24, zoom: 0.8 };
 const DeliveryCanvas = memo(function DeliveryCanvas() {
   const rf = useReactFlow();
   const requirements = useDomainStore((state) => state.requirements);
-  const clarifications = useDomainStore((state) => state.clarifications);
   const revisions = useDomainStore((state) => state.revisions);
   const runs = useDomainStore((state) => state.runs);
   const plans = useDomainStore((state) => state.plans);
@@ -75,6 +67,10 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
     (state) => state.selectedRequirementId,
   );
   const focusRequest = useDeliveryStore((state) => state.focusRequest);
+  const diagnosticsRunId = useDeliveryStore((state) => state.diagnosticsRunId);
+  const deliveryFocusRequest = useCanvasStore(
+    (state) => state.deliveryFocusRequest,
+  );
 
   /* 深链（02 §3.3）：/delivery/requirements/:id 与 /delivery/runs/:id */
   const requirementMatch = useMatch(
@@ -98,16 +94,12 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
       const requirement =
         useDomainStore.getState().requirements[deepRequirementId];
       if (!requirement) return;
+      const visible = groupRequirements([requirement], runs).length > 0;
+      if (!visible) return;
       store.selectRequirement(deepRequirementId);
-      // 聚焦需求当前最关键的一跳节点
-      const target =
-        requirement.state === "spec_ready"
-          ? deliveryNodeId.confirmation(deepRequirementId)
-          : requirement.latest_revision > 0
-            ? deliveryNodeId.spec(deepRequirementId)
-            : requirement.latest_run_id
-              ? deliveryNodeId.run(requirement.latest_run_id)
-              : deliveryNodeId.list();
+      const target = requirement.latest_run_id
+        ? deliveryNodeId.run(requirement.latest_run_id)
+        : deliveryNodeId.requirement(deepRequirementId);
       store.requestFocus(target);
     }
   }, [deepRequirementId, deepRunId]);
@@ -115,40 +107,34 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
   /* 未选中时默认选中第一个需求（FE-DELIVERY-003 从列表锚点开始） */
   useEffect(() => {
     const selected = useDeliveryStore.getState().selectedRequirementId;
-    const all = Object.values(requirements);
-    if (selected && requirements[selected]) return;
-    const first = [...all].sort((a, b) =>
-      a.created_at.localeCompare(b.created_at),
-    )[0];
+    const visible = groupRequirements(
+      Object.values(requirements),
+      runs,
+    ).flatMap((group) => group.items);
+    if (selected && visible.some((entry) => entry.id === selected)) return;
+    const first = visible[0];
     if (first) useDeliveryStore.getState().selectRequirement(first.id);
-  }, [requirements]);
+    else useDeliveryStore.getState().selectRequirement(null);
+  }, [requirements, runs]);
 
-  /* 状态跃迁自动聚焦：规格就绪 → 确认节点；Run 启动 → RunNode（演示流程不丢焦点） */
+  /* Run 首次生成时先定位 Run；WorkPlan 测量完成后再执行一次流水线 fit。 */
   const selectedRequirement = selectedRequirementId
     ? requirements[selectedRequirementId]
     : undefined;
   const selectedRunId = selectedRequirement?.latest_run_id ?? null;
-  const selectedState = selectedRequirement?.state ?? null;
   useEffect(() => {
     if (!selectedRequirementId) return;
     if (selectedRunId) {
       useDeliveryStore
         .getState()
         .requestFocus(deliveryNodeId.run(selectedRunId));
-      return;
     }
-    if (selectedState === "spec_ready") {
-      useDeliveryStore
-        .getState()
-        .requestFocus(deliveryNodeId.confirmation(selectedRequirementId));
-    }
-  }, [selectedRequirementId, selectedState, selectedRunId]);
+  }, [selectedRequirementId, selectedRunId]);
 
   const projection = useMemo(
     () =>
       projectDelivery({
         requirements,
-        clarifications,
         revisions,
         runs,
         plans,
@@ -157,10 +143,10 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
         publications,
         actions,
         selectedRequirementId,
+        diagnosticsRunId,
       }),
     [
       requirements,
-      clarifications,
       revisions,
       runs,
       plans,
@@ -169,23 +155,74 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
       publications,
       actions,
       selectedRequirementId,
+      diagnosticsRunId,
     ],
   );
+  const nodes: DeliveryFlowNode[] = projection.nodes;
 
-  const [nodes, setNodes] = useState<DeliveryFlowNode[]>([]);
+  const lastFittedPipeline = useRef<string | null>(null);
+  const selectedPlanRevision = selectedRunId
+    ? (plans[selectedRunId]?.revision ?? null)
+    : null;
   useEffect(() => {
-    setNodes(projection.nodes);
-  }, [projection]);
-  const onNodesChange = useCallback(
-    (changes: NodeChange<DeliveryFlowNode>[]) =>
-      setNodes((current) => applyNodeChanges(changes, current)),
-    [],
-  );
+    if (
+      !selectedRequirementId ||
+      !selectedRunId ||
+      selectedPlanRevision === null
+    ) {
+      return;
+    }
+    const pipelineKey = `${selectedRequirementId}:${selectedRunId}:${selectedPlanRevision}`;
+    if (lastFittedPipeline.current === pipelineKey) return;
+    const fitTypes = new Set<DeliveryFlowNode["type"]>([
+      "run",
+      "work_plan",
+      "plan_invalid",
+      "work_item",
+      "diff",
+      "validation",
+      "review",
+      "publication",
+    ]);
+    const pipelineNodes = nodes.filter((node) => fitTypes.has(node.type));
+    if (pipelineNodes.length <= 1) return;
+    let frame = 0;
+    let attempts = 0;
+    const fitWhenReady = () => {
+      void rf
+        .fitView({
+          nodes: pipelineNodes,
+          padding: 0.16,
+          minZoom: 0.42,
+          maxZoom: 0.9,
+          duration: 280,
+        })
+        .then((fitted) => {
+          if (fitted) {
+            lastFittedPipeline.current = pipelineKey;
+            return;
+          }
+          attempts += 1;
+          if (attempts < 60) frame = requestAnimationFrame(fitWhenReady);
+        });
+    };
+    frame = requestAnimationFrame(fitWhenReady);
+    return () => cancelAnimationFrame(frame);
+    // 流水线状态只更新节点内容；只有选择、Run 或 plan revision 改变时重新 fit。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rf, selectedPlanRevision, selectedRequirementId, selectedRunId]);
 
   /* 一次性聚焦请求（深链 / GrayDango 定位） */
   useEffect(() => {
-    if (!focusRequest) return;
-    const target = nodes.find((node) => node.id === focusRequest.nodeId);
+    const localNodeId = focusRequest?.nodeId ?? null;
+    const globalNodeId = deliveryFocusRequest?.node_id ?? null;
+    const requestedNodeId = localNodeId ?? globalNodeId;
+    if (!requestedNodeId) return;
+    const exactTarget = nodes.find((node) => node.id === requestedNodeId);
+    // 深链/状态跃迁的精确目标尚未投影时继续等待，不能把请求消费在列表锚点。
+    if (localNodeId && !exactTarget) return;
+    const target =
+      exactTarget ?? nodes.find((node) => /diag/.test(node.id)) ?? nodes[0];
     if (target) {
       const width =
         typeof target.style?.width === "number" ? target.style.width : 200;
@@ -195,11 +232,16 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
         { zoom: 0.9, duration: 320 },
       );
     }
-    useDeliveryStore.getState().clearFocus();
-  }, [focusRequest, nodes, rf]);
+    if (focusRequest) useDeliveryStore.getState().clearFocus();
+    if (deliveryFocusRequest) {
+      useCanvasStore
+        .getState()
+        .consumeDeliveryFocus(deliveryFocusRequest.request_id);
+    }
+  }, [deliveryFocusRequest, focusRequest, nodes, rf]);
 
   const viewport = useCanvasStore(
-    (state) => state.workbenchViewports.delivery ?? DEFAULT_VIEWPORT,
+    (state) => state.deliveryViewport ?? DEFAULT_VIEWPORT,
   );
 
   return (
@@ -208,10 +250,9 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
         nodes={nodes}
         edges={projection.edges}
         nodeTypes={nodeTypes}
-        onNodesChange={onNodesChange}
         viewport={viewport}
         onViewportChange={(next) =>
-          useCanvasStore.getState().saveWorkbenchViewport("delivery", next)
+          useCanvasStore.getState().saveDeliveryViewport(next)
         }
         onNodeClick={() => {
           // XYFlow：无 flow 级 onNodeClick 时节点包装层不启用 pointer-events，
@@ -225,7 +266,9 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
         proOptions={{ hideAttribution: true }}
         aria-label="需求交付子画布"
       />
-      <DevScenarioBar />
+      {import.meta.env.VITE_ENABLE_DEMO_CONSOLE === "true" ? (
+        <DevScenarioBar />
+      ) : null}
     </div>
   );
 });

@@ -12,8 +12,11 @@ import {
   EVENT_SCHEMA_VERSION,
   type AppSettings,
   type ApplicationSnapshot,
+  type ClarificationAnswer,
   type ConversationBranch,
+  type ConversationGraphSnapshot,
   type ConversationNode,
+  type ConversationSession,
   type DiagnosticsInfo,
   type DomainEventPayload,
   type EventAggregateType,
@@ -42,9 +45,11 @@ import { ModelsModule } from "./models";
 import { selectScript, type ScriptStep } from "./scripts";
 import { SettingsModule } from "./settings";
 import { TerminalModule } from "./terminal";
+import { UsageModule } from "./usage";
 
-const GRAPH_ID = "g-main";
-const ROOT_BRANCH_ID = "b-main";
+const INITIAL_SESSION_ID = "s-main";
+const INITIAL_GRAPH_ID = "g-main";
+const INITIAL_ROOT_BRANCH_ID = "b-main";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const latency = () => sleep(40 + Math.random() * 80);
@@ -58,7 +63,7 @@ const WORKBENCH_TITLES: Record<WorkbenchKind, string> = {
   files: "文件",
   git: "Git",
   terminal: "终端",
-  models: "模型与用量",
+  usage: "用量统计",
   settings: "设置",
 };
 
@@ -116,6 +121,20 @@ function workbenchActionCopy(
         impact: "会话进程树将被终止，未保存的输出丢失。",
         irreversible: true,
       };
+    case "conversation_redact":
+      return {
+        title: "删除对话节点可见内容",
+        impact:
+          "节点正文与附件引用将显示为已删除；节点 ID、连线、分支和业务证据关系保留。",
+        irreversible: true,
+      };
+    case "conversation_new_session":
+      return {
+        title: "新建独立会话",
+        impact:
+          "停止当前流式响应并保留已生成内容；未完成需求和草稿留在旧会话，随后切换到空白会话。",
+        irreversible: false,
+      };
   }
 }
 
@@ -129,11 +148,15 @@ export class FakeBackend implements RaccoonApi {
   private eventCounter = 0;
   private nodeCounter = 0;
   private branchCounter = 0;
+  private sessionCounter = 0;
   private notificationCounter = 0;
   private readonly log: EventEnvelope[] = [];
   private readonly subscribers = new Set<(envelope: EventEnvelope) => void>();
   private readonly nodes = new Map<string, ConversationNode>();
   private readonly branches = new Map<string, ConversationBranch>();
+  private readonly sessions = new Map<string, ConversationSession>();
+  private readonly sessionIdempotency = new Map<string, string>();
+  private activeSessionId = INITIAL_SESSION_ID;
   private readonly notifications = new Map<string, Notification>();
   private readonly runs = new Map<string, AbortController>();
   private demoNotificationsStarted = false;
@@ -142,18 +165,27 @@ export class FakeBackend implements RaccoonApi {
   private readonly git: GitModule;
   private readonly terminal: TerminalModule;
   private readonly models: ModelsModule;
+  private readonly usage: UsageModule;
   private readonly settings: SettingsModule;
   private workbenchActionCounter = 0;
   private readonly workbenchActions = new Map<string, WorkbenchAction>();
   private readonly idPrefix = `i${++backendInstanceCounter}`;
 
   constructor() {
-    this.branches.set(ROOT_BRANCH_ID, {
-      id: ROOT_BRANCH_ID,
-      graph_id: GRAPH_ID,
+    const createdAt = now();
+    this.sessions.set(INITIAL_SESSION_ID, {
+      id: INITIAL_SESSION_ID,
+      graph_id: INITIAL_GRAPH_ID,
+      root_branch_id: INITIAL_ROOT_BRANCH_ID,
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    this.branches.set(INITIAL_ROOT_BRANCH_ID, {
+      id: INITIAL_ROOT_BRANCH_ID,
+      graph_id: INITIAL_GRAPH_ID,
       anchor_node_id: null,
       parent_branch_id: null,
-      created_at: now(),
+      created_at: createdAt,
     });
     this.delivery = new DeliveryModule({
       idPrefix: this.idPrefix,
@@ -169,6 +201,21 @@ export class FakeBackend implements RaccoonApi {
       resolveNotification: (notificationId) =>
         this.resolveNotification(notificationId),
       nodeContent: (nodeId) => this.nodes.get(nodeId)?.content ?? null,
+      appendConversationNode: (input) => {
+        return this.createNode({
+          branch_id: input.branch_id,
+          kind: input.kind,
+          state: "completed",
+          content: input.content,
+          completed_at: now(),
+          requirement_id: input.requirement_id,
+          requirement_revision: input.requirement_revision ?? null,
+          clarification_round_id: input.clarification_round_id ?? null,
+        }).id;
+      },
+      defaultTaskBudget: () =>
+        this.settings?.snapshotState().default_task_budget_usd ?? 25,
+      recordRunUsage: (input) => this.usage.recordRunUsage(input),
       latency: () => latency().then(() => undefined),
     });
     this.files = new FilesModule({
@@ -190,14 +237,11 @@ export class FakeBackend implements RaccoonApi {
     this.models = new ModelsModule({
       emit: (aggregateType, aggregateId, eventType, payload) =>
         this.emit(aggregateType, aggregateId, eventType, payload),
-      notify: (severity, message, sourceWorkbench, sourceNodeId) =>
-        this.raiseNotification(
-          severity,
-          message,
-          sourceWorkbench,
-          sourceNodeId,
-        ),
       latency: () => latency().then(() => undefined),
+    });
+    this.usage = new UsageModule({
+      emit: (aggregateType, aggregateId, eventType, payload) =>
+        this.emit(aggregateType, aggregateId, eventType, payload),
     });
     this.settings = new SettingsModule({
       emit: (aggregateType, aggregateId, eventType, payload) =>
@@ -211,7 +255,6 @@ export class FakeBackend implements RaccoonApi {
         ),
       latency: () => latency().then(() => undefined),
       lastSequence: () => this.sequence,
-      onThresholdChange: (usd) => this.models.setSoftThreshold(usd),
     });
   }
 
@@ -272,10 +315,11 @@ export class FakeBackend implements RaccoonApi {
       state_hash: "mock-state-hash",
       state: {
         conversation: {
-          graph_id: GRAPH_ID,
-          root_branch_id: ROOT_BRANCH_ID,
-          nodes: [...this.nodes.values()],
-          branches: [...this.branches.values()],
+          active_session_id: this.activeSessionId,
+          sessions: [...this.sessions.values()],
+          graphs: [...this.sessions.values()].map((session) =>
+            this.graphSnapshot(session),
+          ),
         },
         notifications: [...this.notifications.values()],
         ...this.delivery.snapshotState(),
@@ -283,12 +327,81 @@ export class FakeBackend implements RaccoonApi {
         git: this.git.snapshotState(),
         terminals: this.terminal.snapshotState(),
         models: this.models.snapshotState(),
+        usage: this.usage.snapshotState(),
         settings: this.settings.snapshotState(),
       },
     }));
   }
 
   /* ── 对话命令 ── */
+
+  private graphSnapshot(
+    session: ConversationSession,
+  ): ConversationGraphSnapshot {
+    return {
+      graph_id: session.graph_id,
+      root_branch_id: session.root_branch_id,
+      nodes: [...this.nodes.values()].filter(
+        (node) => node.graph_id === session.graph_id,
+      ),
+      branches: [...this.branches.values()].filter(
+        (branch) => branch.graph_id === session.graph_id,
+      ),
+    };
+  }
+
+  private sessionForGraph(graphId: string): ConversationSession {
+    const session = [...this.sessions.values()].find(
+      (candidate) => candidate.graph_id === graphId,
+    );
+    if (!session) throw new Error(`conversation: 未找到图 ${graphId}`);
+    return session;
+  }
+
+  async createConversationSession(input: { idempotency_key: string }): Promise<{
+    session: ConversationSession;
+    graph: ConversationGraphSnapshot;
+  }> {
+    await latency();
+    const existingId = this.sessionIdempotency.get(input.idempotency_key);
+    if (existingId) {
+      const existing = this.sessions.get(existingId)!;
+      this.activeSessionId = existing.id;
+      return { session: existing, graph: this.graphSnapshot(existing) };
+    }
+    const index = ++this.sessionCounter;
+    const createdAt = now();
+    const session: ConversationSession = {
+      id: `s-${this.idPrefix}-${index}`,
+      graph_id: `g-${this.idPrefix}-${index}`,
+      root_branch_id: `b-${this.idPrefix}-root-${index}`,
+      created_at: createdAt,
+      updated_at: createdAt,
+    };
+    const root: ConversationBranch = {
+      id: session.root_branch_id,
+      graph_id: session.graph_id,
+      anchor_node_id: null,
+      parent_branch_id: null,
+      created_at: createdAt,
+    };
+    this.sessions.set(session.id, session);
+    this.branches.set(root.id, root);
+    this.sessionIdempotency.set(input.idempotency_key, session.id);
+    this.activeSessionId = session.id;
+    const graph = this.graphSnapshot(session);
+    this.emit(
+      "conversation",
+      session.graph_id,
+      "conversation.session.created",
+      {
+        session,
+        graph,
+        active: true,
+      },
+    );
+    return { session, graph };
+  }
 
   private headOf(branchId: string): string | null {
     let head: string | null = null;
@@ -310,10 +423,12 @@ export class FakeBackend implements RaccoonApi {
       Partial<ConversationNode> & { branch_id: string },
   ): ConversationNode {
     const { branch_id, kind, state, ...rest } = partial;
+    const branch = this.branches.get(branch_id);
+    if (!branch) throw new Error(`conversation: 未找到分支 ${branch_id}`);
     const parentId = rest.parent_ids?.[0] ?? this.headOf(branch_id);
     const node: ConversationNode = {
       id: `n-${this.idPrefix}-${++this.nodeCounter}`,
-      graph_id: GRAPH_ID,
+      graph_id: branch.graph_id,
       content: "",
       node_sequence: 0,
       intent: null,
@@ -321,6 +436,8 @@ export class FakeBackend implements RaccoonApi {
       completed_at: null,
       requirement_id: null,
       requirement_revision: null,
+      clarification_round_id: null,
+      redacted_at: null,
       tool_activity: null,
       ...rest,
       kind,
@@ -329,7 +446,9 @@ export class FakeBackend implements RaccoonApi {
       branch_ids: [branch_id],
     };
     this.nodes.set(node.id, node);
-    this.emit("conversation", GRAPH_ID, "conversation.node.created", { node });
+    this.emit("conversation", node.graph_id, "conversation.node.created", {
+      node,
+    });
     return node;
   }
 
@@ -351,7 +470,7 @@ export class FakeBackend implements RaccoonApi {
           node_sequence: nextSequence,
         };
         this.nodes.set(current.id, current);
-        this.emit("conversation", GRAPH_ID, "conversation.node.delta", {
+        this.emit("conversation", current.graph_id, "conversation.node.delta", {
           node_id: current.id,
           node_sequence: nextSequence,
           delta: chunk,
@@ -373,12 +492,17 @@ export class FakeBackend implements RaccoonApi {
       tool_activity: toolActivity ?? node.tool_activity,
     };
     this.nodes.set(finished.id, finished);
-    this.emit("conversation", GRAPH_ID, "conversation.node.state_changed", {
-      node_id: finished.id,
-      state,
-      completed_at: finished.completed_at,
-      ...(toolActivity ? { tool_activity: toolActivity } : {}),
-    });
+    this.emit(
+      "conversation",
+      finished.graph_id,
+      "conversation.node.state_changed",
+      {
+        node_id: finished.id,
+        state,
+        completed_at: finished.completed_at,
+        ...(toolActivity ? { tool_activity: toolActivity } : {}),
+      },
+    );
   }
 
   private abortActiveNodes(branchId: string) {
@@ -444,11 +568,16 @@ export class FakeBackend implements RaccoonApi {
           started_at: now(),
         };
         this.nodes.set(node.id, { ...node, tool_activity: running });
-        this.emit("conversation", GRAPH_ID, "conversation.node.state_changed", {
-          node_id: node.id,
-          state: "running",
-          tool_activity: running,
-        });
+        this.emit(
+          "conversation",
+          node.graph_id,
+          "conversation.node.state_changed",
+          {
+            node_id: node.id,
+            state: "running",
+            tool_activity: running,
+          },
+        );
         await sleep(step.duration_ms);
         if (signal.aborted) break;
         const final: ToolActivity = {
@@ -483,6 +612,8 @@ export class FakeBackend implements RaccoonApi {
         (id): id is string => Boolean(id),
       );
       await this.delivery.createRequirementFromChat({
+        session_id: this.sessionForGraph(this.branches.get(branchId)!.graph_id)
+          .id,
         branch_id: branchId,
         node_ids: nodeIds,
         title: userText.trim().slice(0, 24),
@@ -492,6 +623,11 @@ export class FakeBackend implements RaccoonApi {
 
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
     await latency();
+    const session = this.sessions.get(input.session_id);
+    const branch = this.branches.get(input.branch_id);
+    if (!session || !branch || branch.graph_id !== session.graph_id) {
+      throw new Error("send_message: 会话与分支不匹配");
+    }
     const detected =
       input.intent === "auto" ? detectIntent(input.text) : input.intent;
     const userNode = this.createNode({
@@ -514,19 +650,27 @@ export class FakeBackend implements RaccoonApi {
     return { user_node_id: userNode.id, detected_intent: detected };
   }
 
-  async abortResponse(branch_id: string): Promise<void> {
+  async abortResponse(session_id: string, branch_id: string): Promise<void> {
     await latency();
+    const session = this.sessions.get(session_id);
+    if (!session || this.branches.get(branch_id)?.graph_id !== session.graph_id)
+      return;
     this.runs.get(branch_id)?.abort();
     this.runs.delete(branch_id);
     this.abortActiveNodes(branch_id);
   }
 
   async branchFrom(input: {
+    session_id: string;
     node_id: string;
   }): Promise<{ branch: ConversationBranch }> {
     await latency();
     // 其他节点归一到最近祖先用户节点（PRD-CHAT-009）
     let anchor = this.nodes.get(input.node_id);
+    const session = this.sessions.get(input.session_id);
+    if (!session || anchor?.graph_id !== session.graph_id) {
+      throw new Error("branch_from: 会话与锚点不匹配");
+    }
     while (anchor && anchor.kind !== "user_message") {
       const parentId: string | undefined =
         anchor.parent_ids[anchor.parent_ids.length - 1];
@@ -545,10 +689,11 @@ export class FakeBackend implements RaccoonApi {
     }
     const branch: ConversationBranch = {
       id: `b-${this.idPrefix}-${++this.branchCounter}`,
-      graph_id: GRAPH_ID,
+      graph_id: session.graph_id,
       anchor_node_id: anchor.id,
       parent_branch_id:
-        anchor.branch_ids[anchor.branch_ids.length - 1] ?? ROOT_BRANCH_ID,
+        anchor.branch_ids[anchor.branch_ids.length - 1] ??
+        session.root_branch_id,
       created_at: now(),
     };
     this.branches.set(branch.id, branch);
@@ -560,7 +705,7 @@ export class FakeBackend implements RaccoonApi {
         });
       }
     }
-    this.emit("conversation", GRAPH_ID, "conversation.branch.created", {
+    this.emit("conversation", session.graph_id, "conversation.branch.created", {
       branch,
       shared_node_ids: shared.map((node) => node.id),
     });
@@ -628,8 +773,8 @@ export class FakeBackend implements RaccoonApi {
     schedule(16_000, () =>
       this.raiseNotification(
         "warning",
-        "演示：模型 fake-large 的会话用量接近软阈值（80%）。",
-        "models",
+        "演示：模型目录需要重新验证凭据。",
+        "settings",
         null,
       ),
     );
@@ -646,7 +791,7 @@ export class FakeBackend implements RaccoonApi {
         "error",
         "演示：终端会话 t-1 意外断开（可重连）。",
         "terminal",
-        null,
+        "t-1",
       ),
     );
   }
@@ -670,13 +815,12 @@ export class FakeBackend implements RaccoonApi {
   /* ── 工作台概览 ── */
 
   getWorkbenchSummary(kind: WorkbenchKind): Promise<WorkbenchSummary> {
-    if (kind === "models") this.models.evaluateThresholdOnce();
     const lines: Record<WorkbenchKind, () => string[]> = {
       delivery: () => this.delivery.summaryLines(),
       files: () => this.files.summaryLines(),
       git: () => this.git.summaryLines(),
       terminal: () => this.terminal.summaryLines(),
-      models: () => this.models.summaryLines(),
+      usage: () => this.usage.summaryLines(),
       settings: () => this.settings.summaryLines(),
     };
     return latency().then(() => ({
@@ -689,6 +833,7 @@ export class FakeBackend implements RaccoonApi {
   /* ── 需求交付命令（委托 DeliveryModule） ── */
 
   createRequirementFromChat(input: {
+    session_id: string;
     branch_id: string;
     node_ids: string[];
     title?: string;
@@ -699,9 +844,13 @@ export class FakeBackend implements RaccoonApi {
   answerClarification(input: {
     requirement_id: string;
     round_id: string;
-    answer: string;
+    answer: ClarificationAnswer;
   }): Promise<void> {
     return this.delivery.answerClarification(input);
+  }
+
+  cancelRequirement(requirementId: string): Promise<void> {
+    return this.delivery.cancelRequirement(requirementId);
   }
 
   updateSpec(input: {
@@ -715,6 +864,7 @@ export class FakeBackend implements RaccoonApi {
   confirmRequirement(input: {
     requirement_id: string;
     revision: number;
+    task_budget_usd: number;
   }): Promise<{ run_id: string | null; conflict: boolean }> {
     return this.delivery.confirmRequirement(input);
   }
@@ -818,6 +968,7 @@ export class FakeBackend implements RaccoonApi {
       state: "awaiting",
       result: null,
       created_at: now(),
+      updated_at: now(),
     };
     this.workbenchActions.set(action.id, action);
     this.emit("action", action.id, "workbench_action.updated", { action });
@@ -837,6 +988,7 @@ export class FakeBackend implements RaccoonApi {
         ...action,
         state: "cancelled",
         result: { ok: false, message: "确认 token 不匹配，已拒绝执行。" },
+        updated_at: now(),
       };
       this.workbenchActions.set(action.id, rejected);
       this.emit("action", action.id, "workbench_action.updated", {
@@ -844,13 +996,58 @@ export class FakeBackend implements RaccoonApi {
       });
       return;
     }
-    const result = action.kind.startsWith("git_")
-      ? this.git.execute(action.kind, action.payload)
-      : this.terminal.forceClose(action.payload.session_id);
+    let result: { ok: boolean; message: string };
+    if (action.kind.startsWith("git_")) {
+      result = this.git.execute(action.kind, action.payload);
+    } else if (action.kind === "terminal_close") {
+      result = this.terminal.forceClose(action.payload.session_id);
+    } else if (action.kind === "conversation_new_session") {
+      const sessionId = action.payload.session_id;
+      const branchId = action.payload.branch_id;
+      if (sessionId && branchId) {
+        await this.abortResponse(sessionId, branchId);
+      }
+      const created = await this.createConversationSession({
+        idempotency_key: action.id,
+      });
+      result = {
+        ok: true,
+        message: `已创建独立会话 ${created.session.id}。`,
+      };
+    } else {
+      const nodeId = action.payload.node_id ?? action.source_node_id;
+      const node = nodeId ? this.nodes.get(nodeId) : null;
+      if (!node) {
+        result = { ok: false, message: "来源对话节点不存在，未执行删除。" };
+      } else if (node.redacted_at) {
+        result = { ok: true, message: "该节点已经删除，无需重复执行。" };
+      } else {
+        for (const branchId of node.branch_ids) {
+          this.runs.get(branchId)?.abort();
+          this.runs.delete(branchId);
+          this.abortActiveNodes(branchId);
+        }
+        const redactedAt = now();
+        this.nodes.set(node.id, {
+          ...node,
+          content: "",
+          redacted_at: redactedAt,
+        });
+        this.emit("conversation", node.graph_id, "conversation.node.redacted", {
+          node_id: node.id,
+          redacted_at: redactedAt,
+        });
+        result = {
+          ok: true,
+          message: "节点内容已删除，图结构与分支关系保留。",
+        };
+      }
+    }
     const confirmed: WorkbenchAction = {
       ...action,
       state: "confirmed",
       result,
+      updated_at: now(),
     };
     this.workbenchActions.set(action.id, confirmed);
     this.emit("action", action.id, "workbench_action.updated", {
@@ -866,6 +1063,7 @@ export class FakeBackend implements RaccoonApi {
       ...action,
       state: "cancelled",
       result: { ok: true, message: "已取消，未执行任何变更。" },
+      updated_at: now(),
     };
     this.workbenchActions.set(actionId, cancelled);
     this.emit("action", actionId, "workbench_action.updated", {
@@ -917,7 +1115,7 @@ export class FakeBackend implements RaccoonApi {
     return this.terminal.subscribeOutput(sessionId, onData);
   }
 
-  /* ── 模型与用量命令（委托 ModelsModule） ── */
+  /* ── 模型配置命令（设置工作台，委托 ModelsModule） ── */
 
   setProviderCredential(input: {
     provider_id: string;

@@ -4,7 +4,7 @@ import type { AppSettings } from "./types";
 
 const base: AppSettings = {
   network_policy: "offline",
-  soft_threshold_usd: 25,
+  default_task_budget_usd: 25,
   listen_host: "127.0.0.1",
   listen_port: 4173,
   pending_restart: [],
@@ -31,9 +31,9 @@ describe("restart_required 逻辑（FE-SET-002）", () => {
     expect(
       settingsRequiringRestart(base, { network_policy: "git_remote" }),
     ).toEqual([]);
-    expect(settingsRequiringRestart(base, { soft_threshold_usd: 50 })).toEqual(
-      [],
-    );
+    expect(
+      settingsRequiringRestart(base, { default_task_budget_usd: 50 }),
+    ).toEqual([]);
   });
 
   it("值未变化不产生重启要求", () => {

@@ -12,7 +12,7 @@ export const CAPABILITY_KINDS = [
   "files",
   "git",
   "terminal",
-  "models",
+  "usage",
   "settings",
 ] as const satisfies readonly WorkbenchKind[];
 
@@ -21,7 +21,7 @@ export const CAPABILITY_LABELS: Record<WorkbenchKind, string> = {
   files: "文件",
   git: "Git",
   terminal: "终端",
-  models: "模型与用量",
+  usage: "用量统计",
   settings: "设置",
 };
 
@@ -120,26 +120,26 @@ export function centralAreaRatio(screen: Size): {
   };
 }
 
-/** 工作台尺寸：需求交付最大可用（FE-DELIVERY-001），其余按内容密度取中大型 */
+/** 工作台尺寸：需求交付保持原尺寸；普通工具页按连续分栏需要扩展。 */
 export function workbenchSizeFor(kind: WorkbenchKind, screen: Size): Size {
   switch (kind) {
     case "delivery":
       return {
-        width: Math.min(1120, screen.width * 0.82),
-        height: Math.min(720, screen.height * 0.84),
+        width: Math.min(1380, screen.width * 0.94),
+        height: Math.min(820, screen.height * 0.9),
       };
     case "files":
     case "git":
-    case "models":
-      return {
-        width: Math.min(980, screen.width * 0.78),
-        height: Math.min(620, screen.height * 0.8),
-      };
-    case "terminal":
+    case "usage":
     case "settings":
       return {
-        width: Math.min(860, screen.width * 0.72),
-        height: Math.min(600, screen.height * 0.78),
+        width: Math.min(1180, screen.width * 0.86),
+        height: Math.min(760, screen.height * 0.86),
+      };
+    case "terminal":
+      return {
+        width: Math.min(1100, screen.width * 0.84),
+        height: Math.min(720, screen.height * 0.84),
       };
   }
 }

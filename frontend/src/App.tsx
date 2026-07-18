@@ -91,6 +91,10 @@ export function App() {
         path="/canvas/workbenches/delivery/runs/:runId"
         element={<MainCanvas />}
       />
+      <Route
+        path="/canvas/chat/branches/:branchId/nodes/:nodeId"
+        element={<MainCanvas />}
+      />
       <Route path="*" element={<MainCanvas />} />
     </Routes>
   );

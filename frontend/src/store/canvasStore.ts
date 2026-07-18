@@ -6,6 +6,11 @@ import type { WorkbenchKind } from "../api/types";
 export type Point = { x: number; y: number };
 export type Viewport = { x: number; y: number; zoom: number };
 
+export type DeliveryFocusRequest = {
+  node_id: string;
+  request_id: string;
+};
+
 export type CanvasNavigationState = {
   mode: "overview" | "opening" | "workbench" | "closing";
   workbench: WorkbenchKind | null;
@@ -14,12 +19,19 @@ export type CanvasNavigationState = {
   restoreFocusId: string | null;
   savedMainViewport: Viewport | null;
   parallaxTarget: Point | null;
+  activeConversationScope: string | null;
   activeConversationBranchId: string | null;
   selectedConversationNodeId: string | null;
+  conversationSelections: Record<string, string | null>;
+  /** 前向业务操作请求对话图恢复自动跟随；只保存递增信号。 */
+  conversationFollowRequestId: number;
   conversationViewports: Record<string, Viewport>;
-  workbenchViewports: Partial<Record<WorkbenchKind, Viewport>>;
-  nodeScrollPositions: Record<string, number>;
+  deliveryViewport: Viewport | null;
+  scrollPositions: Record<string, number>;
   expandedProcessGroupIds: string[];
+  conversationExpandedProcessGroups: Record<string, string[]>;
+  /** GrayDango / 深链发出，只由需求子画布一次性消费。 */
+  deliveryFocusRequest: DeliveryFocusRequest | null;
 };
 
 export type OpenWorkbenchInput = {
@@ -41,13 +53,20 @@ type CanvasActions = {
   beginCloseWorkbench: () => void;
   /** 恢复完成后清理瞬时字段，保留对话 viewport 等长期投影 */
   finishCloseWorkbench: () => void;
-  saveWorkbenchViewport: (kind: WorkbenchKind, viewport: Viewport) => void;
+  saveDeliveryViewport: (viewport: Viewport) => void;
   setParallaxTarget: (target: Point | null) => void;
   setActiveConversationBranch: (branchId: string) => void;
+  activateConversationSession: (
+    sessionId: string,
+    rootBranchId: string,
+  ) => void;
   setSelectedConversationNode: (nodeId: string | null) => void;
+  requestConversationFollow: () => void;
   setConversationViewport: (branchId: string, viewport: Viewport) => void;
-  setNodeScrollPosition: (nodeId: string, position: number) => void;
+  setScrollPosition: (key: string, position: number) => void;
   toggleProcessGroup: (groupId: string) => void;
+  requestDeliveryFocus: (nodeId: string) => void;
+  consumeDeliveryFocus: (requestId: string) => void;
 };
 
 export type CanvasStore = CanvasNavigationState & CanvasActions;
@@ -60,13 +79,20 @@ export const initialCanvasNavigationState: CanvasNavigationState = {
   restoreFocusId: null,
   savedMainViewport: null,
   parallaxTarget: null,
+  activeConversationScope: null,
   activeConversationBranchId: null,
   selectedConversationNodeId: null,
+  conversationSelections: {},
+  conversationFollowRequestId: 0,
   conversationViewports: {},
-  workbenchViewports: {},
-  nodeScrollPositions: {},
+  deliveryViewport: null,
+  scrollPositions: {},
   expandedProcessGroupIds: [],
+  conversationExpandedProcessGroups: {},
+  deliveryFocusRequest: null,
 };
+
+let focusRequestSequence = 0;
 
 export const useCanvasStore = create<CanvasStore>()((set) => ({
   ...initialCanvasNavigationState,
@@ -123,20 +149,64 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
       parallaxTarget: null,
     })),
 
-  saveWorkbenchViewport: (kind, viewport) =>
-    set((state) => ({
-      ...state,
-      workbenchViewports: { ...state.workbenchViewports, [kind]: viewport },
-    })),
+  saveDeliveryViewport: (viewport) =>
+    set((state) => ({ ...state, deliveryViewport: viewport })),
 
   setParallaxTarget: (target) =>
     set((state) => ({ ...state, parallaxTarget: target })),
 
   setActiveConversationBranch: (branchId) =>
-    set((state) => ({ ...state, activeConversationBranchId: branchId })),
+    set((state) => {
+      const sessionId = state.activeConversationScope?.split(":", 1)[0];
+      const scope = sessionId ? `${sessionId}:${branchId}` : branchId;
+      return {
+        ...state,
+        activeConversationScope: scope,
+        activeConversationBranchId: branchId,
+        selectedConversationNodeId: state.conversationSelections[scope] ?? null,
+        expandedProcessGroupIds:
+          state.conversationExpandedProcessGroups[scope] ?? [],
+      };
+    }),
+
+  activateConversationSession: (sessionId, rootBranchId) =>
+    set((state) => {
+      const scope = `${sessionId}:${rootBranchId}`;
+      return {
+        ...state,
+        activeConversationScope: scope,
+        activeConversationBranchId: rootBranchId,
+        selectedConversationNodeId: state.conversationSelections[scope] ?? null,
+        expandedProcessGroupIds:
+          state.conversationExpandedProcessGroups[scope] ?? [],
+        conversationFollowRequestId: state.conversationFollowRequestId + 1,
+      };
+    }),
 
   setSelectedConversationNode: (nodeId) =>
-    set((state) => ({ ...state, selectedConversationNodeId: nodeId })),
+    set((state) => ({
+      ...state,
+      selectedConversationNodeId: nodeId,
+      conversationSelections: state.activeConversationScope
+        ? {
+            ...state.conversationSelections,
+            [state.activeConversationScope]: nodeId,
+          }
+        : state.conversationSelections,
+    })),
+
+  requestConversationFollow: () =>
+    set((state) => ({
+      ...state,
+      conversationFollowRequestId: state.conversationFollowRequestId + 1,
+      selectedConversationNodeId: null,
+      conversationSelections: state.activeConversationScope
+        ? {
+            ...state.conversationSelections,
+            [state.activeConversationScope]: null,
+          }
+        : state.conversationSelections,
+    })),
 
   setConversationViewport: (branchId, viewport) =>
     set((state) => ({
@@ -147,17 +217,44 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
       },
     })),
 
-  setNodeScrollPosition: (nodeId, position) =>
+  setScrollPosition: (key, position) =>
     set((state) => ({
       ...state,
-      nodeScrollPositions: { ...state.nodeScrollPositions, [nodeId]: position },
+      scrollPositions: { ...state.scrollPositions, [key]: position },
     })),
 
   toggleProcessGroup: (groupId) =>
+    set((state) => {
+      const expandedProcessGroupIds = state.expandedProcessGroupIds.includes(
+        groupId,
+      )
+        ? state.expandedProcessGroupIds.filter((id) => id !== groupId)
+        : [...state.expandedProcessGroupIds, groupId];
+      return {
+        ...state,
+        expandedProcessGroupIds,
+        conversationExpandedProcessGroups: state.activeConversationScope
+          ? {
+              ...state.conversationExpandedProcessGroups,
+              [state.activeConversationScope]: expandedProcessGroupIds,
+            }
+          : state.conversationExpandedProcessGroups,
+      };
+    }),
+
+  requestDeliveryFocus: (node_id) =>
     set((state) => ({
       ...state,
-      expandedProcessGroupIds: state.expandedProcessGroupIds.includes(groupId)
-        ? state.expandedProcessGroupIds.filter((id) => id !== groupId)
-        : [...state.expandedProcessGroupIds, groupId],
+      deliveryFocusRequest: {
+        node_id,
+        request_id: `delivery-focus-${++focusRequestSequence}`,
+      },
     })),
+
+  consumeDeliveryFocus: (requestId) =>
+    set((state) =>
+      state.deliveryFocusRequest?.request_id === requestId
+        ? { ...state, deliveryFocusRequest: null }
+        : state,
+    ),
 }));

@@ -14,6 +14,7 @@ export function DNode({
   children,
   actions,
   width,
+  height,
   ariaLabel,
   className,
 }: {
@@ -24,19 +25,34 @@ export function DNode({
   children: React.ReactNode;
   actions?: React.ReactNode;
   width: number;
+  height?: number;
   ariaLabel: string;
   className?: string;
 }) {
   return (
     <section
       className={`dnode px-cut px-shadowed-sm${className ? ` ${className}` : ""}`}
-      style={{ width }}
+      style={{ width, height, boxSizing: "border-box" }}
       aria-label={ariaLabel}
     >
       <Handle
         type="target"
         position={Position.Left}
         id="in-l"
+        isConnectable={false}
+      />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="in-l-top"
+        style={{ top: "32%" }}
+        isConnectable={false}
+      />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="in-l-bottom"
+        style={{ top: "68%" }}
         isConnectable={false}
       />
       <Handle
@@ -62,6 +78,20 @@ export function DNode({
         type="source"
         position={Position.Right}
         id="out-r"
+        isConnectable={false}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="out-r-top"
+        style={{ top: "32%" }}
+        isConnectable={false}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="out-r-bottom"
+        style={{ top: "68%" }}
         isConnectable={false}
       />
       <Handle

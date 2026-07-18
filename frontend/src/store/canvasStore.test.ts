@@ -66,9 +66,7 @@ describe("CanvasNavigationState（FE-CANVAS-008～015）", () => {
     useCanvasStore
       .getState()
       .setConversationViewport("b-main", { x: 1, y: 2, zoom: 0.8 });
-    useCanvasStore
-      .getState()
-      .saveWorkbenchViewport("git", { x: 3, y: 4, zoom: 0.5 });
+    useCanvasStore.getState().saveDeliveryViewport({ x: 3, y: 4, zoom: 0.5 });
     useCanvasStore.getState().toggleProcessGroup("pg:n1");
     useCanvasStore.getState().beginCloseWorkbench();
     expect(useCanvasStore.getState().mode).toBe("closing");
@@ -86,7 +84,7 @@ describe("CanvasNavigationState（FE-CANVAS-008～015）", () => {
       y: 2,
       zoom: 0.8,
     });
-    expect(state.workbenchViewports.git).toEqual({ x: 3, y: 4, zoom: 0.5 });
+    expect(state.deliveryViewport).toEqual({ x: 3, y: 4, zoom: 0.5 });
     expect(state.expandedProcessGroupIds).toEqual(["pg:n1"]);
   });
 
@@ -97,5 +95,54 @@ describe("CanvasNavigationState（FE-CANVAS-008～015）", () => {
     ]);
     useCanvasStore.getState().toggleProcessGroup("pg:n1");
     expect(useCanvasStore.getState().expandedProcessGroupIds).toEqual([]);
+  });
+
+  it("不同会话的同名分支分别保存选择、过程组和 viewport", () => {
+    const firstScope = "session-1:b-main";
+    const secondScope = "session-2:b-main";
+    useCanvasStore
+      .getState()
+      .activateConversationSession("session-1", "b-main");
+    useCanvasStore.getState().setSelectedConversationNode("node-1");
+    useCanvasStore.getState().toggleProcessGroup("pg:one");
+    useCanvasStore
+      .getState()
+      .setConversationViewport(firstScope, { x: 10, y: 20, zoom: 0.8 });
+
+    useCanvasStore
+      .getState()
+      .activateConversationSession("session-2", "b-main");
+    expect(useCanvasStore.getState().selectedConversationNodeId).toBeNull();
+    expect(useCanvasStore.getState().expandedProcessGroupIds).toEqual([]);
+    useCanvasStore.getState().setSelectedConversationNode("node-2");
+    useCanvasStore.getState().toggleProcessGroup("pg:two");
+    useCanvasStore
+      .getState()
+      .setConversationViewport(secondScope, { x: 30, y: 40, zoom: 1.1 });
+
+    useCanvasStore
+      .getState()
+      .activateConversationSession("session-1", "b-main");
+    const state = useCanvasStore.getState();
+    expect(state.selectedConversationNodeId).toBe("node-1");
+    expect(state.expandedProcessGroupIds).toEqual(["pg:one"]);
+    expect(state.conversationViewports[firstScope]).toEqual({
+      x: 10,
+      y: 20,
+      zoom: 0.8,
+    });
+    expect(state.conversationViewports[secondScope]).toEqual({
+      x: 30,
+      y: 40,
+      zoom: 1.1,
+    });
+  });
+
+  it("内部节点定位请求只属于需求工作台并可一次性消费", () => {
+    useCanvasStore.getState().requestDeliveryFocus("run:run-1");
+    const request = useCanvasStore.getState().deliveryFocusRequest;
+    expect(request?.node_id).toBe("run:run-1");
+    useCanvasStore.getState().consumeDeliveryFocus(request?.request_id ?? "");
+    expect(useCanvasStore.getState().deliveryFocusRequest).toBeNull();
   });
 });

@@ -1,7 +1,10 @@
 import type {
   AppSettings,
   ApplicationSnapshot,
+  ClarificationAnswer,
   ConversationBranch,
+  ConversationGraphSnapshot,
+  ConversationSession,
   DetectedIntent,
   DiagnosticsInfo,
   FileEntry,
@@ -19,14 +22,21 @@ import type {
 } from "./types";
 
 export type SendMessageInput = {
+  session_id: string;
   branch_id: string;
   text: string;
   /** auto 由后端判定；question/change 为用户覆盖，只影响当前提交（FE-CHAT-002） */
   intent: IntentMode;
   /** 仓库文件引用（最多 8 个，PRD-CHAT-001） */
   file_refs?: string[];
-  /** 图片附件占位名（最多 3 张；假数据层接受但不渲染大图） */
-  images?: string[];
+  /** 本轮 mock 只接收安全元数据；真实二进制上传留给后端阶段。 */
+  images?: ImageAttachmentInput[];
+};
+
+export type ImageAttachmentInput = {
+  name: string;
+  mime: string;
+  size: number;
 };
 
 export type SendMessageResult = {
@@ -41,14 +51,15 @@ export type WorkbenchSummary = {
   lines: string[];
 };
 
-/** 确认摘要（FE-SPEC-005）：预计发布路径、模型角色、软阈值、脏工作区阻断 */
+/** 确认摘要（FE-SPEC-005）：预计发布路径、模型角色、任务预算、脏工作区阻断 */
 export type ConfirmationPreview = {
   requirement_id: string;
   revision: number;
   publication_path: PublicationPath;
   publication_reason: string;
   model_roles: { role: string; model: string }[];
-  soft_threshold: string;
+  default_task_budget_usd: number;
+  effective_task_budget_usd: number;
   workspace_dirty: boolean;
   workspace_note: string | null;
 };
@@ -85,11 +96,16 @@ export type ScenarioCommand =
  */
 export interface RaccoonApi {
   getSnapshot(): Promise<ApplicationSnapshot>;
+  createConversationSession(input: { idempotency_key: string }): Promise<{
+    session: ConversationSession;
+    graph: ConversationGraphSnapshot;
+  }>;
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;
   /** 停止当前分支响应：已产出内容保留，活动节点转 aborted（PRD-CHAT-005） */
-  abortResponse(branch_id: string): Promise<void>;
+  abortResponse(session_id: string, branch_id: string): Promise<void>;
   /** 从历史用户节点开新分支；其他节点归一到最近祖先用户节点（PRD-CHAT-009） */
   branchFrom(input: {
+    session_id: string;
     node_id: string;
   }): Promise<{ branch: ConversationBranch }>;
   acknowledgeNotification(notification_id: string): Promise<void>;
@@ -100,16 +116,19 @@ export interface RaccoonApi {
 
   /** 从连续对话节点整理为需求（PRD-CHAT-003）：来源与证据自动关联 */
   createRequirementFromChat(input: {
+    session_id: string;
     branch_id: string;
     node_ids: string[];
     title?: string;
   }): Promise<{ requirement_id: string }>;
-  /** 提交澄清回答（FE-SPEC-001：一次一个问题，选项 chip 或自定义输入） */
+  /** 提交结构化澄清回答（FE-SPEC-001：单选、多选或自由文本） */
   answerClarification(input: {
     requirement_id: string;
     round_id: string;
-    answer: string;
+    answer: ClarificationAnswer;
   }): Promise<void>;
+  /** 取消尚未确认的需求流程并释放当前分支输入权。 */
+  cancelRequirement(requirement_id: string): Promise<void>;
   /**
    * 保存规格编辑（PRD-SPEC-005/007）：产生新 revision；
    * semantic_hash 变化 → 撤销确认并取消未终态 Run；base_revision 过期返回冲突。
@@ -123,6 +142,7 @@ export interface RaccoonApi {
   confirmRequirement(input: {
     requirement_id: string;
     revision: number;
+    task_budget_usd: number;
   }): Promise<{ run_id: string | null; conflict: boolean }>;
   /** 确认摘要预览（FE-SPEC-005） */
   getConfirmationPreview(requirement_id: string): Promise<ConfirmationPreview>;
@@ -137,7 +157,10 @@ export interface RaccoonApi {
     run_id: string;
     item_id: string;
     patch: Partial<
-      Pick<WorkItem, "title" | "scenario_ids" | "verification_target">
+      Pick<
+        WorkItem,
+        "title" | "scenario_ids" | "verification_target" | "depends_on"
+      >
     >;
   }): Promise<{ plan_revision: number }>;
   /** 危险操作两阶段：request 产生确认节点事实，confirm 执行并产生结果节点 */
@@ -196,7 +219,7 @@ export interface RaccoonApi {
     onData: (data: string) => void,
   ): () => void;
 
-  /* ── 模型与用量（01 §7.6；凭据只新建/替换不回显） ── */
+  /* ── 模型配置（设置工作台；凭据只新建/替换不回显） ── */
 
   setProviderCredential(input: {
     provider_id: string;

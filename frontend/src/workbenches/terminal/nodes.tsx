@@ -2,46 +2,13 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { PixelButton } from "@pxlkit/ui-kit";
-import type { NodeProps } from "@xyflow/react";
 import { memo, useEffect, useRef, useState } from "react";
 import { getApi } from "../../api";
 import type { TerminalSession } from "../../api/types";
-import { DNode } from "../../components/DNode";
 import { useDomainStore } from "../../store/domainStore";
 import { useTerminalStore } from "../../store/terminalStore";
-import { terminalNodeId } from "./projection";
 
-/* ── 新建会话节点 ── */
-
-export const LauncherNode = memo(function LauncherNode() {
-  return (
-    <DNode
-      icon="terminal"
-      label="终端"
-      chip="PTY"
-      width={280}
-      ariaLabel="终端会话管理"
-      actions={
-        <PixelButton
-          size="sm"
-          tone="green"
-          onClick={() => void useDomainStore.getState().createTerminal()}
-        >
-          新建会话
-        </PixelButton>
-      }
-    >
-      <p className="dnode__text">
-        每个 PTY 是独立会话节点；连接断开与进程退出是不同状态。
-      </p>
-      <p className="dnode__meta">
-        关闭运行中会话走确认节点；正文不进入业务事件。
-      </p>
-    </DNode>
-  );
-});
-
-/* ── 终端会话节点（xterm.js + fit；主题跟随 token） ── */
+/* ── 当前活动终端（xterm.js + fit；主题跟随 token） ── */
 
 const STATE_LABELS: Record<TerminalSession["state"], string> = {
   running: "运行中",
@@ -67,7 +34,7 @@ function readXtermTheme() {
   };
 }
 
-function XtermPane({ session }: { session: TerminalSession }) {
+export function XtermPane({ session }: { session: TerminalSession }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
 
@@ -99,17 +66,27 @@ function XtermPane({ session }: { session: TerminalSession }) {
     const disposable = term.onData(
       (data) => void getApi().terminalInput({ session_id: session.id, data }),
     );
+    let resizeFrame: number | null = null;
+    let lastCols = term.cols;
+    let lastRows = term.rows;
     const observer = new ResizeObserver(() => {
-      try {
-        fit.fit();
-        void getApi().resizeTerminal({
-          session_id: session.id,
-          cols: term.cols,
-          rows: term.rows,
-        });
-      } catch {
-        // 容器隐藏时 fit 可能失败，忽略
-      }
+      if (resizeFrame !== null) return;
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        try {
+          fit.fit();
+          if (term.cols === lastCols && term.rows === lastRows) return;
+          lastCols = term.cols;
+          lastRows = term.rows;
+          void getApi().resizeTerminal({
+            session_id: session.id,
+            cols: term.cols,
+            rows: term.rows,
+          });
+        } catch {
+          // 容器隐藏时 fit 可能失败，忽略
+        }
+      });
     });
     observer.observe(host);
     // 明暗切换即时生效：token 变化时刷新 xterm 配色
@@ -121,6 +98,7 @@ function XtermPane({ session }: { session: TerminalSession }) {
       attributeFilter: ["data-theme", "class"],
     });
     return () => {
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       themeObserver.disconnect();
       observer.disconnect();
       disposable.dispose();
@@ -139,21 +117,24 @@ function XtermPane({ session }: { session: TerminalSession }) {
   );
 }
 
-export const TerminalSessionNode = memo(function TerminalSessionNode({
-  data,
-}: NodeProps) {
-  const { session } = data as { session: TerminalSession };
+export const TerminalSessionContent = memo(function TerminalSessionContent({
+  session,
+  actionSourceActive,
+}: {
+  session: TerminalSession;
+  actionSourceActive: boolean;
+}) {
   const renaming = useTerminalStore((state) => state.renamingId === session.id);
   const [titleDraft, setTitleDraft] = useState(session.title);
 
   const close = () => {
     const domain = useDomainStore.getState();
     if (session.state === "running") {
-      // 关闭运行中会话走确认节点（FE-TERM-003）
+      // 关闭运行中会话走来源工具条下的确认条（FE-TERM-003）
       void domain.requestWorkbenchAction({
         kind: "terminal_close",
         payload: { session_id: session.id, title: session.title },
-        source_node_id: terminalNodeId.session(session.id),
+        source_node_id: null,
       });
     } else {
       void domain.closeTerminal(session.id);
@@ -161,53 +142,55 @@ export const TerminalSessionNode = memo(function TerminalSessionNode({
   };
 
   return (
-    <DNode
-      icon="terminal"
-      label={session.title}
-      chip={STATE_LABELS[session.state]}
-      chipTone={STATE_TONES[session.state]}
-      width={500}
-      ariaLabel={`终端会话 ${session.title}`}
-      actions={
-        <>
-          {session.state === "running" ? (
-            <PixelButton
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                void useDomainStore.getState().disconnectTerminal(session.id)
-              }
-            >
-              模拟断开
-            </PixelButton>
-          ) : null}
-          {session.state === "disconnected" ? (
-            <PixelButton
-              size="sm"
-              tone="cyan"
-              variant="outline"
-              onClick={() =>
-                void useDomainStore.getState().reconnectTerminal(session.id)
-              }
-            >
-              重连
-            </PixelButton>
-          ) : null}
+    <div className="terminal-session">
+      <div className="terminal-session__toolbar">
+        <span
+          className="terminal-session__state"
+          data-tone={STATE_TONES[session.state]}
+        >
+          {STATE_LABELS[session.state]}
+        </span>
+        {session.state === "running" ? (
           <PixelButton
             size="sm"
             variant="outline"
             onClick={() =>
-              useTerminalStore.getState().setRenamingId(session.id)
+              void useDomainStore.getState().disconnectTerminal(session.id)
             }
           >
-            重命名
+            模拟断开
           </PixelButton>
-          <PixelButton size="sm" tone="red" variant="outline" onClick={close}>
-            关闭
+        ) : null}
+        {session.state === "disconnected" ? (
+          <PixelButton
+            size="sm"
+            tone="cyan"
+            variant="outline"
+            onClick={() =>
+              void useDomainStore.getState().reconnectTerminal(session.id)
+            }
+          >
+            重连
           </PixelButton>
-        </>
-      }
-    >
+        ) : null}
+        <PixelButton
+          size="sm"
+          variant="outline"
+          onClick={() => useTerminalStore.getState().setRenamingId(session.id)}
+        >
+          重命名
+        </PixelButton>
+        <PixelButton
+          size="sm"
+          tone="red"
+          variant="outline"
+          onClick={close}
+          data-action-source={`terminal_close:${session.id}`}
+          data-action-source-active={actionSourceActive || undefined}
+        >
+          关闭
+        </PixelButton>
+      </div>
       {renaming ? (
         <form
           className="dnode__inline-form nodrag nowheel"
@@ -241,6 +224,6 @@ export const TerminalSessionNode = memo(function TerminalSessionNode({
         </p>
       ) : null}
       <XtermPane session={session} />
-    </DNode>
+    </div>
   );
 });

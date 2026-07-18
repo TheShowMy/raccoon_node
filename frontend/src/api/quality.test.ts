@@ -19,6 +19,7 @@ function run(partial: Partial<Run>): Run {
     current_activity: null,
     publication_path: "local",
     publication_frozen_reason: "",
+    task_budget_usd: 25,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
     ...partial,

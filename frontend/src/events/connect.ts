@@ -63,6 +63,9 @@ export function connectEvents(options: ConnectEventsOptions): EventConnection {
           if (value && value.byteLength > 0) decoder.write(value);
         }
         decoder.flush();
+        // 断线重连从最后已应用 sequence 建立新请求（FE-EVENT-005），
+        // 否则对端会重放已应用事件（delta 重复追加）
+        after = applier.expectedSequence - 1;
       } catch {
         options.onConnectionChange?.("retrying");
       } finally {

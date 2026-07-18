@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { UsageEntry, UsageState } from "./types";
 import {
-  evaluateSoftThreshold,
-  formatCost,
+  buildDailyUsage,
+  entryTokens,
+  evaluateRunBudget,
   formatTokens,
-  totalCost,
+  groupUsageByModel,
+  summarizeTokens,
   usageEntryComplete,
 } from "./usage";
 
 const entry = (overrides: Partial<UsageEntry> = {}): UsageEntry => ({
   id: "u-x",
   run_id: null,
+  occurred_at: "2026-07-18T10:00:00Z",
   role: "qa",
   provider_id: "fake-chat",
   model_id: "fake-chat-pro",
@@ -21,57 +24,83 @@ const entry = (overrides: Partial<UsageEntry> = {}): UsageEntry => ({
   ...overrides,
 });
 
-describe("用量完整性展示规则（PRD-USAGE-003）", () => {
-  it("任一 token 或价格未知即为不完整", () => {
-    expect(usageEntryComplete(entry())).toBe(true);
-    expect(usageEntryComplete(entry({ cache_tokens: null }))).toBe(false);
-    expect(usageEntryComplete(entry({ cost_usd: null }))).toBe(false);
-  });
-
-  it("未知显示「不完整」，不估造", () => {
-    expect(formatTokens(null)).toBe("不完整");
-    expect(formatCost(null)).toBe("不完整");
-    expect(formatTokens(1234)).toBe("1,234");
-    expect(formatCost(0.5)).toBe("$0.5000");
-  });
-
-  it("任一价格未知时合计为 null（整体不完整）", () => {
+describe("用量统计口径", () => {
+  it("总 Token 只包含输入与输出，缓存单独统计", () => {
     const usage: UsageState = {
-      soft_threshold_usd: 25,
-      entries: [entry({ cost_usd: 2 }), entry({ cost_usd: null })],
+      entries: [entry(), entry({ id: "task", run_id: "run-1" })],
     };
-    expect(totalCost(usage)).toBeNull();
-    expect(totalCost({ ...usage, entries: [entry({ cost_usd: 2 })] })).toBe(2);
+    expect(entryTokens(usage.entries[0])).toBe(150);
+    expect(summarizeTokens(usage)).toEqual({
+      known_total: 300,
+      conversation_tokens: 150,
+      task_tokens: 150,
+      cache_tokens: 20,
+      conversation_cache_tokens: 10,
+      task_cache_tokens: 10,
+      incomplete_entries: 0,
+    });
+  });
+
+  it("长 Token 数按万、千万、亿缩写", () => {
+    expect(formatTokens(9_999)).toBe("9,999");
+    expect(formatTokens(28_700)).toBe("2.9万");
+    expect(formatTokens(32_000_000)).toBe("3.2千万");
+    expect(formatTokens(2_870_000_000)).toBe("28.7亿");
+  });
+
+  it("未知 Token 与费用保留不完整计数，不按零伪装完整", () => {
+    const usage: UsageState = {
+      entries: [entry(), entry({ input_tokens: null, cost_usd: null })],
+    };
+    expect(usageEntryComplete(usage.entries[1])).toBe(false);
+    expect(summarizeTokens(usage).incomplete_entries).toBe(1);
+    expect(groupUsageByModel(usage)[0].incomplete_cost_entries).toBe(1);
+  });
+
+  it("按模型聚合对话、任务、缓存、占比和已知费用", () => {
+    const usage: UsageState = {
+      entries: [entry(), entry({ id: "task", run_id: "run-1", cost_usd: 2 })],
+    };
+    expect(groupUsageByModel(usage)[0]).toMatchObject({
+      total_tokens: 300,
+      conversation_tokens: 150,
+      task_tokens: 150,
+      cache_tokens: 20,
+      share: 1,
+      known_cost_usd: 3,
+    });
+  });
+
+  it("生成固定 365 天点阵并按日聚合分档", () => {
+    const points = buildDailyUsage(
+      { entries: [entry()] },
+      365,
+      new Date("2026-07-18T12:00:00Z"),
+    );
+    expect(points).toHaveLength(365);
+    expect(points.at(-1)).toMatchObject({
+      date: "2026-07-18",
+      tokens: 150,
+      level: 4,
+    });
+    expect(points[0].level).toBe(0);
   });
 });
 
-describe("软阈值告警（PRD-USAGE-002）", () => {
-  it("≥80% 触发告警", () => {
+describe("任务预算", () => {
+  it("只按 run_id 聚合已知费用，80% 触发软警告", () => {
     const usage: UsageState = {
-      soft_threshold_usd: 25,
-      entries: [entry({ cost_usd: 20 })],
+      entries: [
+        entry({ run_id: "run-1", cost_usd: 8 }),
+        entry({ id: "unknown", run_id: "run-1", cost_usd: null }),
+        entry({ id: "other", run_id: "run-2", cost_usd: 99 }),
+      ],
     };
-    const alert = evaluateSoftThreshold(usage);
-    expect(alert?.ratio).toBeCloseTo(0.8);
-    expect(alert?.total).toBe(20);
-  });
-
-  it("低于 80% 不触发", () => {
-    expect(
-      evaluateSoftThreshold({
-        soft_threshold_usd: 25,
-        entries: [entry({ cost_usd: 10 })],
-      }),
-    ).toBeNull();
-  });
-
-  it("阈值评估基于已知价格小计（未知价格条目不计入）", () => {
-    // 已知小计 20 / 25 = 80% → 触发；未知价格条目不改变结果
-    const withUnknown = evaluateSoftThreshold({
-      soft_threshold_usd: 25,
-      entries: [entry({ cost_usd: 20 }), entry({ cost_usd: null })],
+    expect(evaluateRunBudget(usage, "run-1", 10)).toMatchObject({
+      known_cost_usd: 8,
+      incomplete_entries: 1,
+      ratio: 0.8,
+      warning: true,
     });
-    expect(withUnknown?.total).toBe(20);
-    expect(withUnknown?.ratio).toBeCloseTo(0.8);
   });
 });

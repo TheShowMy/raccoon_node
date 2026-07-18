@@ -4,6 +4,7 @@ import {
   centralAreaRatio,
   computeMainLayout,
   sideColumnWidth,
+  workbenchSizeFor,
 } from "./layout";
 
 describe("外层固定布局（FE-CANVAS-001/004/005）", () => {
@@ -41,5 +42,33 @@ describe("外层固定布局（FE-CANVAS-001/004/005）", () => {
     expect(narrow.central.height).toBeGreaterThanOrEqual(420);
     // 宽屏下中央区随窗口增大
     expect(wide.central.width).toBeGreaterThan(narrow.central.width);
+  });
+
+  it("普通工具页获得连续分栏尺寸，需求子画布使用最大可用空间", () => {
+    const screen = { width: 1440, height: 900 };
+    expect(workbenchSizeFor("git", screen)).toEqual({
+      width: 1180,
+      height: 760,
+    });
+    expect(workbenchSizeFor("files", screen)).toEqual({
+      width: 1180,
+      height: 760,
+    });
+    expect(workbenchSizeFor("usage", screen)).toEqual({
+      width: 1180,
+      height: 760,
+    });
+    expect(workbenchSizeFor("terminal", screen)).toEqual({
+      width: 1100,
+      height: 720,
+    });
+    expect(workbenchSizeFor("settings", screen)).toEqual({
+      width: 1180,
+      height: 760,
+    });
+    expect(workbenchSizeFor("delivery", screen)).toEqual({
+      width: 1353.6,
+      height: 810,
+    });
   });
 });

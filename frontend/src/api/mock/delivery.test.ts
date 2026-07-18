@@ -3,7 +3,9 @@ import { createEventApplier } from "../../events/applier";
 import { createNdjsonDecoder } from "../../events/ndjson";
 import { countAdvisories } from "../quality";
 import { useDomainStore } from "../../store/domainStore";
+import type { ClarificationRound } from "../types";
 import { FakeBackend } from "./backend";
+import { clarificationAnswerText } from "./delivery";
 
 /**
  * 需求交付假数据层端到端：命令 → NDJSON 事件流 → 领域投影（与生产同路径）。
@@ -53,6 +55,71 @@ function connectBackendToDomain(backend: FakeBackend, after: number) {
 
 const domain = () => useDomainStore.getState();
 
+const clarificationFixture: ClarificationRound = {
+  id: "round-fixture",
+  requirement_id: "req-fixture",
+  question: "请选择",
+  mode: "single_choice",
+  options: [
+    {
+      id: "a",
+      label: "选项 A",
+      description: null,
+      recommended: true,
+    },
+    {
+      id: "b",
+      label: "选项 B",
+      description: null,
+      recommended: false,
+    },
+  ],
+  allow_custom: true,
+  answer: null,
+  state: "pending",
+  asked_at: "2026-01-01T00:00:00.000Z",
+  answered_at: null,
+};
+
+describe("结构化澄清回答", () => {
+  it("分别校验单选、多选和自由文本", () => {
+    expect(
+      clarificationAnswerText(clarificationFixture, {
+        selected_option_ids: ["a"],
+        custom_text: null,
+      }),
+    ).toBe("选项 A");
+    expect(
+      clarificationAnswerText(clarificationFixture, {
+        selected_option_ids: ["a", "b"],
+        custom_text: null,
+      }),
+    ).toBeNull();
+
+    expect(
+      clarificationAnswerText(
+        { ...clarificationFixture, mode: "multiple_choice" },
+        {
+          selected_option_ids: ["a", "b"],
+          custom_text: "额外约束",
+        },
+      ),
+    ).toBe("选项 A；选项 B；额外约束");
+
+    expect(
+      clarificationAnswerText(
+        {
+          ...clarificationFixture,
+          mode: "free_text",
+          options: [],
+          allow_custom: false,
+        },
+        { selected_option_ids: [], custom_text: "完整说明" },
+      ),
+    ).toBe("完整说明");
+  });
+});
+
 async function bootBackend(): Promise<FakeBackend> {
   const backend = new FakeBackend();
   const snapshot = await backend.getSnapshot();
@@ -68,6 +135,7 @@ async function createToSpecReady(
   title: string,
 ): Promise<string> {
   const { requirement_id } = await backend.createRequirementFromChat({
+    session_id: "s-main",
     branch_id: "b-main",
     node_ids: [],
     title,
@@ -84,7 +152,10 @@ async function createToSpecReady(
   await backend.answerClarification({
     requirement_id,
     round_id: round.id,
-    answer: "工作流执行语义",
+    answer: {
+      selected_option_ids: ["workflow"],
+      custom_text: null,
+    },
   });
   await waitFor(
     () => domain().requirements[requirement_id]?.state === "spec_ready",
@@ -100,12 +171,49 @@ async function confirmLatest(
   const result = await backend.confirmRequirement({
     requirement_id: requirementId,
     revision: requirement.latest_revision,
+    task_budget_usd: 30,
   });
   expect(result.conflict).toBe(false);
   return requirementId;
 }
 
 describe("需求交付假后端（P2 演示流程）", () => {
+  it("同一分支复用未完成需求，取消后释放输入权并允许新建", async () => {
+    const backend = await bootBackend();
+    const first = await backend.createRequirementFromChat({
+      session_id: "s-main",
+      branch_id: "b-main",
+      node_ids: [],
+      title: "第一个需求",
+    });
+    const duplicate = await backend.createRequirementFromChat({
+      session_id: "s-main",
+      branch_id: "b-main",
+      node_ids: ["another-source"],
+      title: "不应创建的需求",
+    });
+    expect(duplicate.requirement_id).toBe(first.requirement_id);
+    expect(Object.keys(domain().requirements)).toHaveLength(1);
+
+    await backend.cancelRequirement(first.requirement_id);
+    await waitFor(
+      () => domain().requirements[first.requirement_id]?.state === "cancelled",
+    );
+    expect(
+      Object.values(domain().clarifications).find(
+        (round) => round.requirement_id === first.requirement_id,
+      )?.state,
+    ).toBe("cancelled");
+
+    const next = await backend.createRequirementFromChat({
+      session_id: "s-main",
+      branch_id: "b-main",
+      node_ids: [],
+      title: "第二个需求",
+    });
+    expect(next.requirement_id).not.toBe(first.requirement_id);
+  });
+
   it("全流程：澄清 → 确认 → 自动规划/执行/验证/审核/发布 → 已交付组合结论", async () => {
     const backend = await bootBackend();
     const requirementId = await createToSpecReady(backend, "全流程演示需求");

@@ -29,7 +29,7 @@ const now = () => new Date().toISOString();
 export class SettingsModule {
   private settings: AppSettings = {
     network_policy: "git_remote",
-    soft_threshold_usd: 25,
+    default_task_budget_usd: 25,
     listen_host: "127.0.0.1",
     listen_port: 4173,
     pending_restart: [],
@@ -42,7 +42,6 @@ export class SettingsModule {
       notify: Notify;
       latency: () => Promise<void>;
       lastSequence: () => number;
-      onThresholdChange: (usd: number) => void;
     },
   ) {}
 
@@ -59,9 +58,6 @@ export class SettingsModule {
   async update(patch: Partial<AppSettings>): Promise<void> {
     await this.deps.latency();
     const restartKeys = settingsRequiringRestart(this.settings, patch);
-    const thresholdChanged =
-      patch.soft_threshold_usd !== undefined &&
-      patch.soft_threshold_usd !== this.settings.soft_threshold_usd;
     this.settings = {
       ...this.settings,
       ...patch,
@@ -77,9 +73,6 @@ export class SettingsModule {
         at: now(),
       },
     };
-    if (thresholdChanged) {
-      this.deps.onThresholdChange(this.settings.soft_threshold_usd);
-    }
     this.publish();
   }
 

@@ -10,11 +10,11 @@ import { FakeBackend } from "./backend";
  * 领域投影（与生产形态同路径，FE-CHAT-008/014、FE-EVENT-003）。
  */
 async function waitFor(
-  condition: () => boolean,
+  condition: () => boolean | Promise<boolean>,
   timeoutMs = 12_000,
 ): Promise<void> {
   const start = Date.now();
-  while (!condition()) {
+  while (!(await condition())) {
     if (Date.now() - start > timeoutMs) {
       throw new Error("waitFor 超时");
     }
@@ -48,6 +48,81 @@ function connectBackendToDomain(backend: FakeBackend, after: number) {
 }
 
 describe("FakeBackend 端到端（假 LLM 脚本 + NDJSON 流）", () => {
+  it("新建会话创建独立图、保留旧图并对幂等键去重", async () => {
+    const backend = new FakeBackend();
+    const before = await backend.getSnapshot();
+    const first = await backend.createConversationSession({
+      idempotency_key: "new-session-1",
+    });
+    const duplicate = await backend.createConversationSession({
+      idempotency_key: "new-session-1",
+    });
+    const after = await backend.getSnapshot();
+
+    expect(first.session.id).toBe(duplicate.session.id);
+    expect(first.session.graph_id).not.toBe("g-main");
+    expect(first.graph.nodes).toEqual([]);
+    expect(first.graph.branches).toHaveLength(1);
+    expect(after.state.conversation.sessions).toHaveLength(
+      before.state.conversation.sessions.length + 1,
+    );
+    expect(after.state.conversation.active_session_id).toBe(first.session.id);
+    expect(
+      after.state.conversation.graphs.some(
+        (graph) => graph.graph_id === "g-main",
+      ),
+    ).toBe(true);
+  });
+
+  it("生成中确认新建会话会中止旧响应并保留旧图", async () => {
+    const backend = new FakeBackend();
+    const initial = await backend.getSnapshot();
+    useDomainStore.getState().initFromSnapshot(initial);
+    connectBackendToDomain(backend, initial.last_sequence);
+    await backend.sendMessage({
+      session_id: "s-main",
+      branch_id: "b-main",
+      text: "为什么新会话不继承旧上下文？",
+      intent: "auto",
+    });
+    await waitFor(async () => {
+      const snapshot = await backend.getSnapshot();
+      return snapshot.state.conversation.graphs.some((graph) =>
+        graph.nodes.some(
+          (node) => node.state === "streaming" && node.content.length > 0,
+        ),
+      );
+    });
+    const { action_id } = await backend.requestWorkbenchAction({
+      kind: "conversation_new_session",
+      source_node_id: null,
+      payload: { session_id: "s-main", branch_id: "b-main" },
+    });
+    const prepared = await backend.getSnapshot();
+    const action = prepared.state.workbench_actions.find(
+      (candidate) => candidate.id === action_id,
+    )!;
+    await backend.confirmWorkbenchAction({
+      action_id,
+      confirm_token: action.confirm_token,
+    });
+    const after = await backend.getSnapshot();
+    const oldGraph = after.state.conversation.graphs.find(
+      (graph) => graph.graph_id === "g-main",
+    )!;
+
+    expect(oldGraph.nodes.some((node) => node.state === "aborted")).toBe(true);
+    expect(after.state.conversation.active_session_id).not.toBe("s-main");
+    await waitFor(
+      () => useDomainStore.getState().activeConversationSessionId !== "s-main",
+    );
+    expect(
+      Object.values(
+        useDomainStore.getState().conversationGraphs["s-main"].nodes,
+      ).some((node) => node.state === "aborted"),
+    ).toBe(true);
+  });
+
   it("开发需求消息：用户/过程/工具/回答流式到达，回答完成后形成过程组", async () => {
     const backend = new FakeBackend();
     const snapshot = await backend.getSnapshot();
@@ -55,6 +130,7 @@ describe("FakeBackend 端到端（假 LLM 脚本 + NDJSON 流）", () => {
     connectBackendToDomain(backend, snapshot.last_sequence);
 
     await backend.sendMessage({
+      session_id: "s-main",
       branch_id: "b-main",
       text: "帮我做一个新功能",
       intent: "auto",
@@ -100,6 +176,7 @@ describe("FakeBackend 端到端（假 LLM 脚本 + NDJSON 流）", () => {
     connectBackendToDomain(backend, snapshot.last_sequence);
 
     await backend.sendMessage({
+      session_id: "s-main",
       branch_id: "b-main",
       text: "什么是 Raccoon Node？",
       intent: "auto",
@@ -110,7 +187,7 @@ describe("FakeBackend 端到端（假 LLM 脚本 + NDJSON 流）", () => {
         (node) => node.state === "streaming" && node.content.length > 0,
       );
     });
-    await backend.abortResponse("b-main");
+    await backend.abortResponse("s-main", "b-main");
     await waitFor(() => {
       const { conversation } = useDomainStore.getState();
       return Object.values(conversation.nodes).some(
@@ -135,6 +212,7 @@ describe("FakeBackend 端到端（假 LLM 脚本 + NDJSON 流）", () => {
     connectBackendToDomain(backend, snapshot.last_sequence);
 
     await backend.sendMessage({
+      session_id: "s-main",
       branch_id: "b-main",
       text: "什么是 Raccoon Node？",
       intent: "auto",
@@ -149,7 +227,10 @@ describe("FakeBackend 端到端（假 LLM 脚本 + NDJSON 流）", () => {
     const answer = Object.values(
       useDomainStore.getState().conversation.nodes,
     ).find((node) => node.kind === "assistant_answer")!;
-    const { branch } = await backend.branchFrom({ node_id: answer.id });
+    const { branch } = await backend.branchFrom({
+      session_id: "s-main",
+      node_id: answer.id,
+    });
     const anchor =
       useDomainStore.getState().conversation.nodes[branch.anchor_node_id!];
     expect(anchor.kind).toBe("user_message");

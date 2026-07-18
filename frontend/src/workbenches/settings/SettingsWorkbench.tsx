@@ -1,5 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
 import { PixelButton } from "@pxlkit/ui-kit";
+import { useQuery } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { useState } from "react";
 import { getApi } from "../../api";
 import { NETWORK_POLICY_LABELS } from "../../api/settings";
@@ -10,22 +11,33 @@ import {
   type ThemePreference,
 } from "../../store/appearanceStore";
 import { useDomainStore } from "../../store/domainStore";
+import {
+  type SettingsCategory,
+  useSettingsWorkbenchStore,
+} from "../../store/settingsWorkbenchStore";
+import {
+  ToolWorkbench,
+  WorkbenchPane,
+  WorkbenchTabs,
+  WorkbenchToolbar,
+} from "../shared/ToolWorkbench";
+import { ModelSettingsContent } from "../models/ModelsWorkbench";
 
-/**
- * 设置工作台（FE-SET-001～003）：设置分组节点化卡片，常规布局
- * （表单密集型内容不强行画布化，02 §2.2）。外观为本地偏好即时生效。
- */
-
+/** 设置使用紧凑响应式功能区；表单控件只存在于所属面板内部。 */
 function Group({
+  panelId,
   title,
   children,
 }: {
+  panelId: string;
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
-    <section className="set-group px-cut px-shadowed-sm" aria-label={title}>
-      <h3 className="px-font-pixel set-group__title">{title}</h3>
+    <section className="settings-section" data-settings-section={panelId}>
+      <div className="workbench-section-heading">
+        <span>{title}</span>
+      </div>
       {children}
     </section>
   );
@@ -39,7 +51,7 @@ function AppearanceGroup() {
     (state) => state.nonCriticalBubbles,
   );
   return (
-    <Group title="外观（本地偏好）">
+    <Group panelId="settings-appearance" title="外观（本地偏好）">
       <div className="set-row" role="group" aria-label="明暗模式">
         <span>明暗</span>
         {(["system", "light", "dark"] as ThemePreference[]).map((value) => (
@@ -92,7 +104,7 @@ function AppearanceGroup() {
               .setNonCriticalBubbles(event.target.checked)
           }
         />
-        非关键气泡（完成/信息；错误与阻断始终可达）
+        非关键气泡（错误与阻断始终可达）
       </label>
     </Group>
   );
@@ -100,7 +112,7 @@ function AppearanceGroup() {
 
 function NetworkGroup({ settings }: { settings: AppSettings }) {
   return (
-    <Group title="网络策略">
+    <Group panelId="settings-network" title="网络策略">
       <div className="set-row" role="radiogroup" aria-label="网络策略">
         {(Object.keys(NETWORK_POLICY_LABELS) as NetworkPolicy[]).map(
           (policy) => (
@@ -123,25 +135,25 @@ function NetworkGroup({ settings }: { settings: AppSettings }) {
         )}
       </div>
       <p className="dnode__meta">
-        应用层策略，不构成 OS 级网络沙箱；包管理器生命周期脚本风险可见。
+        应用层策略，不构成 OS 级网络沙箱；包管理器脚本风险保持可见。
       </p>
     </Group>
   );
 }
 
-function ThresholdGroup({ settings }: { settings: AppSettings }) {
-  const [draft, setDraft] = useState(String(settings.soft_threshold_usd));
+function DefaultTaskBudgetGroup({ settings }: { settings: AppSettings }) {
+  const [draft, setDraft] = useState(String(settings.default_task_budget_usd));
   const value = Number(draft);
   const dirty =
     draft.trim() !== "" &&
     Number.isFinite(value) &&
-    value !== settings.soft_threshold_usd;
+    value !== settings.default_task_budget_usd;
   return (
-    <Group title="用量软阈值">
+    <Group panelId="settings-budget" title="默认任务预算">
       <div className="set-row">
-        <label htmlFor="soft-threshold">阈值（USD）</label>
+        <label htmlFor="default-task-budget">默认值（USD）</label>
         <input
-          id="soft-threshold"
+          id="default-task-budget"
           className="dnode__input set-row__input"
           inputMode="decimal"
           value={draft}
@@ -152,28 +164,32 @@ function ThresholdGroup({ settings }: { settings: AppSettings }) {
           tone="green"
           variant="outline"
           disabled={!dirty || value <= 0}
-          onClick={() => {
+          onClick={() =>
             void useDomainStore
               .getState()
-              .updateSettings({ soft_threshold_usd: value });
-          }}
+              .updateSettings({ default_task_budget_usd: value })
+          }
         >
           保存
         </PixelButton>
       </div>
-      <p className="dnode__meta">软阈值只告警，不自动暂停、取消或换模。</p>
+      <p className="dnode__meta">
+        仅作为新需求确认时的默认值；可在确认节点覆盖，Run 启动后冻结。达到 80%
+        只告警，不暂停、取消或换模。
+      </p>
     </Group>
   );
 }
 
-function ListenGroup({ settings }: { settings: AppSettings }) {
+function SecurityGroup({ settings }: { settings: AppSettings }) {
   const [host, setHost] = useState(settings.listen_host);
   const [port, setPort] = useState(String(settings.listen_port));
   const portNumber = Number(port);
   const dirty =
     host !== settings.listen_host || portNumber !== settings.listen_port;
+  const loopback = host === "127.0.0.1" || host === "localhost";
   return (
-    <Group title="监听与端口">
+    <Group panelId="settings-security" title="监听与安全">
       <div className="set-row">
         <label htmlFor="listen-host">Host</label>
         <input
@@ -200,23 +216,35 @@ function ListenGroup({ settings }: { settings: AppSettings }) {
             !Number.isInteger(portNumber) ||
             portNumber <= 0
           }
-          onClick={() => {
+          onClick={() =>
             void useDomainStore.getState().updateSettings({
               listen_host: host.trim(),
               listen_port: portNumber,
-            });
-          }}
+            })
+          }
         >
           保存
         </PixelButton>
       </div>
+      <p className="dnode__meta">
+        {loopback
+          ? "loopback：启动 nonce + SameSite session。"
+          : "非本机监听：REST、NDJSON 与 WebSocket 全部必须鉴权。"}
+      </p>
+    </Group>
+  );
+}
+
+function RestartGroup({ settings }: { settings: AppSettings }) {
+  return (
+    <Group panelId="settings-restart" title="重启">
       {settings.pending_restart.length > 0 ? (
-        <div className="set-result set-result--restart" role="status">
-          <p>
+        <>
+          <p className="dnode__text">
             <strong>restart_required</strong>：
-            {settings.pending_restart.join("、")}{" "}
-            已保存，需重启后生效（保存和重启是两个动作）。
+            {settings.pending_restart.join("、")}
           </p>
+          <p className="dnode__meta">设置已保存；重启是独立动作。</p>
           <PixelButton
             size="sm"
             tone="red"
@@ -225,20 +253,21 @@ function ListenGroup({ settings }: { settings: AppSettings }) {
           >
             立即模拟重启
           </PixelButton>
-        </div>
-      ) : null}
+        </>
+      ) : (
+        <p className="dnode__text">没有等待生效的设置。</p>
+      )}
     </Group>
   );
 }
 
 function DiagnosticsGroup() {
-  const diagnosticsQuery = useQuery({
+  const { data: info } = useQuery({
     queryKey: ["diagnostics"],
     queryFn: () => getApi().getDiagnostics(),
   });
-  const info = diagnosticsQuery.data;
   return (
-    <Group title="数据诊断">
+    <Group panelId="settings-diagnostics" title="数据诊断">
       {info ? (
         <>
           <p className="dnode__text">{info.event_store_health}</p>
@@ -260,25 +289,99 @@ function DiagnosticsGroup() {
 }
 
 function SettingsResult({ settings }: { settings: AppSettings }) {
-  if (!settings.last_result) return null;
   return (
-    <p className="set-result" role="status" data-ok={settings.last_result.ok}>
-      {settings.last_result.message}
+    <p
+      className="set-result"
+      role="status"
+      data-ok={settings.last_result?.ok ?? true}
+    >
+      {settings.last_result?.message ?? "尚无设置操作结果。"}
     </p>
   );
 }
 
+const CATEGORIES: { id: SettingsCategory; label: string }[] = [
+  { id: "general", label: "通用" },
+  { id: "models", label: "模型" },
+  { id: "runtime_security", label: "运行与安全" },
+  { id: "maintenance", label: "维护" },
+];
+
 export function SettingsWorkbench() {
   const settings = useDomainStore((state) => state.settings);
+  const activeCategory = useSettingsWorkbenchStore(
+    (state) => state.activeCategory,
+  );
   if (!settings) return null;
+  const content = {
+    general: <AppearanceGroup />,
+    models: <ModelSettingsContent />,
+    runtime_security: (
+      <>
+        <NetworkGroup settings={settings} />
+        <SecurityGroup settings={settings} />
+        <DefaultTaskBudgetGroup settings={settings} />
+      </>
+    ),
+    maintenance: (
+      <>
+        <DiagnosticsGroup />
+        <RestartGroup settings={settings} />
+      </>
+    ),
+  }[activeCategory];
+  const activeLabel =
+    CATEGORIES.find((category) => category.id === activeCategory)?.label ??
+    "设置";
   return (
-    <div className="settings-workbench nodrag nowheel">
-      <AppearanceGroup />
-      <NetworkGroup settings={settings} />
-      <ThresholdGroup settings={settings} />
-      <ListenGroup settings={settings} />
-      <DiagnosticsGroup />
-      <SettingsResult settings={settings} />
-    </div>
+    <ToolWorkbench className="settings-workbench" ariaLabel="设置工具页">
+      <WorkbenchToolbar ariaLabel="设置工作台工具栏">
+        <strong className="tool-workbench__title">设置</strong>
+        <span className="tool-workbench__meta">
+          修改保存在来源分类；需要重启的设置不会伪装为即时生效。
+        </span>
+        <WorkbenchTabs
+          className="settings-workbench__compact-tabs"
+          ariaLabel="设置分类"
+          tabs={CATEGORIES}
+          active={activeCategory}
+          onChange={(value) =>
+            useSettingsWorkbenchStore.getState().setActiveCategory(value)
+          }
+        />
+      </WorkbenchToolbar>
+      <WorkbenchPane
+        paneId="settings-categories"
+        label="分类"
+        ariaLabel="设置分类导航"
+        className="settings-workbench__categories"
+      >
+        <nav className="settings-category-list" aria-label="设置分类">
+          {CATEGORIES.map((category) => (
+            <button
+              key={category.id}
+              type="button"
+              data-active={activeCategory === category.id || undefined}
+              onClick={() =>
+                useSettingsWorkbenchStore
+                  .getState()
+                  .setActiveCategory(category.id)
+              }
+            >
+              {category.label}
+            </button>
+          ))}
+        </nav>
+      </WorkbenchPane>
+      <WorkbenchPane
+        paneId={`settings-content:${activeCategory}`}
+        label={activeLabel}
+        ariaLabel={`${activeLabel}设置`}
+        className="settings-workbench__content"
+      >
+        {content}
+        <SettingsResult settings={settings} />
+      </WorkbenchPane>
+    </ToolWorkbench>
   );
 }

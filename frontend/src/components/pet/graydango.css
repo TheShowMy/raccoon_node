@@ -57,8 +57,8 @@
 
 .graydango-queue {
   position: absolute;
-  right: var(--px-space-4);
-  bottom: 132px;
+  right: 0;
+  bottom: calc(100% + var(--px-space-2));
   z-index: 31;
   width: 300px;
   padding: var(--px-space-2) var(--px-space-3);
@@ -67,6 +67,19 @@
   border: var(--px-border-width) solid var(--px-border-ink);
   border-radius: var(--px-radius);
   font-size: 12px;
+  pointer-events: auto;
+}
+
+.graydango-pet[data-horizontal="left"] .graydango-queue,
+.graydango-pet[data-horizontal="left"] .graydango-queue-indicator {
+  right: auto;
+  left: 0;
+}
+
+.graydango-pet[data-vertical="top"] .graydango-queue,
+.graydango-pet[data-vertical="top"] .graydango-queue-indicator {
+  top: calc(100% + var(--px-space-2));
+  bottom: auto;
 }
 
 .graydango-queue[data-severity="error"] {
@@ -107,8 +120,8 @@
 
 .graydango-queue-indicator {
   position: absolute;
-  right: var(--px-space-4);
-  bottom: 132px;
+  right: 0;
+  bottom: calc(100% + var(--px-space-2));
   z-index: 31;
   min-width: 28px;
   height: 28px;
@@ -120,4 +133,5 @@
   border-radius: var(--px-radius);
   box-shadow: var(--px-shadow-sm) var(--px-border-ink);
   cursor: pointer;
+  pointer-events: auto;
 }

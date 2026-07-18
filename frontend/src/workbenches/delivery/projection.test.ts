@@ -1,17 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { buildDemoPlan } from "../../api/mock/demoContent";
-import type { PendingAction, Requirement, Run } from "../../api/types";
-import { deliveryNodeId, projectDelivery } from "./projection";
-
-/**
- * 子画布投影（FE-DELIVERY-003/006）：选中需求只展开一跳关系；
- * 依赖边区分串行/合并/阻断（FE-RUN-004）；危险操作确认链成节点（FE-CANVAS-019）。
- */
+import type {
+  PendingAction,
+  Requirement,
+  Run,
+  WorkItem,
+} from "../../api/types";
+import {
+  TASK_LANE_GAP,
+  TASK_LEVEL_GAP,
+  TASK_NODE_WIDTH,
+  deliveryNodeId,
+  layoutWorkItems,
+  projectDelivery,
+} from "./projection";
 
 const requirement: Requirement = {
   id: "req-1",
   title: "演示需求",
   state: "queued",
+  source_session_id: "s-main",
   source_branch_id: "b-main",
   source_node_ids: ["n-1"],
   latest_revision: 1,
@@ -33,6 +41,7 @@ const run: Run = {
   current_activity: null,
   publication_path: "github_pull_request",
   publication_frozen_reason: "",
+  task_budget_usd: 25,
   created_at: "2026-01-01T00:00:00.000Z",
   updated_at: "2026-01-01T00:00:00.000Z",
 };
@@ -40,7 +49,6 @@ const run: Run = {
 function baseInput() {
   return {
     requirements: { "req-1": requirement },
-    clarifications: {},
     revisions: { "req-1": [] },
     runs: { "run-1": run },
     plans: {},
@@ -49,194 +57,244 @@ function baseInput() {
     publications: {},
     actions: {},
     selectedRequirementId: "req-1",
+    diagnosticsRunId: null,
   };
 }
 
-describe("projectDelivery", () => {
-  it("未选中需求：只有列表锚点", () => {
-    const projection = projectDelivery({
-      ...baseInput(),
-      selectedRequirementId: null,
-    });
-    expect(projection.nodes.map((node) => node.id)).toEqual(["req-list"]);
-    expect(projection.edges).toEqual([]);
+describe("确定需求交付投影", () => {
+  it("未选择或尚未确认时只显示列表锚点", () => {
+    expect(
+      projectDelivery({
+        ...baseInput(),
+        selectedRequirementId: null,
+      }).nodes.map((node) => node.id),
+    ).toEqual(["req-list"]);
+    expect(
+      projectDelivery({
+        ...baseInput(),
+        requirements: {
+          "req-1": {
+            ...requirement,
+            state: "spec_ready",
+            confirmed_revision: null,
+            latest_run_id: null,
+          },
+        },
+        runs: {},
+      }).nodes.map((node) => node.id),
+    ).toEqual(["req-list"]);
   });
 
-  it("无 Run 的待确认需求：来源 → 澄清 → 规格 → 确认 链", () => {
+  it("已确认但未启动时只显示确定需求摘要，不复制规格/澄清/确认", () => {
     const projection = projectDelivery({
       ...baseInput(),
       requirements: {
-        "req-1": { ...requirement, latest_run_id: null, state: "spec_ready" },
-      },
-      clarifications: {
-        "clr-1": {
-          id: "clr-1",
-          requirement_id: "req-1",
-          question: "问题",
-          options: ["A"],
-          answer: null,
-          state: "pending",
-          asked_at: "2026-01-01T00:00:00.000Z",
-          answered_at: null,
-        },
-      },
-      revisions: {
-        "req-1": [
-          {
-            requirement_id: "req-1",
-            revision: 1,
-            spec: {
-              goal: "",
-              user_value: "",
-              in_scope: [],
-              out_of_scope: [],
-              scenarios: [],
-              constraints: [],
-              non_goals: [],
-              risks: [],
-              assumptions: [],
-              evidence: [],
-            },
-            semantic_hash: "abc",
-            created_at: "2026-01-01T00:00:00.000Z",
-            source_graph_id: "g-main",
-            source_branch_id: "b-main",
-            source_node_ids: [],
-            confirmation: null,
-          },
-        ],
+        "req-1": { ...requirement, latest_run_id: null },
       },
       runs: {},
     });
-    const ids = projection.nodes.map((node) => node.id);
-    expect(ids).toContain("req-source:req-1");
-    expect(ids).toContain("req-clar:clr-1");
-    expect(ids).toContain("req-spec:req-1");
-    expect(ids).toContain("req-confirm:req-1");
-    expect(ids).not.toContain("run:run-1");
-    const edgeIds = projection.edges.map((edge) => edge.id);
-    expect(edgeIds).toContain("e-req-source:req-1-req-clar:clr-1");
-    expect(edgeIds).toContain("e-req-spec:req-1-req-confirm:req-1");
+    expect(projection.nodes.map((node) => node.type)).toEqual([
+      "requirement_list",
+      "requirement_summary",
+    ]);
   });
 
-  it("一跳展开：Run/计划/工作项/Diff/验证/审核/发布/诊断 + 依赖边语义", () => {
+  it("WorkPlan 只连接根任务，依赖与质量链各只有一套语义", () => {
     const plan = buildDemoPlan("plan-1", "run-1", 1);
     const projection = projectDelivery({
       ...baseInput(),
       plans: { "run-1": plan },
-      publications: {
-        "run-1": {
-          run_id: "run-1",
-          path: "github_pull_request",
-          frozen_reason: "",
-          state: "not_started",
-          branch: "main",
-          commit: null,
-          pr_url: null,
-          ci_fix_attempts: 0,
-          remote_merged: false,
-          local_synced: false,
-          blocked_reason: null,
-        },
-      },
     });
-    const ids = projection.nodes.map((node) => node.id);
-    expect(ids).toEqual(
+    const types = projection.nodes.map((node) => node.type);
+    expect(types).not.toEqual(
       expect.arrayContaining([
-        "req-list",
-        "run:run-1",
-        "plan:run-1",
-        "diff:run-1",
-        "val:run-1",
-        "rev:run-1",
-        "pub:run-1",
-        "diag:run-1",
+        "source_ref",
+        "clarification",
+        "spec",
+        "confirmation",
       ]),
     );
-    for (const item of plan.items) {
-      expect(ids).toContain(`wi:${item.id}`);
-    }
-    // 并行批 → 合并任务：merge 边（plan → 合并任务的 chain 边不计入）
-    const mergeTask = plan.items.find((item) => item.kind === "merge_task")!;
-    const mergeEdges = projection.edges.filter(
-      (edge) =>
-        edge.target === `wi:${mergeTask.id}` && edge.className === "de-merge",
+    expect(types).toEqual(
+      expect.arrayContaining([
+        "requirement_summary",
+        "run",
+        "work_plan",
+        "work_item",
+        "diff",
+        "validation",
+        "review",
+        "publication",
+      ]),
     );
-    expect(mergeEdges).toHaveLength(2);
-    expect(mergeEdges.every((edge) => edge.className === "de-merge")).toBe(
-      true,
+    expect(types).not.toContain("diagnostics");
+
+    const roots = plan.items.filter((item) => item.depends_on.length === 0);
+    const planEdges = projection.edges.filter(
+      (edge) => edge.source === deliveryNodeId.plan(run.id),
     );
-    const serialEdge = projection.edges.find(
-      (edge) =>
-        edge.source === `wi:${mergeTask.id}` && edge.className === "de-serial",
+    expect(planEdges.map((edge) => edge.target).sort()).toEqual(
+      roots.map((item) => deliveryNodeId.workItem(item.id)).sort(),
     );
-    expect(serialEdge).toBeDefined();
-    // 合并任务 → Diff
-    expect(
-      projection.edges.some(
-        (edge) => edge.target === "diff:run-1" && edge.className === "de-merge",
+    expect(new Set(planEdges.map((edge) => edge.sourceHandle)).size).toBe(
+      roots.length,
+    );
+
+    const dependencyEdges = projection.edges.filter((edge) =>
+      plan.items.some(
+        (item) =>
+          edge.target === deliveryNodeId.workItem(item.id) &&
+          item.depends_on.some(
+            (dependency) => edge.source === deliveryNodeId.workItem(dependency),
+          ),
       ),
-    ).toBe(true);
+    );
+    expect(dependencyEdges).toHaveLength(
+      plan.items.reduce((count, item) => count + item.depends_on.length, 0),
+    );
+
+    expect(projection.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: deliveryNodeId.diff(run.id),
+          target: deliveryNodeId.validation(run.id),
+        }),
+        expect.objectContaining({
+          source: deliveryNodeId.validation(run.id),
+          target: deliveryNodeId.review(run.id),
+        }),
+        expect.objectContaining({
+          source: deliveryNodeId.review(run.id),
+          target: deliveryNodeId.publication(run.id),
+        }),
+      ]),
+    );
   });
 
-  it("阻断工作项的依赖边为 de-blocked（不只靠颜色）", () => {
+  it("分层布局保持 48px 同层间距和至少 112px 层间距", () => {
     const plan = buildDemoPlan("plan-1", "run-1", 1);
-    plan.items = plan.items.map((item) =>
-      item.kind === "merge_task" ? { ...item, status: "blocked" } : item,
+    const layout = layoutWorkItems(plan.items);
+    expect(layout.issues).toEqual([]);
+    expect(layout.levels.map((level) => level.length)).toEqual([2, 1, 1]);
+    const first = layout.levels[0];
+    const firstBottom = layout.positions[first[0].id].y + 208;
+    expect(layout.positions[first[1].id].y - firstBottom).toBe(TASK_LANE_GAP);
+    const level0X = layout.positions[first[0].id].x;
+    const level1X = layout.positions[layout.levels[1][0].id].x;
+    expect(level1X - level0X - TASK_NODE_WIDTH).toBe(TASK_LEVEL_GAP);
+  });
+
+  it("相同 revision 的状态更新不改变任务坐标", () => {
+    const plan = buildDemoPlan("plan-1", "run-1", 1);
+    const before = layoutWorkItems(plan.items).positions;
+    const after = layoutWorkItems(
+      plan.items.map((item, index) => ({
+        ...item,
+        status: index === 0 ? "running" : item.status,
+        attempts:
+          index === 0
+            ? [
+                {
+                  index: 1,
+                  kind: "implementation",
+                  model: "mock",
+                  upgraded: false,
+                  status: "running",
+                  summary: null,
+                  started_at: "2026-01-01T00:00:00.000Z",
+                  finished_at: null,
+                },
+              ]
+            : item.attempts,
+      })),
+    ).positions;
+    expect(after).toEqual(before);
+  });
+
+  it("环或缺失依赖只显示计划无效节点，不绘制任务", () => {
+    const plan = buildDemoPlan("plan-1", "run-1", 1);
+    plan.items = plan.items.map((item, index) =>
+      index === 0 ? { ...item, depends_on: [plan.items.at(-1)!.id] } : item,
     );
+    plan.validation = { ok: false, issues: ["计划依赖存在环"] };
     const projection = projectDelivery({
       ...baseInput(),
       plans: { "run-1": plan },
     });
-    const mergeTask = plan.items.find((item) => item.kind === "merge_task")!;
-    const blockedEdges = projection.edges.filter(
-      (edge) =>
-        (edge.target === `wi:${mergeTask.id}` ||
-          edge.source === `wi:${mergeTask.id}`) &&
-        edge.className === "de-blocked",
+    expect(projection.nodes.some((node) => node.type === "plan_invalid")).toBe(
+      true,
     );
-    expect(blockedEdges.length).toBeGreaterThan(0);
+    expect(projection.nodes.some((node) => node.type === "work_item")).toBe(
+      false,
+    );
   });
 
-  it("危险操作：awaiting → 确认节点（红色链）；已确认 → 结果节点", () => {
-    const action = (partial: Partial<PendingAction>): PendingAction => ({
+  it("不信任持久化 ok 标记，缺失合并任务时仍拒绝绘图", () => {
+    const plan = buildDemoPlan("plan-1", "run-1", 1);
+    plan.items = plan.items.filter((item) => item.kind !== "merge_task");
+    plan.validation = { ok: true, issues: [] };
+    const projection = projectDelivery({
+      ...baseInput(),
+      plans: { "run-1": plan },
+    });
+    expect(projection.nodes.some((node) => node.type === "plan_invalid")).toBe(
+      true,
+    );
+    expect(projection.nodes.some((node) => node.type === "work_item")).toBe(
+      false,
+    );
+    expect(projection.edges.some((edge) => edge.source.startsWith("wi:"))).toBe(
+      false,
+    );
+  });
+
+  it("诊断按需出现；危险操作连接到真实来源阶段", () => {
+    const action: PendingAction = {
       id: "act-1",
-      kind: "abandon_run",
-      run_id: "run-1",
-      requirement_id: "req-1",
-      title: "放弃 Run",
+      kind: "force_deliver_unreviewed",
+      run_id: run.id,
+      requirement_id: requirement.id,
+      title: "未经审核交付",
       impact: "",
       irreversible: true,
       state: "awaiting",
       result: null,
       created_at: "2026-01-01T00:00:00.000Z",
-      ...partial,
-    });
-    const awaiting = projectDelivery({
+    };
+    const projection = projectDelivery({
       ...baseInput(),
-      actions: { "act-1": action({}) },
+      diagnosticsRunId: run.id,
+      actions: { [action.id]: action },
     });
-    expect(
-      awaiting.nodes.some((node) => node.type === "action_confirmation"),
-    ).toBe(true);
-    expect(
-      awaiting.edges.some(
-        (edge) =>
-          edge.target === deliveryNodeId.actionConfirmation("act-1") &&
-          edge.className === "de-blocked",
-      ),
-    ).toBe(true);
-    const confirmed = projectDelivery({
-      ...baseInput(),
-      actions: {
-        "act-1": action({
-          state: "confirmed",
-          result: { ok: true, message: "已放弃" },
-        }),
-      },
-    });
-    expect(confirmed.nodes.some((node) => node.type === "action_result")).toBe(
+    expect(projection.nodes.some((node) => node.type === "diagnostics")).toBe(
       true,
     );
+    expect(projection.edges).toContainEqual(
+      expect.objectContaining({
+        source: deliveryNodeId.review(run.id),
+        target: deliveryNodeId.actionConfirmation(action.id),
+      }),
+    );
+  });
+});
+
+describe("layoutWorkItems 异常保护", () => {
+  it("缺失依赖产生确定性问题", () => {
+    const item: WorkItem = {
+      id: "one",
+      plan_id: "plan",
+      kind: "work_item",
+      title: "任务",
+      position: 1,
+      depends_on: ["missing"],
+      scope_hint: "src/**",
+      scenario_ids: [],
+      verification_target: "test",
+      batch: 0,
+      status: "pending",
+      attempts: [],
+      artifact_summary: null,
+      conflict_resolution: null,
+    };
+    expect(layoutWorkItems([item]).issues[0]).toContain("依赖不存在");
   });
 });

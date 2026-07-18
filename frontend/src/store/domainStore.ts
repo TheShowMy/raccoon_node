@@ -4,7 +4,11 @@ import type { SendMessageInput } from "../api/client";
 import type {
   AppSettings,
   ApplicationSnapshot,
+  ClarificationAnswer,
   ClarificationRound,
+  ConversationGraphSnapshot,
+  ConversationSession,
+  DomainEventPayload,
   EventEnvelope,
   EventType,
   GitRepoState,
@@ -36,6 +40,7 @@ import {
   reduceBranchCreated,
   reduceNodeCreated,
   reduceNodeDelta,
+  reduceNodeRedacted,
   reduceNodeStateChanged,
   type ConversationGraphState,
 } from "../chat/dag";
@@ -49,6 +54,11 @@ export type DomainState = {
   lastSequence: number;
   connection: EventConnectionState;
   conversation: ConversationGraphState;
+  activeConversationSessionId: string;
+  conversationSessions: Record<string, ConversationSession>;
+  conversationGraphs: Record<string, ConversationGraphState>;
+  /** 最近创建且尚未终止的持久对话节点，用于创建事件到活动状态之间的相机跟随。 */
+  recentConversationNodeId: string | null;
   notifications: Record<string, Notification>;
   requirements: Record<string, Requirement>;
   clarifications: Record<string, ClarificationRound>;
@@ -62,14 +72,14 @@ export type DomainState = {
   publications: Record<string, Publication>;
   /** 危险操作确认链事实（FE-CANVAS-019） */
   actions: Record<string, PendingAction>;
-  /** 工作台危险操作确认链（git/terminal） */
+  /** 普通工作台危险操作的来源内确认/结果条事实（git/terminal）。 */
   workbenchActions: Record<string, WorkbenchAction>;
   git: GitRepoState | null;
   terminals: Record<string, TerminalSession>;
   providers: ProviderInfo[];
   roles: RoleProfile[];
   usage: UsageState | null;
-  /** 模型角色保存结果（能力不匹配被阻止的结果节点，FE-MODEL-002） */
+  /** 模型角色保存结果（能力不匹配时在角色来源区显示） */
   modelResult: RoleAssignResult;
   settings: AppSettings | null;
 
@@ -78,12 +88,14 @@ export type DomainState = {
   setConnection: (state: EventConnectionState) => void;
 
   sendMessage: (input: SendMessageInput) => Promise<void>;
-  abortResponse: (branchId: string) => Promise<void>;
-  branchFromNode: (nodeId: string) => Promise<string | null>;
+  createConversationSession: (idempotencyKey: string) => Promise<void>;
+  abortResponse: (sessionId: string, branchId: string) => Promise<void>;
+  branchFromNode: (sessionId: string, nodeId: string) => Promise<string | null>;
   acknowledgeNotification: (notificationId: string) => Promise<void>;
 
   /* ── 需求交付命令 ── */
   createRequirementFromChat: (input: {
+    session_id: string;
     branch_id: string;
     node_ids: string[];
     title?: string;
@@ -91,8 +103,9 @@ export type DomainState = {
   answerClarification: (input: {
     requirement_id: string;
     round_id: string;
-    answer: string;
+    answer: ClarificationAnswer;
   }) => Promise<void>;
+  cancelRequirement: (requirementId: string) => Promise<void>;
   updateSpec: (input: {
     requirement_id: string;
     base_revision: number;
@@ -101,6 +114,7 @@ export type DomainState = {
   confirmRequirement: (input: {
     requirement_id: string;
     revision: number;
+    task_budget_usd: number;
   }) => Promise<{ run_id: string | null; conflict: boolean }>;
   reorderQueue: (requirementIds: string[]) => Promise<{ ok: boolean }>;
   pauseRun: (runId: string) => Promise<void>;
@@ -110,7 +124,10 @@ export type DomainState = {
     run_id: string;
     item_id: string;
     patch: Partial<
-      Pick<WorkItem, "title" | "scenario_ids" | "verification_target">
+      Pick<
+        WorkItem,
+        "title" | "scenario_ids" | "verification_target" | "depends_on"
+      >
     >;
   }) => Promise<{ plan_revision: number }>;
   requestAction: (input: {
@@ -158,6 +175,9 @@ export type DomainState = {
 type Projection = Pick<
   DomainState,
   | "conversation"
+  | "activeConversationSessionId"
+  | "conversationSessions"
+  | "conversationGraphs"
   | "notifications"
   | "requirements"
   | "clarifications"
@@ -186,6 +206,22 @@ const eventReducers: {
     payload: EventEnvelope<K>["payload"],
   ) => Partial<Projection>;
 } = {
+  "conversation.session.created": (state, { session, graph }) => {
+    const conversation = graphFromGraphSnapshot(graph);
+    return {
+      conversation,
+      activeConversationSessionId: session.id,
+      conversationSessions: {
+        ...state.conversationSessions,
+        [session.id]: session,
+      },
+      conversationGraphs: {
+        ...state.conversationGraphs,
+        [state.activeConversationSessionId]: state.conversation,
+        [session.id]: conversation,
+      },
+    };
+  },
   "conversation.node.created": (state, { node }) => ({
     conversation: reduceNodeCreated(state.conversation, node),
   }),
@@ -194,6 +230,9 @@ const eventReducers: {
   }),
   "conversation.node.state_changed": (state, payload) => ({
     conversation: reduceNodeStateChanged(state.conversation, payload),
+  }),
+  "conversation.node.redacted": (state, payload) => ({
+    conversation: reduceNodeRedacted(state.conversation, payload),
   }),
   "conversation.branch.created": (state, payload) => ({
     conversation: reduceBranchCreated(state.conversation, payload),
@@ -244,6 +283,9 @@ const eventReducers: {
   "requirement.clarification_answered": (state, { round }) => ({
     clarifications: { ...state.clarifications, [round.id]: round },
   }),
+  "requirement.clarification_cancelled": (state, { round }) => ({
+    clarifications: { ...state.clarifications, [round.id]: round },
+  }),
   "requirement.revision_created": (state, { revision }) => {
     const list = state.revisions[revision.requirement_id] ?? [];
     const index = list.findIndex(
@@ -292,18 +334,17 @@ const eventReducers: {
   "models.updated": (_state, payload) => ({
     providers: payload.providers,
     roles: payload.roles,
-    usage: payload.usage,
     modelResult: payload.last_result,
   }),
+  "usage.updated": (_state, { usage }) => ({ usage }),
   "settings.updated": (_state, { settings }) => ({ settings }),
   "system.resync_required": () => ({}), // 由事件连接层处理，不进入领域投影
 };
 
-function graphFromSnapshot(
-  snapshot: ApplicationSnapshot,
+function graphFromGraphSnapshot(
+  graphSnapshot: ConversationGraphSnapshot,
 ): ConversationGraphState {
-  const { graph_id, root_branch_id, nodes, branches } =
-    snapshot.state.conversation;
+  const { graph_id, root_branch_id, nodes, branches } = graphSnapshot;
   let graph = createGraphState(graph_id, root_branch_id);
   for (const node of [...nodes].sort((a, b) =>
     a.created_at.localeCompare(b.created_at),
@@ -352,6 +393,10 @@ export const useDomainStore = create<DomainState>()((set) => ({
   lastSequence: 0,
   connection: "connecting",
   conversation: createGraphState("g-main", "b-main"),
+  activeConversationSessionId: "s-main",
+  conversationSessions: {},
+  conversationGraphs: {},
+  recentConversationNodeId: null,
   notifications: {},
   requirements: {},
   clarifications: {},
@@ -372,29 +417,56 @@ export const useDomainStore = create<DomainState>()((set) => ({
   settings: null,
 
   initFromSnapshot: (snapshot) =>
-    set(() => ({
-      snapshotLoaded: true,
-      lastSequence: snapshot.last_sequence,
-      conversation: graphFromSnapshot(snapshot),
-      notifications: indexBy(snapshot.state.notifications, (n) => n.id),
-      requirements: indexBy(snapshot.state.requirements, (r) => r.id),
-      clarifications: indexBy(snapshot.state.clarifications, (c) => c.id),
-      revisions: groupRevisions(snapshot.state.revisions),
-      runs: indexBy(snapshot.state.runs, (r) => r.id),
-      plans: indexBy(snapshot.state.plans, (p) => p.run_id),
-      validations: indexBy(snapshot.state.validations, (v) => v.run_id),
-      reviews: indexBy(snapshot.state.reviews, (r) => r.run_id),
-      publications: indexBy(snapshot.state.publications, (p) => p.run_id),
-      actions: indexBy(snapshot.state.actions, (a) => a.id),
-      workbenchActions: indexBy(snapshot.state.workbench_actions, (a) => a.id),
-      git: snapshot.state.git,
-      terminals: indexBy(snapshot.state.terminals, (t) => t.id),
-      providers: snapshot.state.models.providers,
-      roles: snapshot.state.models.roles,
-      usage: snapshot.state.models.usage,
-      modelResult: snapshot.state.models.last_result,
-      settings: snapshot.state.settings,
-    })),
+    set(() => {
+      const sessions = indexBy(
+        snapshot.state.conversation.sessions,
+        (session) => session.id,
+      );
+      const graphs = Object.fromEntries(
+        snapshot.state.conversation.sessions.map((session) => {
+          const graph = snapshot.state.conversation.graphs.find(
+            (candidate) => candidate.graph_id === session.graph_id,
+          );
+          return [
+            session.id,
+            graph
+              ? graphFromGraphSnapshot(graph)
+              : createGraphState(session.graph_id, session.root_branch_id),
+          ];
+        }),
+      );
+      const activeId = snapshot.state.conversation.active_session_id;
+      return {
+        snapshotLoaded: true,
+        lastSequence: snapshot.last_sequence,
+        conversation: graphs[activeId] ?? createGraphState("g-main", "b-main"),
+        activeConversationSessionId: activeId,
+        conversationSessions: sessions,
+        conversationGraphs: graphs,
+        recentConversationNodeId: null,
+        notifications: indexBy(snapshot.state.notifications, (n) => n.id),
+        requirements: indexBy(snapshot.state.requirements, (r) => r.id),
+        clarifications: indexBy(snapshot.state.clarifications, (c) => c.id),
+        revisions: groupRevisions(snapshot.state.revisions),
+        runs: indexBy(snapshot.state.runs, (r) => r.id),
+        plans: indexBy(snapshot.state.plans, (p) => p.run_id),
+        validations: indexBy(snapshot.state.validations, (v) => v.run_id),
+        reviews: indexBy(snapshot.state.reviews, (r) => r.run_id),
+        publications: indexBy(snapshot.state.publications, (p) => p.run_id),
+        actions: indexBy(snapshot.state.actions, (a) => a.id),
+        workbenchActions: indexBy(
+          snapshot.state.workbench_actions,
+          (a) => a.id,
+        ),
+        git: snapshot.state.git,
+        terminals: indexBy(snapshot.state.terminals, (t) => t.id),
+        providers: snapshot.state.models.providers,
+        roles: snapshot.state.models.roles,
+        usage: snapshot.state.usage,
+        modelResult: snapshot.state.models.last_result,
+        settings: snapshot.state.settings,
+      };
+    }),
 
   applyEvent: (envelope) =>
     set((state) => {
@@ -403,8 +475,21 @@ export const useDomainStore = create<DomainState>()((set) => ({
         payload: EventEnvelope["payload"],
       ) => Partial<Projection>;
       if (!reducer) return state; // 未知扩展事件：忽略但不崩溃（FE-EVENT-007）
+      const graphEventSessionId =
+        envelope.aggregate_type === "conversation" &&
+        envelope.event_type !== "conversation.session.created"
+          ? Object.values(state.conversationSessions).find(
+              (session) => session.graph_id === envelope.aggregate_id,
+            )?.id
+          : undefined;
+      const targetSessionId =
+        graphEventSessionId ?? state.activeConversationSessionId;
       const projection: Projection = {
-        conversation: state.conversation,
+        conversation:
+          state.conversationGraphs[targetSessionId] ?? state.conversation,
+        activeConversationSessionId: state.activeConversationSessionId,
+        conversationSessions: state.conversationSessions,
+        conversationGraphs: state.conversationGraphs,
         notifications: state.notifications,
         requirements: state.requirements,
         clarifications: state.clarifications,
@@ -425,10 +510,62 @@ export const useDomainStore = create<DomainState>()((set) => ({
         settings: state.settings,
         lastSequence: state.lastSequence,
       };
-      const patch = reducer(projection, envelope.payload);
+      let patch = reducer(projection, envelope.payload);
+      if (
+        patch.conversation &&
+        envelope.event_type !== "conversation.session.created"
+      ) {
+        const updatedConversation = patch.conversation;
+        patch = {
+          ...patch,
+          conversation:
+            targetSessionId === state.activeConversationSessionId
+              ? updatedConversation
+              : state.conversation,
+          conversationGraphs: {
+            ...state.conversationGraphs,
+            [targetSessionId]: updatedConversation,
+          },
+        };
+      }
+      let recentConversationNodeId = state.recentConversationNodeId;
+      if (
+        envelope.event_type === "conversation.node.created" &&
+        targetSessionId === state.activeConversationSessionId
+      ) {
+        const payload =
+          envelope.payload as DomainEventPayload["conversation.node.created"];
+        recentConversationNodeId = payload.node.id;
+      } else if (envelope.event_type === "conversation.session.created") {
+        recentConversationNodeId = null;
+      } else if (
+        envelope.event_type === "conversation.node.state_changed" &&
+        targetSessionId === state.activeConversationSessionId
+      ) {
+        const payload =
+          envelope.payload as DomainEventPayload["conversation.node.state_changed"];
+        if (
+          payload.node_id === recentConversationNodeId &&
+          payload.state !== "streaming" &&
+          payload.state !== "running"
+        ) {
+          recentConversationNodeId = null;
+        }
+      } else if (envelope.event_type === "requirement.updated") {
+        const payload =
+          envelope.payload as DomainEventPayload["requirement.updated"];
+        if (
+          payload.requirement.state === "queued" ||
+          payload.requirement.state === "cancelled" ||
+          payload.requirement.state === "superseded"
+        ) {
+          recentConversationNodeId = null;
+        }
+      }
       return {
         ...state,
         ...patch,
+        recentConversationNodeId,
         lastSequence: Math.max(state.lastSequence, envelope.sequence),
       };
     }),
@@ -439,12 +576,21 @@ export const useDomainStore = create<DomainState>()((set) => ({
     await getApi().sendMessage(input);
   },
 
-  abortResponse: async (branchId) => {
-    await getApi().abortResponse(branchId);
+  createConversationSession: async (idempotencyKey) => {
+    await getApi().createConversationSession({
+      idempotency_key: idempotencyKey,
+    });
   },
 
-  branchFromNode: async (nodeId) => {
-    const { branch } = await getApi().branchFrom({ node_id: nodeId });
+  abortResponse: async (sessionId, branchId) => {
+    await getApi().abortResponse(sessionId, branchId);
+  },
+
+  branchFromNode: async (sessionId, nodeId) => {
+    const { branch } = await getApi().branchFrom({
+      session_id: sessionId,
+      node_id: nodeId,
+    });
     return branch.id;
   },
 
@@ -459,6 +605,10 @@ export const useDomainStore = create<DomainState>()((set) => ({
 
   answerClarification: async (input) => {
     await getApi().answerClarification(input);
+  },
+
+  cancelRequirement: async (requirementId) => {
+    await getApi().cancelRequirement(requirementId);
   },
 
   updateSpec: (input) => getApi().updateSpec(input),

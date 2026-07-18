@@ -11,6 +11,7 @@ import {
 import { useAppearanceStore } from "../../store/appearanceStore";
 import { useCanvasStore } from "../../store/canvasStore";
 import { useDomainStore } from "../../store/domainStore";
+import { deliveryNodeId } from "../../workbenches/delivery/projection";
 import GrayDangoPet from "./GrayDangoPet";
 import {
   deriveGrayDangoPresentation,
@@ -117,14 +118,7 @@ export function GrayDangoHost({
         : node.branch_ids[node.branch_ids.length - 1];
       canvas.setActiveConversationBranch(branchId);
       canvas.setSelectedConversationNode(node.id);
-      const position = domain.conversation.positions[node.id];
-      if (position) {
-        canvas.setConversationViewport(branchId, {
-          zoom: 1,
-          x: 160 - position.x,
-          y: 140 - position.y,
-        });
-      }
+      navigate(`/canvas/chat/branches/${branchId}/nodes/${node.id}`);
       return;
     }
     if (notification.source_workbench !== "system") {
@@ -136,13 +130,25 @@ export function GrayDangoHost({
       ) {
         const sourceId = notification.source_node_id;
         if (useDomainStore.getState().runs[sourceId]) {
+          canvas.requestDeliveryFocus(deliveryNodeId.run(sourceId));
           navigate(`/canvas/workbenches/delivery/runs/${sourceId}`);
+        } else if (
+          Object.values(useDomainStore.getState().plans).some((plan) =>
+            plan.items.some((item) => item.id === sourceId),
+          )
+        ) {
+          const plan = Object.values(useDomainStore.getState().plans).find(
+            (entry) => entry.items.some((item) => item.id === sourceId),
+          )!;
+          canvas.requestDeliveryFocus(deliveryNodeId.workItem(sourceId));
+          navigate(`/canvas/workbenches/delivery/runs/${plan.run_id}`);
         } else {
+          canvas.requestDeliveryFocus(deliveryNodeId.requirement(sourceId));
           navigate(`/canvas/workbenches/delivery/requirements/${sourceId}`);
         }
         return;
       }
-      // 其余工作台（P3 补齐内部节点聚焦）
+      // 普通工作台没有内部画布定位；通知只负责按射线流程打开工作台。
       navigate(`/canvas/workbenches/${notification.source_workbench}`);
     }
   };
@@ -161,77 +167,78 @@ export function GrayDangoHost({
               { ...presentation, bubble: null, animation: "idle", frames: 1 }
         }
         containerRef={containerRef}
-      />
-      {current && !collapsed ? (
-        <section
-          className="graydango-queue px-cut px-shadowed"
-          data-severity={current.severity}
-          aria-label="通知队列"
-        >
-          <p className="graydango-queue__message">
-            <strong>[{SEVERITY_LABELS[current.severity]}]</strong>{" "}
-            {current.message}
-            {current.lifecycle === "acknowledged" ? "（已确认，未解决）" : ""}
-          </p>
-          <div className="graydango-queue__controls">
-            <button
-              type="button"
-              aria-label="前一条通知"
-              disabled={queue.length < 2}
-              onClick={() =>
-                setIndex((value) => (value - 1 + queue.length) % queue.length)
-              }
-            >
-              ←
-            </button>
-            <span
-              aria-label={`第 ${Math.min(index, queue.length - 1) + 1} 条，共 ${queue.length} 条`}
-            >
-              {Math.min(index, queue.length - 1) + 1}/{queue.length}
-            </span>
-            <button
-              type="button"
-              aria-label="后一条通知"
-              disabled={queue.length < 2}
-              onClick={() => setIndex((value) => (value + 1) % queue.length)}
-            >
-              →
-            </button>
-            <PixelButton
-              size="sm"
-              tone="green"
-              variant="outline"
-              disabled={current.lifecycle !== "active"}
-              onClick={() =>
-                void useDomainStore
-                  .getState()
-                  .acknowledgeNotification(current.id)
-              }
-            >
-              确认
-            </PixelButton>
-            <PixelButton
-              size="sm"
-              tone="cyan"
-              variant="outline"
-              disabled={notificationLocateDisabled(current)}
-              onClick={() => locate(current)}
-            >
-              定位
-            </PixelButton>
-          </div>
-        </section>
-      ) : null}
-      {current && collapsed ? (
-        <button
-          type="button"
-          className="graydango-queue-indicator"
-          aria-label={`展开通知队列，共 ${queue.length} 条`}
-          onClick={() => setCollapsed(false)}
-        >
-          {queue.length}
-        </button>
-      ) : null}
+      >
+        {current && !collapsed ? (
+          <section
+            className="graydango-queue px-cut px-shadowed"
+            data-severity={current.severity}
+            aria-label="通知队列"
+          >
+            <p className="graydango-queue__message">
+              <strong>[{SEVERITY_LABELS[current.severity]}]</strong>{" "}
+              {current.message}
+              {current.lifecycle === "acknowledged" ? "（已确认，未解决）" : ""}
+            </p>
+            <div className="graydango-queue__controls">
+              <button
+                type="button"
+                aria-label="前一条通知"
+                disabled={queue.length < 2}
+                onClick={() =>
+                  setIndex((value) => (value - 1 + queue.length) % queue.length)
+                }
+              >
+                ←
+              </button>
+              <span
+                aria-label={`第 ${Math.min(index, queue.length - 1) + 1} 条，共 ${queue.length} 条`}
+              >
+                {Math.min(index, queue.length - 1) + 1}/{queue.length}
+              </span>
+              <button
+                type="button"
+                aria-label="后一条通知"
+                disabled={queue.length < 2}
+                onClick={() => setIndex((value) => (value + 1) % queue.length)}
+              >
+                →
+              </button>
+              <PixelButton
+                size="sm"
+                tone="green"
+                variant="outline"
+                disabled={current.lifecycle !== "active"}
+                onClick={() =>
+                  void useDomainStore
+                    .getState()
+                    .acknowledgeNotification(current.id)
+                }
+              >
+                确认
+              </PixelButton>
+              <PixelButton
+                size="sm"
+                tone="cyan"
+                variant="outline"
+                disabled={notificationLocateDisabled(current)}
+                onClick={() => locate(current)}
+              >
+                定位
+              </PixelButton>
+            </div>
+          </section>
+        ) : null}
+        {current && collapsed ? (
+          <button
+            type="button"
+            className="graydango-queue-indicator"
+            aria-label={`展开通知队列，共 ${queue.length} 条`}
+            onClick={() => setCollapsed(false)}
+          >
+            {queue.length}
+          </button>
+        ) : null}
+      </GrayDangoPet>
       <span
         className="sr-only"
         aria-live={current && isBlocking(current) ? "assertive" : "polite"}

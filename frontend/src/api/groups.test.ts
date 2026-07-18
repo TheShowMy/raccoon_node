@@ -7,6 +7,7 @@ function requirement(
 ): Requirement {
   return {
     title: partial.id,
+    source_session_id: "s-main",
     source_branch_id: "b-main",
     source_node_ids: [],
     latest_revision: 0,
@@ -29,6 +30,7 @@ function run(partial: Partial<Run> & Pick<Run, "id" | "phase">): Run {
     current_activity: null,
     publication_path: "github_pull_request",
     publication_frozen_reason: "",
+    task_budget_usd: 25,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
     ...partial,
@@ -36,44 +38,60 @@ function run(partial: Partial<Run> & Pick<Run, "id" | "phase">): Run {
 }
 
 describe("需求分组投影（FE-DELIVERY-002、PRD §8.1）", () => {
-  it("RequirementState × 最新 Run 联合投影", () => {
-    const cases: [Requirement, Run | null, string][] = [
-      [requirement({ id: "r1", state: "drafting" }), null, "drafting"],
-      [requirement({ id: "r2", state: "clarifying" }), null, "drafting"],
-      [requirement({ id: "r3", state: "spec_ready" }), null, "pending_confirm"],
-      [requirement({ id: "r4", state: "queued" }), null, "queued"],
+  it("只投影已经确认或曾经执行的需求", () => {
+    const cases: [Requirement, Run | null, string | null][] = [
+      [requirement({ id: "r1", state: "drafting" }), null, null],
+      [requirement({ id: "r2", state: "clarifying" }), null, null],
+      [requirement({ id: "r3", state: "spec_ready" }), null, null],
+      [
+        requirement({
+          id: "r4",
+          state: "queued",
+          confirmed_revision: 1,
+        }),
+        null,
+        "queued",
+      ],
       [
         requirement({ id: "r5", state: "queued", latest_run_id: "run-1" }),
         run({ id: "run-1", phase: "executing" }),
-        "running",
+        "active",
       ],
       [
         requirement({ id: "r6", state: "queued", latest_run_id: "run-2" }),
         run({ id: "run-2", phase: "waiting_workspace" }),
-        "running",
+        "active",
       ],
       [
         requirement({ id: "r7", state: "queued", latest_run_id: "run-3" }),
         run({ id: "run-3", phase: "terminal", outcome: "delivered" }),
-        "delivered",
+        "history",
       ],
       [
         requirement({ id: "r8", state: "queued", latest_run_id: "run-4" }),
-        run({ id: "run-4", phase: "terminal", outcome: "blocked" }),
+        run({ id: "run-4", phase: "blocked" }),
         "blocked",
       ],
       [
         requirement({ id: "r9", state: "queued", latest_run_id: "run-5" }),
         run({ id: "run-5", phase: "terminal", outcome: "failed" }),
-        "blocked",
+        "history",
       ],
       [
         requirement({ id: "r10", state: "spec_ready", latest_run_id: "run-6" }),
         run({ id: "run-6", phase: "terminal", outcome: "cancelled" }),
-        "pending_confirm",
+        "history",
       ],
-      [requirement({ id: "r11", state: "cancelled" }), null, "closed"],
-      [requirement({ id: "r12", state: "superseded" }), null, "closed"],
+      [requirement({ id: "r11", state: "cancelled" }), null, null],
+      [
+        requirement({
+          id: "r12",
+          state: "superseded",
+          confirmed_revision: 1,
+        }),
+        null,
+        "history",
+      ],
     ];
     for (const [req, latestRun, expected] of cases) {
       expect(groupRequirement(req, latestRun), req.id).toBe(expected);
@@ -82,17 +100,23 @@ describe("需求分组投影（FE-DELIVERY-002、PRD §8.1）", () => {
 
   it("分组顺序固定且排队组内按 queue_position 排序", () => {
     const requirements = [
-      requirement({ id: "q2", state: "queued", queue_position: 2 }),
+      requirement({
+        id: "q2",
+        state: "queued",
+        queue_position: 2,
+        confirmed_revision: 1,
+      }),
       requirement({ id: "d1", state: "drafting" }),
-      requirement({ id: "q1", state: "queued", queue_position: 1 }),
+      requirement({
+        id: "q1",
+        state: "queued",
+        queue_position: 1,
+        confirmed_revision: 1,
+      }),
       requirement({ id: "s1", state: "spec_ready" }),
     ];
     const groups = groupRequirements(requirements, {});
-    expect(groups.map((group) => group.key)).toEqual([
-      "drafting",
-      "pending_confirm",
-      "queued",
-    ]);
+    expect(groups.map((group) => group.key)).toEqual(["queued"]);
     const queued = groups.find((group) => group.key === "queued")!;
     expect(queued.items.map((item) => item.id)).toEqual(["q1", "q2"]);
   });

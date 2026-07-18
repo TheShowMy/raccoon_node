@@ -5,6 +5,7 @@ import {
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type RefObject,
 } from "react";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -64,9 +65,11 @@ function savePosition(position: GrayDangoPosition) {
 function GrayDangoPet({
   presentation,
   containerRef,
+  children,
 }: {
   presentation: GrayDangoPresentation;
   containerRef: RefObject<HTMLElement | null>;
+  children?: ReactNode;
 }) {
   const [position, setPosition] = useState(loadPosition);
   const positionRef = useRef(position);
@@ -254,6 +257,8 @@ function GrayDangoPet({
       aria-label="GrayDango 项目助手"
       data-animation={activeAnimation}
       data-dragging={dragging || undefined}
+      data-horizontal={position.x < 0.5 ? "left" : "right"}
+      data-vertical={position.y < 0.45 ? "top" : "bottom"}
       style={petStyle}
     >
       {presentation.bubble ? (
@@ -265,6 +270,7 @@ function GrayDangoPet({
           {presentation.bubble}
         </output>
       ) : null}
+      {children}
       <span
         ref={spriteRef}
         className="graydango-pet__sprite"
