@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import {
   buildDailyUsage,
   formatCost,
@@ -41,9 +42,106 @@ function monthLabels(points: ReturnType<typeof buildDailyUsage>) {
   });
 }
 
+function UsageHeatmap({
+  daily,
+  months,
+}: {
+  daily: ReturnType<typeof buildDailyUsage>;
+  months: ReturnType<typeof buildDailyUsage>;
+}) {
+  const [activeDayIndex, setActiveDayIndex] = useState(
+    Math.max(0, daily.length - 1),
+  );
+  const dayRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  useEffect(() => {
+    setActiveDayIndex((index) =>
+      Math.min(index, Math.max(0, daily.length - 1)),
+    );
+  }, [daily.length]);
+  const moveDayFocus = (index: number) => {
+    const next = Math.max(0, Math.min(daily.length - 1, index));
+    setActiveDayIndex(next);
+    requestAnimationFrame(() => dayRefs.current[next]?.focus());
+  };
+  const activeDay = daily[activeDayIndex];
+  return (
+    <>
+      <div className="usage-heatmap-months" aria-hidden="true">
+        {months.map((point) => (
+          <span key={point.date}>{Number(point.date.slice(5, 7))}月</span>
+        ))}
+      </div>
+      <div
+        className="usage-heatmap"
+        aria-label="最近 365 天每日 Token 点阵图"
+        aria-describedby="usage-heatmap-help usage-heatmap-detail"
+      >
+        {daily.map((point, index) => (
+          <button
+            key={point.date}
+            ref={(element) => {
+              dayRefs.current[index] = element;
+            }}
+            type="button"
+            className="usage-heatmap__day"
+            data-level={point.level}
+            tabIndex={index === activeDayIndex ? 0 : -1}
+            title={`${point.date}：${formatTokens(point.tokens)} Token`}
+            aria-label={`${point.date}，${formatTokens(point.tokens)} Token`}
+            onFocus={() => setActiveDayIndex(index)}
+            onMouseEnter={() => setActiveDayIndex(index)}
+            onKeyDown={(event) => {
+              const moves: Partial<Record<string, number>> = {
+                ArrowUp: -1,
+                ArrowDown: 1,
+                ArrowLeft: -7,
+                ArrowRight: 7,
+              };
+              if (event.key === "Home" || event.key === "End") {
+                event.preventDefault();
+                moveDayFocus(event.key === "Home" ? 0 : daily.length - 1);
+                return;
+              }
+              const delta = moves[event.key];
+              if (delta === undefined) return;
+              event.preventDefault();
+              moveDayFocus(index + delta);
+            }}
+          />
+        ))}
+      </div>
+      <p id="usage-heatmap-help" className="usage-heatmap__help">
+        Tab 进入点阵，方向键按日期或周移动。
+      </p>
+      <p
+        id="usage-heatmap-detail"
+        className="usage-heatmap__detail"
+        aria-live="polite"
+      >
+        {activeDay
+          ? `${activeDay.date} · ${formatTokens(activeDay.tokens)} Token`
+          : "暂无每日用量"}
+      </p>
+      <div className="usage-heatmap-legend" aria-label="Token 活跃度图例">
+        <span>少</span>
+        {[0, 1, 2, 3, 4].map((level) => (
+          <i key={level} data-level={level} />
+        ))}
+        <span>多</span>
+      </div>
+    </>
+  );
+}
+
 export function UsageWorkbench() {
   const usage = useDomainStore((state) => state.usage);
-  if (!usage) return null;
+  if (!usage) {
+    return (
+      <p className="tool-empty-state" role="status">
+        用量数据加载中…
+      </p>
+    );
+  }
   const overview = summarizeTokens(usage);
   const daily = buildDailyUsage(usage);
   const models = groupUsageByModel(usage);
@@ -85,33 +183,7 @@ export function UsageWorkbench() {
           <h3 id="usage-activity-title">Token 活动</h3>
           <span>最近 365 天 · 每日</span>
         </header>
-        <div className="usage-heatmap-months" aria-hidden="true">
-          {months.map((point) => (
-            <span key={point.date}>{Number(point.date.slice(5, 7))}月</span>
-          ))}
-        </div>
-        <div
-          className="usage-heatmap"
-          aria-label="最近 365 天每日 Token 点阵图"
-        >
-          {daily.map((point) => (
-            <button
-              key={point.date}
-              type="button"
-              className="usage-heatmap__day"
-              data-level={point.level}
-              title={`${point.date}：${formatTokens(point.tokens)} Token`}
-              aria-label={`${point.date}，${formatTokens(point.tokens)} Token`}
-            />
-          ))}
-        </div>
-        <div className="usage-heatmap-legend" aria-label="Token 活跃度图例">
-          <span>少</span>
-          {[0, 1, 2, 3, 4].map((level) => (
-            <i key={level} data-level={level} />
-          ))}
-          <span>多</span>
-        </div>
+        <UsageHeatmap daily={daily} months={months} />
       </section>
       <section className="usage-models" aria-labelledby="usage-models-title">
         <header>

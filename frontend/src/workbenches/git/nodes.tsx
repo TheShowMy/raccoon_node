@@ -1,8 +1,9 @@
 import { PixelButton } from "@pxlkit/ui-kit";
-import { memo, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { CHANGE_STATUS_LABELS, groupChanges } from "../../api/git";
 import type {
   GitChange,
+  GitMutationResult,
   GitRepoState,
   WorkbenchActionKind,
 } from "../../api/types";
@@ -169,24 +170,45 @@ function ChangeRow({
   activeSourceKey: string | null;
 }) {
   const [error, setError] = useState<string | null>(null);
-  const run = async (
-    fn: () => Promise<{ ok: boolean; message: string | null }>,
-  ) => {
+  const selectedChangePath = useGitStore((state) => state.selectedChangePath);
+  const checked = useGitStore((state) =>
+    state.selectedChangePaths.includes(change.path),
+  );
+  const selectable = change.status !== "conflicted";
+  const run = async (fn: () => Promise<GitMutationResult>) => {
     const result = await fn();
     setError(result.ok ? null : result.message);
+    if (result.ok) {
+      useGitStore.getState().removeSelectedChanges(result.changed_paths);
+    }
   };
   return (
     <li
       className="git-change-row"
-      data-selected={
-        useGitStore.getState().selectedChangePath === change.path || undefined
-      }
+      data-selected={selectedChangePath === change.path || undefined}
+      data-checked={checked || undefined}
       data-action-source={`git_discard:${change.path}`}
       data-action-source-active={
         activeSourceKey === `git_discard:${change.path}` || undefined
       }
     >
       <div className="git-change-row__line">
+        <label className="git-selection-control">
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={locked || !selectable}
+            aria-label={
+              selectable
+                ? `选择 ${change.path}`
+                : `${change.path} 存在冲突，不能批量暂存`
+            }
+            onChange={() =>
+              useGitStore.getState().toggleChangeSelection(change.path)
+            }
+          />
+          <span aria-hidden="true" />
+        </label>
         <span
           className="git-change-row__status"
           data-status={change.status}
@@ -210,7 +232,7 @@ function ChangeRow({
           {change.path}
         </button>
         <span className="git-change-row__ops">
-          {change.status === "unstaged" ? (
+          {["unstaged", "untracked"].includes(change.status) ? (
             <button
               type="button"
               className="git-change-row__action"
@@ -218,7 +240,7 @@ function ChangeRow({
               aria-label={`暂存 ${change.path}`}
               onClick={() =>
                 void run(() =>
-                  useDomainStore.getState().stageChange(change.path),
+                  useDomainStore.getState().stageChanges([change.path]),
                 )
               }
             >
@@ -233,7 +255,7 @@ function ChangeRow({
               aria-label={`取消暂存 ${change.path}`}
               onClick={() =>
                 void run(() =>
-                  useDomainStore.getState().unstageChange(change.path),
+                  useDomainStore.getState().unstageChanges([change.path]),
                 )
               }
             >
@@ -258,6 +280,43 @@ function ChangeRow({
   );
 }
 
+function GroupSelection({
+  label,
+  paths,
+  selectedPaths,
+  locked,
+}: {
+  label: string;
+  paths: string[];
+  selectedPaths: string[];
+  locked: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const selectedCount = paths.filter((path) =>
+    selectedPaths.includes(path),
+  ).length;
+  const checked = paths.length > 0 && selectedCount === paths.length;
+  const mixed = selectedCount > 0 && !checked;
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = mixed;
+  }, [mixed]);
+  return (
+    <label className="git-group-selection">
+      <input
+        ref={inputRef}
+        type="checkbox"
+        checked={checked}
+        disabled={locked || paths.length === 0}
+        aria-label={`${checked ? "取消全选" : "全选"}${label}`}
+        onChange={() =>
+          useGitStore.getState().setGroupSelection(paths, !checked)
+        }
+      />
+      <span aria-hidden="true" />
+    </label>
+  );
+}
+
 export const ChangesContent = memo(function ChangesContent({
   git,
   activeSourceKey,
@@ -268,9 +327,72 @@ export const ChangesContent = memo(function ChangesContent({
   const groups = groupChanges(git.changes);
   const locked = git.write_lock.locked;
   const message = useGitStore((state) => state.commitMessage);
+  const selectedPaths = useGitStore((state) => state.selectedChangePaths);
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const staged = git.changes.filter((change) => change.status === "staged");
+  const selectedChanges = git.changes.filter((change) =>
+    selectedPaths.includes(change.path),
+  );
+  const stageablePaths = selectedChanges
+    .filter((change) => ["unstaged", "untracked"].includes(change.status))
+    .map((change) => change.path);
+  const unstageablePaths = selectedChanges
+    .filter((change) => change.status === "staged")
+    .map((change) => change.path);
+  const runBatch = async (
+    operation: (paths: string[]) => Promise<GitMutationResult>,
+    paths: string[],
+  ) => {
+    setBulkBusy(true);
+    const result = await operation(paths);
+    setBulkBusy(false);
+    setBulkMessage(result.message);
+    if (result.ok) {
+      useGitStore.getState().removeSelectedChanges(result.changed_paths);
+    }
+  };
   return (
     <div className="git-changes-layout">
+      <div className="git-bulk-toolbar" aria-label="Git 批量操作">
+        <strong>已选 {selectedPaths.length}</strong>
+        <button
+          type="button"
+          disabled={locked || bulkBusy || stageablePaths.length === 0}
+          title={locked ? "写锁占用，批量写操作不可用" : undefined}
+          onClick={() =>
+            void runBatch(
+              useDomainStore.getState().stageChanges,
+              stageablePaths,
+            )
+          }
+        >
+          暂存所选（{stageablePaths.length}）
+        </button>
+        <button
+          type="button"
+          disabled={locked || bulkBusy || unstageablePaths.length === 0}
+          title={locked ? "写锁占用，批量写操作不可用" : undefined}
+          onClick={() =>
+            void runBatch(
+              useDomainStore.getState().unstageChanges,
+              unstageablePaths,
+            )
+          }
+        >
+          取消暂存（{unstageablePaths.length}）
+        </button>
+        <button
+          type="button"
+          disabled={selectedPaths.length === 0}
+          onClick={() => useGitStore.getState().clearChangeSelection()}
+        >
+          清除选择
+        </button>
+        <span role="status" aria-live="polite">
+          {locked ? "写锁占用" : bulkMessage}
+        </span>
+      </div>
       <div className="git-change-list" data-scroll-key="git-change-list">
         {groups.length === 0 ? (
           <p className="tool-empty-state">工作区干净。</p>
@@ -278,7 +400,17 @@ export const ChangesContent = memo(function ChangesContent({
           groups.map((group) => (
             <section key={group.status} className="git-change-group">
               <h4 className="tool-section-title">
-                {CHANGE_STATUS_LABELS[group.status]}（{group.changes.length}）
+                <span>
+                  {CHANGE_STATUS_LABELS[group.status]}（{group.changes.length}）
+                </span>
+                <GroupSelection
+                  label={CHANGE_STATUS_LABELS[group.status]}
+                  paths={group.changes
+                    .filter((change) => change.status !== "conflicted")
+                    .map((change) => change.path)}
+                  selectedPaths={selectedPaths}
+                  locked={locked}
+                />
               </h4>
               <ul aria-label={`${group.label}变更`}>
                 {group.changes.map((change) => (

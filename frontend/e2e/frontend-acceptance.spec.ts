@@ -471,6 +471,18 @@ test("普通工作台连续页、GrayDango 打开工作台与内部滚动恢复"
   await expect(page.getByLabel("Token 指标")).not.toContainText("已知至少");
   await expect(page.getByLabel("Token 指标")).toContainText(/万|千万|亿/);
   await expect(page.getByLabel("最近 365 天每日 Token 点阵图")).toBeVisible();
+  const heatmapDays = page
+    .getByLabel("最近 365 天每日 Token 点阵图")
+    .locator("button");
+  await expect(heatmapDays).toHaveCount(365);
+  await expect(
+    page
+      .getByLabel("最近 365 天每日 Token 点阵图")
+      .locator("button[tabindex='0']"),
+  ).toHaveCount(1);
+  await heatmapDays.last().focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(heatmapDays.nth(357)).toBeFocused();
   await expect(page.getByRole("table", { name: "模型消耗" })).toBeVisible();
   await expect(page.getByText("预算进度")).toHaveCount(0);
   await expect(page.getByText("Provider 凭据")).toHaveCount(0);
@@ -602,6 +614,30 @@ test("Git 连续三栏保留 2px/1px 间距并在窄屏切换 Diff", async ({ pa
   );
   expect(comfortableHeights.every((height) => height <= 27)).toBe(true);
 
+  await workbench
+    .getByRole("checkbox", { name: "选择 frontend/src/canvas/nodes.tsx" })
+    .check();
+  await workbench
+    .getByRole("checkbox", { name: "选择 docs/rewrite/TODO.md" })
+    .check();
+  await expect(workbench.getByLabel("Git 批量操作")).toContainText("已选 2");
+  await workbench.getByRole("button", { name: "暂存所选（2）" }).click();
+  await expect(workbench.getByLabel("Git 批量操作")).toContainText("已选 0");
+  await workbench
+    .getByRole("button", { name: "查看 docs/rewrite/TODO.md 的 Diff" })
+    .click();
+  await expect(workbench.getByLabel("Diff 内容")).toContainText(
+    "new file mode",
+  );
+  await workbench
+    .getByRole("checkbox", { name: "选择 docs/rewrite/TODO.md" })
+    .check();
+  await workbench.getByRole("button", { name: "取消暂存（1）" }).click();
+  await expect(workbench.getByLabel("Git 批量操作")).toContainText("已选 0");
+  await expect(workbench.locator(".git-diff-content")).toContainText(
+    "未跟踪文件暂无 Diff",
+  );
+
   const panesBeforeDock = await panes.evaluateAll((elements) =>
     elements.map((element) => ({
       left: (element as HTMLElement).offsetLeft,
@@ -653,6 +689,17 @@ test("Git 连续三栏保留 2px/1px 间距并在窄屏切换 Diff", async ({ pa
   expect(compactHeights.every((height) => height <= 23)).toBe(true);
 
   await page.setViewportSize({ width: 780, height: 700 });
+  await expect
+    .poll(async () => {
+      const box = await page.locator("[data-workbench='git']").boundingBox();
+      return box
+        ? box.x >= -1 &&
+            box.y >= -1 &&
+            box.x + box.width <= 781 &&
+            box.y + box.height <= 701
+        : false;
+    })
+    .toBe(true);
   const compactTabs = workbench.getByRole("tablist", {
     name: "Git 工作区分区",
   });

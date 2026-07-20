@@ -4,6 +4,7 @@ import type { NodeProps } from "@xyflow/react";
 import { memo, useEffect, useRef, type ComponentType } from "react";
 import { getApi } from "../api";
 import type { WorkbenchKind } from "../api/types";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { persistScrollPosition, restoreScrollPositions } from "./nodeScroll";
 import { ConversationGraph } from "../chat/ConversationGraph";
 import { DeliveryWorkbench } from "../workbenches/delivery/DeliveryWorkbench";
@@ -29,7 +30,11 @@ export const CapabilityNode = memo(function CapabilityNode({
   data,
 }: NodeProps) {
   const { kind, dimmed, onOpen } = data as CapabilityNodeData;
-  const { data: summary } = useQuery({
+  const {
+    data: summary,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ["workbench-summary", kind],
     queryFn: () => getApi().getWorkbenchSummary(kind),
     staleTime: 60_000,
@@ -44,7 +49,6 @@ export const CapabilityNode = memo(function CapabilityNode({
       aria-label={`${title}工作台，按 Enter 打开`}
       data-capability-trigger={capabilityNodeId(kind)}
       onKeyDown={(event) => {
-        // 点击由 flow 级 onNodeClick 路由（见 MainCanvas），这里只保留键盘打开
         if (dimmed) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -57,9 +61,15 @@ export const CapabilityNode = memo(function CapabilityNode({
         {title}
       </h3>
       <ul className="capability-node__lines">
-        {(summary?.lines ?? ["加载中…"]).slice(0, 3).map((line) => (
-          <li key={line}>{line}</li>
-        ))}
+        {isError ? (
+          <li>摘要获取失败</li>
+        ) : isLoading || !summary ? (
+          <li className="capability-node__line--loading">加载中…</li>
+        ) : (
+          summary.lines
+            .slice(0, 3)
+            .map((line, index) => <li key={`${kind}-${index}`}>{line}</li>)
+        )}
       </ul>
     </div>
   );
@@ -80,7 +90,9 @@ export const CentralConversationNode = memo(function CentralConversationNode({
       aria-label="中央对话图"
       aria-hidden={dimmed || undefined}
     >
-      <ConversationGraph />
+      <ErrorBoundary title="对话">
+        <ConversationGraph />
+      </ErrorBoundary>
     </div>
   );
 });
@@ -108,6 +120,7 @@ export const CanvasWorkbenchNode = memo(function CanvasWorkbenchNode({
   const title = CAPABILITY_LABELS[kind];
   const Content = WORKBENCH_CONTENT[kind];
   const bodyRef = useRef<HTMLDivElement>(null);
+  const scrollDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       if (bodyRef.current) {
@@ -116,6 +129,12 @@ export const CanvasWorkbenchNode = memo(function CanvasWorkbenchNode({
     });
     return () => cancelAnimationFrame(frame);
   }, [kind]);
+  useEffect(() => {
+    const timer = scrollDebounceRef.current;
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
   return (
     <section
       className="workbench-node px-cut px-shadowed"
@@ -139,11 +158,18 @@ export const CanvasWorkbenchNode = memo(function CanvasWorkbenchNode({
         ref={bodyRef}
         className="workbench-node__body nodrag nowheel"
         data-fill
-        onScrollCapture={(event) =>
-          persistScrollPosition(event.target, `workbench:${kind}`)
-        }
+        onScrollCapture={(event) => {
+          if (scrollDebounceRef.current) {
+            clearTimeout(scrollDebounceRef.current);
+          }
+          scrollDebounceRef.current = setTimeout(() => {
+            persistScrollPosition(event.target, `workbench:${kind}`);
+          }, 100);
+        }}
       >
-        <Content />
+        <ErrorBoundary title={title}>
+          <Content />
+        </ErrorBoundary>
       </div>
     </section>
   );

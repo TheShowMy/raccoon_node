@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Route, Routes } from "react-router-dom";
 import { bootstrapDomain } from "./api/bootstrap";
 import { MainCanvas } from "./canvas/MainCanvas";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { useAppearanceStore } from "./store/appearanceStore";
 
@@ -80,22 +81,24 @@ export function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<MainCanvas />} />
-      <Route path="/canvas/workbenches/:kind" element={<MainCanvas />} />
-      <Route
-        path="/canvas/workbenches/delivery/requirements/:requirementId"
-        element={<MainCanvas />}
-      />
-      <Route
-        path="/canvas/workbenches/delivery/runs/:runId"
-        element={<MainCanvas />}
-      />
-      <Route
-        path="/canvas/chat/branches/:branchId/nodes/:nodeId"
-        element={<MainCanvas />}
-      />
-      <Route path="*" element={<MainCanvas />} />
-    </Routes>
+    <ErrorBoundary title="Raccoon Node">
+      <Routes>
+        <Route path="/" element={<MainCanvas />} />
+        <Route path="/canvas/workbenches/:kind" element={<MainCanvas />} />
+        <Route
+          path="/canvas/workbenches/delivery/requirements/:requirementId"
+          element={<MainCanvas />}
+        />
+        <Route
+          path="/canvas/workbenches/delivery/runs/:runId"
+          element={<MainCanvas />}
+        />
+        <Route
+          path="/canvas/chat/branches/:branchId/nodes/:nodeId"
+          element={<MainCanvas />}
+        />
+        <Route path="*" element={<MainCanvas />} />
+      </Routes>
+    </ErrorBoundary>
   );
 }

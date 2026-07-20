@@ -140,6 +140,7 @@
 /* ── 对话节点 ── */
 
 .chat-node {
+  contain: layout style;
   padding: var(--px-space-2) var(--px-space-3);
   background: var(--px-surface-raised);
   border: var(--px-border-width) solid var(--px-border-ink);
@@ -247,6 +248,7 @@
 }
 
 .chat-node__override-option {
+  min-height: 28px;
   padding: 0 var(--px-space-1);
   font-size: 10px;
   background: var(--px-surface);

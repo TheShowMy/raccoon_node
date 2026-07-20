@@ -182,22 +182,35 @@ function DefaultTaskBudgetGroup({ settings }: { settings: AppSettings }) {
 }
 
 function SecurityGroup({ settings }: { settings: AppSettings }) {
-  const [host, setHost] = useState(settings.listen_host);
+  const isLoopback =
+    settings.listen_host === "127.0.0.1" ||
+    settings.listen_host === "localhost";
+  const [localMode, setLocalMode] = useState(isLoopback);
   const [port, setPort] = useState(String(settings.listen_port));
   const portNumber = Number(port);
+  const desiredHost = localMode ? "127.0.0.1" : "0.0.0.0";
   const dirty =
-    host !== settings.listen_host || portNumber !== settings.listen_port;
-  const loopback = host === "127.0.0.1" || host === "localhost";
+    desiredHost !== settings.listen_host || portNumber !== settings.listen_port;
   return (
     <Group panelId="settings-security" title="监听与安全">
+      <div className="set-row" role="group" aria-label="监听地址">
+        <span>监听</span>
+        {[
+          { value: true, label: "本地（仅本机）" },
+          { value: false, label: "局域网" },
+        ].map((option) => (
+          <button
+            key={String(option.value)}
+            type="button"
+            className="chat-node__override-option"
+            data-active={localMode === option.value || undefined}
+            onClick={() => setLocalMode(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
       <div className="set-row">
-        <label htmlFor="listen-host">Host</label>
-        <input
-          id="listen-host"
-          className="dnode__input set-row__input"
-          value={host}
-          onChange={(event) => setHost(event.target.value)}
-        />
         <label htmlFor="listen-port">端口</label>
         <input
           id="listen-port"
@@ -210,15 +223,10 @@ function SecurityGroup({ settings }: { settings: AppSettings }) {
           size="sm"
           tone="green"
           variant="outline"
-          disabled={
-            !dirty ||
-            !host.trim() ||
-            !Number.isInteger(portNumber) ||
-            portNumber <= 0
-          }
+          disabled={!dirty || !Number.isInteger(portNumber) || portNumber <= 0}
           onClick={() =>
             void useDomainStore.getState().updateSettings({
-              listen_host: host.trim(),
+              listen_host: desiredHost,
               listen_port: portNumber,
             })
           }
@@ -227,9 +235,9 @@ function SecurityGroup({ settings }: { settings: AppSettings }) {
         </PixelButton>
       </div>
       <p className="dnode__meta">
-        {loopback
-          ? "loopback：启动 nonce + SameSite session。"
-          : "非本机监听：REST、NDJSON 与 WebSocket 全部必须鉴权。"}
+        {localMode
+          ? "本地：启动 nonce + SameSite session。"
+          : "局域网：REST、NDJSON 与 WebSocket 全部必须鉴权。"}
       </p>
     </Group>
   );
@@ -262,13 +270,21 @@ function RestartGroup({ settings }: { settings: AppSettings }) {
 }
 
 function DiagnosticsGroup() {
-  const { data: info } = useQuery({
+  const {
+    data: info,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ["diagnostics"],
     queryFn: () => getApi().getDiagnostics(),
   });
   return (
     <Group panelId="settings-diagnostics" title="数据诊断">
-      {info ? (
+      {isLoading ? (
+        <p className="dnode__meta">加载诊断信息…</p>
+      ) : isError ? (
+        <p className="dnode__meta">诊断加载失败</p>
+      ) : info ? (
         <>
           <p className="dnode__text">{info.event_store_health}</p>
           <p className="dnode__meta">last_sequence：{info.last_sequence}</p>
@@ -282,7 +298,7 @@ function DiagnosticsGroup() {
           <p className="dnode__meta">{info.archive_hint}</p>
         </>
       ) : (
-        <p className="dnode__meta">加载诊断信息…</p>
+        <p className="dnode__meta">暂无诊断数据</p>
       )}
     </Group>
   );
@@ -300,6 +316,43 @@ function SettingsResult({ settings }: { settings: AppSettings }) {
   );
 }
 
+function SettingsRestartDock({ settings }: { settings: AppSettings }) {
+  const [dismissed, setDismissed] = useState(false);
+  if (settings.pending_restart.length === 0 || dismissed) return null;
+  return (
+    <section
+      className="workbench-action-dock px-cut px-shadowed-sm"
+      data-tone="red"
+      data-action-kind="settings_restart"
+      aria-label={`重启确认：${settings.pending_restart.join("、")}`}
+    >
+      <div className="workbench-action-dock__body">
+        <strong>重启确认 · 系统</strong>
+        <span>
+          restart_required：{settings.pending_restart.join("、")}
+          。设置已保存；需重启系统后生效。
+        </span>
+      </div>
+      <div className="workbench-action-dock__actions">
+        <PixelButton
+          size="sm"
+          tone="red"
+          onClick={() => void useDomainStore.getState().restartSystem()}
+        >
+          确认重启
+        </PixelButton>
+        <PixelButton
+          size="sm"
+          variant="outline"
+          onClick={() => setDismissed(true)}
+        >
+          稍后
+        </PixelButton>
+      </div>
+    </section>
+  );
+}
+
 const CATEGORIES: { id: SettingsCategory; label: string }[] = [
   { id: "general", label: "通用" },
   { id: "models", label: "模型" },
@@ -312,7 +365,13 @@ export function SettingsWorkbench() {
   const activeCategory = useSettingsWorkbenchStore(
     (state) => state.activeCategory,
   );
-  if (!settings) return null;
+  if (!settings) {
+    return (
+      <p className="tool-empty-state" role="status">
+        设置数据加载中…
+      </p>
+    );
+  }
   const content = {
     general: <AppearanceGroup />,
     models: <ModelSettingsContent />,
@@ -381,6 +440,7 @@ export function SettingsWorkbench() {
       >
         {content}
         <SettingsResult settings={settings} />
+        <SettingsRestartDock settings={settings} />
       </WorkbenchPane>
     </ToolWorkbench>
   );

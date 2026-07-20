@@ -7,10 +7,8 @@ export type EventConnectionState =
 
 export type ConnectEventsOptions = {
   after: number;
-  /** 生产形态：fetch(`/api/v1/events?after=${after}`) 的 body（FE-EVENT-001/005） */
   openStream: (after: number) => Promise<ReadableStream<Uint8Array>>;
   apply: (envelope: EventEnvelope) => void;
-  /** 缺口 / resync_required / 版本不兼容：重新加载快照，返回新的 last_sequence（FE-EVENT-006） */
   reloadSnapshot: () => Promise<number>;
   onConnectionChange?: (state: EventConnectionState) => void;
   reconnectDelayMs?: number;
@@ -20,17 +18,46 @@ export type EventConnection = { close: () => void };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/**
- * 事件流连接状态机：断线保留当前只读投影并重连（FE-EVENT-005）；
- * 对账失败先 reload 快照再以新 last_sequence 重连。
- */
+const BASE_DELAY_MS = 1500;
+const MAX_DELAY_MS = 30_000;
+
+function backoff(attempt: number, base: number): number {
+  return Math.min(base * 2 ** attempt, MAX_DELAY_MS);
+}
+
+function readWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): ReturnType<typeof reader.read> {
+  return Promise.race([
+    reader.read(),
+    new Promise<never>((_, reject) => {
+      const onAbort = () =>
+        reject(new DOMException("Read timeout", "TimeoutError"));
+      signal.addEventListener("abort", onAbort, { once: true });
+    }),
+  ]);
+}
+
 export function connectEvents(options: ConnectEventsOptions): EventConnection {
-  const reconnectDelayMs = options.reconnectDelayMs ?? 1500;
+  const reconnectDelayMs = options.reconnectDelayMs ?? BASE_DELAY_MS;
   let closed = false;
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
+  const releaseReader = () => {
+    if (reader) {
+      try {
+        reader.releaseLock();
+      } catch {
+        // 锁可能已被释放
+      }
+      reader = null;
+    }
+  };
+
   const loop = async (initialAfter: number) => {
     let after = initialAfter;
+    let retryCount = 0;
     while (!closed) {
       options.onConnectionChange?.("connecting");
       let resyncNeeded = false;
@@ -40,7 +67,6 @@ export function connectEvents(options: ConnectEventsOptions): EventConnection {
           apply: options.apply,
           onResyncNeeded: () => {
             resyncNeeded = true;
-            // 取消挂起的 read，尽快进入 resync 流程
             void reader?.cancel().catch(() => undefined);
           },
         });
@@ -50,41 +76,54 @@ export function connectEvents(options: ConnectEventsOptions): EventConnection {
             try {
               envelope = JSON.parse(line) as EventEnvelope;
             } catch {
-              return; // 单行损坏不致命：sequence 缺口会触发 resync
+              return;
             }
             applier.handle(envelope);
           },
         });
         reader = stream.getReader();
         options.onConnectionChange?.("open");
+        retryCount = 0;
+        const timeoutController = new AbortController();
         for (;;) {
-          const { done, value } = await reader.read();
-          if (done || resyncNeeded) break;
-          if (value && value.byteLength > 0) decoder.write(value);
+          if (resyncNeeded) break;
+          try {
+            const { done, value } = await readWithTimeout(
+              reader,
+              timeoutController.signal,
+            );
+            if (done) break;
+            if (value && value.byteLength > 0) decoder.write(value);
+          } catch (err) {
+            if (err instanceof DOMException && err.name === "TimeoutError") {
+              break;
+            }
+            throw err;
+          }
         }
+        timeoutController.abort();
         decoder.flush();
-        // 断线重连从最后已应用 sequence 建立新请求（FE-EVENT-005），
-        // 否则对端会重放已应用事件（delta 重复追加）
         after = applier.expectedSequence - 1;
       } catch {
         options.onConnectionChange?.("retrying");
       } finally {
-        reader?.releaseLock();
-        reader = null;
+        releaseReader();
       }
       if (closed) break;
       if (resyncNeeded) {
         try {
           after = await options.reloadSnapshot();
+          retryCount = 0;
         } catch {
           options.onConnectionChange?.("retrying");
-          await sleep(reconnectDelayMs);
+          await sleep(backoff(retryCount, reconnectDelayMs));
+          retryCount++;
         }
         continue;
       }
-      // 对端正常关闭：从最后已应用 sequence 重连
       options.onConnectionChange?.("retrying");
-      await sleep(reconnectDelayMs);
+      await sleep(backoff(retryCount, reconnectDelayMs));
+      retryCount++;
     }
     options.onConnectionChange?.("closed");
   };

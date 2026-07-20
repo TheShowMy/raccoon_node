@@ -461,7 +461,7 @@ GET    /api/v1/terminals/{id}/ws
 
 - **BE-FILE-001**：文件 API 拒绝 `.git`、`.raccoon-node`、依赖/构建目录、路径逃逸和符号链接逃逸；文本预览默认上限 128 KiB。
 - **BE-GIT-001**：Git 状态基于 `git status --porcelain=v2 -z --branch`，按字节安全解析路径。
-- **BE-GIT-002**：stage、unstage、commit、fetch、pull、push、switch、create 是唯一 v1 Git 写动作；危险动作要求 prepare/confirm 两阶段产生的确认 token，前端是画布确认节点还是普通工作台 Dock 不改变后端契约。
+- **BE-GIT-002**：stage/unstage 接受去重后的 `paths[]`，必须在获取写锁后先校验全部路径，再作为一个批次应用；任一路径不存在、状态不匹配或存在冲突时整批不执行。未跟踪文件允许 stage，unstage 后必须恢复未跟踪状态；成功结果返回实际变化路径并只产生一次 `git.updated`。commit、fetch、pull、push、switch、create 继续属于 v1 Git 写动作；危险动作要求 prepare/confirm 两阶段产生的确认 token，前端是画布确认节点还是普通工作台 Dock 不改变后端契约，批量丢弃不在 v1 范围。
 - **BE-TERM-001**：PTY cwd 固定 Git 根；限制终端数、尺寸、缓冲和闲置时间，关闭时终止完整进程树。
 - **BE-TERM-002**：终端消息为版本化 input/output/resize/exit/error；终端正文不进入事件、状态或常规日志。
 

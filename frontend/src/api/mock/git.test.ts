@@ -33,12 +33,17 @@ describe("Git 模块（FE-GIT-002/003）", () => {
     const stagedBefore = module
       .snapshotState()
       .changes.filter((change) => change.status === "staged").length;
-    await module.stageChange("frontend/src/canvas/nodes.tsx");
+    const stageResult = await module.stageChanges([
+      "frontend/src/canvas/nodes.tsx",
+    ]);
+    expect(stageResult.changed_paths).toEqual([
+      "frontend/src/canvas/nodes.tsx",
+    ]);
     const staged = module
       .snapshotState()
       .changes.filter((change) => change.status === "staged");
     expect(staged).toHaveLength(stagedBefore + 1);
-    await module.unstageChange("frontend/src/canvas/nodes.tsx");
+    await module.unstageChanges(["frontend/src/canvas/nodes.tsx"]);
     expect(
       module
         .snapshotState()
@@ -47,6 +52,46 @@ describe("Git 模块（FE-GIT-002/003）", () => {
     expect(
       events.filter((event) => event.event_type === "git.updated").length,
     ).toBe(2);
+  });
+
+  it("未跟踪文件可暂存查看新增 Diff，并在取消暂存后恢复", async () => {
+    const { module } = makeGit();
+    const path = "docs/rewrite/TODO.md";
+    const staged = await module.stageChanges([path]);
+    expect(staged).toMatchObject({ ok: true, changed_paths: [path] });
+    expect(
+      module.snapshotState().changes.find((change) => change.path === path),
+    ).toMatchObject({ status: "staged" });
+    expect(
+      module.snapshotState().changes.find((change) => change.path === path)
+        ?.diff,
+    ).toContain("new file mode");
+
+    await module.unstageChanges([path]);
+    expect(
+      module.snapshotState().changes.find((change) => change.path === path),
+    ).toMatchObject({ status: "untracked", diff: null });
+  });
+
+  it("批量操作先完整校验，失败时不修改任何路径且成功只发一个事件", async () => {
+    const { module, events } = makeGit();
+    const before = module.snapshotState().changes;
+    const failed = await module.stageChanges([
+      "frontend/src/canvas/nodes.tsx",
+      "src/merge.rs",
+    ]);
+    expect(failed).toMatchObject({ ok: false, changed_paths: [] });
+    expect(module.snapshotState().changes).toEqual(before);
+    expect(events).toHaveLength(0);
+
+    const succeeded = await module.stageChanges([
+      "frontend/src/canvas/nodes.tsx",
+      "docs/rewrite/TODO.md",
+    ]);
+    expect(succeeded.changed_paths).toHaveLength(2);
+    expect(
+      events.filter((event) => event.event_type === "git.updated"),
+    ).toHaveLength(1);
   });
 
   it("commit 处理器：清空暂存并生成提交", async () => {
@@ -90,7 +135,7 @@ describe("Git 模块（FE-GIT-002/003）", () => {
 
   it("写锁占用时写操作返回 409 语义（PRD-RUN-001）", async () => {
     const { module } = makeGit(true);
-    const staged = await module.stageChange("frontend/src/canvas/nodes.tsx");
+    const staged = await module.stageChanges(["frontend/src/canvas/nodes.tsx"]);
     expect(staged.ok).toBe(false);
     expect(staged.message).toContain("409");
     expect(module.execute("git_commit", { message: "x" }).message).toContain(

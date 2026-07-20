@@ -427,6 +427,12 @@ export type GitChange = {
   diff: string | null;
 };
 
+export type GitMutationResult = {
+  ok: boolean;
+  message: string | null;
+  changed_paths: string[];
+};
+
 export type GitBranch = {
   name: string;
   current: boolean;

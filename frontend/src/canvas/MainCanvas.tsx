@@ -282,6 +282,33 @@ function MainCanvasScene({
     }
   }, [effectiveKind]);
 
+  // 宿主尺寸变化时，已打开工作台沿当前射线重新布局并适配可见区。
+  // 外层不允许用户平移/缩放，因此这里不会覆盖用户浏览状态。
+  useEffect(() => {
+    if (mode !== "workbench" || !workbench) return;
+    const trigger = layout.capabilities.find((item) => item.kind === workbench);
+    if (!trigger) return;
+    const wbSize = workbenchSizeFor(workbench, size);
+    const wbCenter = workbenchCenterOnRay({
+      canvasCenter: layout.canvasCenter,
+      triggerCenter: {
+        x: trigger.x + trigger.width / 2,
+        y: trigger.y + trigger.height / 2,
+      },
+      triggerSize: trigger,
+      workbenchSize: wbSize,
+      gap: WORKBENCH_RAY_GAP,
+    });
+    const viewport = focusViewport({
+      targetCenter: wbCenter,
+      targetSize: wbSize,
+      screen: size,
+      padding: CAMERA_PADDING,
+      maxZoom: 1,
+    });
+    void rf.setViewport(viewport, { duration: reducedMotion ? 0 : 180 });
+  }, [layout, mode, reducedMotion, rf, size, workbench]);
+
   /* Escape 关闭工作台（FE-CANVAS-014） */
   useEffect(() => {
     if (!workbenchOpen) return;

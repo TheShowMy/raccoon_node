@@ -11,6 +11,7 @@ import type {
   DomainEventPayload,
   EventEnvelope,
   EventType,
+  GitMutationResult,
   GitRepoState,
   ModelRef,
   ModelRole,
@@ -138,12 +139,8 @@ export type DomainState = {
   cancelAction: (actionId: string) => Promise<void>;
 
   /* ── P3 工作台命令 ── */
-  stageChange: (
-    path: string,
-  ) => Promise<{ ok: boolean; message: string | null }>;
-  unstageChange: (
-    path: string,
-  ) => Promise<{ ok: boolean; message: string | null }>;
+  stageChanges: (paths: string[]) => Promise<GitMutationResult>;
+  unstageChanges: (paths: string[]) => Promise<GitMutationResult>;
   requestWorkbenchAction: (input: {
     kind: WorkbenchActionKind;
     payload?: Record<string, string>;
@@ -200,6 +197,9 @@ type Projection = Pick<
 >;
 
 /** event_type → 类型化 reducer 集中注册表 */
+
+const MAX_CONVERSATION_GRAPHS = 10;
+
 const eventReducers: {
   [K in EventType]: (
     state: Projection,
@@ -208,6 +208,40 @@ const eventReducers: {
 } = {
   "conversation.session.created": (state, { session, graph }) => {
     const conversation = graphFromGraphSnapshot(graph);
+    const graphs: Record<string, ConversationGraphState> = {
+      ...state.conversationGraphs,
+      [state.activeConversationSessionId]: state.conversation,
+      [session.id]: conversation,
+    };
+    const entries = Object.entries(graphs);
+    if (entries.length > MAX_CONVERSATION_GRAPHS) {
+      const kept = entries
+        .sort(([, a], [, b]) => {
+          const aNodes = Object.values(a.nodes);
+          const bNodes = Object.values(b.nodes);
+          const aTime =
+            aNodes.length > 0
+              ? (aNodes[aNodes.length - 1]?.created_at ?? "")
+              : "";
+          const bTime =
+            bNodes.length > 0
+              ? (bNodes[bNodes.length - 1]?.created_at ?? "")
+              : "";
+          return bTime.localeCompare(aTime);
+        })
+        .slice(0, MAX_CONVERSATION_GRAPHS);
+      const trimmed: Record<string, ConversationGraphState> = {};
+      for (const [key, value] of kept) trimmed[key] = value;
+      return {
+        conversation,
+        activeConversationSessionId: session.id,
+        conversationSessions: {
+          ...state.conversationSessions,
+          [session.id]: session,
+        },
+        conversationGraphs: trimmed,
+      };
+    }
     return {
       conversation,
       activeConversationSessionId: session.id,
@@ -215,11 +249,7 @@ const eventReducers: {
         ...state.conversationSessions,
         [session.id]: session,
       },
-      conversationGraphs: {
-        ...state.conversationGraphs,
-        [state.activeConversationSessionId]: state.conversation,
-        [session.id]: conversation,
-      },
+      conversationGraphs: graphs,
     };
   },
   "conversation.node.created": (state, { node }) => ({
@@ -573,38 +603,74 @@ export const useDomainStore = create<DomainState>()((set) => ({
   setConnection: (connection) => set((state) => ({ ...state, connection })),
 
   sendMessage: async (input) => {
-    await getApi().sendMessage(input);
+    try {
+      await getApi().sendMessage(input);
+    } catch (error) {
+      console.error("[domainStore] sendMessage failed:", error);
+      throw error;
+    }
   },
 
   createConversationSession: async (idempotencyKey) => {
-    await getApi().createConversationSession({
-      idempotency_key: idempotencyKey,
-    });
+    try {
+      await getApi().createConversationSession({
+        idempotency_key: idempotencyKey,
+      });
+    } catch (error) {
+      console.error("[domainStore] createConversationSession failed:", error);
+      throw error;
+    }
   },
 
   abortResponse: async (sessionId, branchId) => {
-    await getApi().abortResponse(sessionId, branchId);
+    try {
+      await getApi().abortResponse(sessionId, branchId);
+    } catch (error) {
+      console.error("[domainStore] abortResponse failed:", error);
+      throw error;
+    }
   },
 
   branchFromNode: async (sessionId, nodeId) => {
-    const { branch } = await getApi().branchFrom({
-      session_id: sessionId,
-      node_id: nodeId,
-    });
-    return branch.id;
+    try {
+      const { branch } = await getApi().branchFrom({
+        session_id: sessionId,
+        node_id: nodeId,
+      });
+      return branch.id;
+    } catch (error) {
+      console.error("[domainStore] branchFromNode failed:", error);
+      throw error;
+    }
   },
 
   acknowledgeNotification: async (notificationId) => {
-    await getApi().acknowledgeNotification(notificationId);
+    try {
+      await getApi().acknowledgeNotification(notificationId);
+    } catch (error) {
+      console.error("[domainStore] acknowledgeNotification failed:", error);
+      throw error;
+    }
   },
 
   createRequirementFromChat: async (input) => {
-    const { requirement_id } = await getApi().createRequirementFromChat(input);
-    return requirement_id;
+    try {
+      const { requirement_id } =
+        await getApi().createRequirementFromChat(input);
+      return requirement_id;
+    } catch (error) {
+      console.error("[domainStore] createRequirementFromChat failed:", error);
+      throw error;
+    }
   },
 
   answerClarification: async (input) => {
-    await getApi().answerClarification(input);
+    try {
+      await getApi().answerClarification(input);
+    } catch (error) {
+      console.error("[domainStore] answerClarification failed:", error);
+      throw error;
+    }
   },
 
   cancelRequirement: async (requirementId) => {
@@ -647,9 +713,9 @@ export const useDomainStore = create<DomainState>()((set) => ({
 
   /* ── P3 工作台命令 ── */
 
-  stageChange: (path) => getApi().stageChange(path),
+  stageChanges: (paths) => getApi().stageChanges(paths),
 
-  unstageChange: (path) => getApi().unstageChange(path),
+  unstageChanges: (paths) => getApi().unstageChanges(paths),
 
   requestWorkbenchAction: async (input) => {
     const { action_id } = await getApi().requestWorkbenchAction(input);

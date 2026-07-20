@@ -3,10 +3,10 @@ import { connectEvents } from "../events/connect";
 import { getApi } from "./index";
 import { useDomainStore } from "../store/domainStore";
 
-/**
- * 启动引导（02 §9.1）：加载快照 → 初始化领域投影 → 按 last_sequence 连接事件流。
- * StrictMode 双挂载与多次调用安全（模块级幂等）。
- */
+const BOOTSTRAP_TIMEOUT_MS = 30_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 let bootPromise: Promise<void> | null = null;
 let connection: EventConnection | null = null;
 
@@ -28,9 +28,19 @@ async function boot(): Promise<void> {
   });
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    sleep(ms).then(() => {
+      throw new Error(`操作超时（${ms / 1000}秒）`);
+    }),
+  ]);
+}
+
 export function bootstrapDomain(): Promise<void> {
-  bootPromise ??= boot().catch((error) => {
-    // 失败后允许重试（首屏快照失败应可重试，02 §11）
+  bootPromise ??= withTimeout(boot(), BOOTSTRAP_TIMEOUT_MS).catch((error) => {
+    connection?.close();
+    connection = null;
     bootPromise = null;
     throw error;
   });

@@ -5,6 +5,7 @@ import type {
   EventType,
   GitBranch,
   GitChange,
+  GitMutationResult,
   GitRepoState,
   WorkbenchActionKind,
 } from "../types";
@@ -47,6 +48,18 @@ const DEMO_DIFF_CONFLICT = [
   ">>>>>>> feat/merge-task",
   "}",
 ].join("\n");
+
+function newFileDiff(path: string) {
+  return [
+    `diff --git a/${path} b/${path}`,
+    "new file mode 100644",
+    "--- /dev/null",
+    `+++ b/${path}`,
+    "@@ -0,0 +1,2 @@",
+    "+Raccoon Node 演示新增文件",
+    `+路径：${path}`,
+  ].join("\n");
+}
 
 /**
  * Git 模块（假数据层）：仓库/分支/变更状态全部经 git.updated 事件投影。
@@ -132,6 +145,11 @@ export class GitModule {
       diff: DEMO_DIFF_CANVAS,
     },
   ];
+  private readonly originallyUntracked = new Set(
+    this.changes
+      .filter((change) => change.status === "untracked")
+      .map((change) => change.path),
+  );
   private lastCommit: string | null = "c3d9e21 feat: 射线工作台与视口恢复";
 
   constructor(
@@ -167,36 +185,86 @@ export class GitModule {
   }
 
   private async mutate(
-    apply: () => { ok: boolean; message: string | null },
-  ): Promise<{ ok: boolean; message: string | null }> {
+    apply: () => GitMutationResult,
+  ): Promise<GitMutationResult> {
     await this.deps.latency();
-    if (this.locked()) return { ok: false, message: GIT_LOCKED_MESSAGE };
+    if (this.locked()) {
+      return { ok: false, message: GIT_LOCKED_MESSAGE, changed_paths: [] };
+    }
     const result = apply();
     if (result.ok) this.publish();
     return result;
   }
 
-  stageChange(path: string) {
+  stageChanges(paths: string[]) {
     return this.mutate(() => {
-      const change = this.changes.find(
-        (entry) => entry.path === path && entry.status === "unstaged",
+      const uniquePaths = [...new Set(paths)];
+      if (uniquePaths.length === 0) {
+        return { ok: false, message: "未选择可暂存文件。", changed_paths: [] };
+      }
+      const changes = uniquePaths.map((path) =>
+        this.changes.find((entry) => entry.path === path),
       );
-      if (!change)
-        return { ok: false, message: `没有可暂存的未暂存变更：${path}` };
-      change.status = "staged";
-      return { ok: true, message: null };
+      const invalidIndex = changes.findIndex(
+        (change) =>
+          !change || !["unstaged", "untracked"].includes(change.status),
+      );
+      if (invalidIndex >= 0) {
+        return {
+          ok: false,
+          message: `批量暂存未执行：路径不可暂存 ${uniquePaths[invalidIndex]}`,
+          changed_paths: [],
+        };
+      }
+      for (const change of changes as GitChange[]) {
+        if (change.status === "untracked")
+          change.diff = newFileDiff(change.path);
+        change.status = "staged";
+      }
+      return {
+        ok: true,
+        message: `已暂存 ${uniquePaths.length} 个文件。`,
+        changed_paths: uniquePaths,
+      };
     });
   }
 
-  unstageChange(path: string) {
+  unstageChanges(paths: string[]) {
     return this.mutate(() => {
-      const change = this.changes.find(
-        (entry) => entry.path === path && entry.status === "staged",
+      const uniquePaths = [...new Set(paths)];
+      if (uniquePaths.length === 0) {
+        return {
+          ok: false,
+          message: "未选择可取消暂存文件。",
+          changed_paths: [],
+        };
+      }
+      const changes = uniquePaths.map((path) =>
+        this.changes.find(
+          (entry) => entry.path === path && entry.status === "staged",
+        ),
       );
-      if (!change)
-        return { ok: false, message: `没有可取消暂存的变更：${path}` };
-      change.status = "unstaged";
-      return { ok: true, message: null };
+      const invalidIndex = changes.findIndex((change) => !change);
+      if (invalidIndex >= 0) {
+        return {
+          ok: false,
+          message: `批量取消暂存未执行：路径不在暂存区 ${uniquePaths[invalidIndex]}`,
+          changed_paths: [],
+        };
+      }
+      for (const change of changes as GitChange[]) {
+        if (this.originallyUntracked.has(change.path)) {
+          change.status = "untracked";
+          change.diff = null;
+        } else {
+          change.status = "unstaged";
+        }
+      }
+      return {
+        ok: true,
+        message: `已取消暂存 ${uniquePaths.length} 个文件。`,
+        changed_paths: uniquePaths,
+      };
     });
   }
 
@@ -219,6 +287,8 @@ export class GitModule {
         this.changes = this.changes.filter(
           (change) => change.status !== "staged",
         );
+        for (const change of staged)
+          this.originallyUntracked.delete(change.path);
         this.lastCommit = `f0e${Math.floor(Math.random() * 900 + 100)} ${message}`;
         if (current) current.ahead += 1;
         this.publish();
@@ -280,6 +350,7 @@ export class GitModule {
         if (this.changes.length === before) {
           return { ok: false, message: `没有可丢弃的变更：${payload.path}` };
         }
+        this.originallyUntracked.delete(payload.path);
         this.publish();
         return { ok: true, message: `已丢弃 ${payload.path} 的工作区修改。` };
       }

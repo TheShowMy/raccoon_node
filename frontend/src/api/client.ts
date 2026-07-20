@@ -10,6 +10,7 @@ import type {
   FileEntry,
   FilePreview,
   FileSearchResult,
+  GitMutationResult,
   IntentMode,
   ModelRef,
   ModelRole,
@@ -182,8 +183,8 @@ export interface RaccoonApi {
 
   /* ── Git 工作台（FE-GIT-*；写操作经事件投影，写锁占用返回 409 语义） ── */
 
-  stageChange(path: string): Promise<{ ok: boolean; message: string | null }>;
-  unstageChange(path: string): Promise<{ ok: boolean; message: string | null }>;
+  stageChanges(paths: string[]): Promise<GitMutationResult>;
+  unstageChanges(paths: string[]): Promise<GitMutationResult>;
 
   /* ── 工作台危险操作两阶段（prepare/confirm 语义；git/terminal 共用） ── */
 

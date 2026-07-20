@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useDomainStore } from "../../store/domainStore";
 import { useGitStore } from "../../store/gitStore";
 import {
@@ -23,7 +24,19 @@ export function GitWorkbench() {
   const workbenchActions = useDomainStore((state) => state.workbenchActions);
   const selectedChangePath = useGitStore((state) => state.selectedChangePath);
   const compactPane = useGitStore((state) => state.compactPane);
-  if (!git) return null;
+  const reconcileChangeSelection = useGitStore(
+    (state) => state.reconcileChangeSelection,
+  );
+  useEffect(() => {
+    reconcileChangeSelection(git?.changes.map((change) => change.path) ?? []);
+  }, [git, reconcileChangeSelection]);
+  if (!git) {
+    return (
+      <p className="tool-empty-state" role="status">
+        Git 数据加载中…
+      </p>
+    );
+  }
   const selectedChange = selectedChangePath
     ? (git.changes.find((change) => change.path === selectedChangePath) ?? null)
     : null;

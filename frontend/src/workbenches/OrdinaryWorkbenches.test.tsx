@@ -9,6 +9,7 @@ import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { getApi } from "../api";
 import { useDomainStore } from "../store/domainStore";
+import { useGitStore } from "../store/gitStore";
 import { useSettingsWorkbenchStore } from "../store/settingsWorkbenchStore";
 import { FilesWorkbench } from "./files/FilesWorkbench";
 import { GitWorkbench } from "./git/GitWorkbench";
@@ -28,6 +29,13 @@ function renderWorkbench(ui: ReactElement): RenderResult {
 beforeEach(async () => {
   const snapshot = await getApi().getSnapshot();
   useDomainStore.getState().initFromSnapshot(snapshot);
+  useGitStore.setState({
+    compactPane: "repository",
+    selectedChangePath: null,
+    selectedChangePaths: [],
+    commitMessage: "",
+    newBranchName: "",
+  });
   useSettingsWorkbenchStore.setState({ activeCategory: "general" });
 });
 
@@ -82,5 +90,46 @@ describe("普通工作台使用连续工具页而不是嵌套 React Flow", () =>
     expect(screen.queryByText("凭据")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("五角色配置")).not.toBeInTheDocument();
     expect(screen.queryByText(/预算进度|软阈值/)).not.toBeInTheDocument();
+  });
+
+  it("Git 支持独立文件选择、跨组批量操作和分组三态全选", () => {
+    renderWorkbench(<GitWorkbench />);
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "选择 frontend/src/canvas/nodes.tsx",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择 docs/rewrite/TODO.md" }),
+    );
+    const bulk = screen.getByLabelText("Git 批量操作");
+    expect(bulk).toHaveTextContent("已选 2");
+    expect(screen.getByRole("button", { name: "暂存所选（2）" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "取消暂存（0）" }),
+    ).toBeDisabled();
+
+    const stagedGroup = screen.getByRole("checkbox", { name: "全选已暂存" });
+    fireEvent.click(stagedGroup);
+    expect(stagedGroup).toBeChecked();
+    expect(screen.getByLabelText("Git 批量操作")).toHaveTextContent("已选 7");
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "选择 frontend/src/theme/tokens.css",
+      }),
+    );
+    expect(stagedGroup).toHaveProperty("indeterminate", true);
+  });
+
+  it("用量点阵只有一个 Tab 停靠点并用方向键按周移动", () => {
+    renderWorkbench(<UsageWorkbench />);
+    const heatmap = screen.getByLabelText("最近 365 天每日 Token 点阵图");
+    const days = Array.from(heatmap.querySelectorAll("button"));
+    expect(days).toHaveLength(365);
+    expect(days.filter((day) => day.tabIndex === 0)).toHaveLength(1);
+    expect(days[364]).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(days[364], { key: "ArrowLeft" });
+    expect(days[357]).toHaveAttribute("tabindex", "0");
+    expect(days[364]).toHaveAttribute("tabindex", "-1");
   });
 });

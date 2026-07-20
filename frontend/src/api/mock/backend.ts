@@ -51,6 +51,8 @@ const INITIAL_SESSION_ID = "s-main";
 const INITIAL_GRAPH_ID = "g-main";
 const INITIAL_ROOT_BRANCH_ID = "b-main";
 
+const MAX_EVENT_LOG = 5000;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const latency = () => sleep(40 + Math.random() * 80);
 const now = () => new Date().toISOString();
@@ -277,6 +279,9 @@ export class FakeBackend implements RaccoonApi {
       payload,
     };
     this.log.push(envelope);
+    if (this.log.length > MAX_EVENT_LOG) {
+      this.log.splice(0, this.log.length - MAX_EVENT_LOG);
+    }
     for (const subscriber of this.subscribers) subscriber(envelope);
   }
 
@@ -652,6 +657,10 @@ export class FakeBackend implements RaccoonApi {
 
   async abortResponse(session_id: string, branch_id: string): Promise<void> {
     await latency();
+    this.abortResponseImmediately(session_id, branch_id);
+  }
+
+  private abortResponseImmediately(session_id: string, branch_id: string) {
     const session = this.sessions.get(session_id);
     if (!session || this.branches.get(branch_id)?.graph_id !== session.graph_id)
       return;
@@ -756,6 +765,7 @@ export class FakeBackend implements RaccoonApi {
 
   /** 启动后 10–30 秒陆续产生不同 severity 的模拟通知（幂等） */
   private startDemoNotifications() {
+    if (import.meta.env.VITE_ENABLE_DEMO_NOTIFICATIONS !== "true") return;
     if (this.demoNotificationsStarted) return;
     this.demoNotificationsStarted = true;
     const schedule = (delayMs: number, raise: () => void) => {
@@ -938,12 +948,12 @@ export class FakeBackend implements RaccoonApi {
 
   /* ── Git 命令（委托 GitModule） ── */
 
-  stageChange(path: string) {
-    return this.git.stageChange(path);
+  stageChanges(paths: string[]) {
+    return this.git.stageChanges(paths);
   }
 
-  unstageChange(path: string) {
-    return this.git.unstageChange(path);
+  unstageChanges(paths: string[]) {
+    return this.git.unstageChanges(paths);
   }
 
   /* ── 工作台危险操作两阶段（prepare/confirm 语义） ── */
@@ -979,7 +989,6 @@ export class FakeBackend implements RaccoonApi {
     action_id: string;
     confirm_token: string;
   }): Promise<void> {
-    await latency();
     const action = this.workbenchActions.get(input.action_id);
     if (!action || action.state !== "awaiting") return;
     if (action.confirm_token !== input.confirm_token) {
@@ -996,17 +1005,20 @@ export class FakeBackend implements RaccoonApi {
       });
       return;
     }
+    if (action.kind === "conversation_new_session") {
+      const sessionId = action.payload.session_id;
+      const branchId = action.payload.branch_id;
+      if (sessionId && branchId) {
+        this.abortResponseImmediately(sessionId, branchId);
+      }
+    }
+    await latency();
     let result: { ok: boolean; message: string };
     if (action.kind.startsWith("git_")) {
       result = this.git.execute(action.kind, action.payload);
     } else if (action.kind === "terminal_close") {
       result = this.terminal.forceClose(action.payload.session_id);
     } else if (action.kind === "conversation_new_session") {
-      const sessionId = action.payload.session_id;
-      const branchId = action.payload.branch_id;
-      if (sessionId && branchId) {
-        await this.abortResponse(sessionId, branchId);
-      }
       const created = await this.createConversationSession({
         idempotency_key: action.id,
       });

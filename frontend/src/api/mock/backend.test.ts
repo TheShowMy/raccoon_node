@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEventApplier } from "../../events/applier";
 import { createNdjsonDecoder } from "../../events/ndjson";
 import { useDomainStore } from "../../store/domainStore";
@@ -47,7 +47,31 @@ function connectBackendToDomain(backend: FakeBackend, after: number) {
   return { applied };
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
+
 describe("FakeBackend 端到端（假 LLM 脚本 + NDJSON 流）", () => {
+  it("默认不启动定时演示通知，显式环境开关仍可启用 fixture", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("VITE_ENABLE_DEMO_NOTIFICATIONS", "");
+    const quietBackend = new FakeBackend();
+    await quietBackend.openEventStream(0);
+    await vi.advanceTimersByTimeAsync(31_000);
+    const quietSnapshot = quietBackend.getSnapshot();
+    await vi.advanceTimersByTimeAsync(200);
+    expect((await quietSnapshot).state.notifications).toEqual([]);
+
+    vi.stubEnv("VITE_ENABLE_DEMO_NOTIFICATIONS", "true");
+    const demoBackend = new FakeBackend();
+    await demoBackend.openEventStream(0);
+    await vi.advanceTimersByTimeAsync(31_000);
+    const demoSnapshot = demoBackend.getSnapshot();
+    await vi.advanceTimersByTimeAsync(200);
+    expect((await demoSnapshot).state.notifications).toHaveLength(4);
+  });
+
   it("新建会话创建独立图、保留旧图并对幂等键去重", async () => {
     const backend = new FakeBackend();
     const before = await backend.getSnapshot();

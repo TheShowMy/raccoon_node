@@ -58,7 +58,26 @@ function DirRow({ entry, depth }: { entry: FileEntry; depth: number }) {
           受限路径（BE-FILE-001 拒绝访问）
         </div>
       ) : null}
-      {expanded && !entry.restricted
+      {expanded && !entry.restricted && childrenQuery.isLoading ? (
+        <div
+          className="ftree__row ftree__note"
+          style={{ paddingLeft: depth * 14 + 14 }}
+        >
+          加载中…
+        </div>
+      ) : null}
+      {expanded && !entry.restricted && childrenQuery.isError ? (
+        <div
+          className="ftree__row ftree__note"
+          style={{ paddingLeft: depth * 14 + 14 }}
+        >
+          加载失败
+        </div>
+      ) : null}
+      {expanded &&
+      !entry.restricted &&
+      !childrenQuery.isLoading &&
+      !childrenQuery.isError
         ? (childrenQuery.data ?? []).map((child) => (
             <DirRow key={child.path} entry={child} depth={depth + 1} />
           ))
@@ -78,6 +97,7 @@ export const DirectoryContent = memo(function DirectoryContent() {
         <DirRow key={entry.path} entry={entry} depth={0} />
       ))}
       {rootQuery.isLoading ? <p className="dnode__meta">加载目录…</p> : null}
+      {rootQuery.isError ? <p className="dnode__meta">目录加载失败</p> : null}
     </div>
   );
 });
@@ -117,22 +137,31 @@ export const SearchContent = memo(function SearchContent() {
         </PixelButton>
       </div>
       <ul className="fresults" aria-label="搜索结果列表">
-        {results.map((result, index) => (
-          <li key={`${result.path}:${result.line}:${index}`}>
-            <button
-              type="button"
-              className="fresults__item"
-              onClick={() => useFilesStore.getState().selectPath(result.path)}
-            >
-              <span className="px-font-mono">{result.path}</span>
-              {result.line > 0 ? (
-                <span className="fresults__excerpt">
-                  L{result.line}：{result.excerpt}
-                </span>
-              ) : null}
-            </button>
-          </li>
-        ))}
+        {resultsQuery.isLoading ? (
+          <li className="dnode__meta">搜索中…</li>
+        ) : resultsQuery.isError ? (
+          <li className="dnode__meta">搜索失败</li>
+        ) : null}
+        {!resultsQuery.isLoading && !resultsQuery.isError
+          ? results.map((result, index) => (
+              <li key={`${result.path}:${result.line}:${index}`}>
+                <button
+                  type="button"
+                  className="fresults__item"
+                  onClick={() =>
+                    useFilesStore.getState().selectPath(result.path)
+                  }
+                >
+                  <span className="px-font-mono">{result.path}</span>
+                  {result.line > 0 ? (
+                    <span className="fresults__excerpt">
+                      L{result.line}：{result.excerpt}
+                    </span>
+                  ) : null}
+                </button>
+              </li>
+            ))
+          : null}
         {submittedQuery && resultsQuery.data && results.length === 0 ? (
           <li className="dnode__meta">无匹配结果（受限路径不进入搜索）。</li>
         ) : null}
@@ -194,7 +223,11 @@ export const PreviewContent = memo(function PreviewContent({
       <div className="file-preview-toolbar">
         <span className="px-font-mono">{path}</span>
         <span className="file-preview-toolbar__kind">
-          {preview ? PREVIEW_KIND_LABELS[preview.kind] : "加载中"}
+          {previewQuery.isError
+            ? "加载失败"
+            : preview
+              ? PREVIEW_KIND_LABELS[preview.kind]
+              : "加载中"}
         </span>
         <PixelButton
           size="sm"
@@ -207,10 +240,15 @@ export const PreviewContent = memo(function PreviewContent({
           引用到 Composer
         </PixelButton>
       </div>
+      {previewQuery.isError ? (
+        <p className="dnode__warning" role="alert">
+          文件预览加载失败
+        </p>
+      ) : null}
       {preview?.kind === "text" && preview.lines ? (
         <pre className="fpreview" aria-label="文件内容">
           {preview.lines.map((line, index) => (
-            <code key={index}>
+            <code key={`${path}-${index}`}>
               <span className="fpreview__lineno">{index + 1}</span>
               {line}
               {"\n"}

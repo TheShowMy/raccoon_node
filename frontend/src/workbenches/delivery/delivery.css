@@ -371,6 +371,7 @@
 }
 
 .req-list__filters button {
+  min-height: 28px;
   padding: 0 var(--px-space-1);
   font-size: 10px;
   background: var(--px-surface);
