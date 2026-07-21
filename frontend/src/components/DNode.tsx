@@ -17,6 +17,7 @@ export function DNode({
   height,
   ariaLabel,
   className,
+  handles = true,
 }: {
   icon: PixelIconName;
   label: string;
@@ -24,7 +25,8 @@ export function DNode({
   chipTone?: string;
   children: React.ReactNode;
   actions?: React.ReactNode;
-  width: number;
+  width: number | string;
+  handles?: boolean;
   height?: number;
   ariaLabel: string;
   className?: string;
@@ -35,32 +37,36 @@ export function DNode({
       style={{ width, height, boxSizing: "border-box" }}
       aria-label={ariaLabel}
     >
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="in-l"
-        isConnectable={false}
-      />
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="in-l-top"
-        style={{ top: "32%" }}
-        isConnectable={false}
-      />
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="in-l-bottom"
-        style={{ top: "68%" }}
-        isConnectable={false}
-      />
-      <Handle
-        type="target"
-        position={Position.Top}
-        id="in-t"
-        isConnectable={false}
-      />
+      {handles ? (
+        <>
+          <Handle
+            type="target"
+            position={Position.Left}
+            id="in-l"
+            isConnectable={false}
+          />
+          <Handle
+            type="target"
+            position={Position.Left}
+            id="in-l-top"
+            style={{ top: "32%" }}
+            isConnectable={false}
+          />
+          <Handle
+            type="target"
+            position={Position.Left}
+            id="in-l-bottom"
+            style={{ top: "68%" }}
+            isConnectable={false}
+          />
+          <Handle
+            type="target"
+            position={Position.Top}
+            id="in-t"
+            isConnectable={false}
+          />
+        </>
+      ) : null}
       <header className="dnode__header">
         <span className="px-font-pixel dnode__label">
           <PixelIcon name={icon} size={12} />
@@ -74,32 +80,36 @@ export function DNode({
       </header>
       {children}
       {actions ? <footer className="dnode__actions">{actions}</footer> : null}
-      <Handle
-        type="source"
-        position={Position.Right}
-        id="out-r"
-        isConnectable={false}
-      />
-      <Handle
-        type="source"
-        position={Position.Right}
-        id="out-r-top"
-        style={{ top: "32%" }}
-        isConnectable={false}
-      />
-      <Handle
-        type="source"
-        position={Position.Right}
-        id="out-r-bottom"
-        style={{ top: "68%" }}
-        isConnectable={false}
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="out-b"
-        isConnectable={false}
-      />
+      {handles ? (
+        <>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="out-r"
+            isConnectable={false}
+          />
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="out-r-top"
+            style={{ top: "32%" }}
+            isConnectable={false}
+          />
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="out-r-bottom"
+            style={{ top: "68%" }}
+            isConnectable={false}
+          />
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="out-b"
+            isConnectable={false}
+          />
+        </>
+      ) : null}
     </section>
   );
 }

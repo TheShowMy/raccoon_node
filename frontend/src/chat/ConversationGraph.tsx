@@ -1,40 +1,26 @@
-import {
-  MarkerType,
-  ReactFlow,
-  ReactFlowProvider,
-  useReactFlow,
-  type Edge,
-  type Node,
-  type NodeChange,
-} from "@xyflow/react";
 import { PixelButton } from "@pxlkit/ui-kit";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import type { Size } from "../canvas/geometry";
 import {
   persistScrollPosition,
   restoreScrollPositions,
 } from "../canvas/nodeScroll";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import { useCanvasStore, type Viewport } from "../store/canvasStore";
+import { useCanvasStore } from "../store/canvasStore";
 import { useDomainStore } from "../store/domainStore";
-import type { WorkbenchAction } from "../api/types";
+import type { ConversationBranch, WorkbenchAction } from "../api/types";
 import {
-  WorkbenchActionConfirmationNode,
-  WorkbenchActionResultNode,
+  ActionConfirmationCard,
+  ActionResultCard,
 } from "../workbenches/shared/actionNodes";
 import {
-  CHAT_NODE_GAP,
   branchActiveNodes,
   deriveBranchInputGate,
   displayItemId,
-  displayItemSize,
+  estimatedDisplayItemSize,
   followTargetItem,
-  layoutBranchDisplay,
   projectBranchDisplay,
-  visibleBranchItems,
   type BranchDisplayItem,
-  type BranchDisplayItemSizes,
 } from "./dag";
 import {
   AssistantAnswerNode,
@@ -47,115 +33,30 @@ import {
   RequirementSpecNode,
   ToolNode,
   UserMessageNode,
+  type ConversationNodeData,
 } from "./nodes";
 import { composerScopeKey, useComposerStore } from "../store/composerStore";
 
-const nodeTypes = {
-  composer: ComposerNode,
-  user_message: UserMessageNode,
-  process: ProcessNode,
-  tool: ToolNode,
-  assistant_answer: AssistantAnswerNode,
-  clarification_question: ClarificationQuestionNode,
-  clarification_answer: ClarificationAnswerNode,
-  requirement_spec: RequirementSpecNode,
-  requirement_confirmation: RequirementConfirmationNode,
-  process_group: ProcessGroupNode,
-  action_confirmation: WorkbenchActionConfirmationNode,
-  action_result: WorkbenchActionResultNode,
-};
+/* ── 列表行模型：领域条目 + 危险操作确认/结果行 ── */
 
-type ChatFlowNode = Node<Record<string, unknown>>;
-
-const DEFAULT_VIEWPORT: Viewport = { x: 32, y: 32, zoom: 1 };
-
-function buildFlowNodes(
-  items: BranchDisplayItem[],
-  sessionId: string,
-  branchId: string,
-  sizes: BranchDisplayItemSizes,
-  selectedNodeId: string | null,
-): ChatFlowNode[] {
-  return items.map((item) => {
-    if (item.type === "composer") {
-      return {
-        id: item.id,
-        type: "composer",
-        position: item.position,
-        data: { sessionId, branchId },
-        draggable: false,
-        selectable: false,
-        deletable: false,
-        style: { width: displayItemSize(item, sizes).width },
-      };
-    }
-    if (item.type === "process_group") {
-      return {
-        id: item.id,
-        type: "process_group",
-        position: item.position,
-        data: item,
-        draggable: false,
-        selectable: false,
-        deletable: false,
-        style: { width: displayItemSize(item, sizes).width },
-      };
-    }
-    return {
-      id: item.node.id,
-      type: item.node.kind,
-      position: item.position,
-      data: {
-        node: item.node,
-        sessionId,
-        branchId,
-        selected: item.node.id === selectedNodeId,
-      },
-      draggable: false,
-      selectable: false,
-      deletable: false,
-      style: { width: displayItemSize(item, sizes).width },
+type ChatRow =
+  | { kind: "item"; id: string; item: BranchDisplayItem }
+  | {
+      kind: "action_confirmation" | "action_result";
+      id: string;
+      action: WorkbenchAction;
     };
-  });
-}
 
-function buildEdges(items: BranchDisplayItem[]): Edge[] {
-  const edges: Edge[] = [];
-  for (let index = 1; index < items.length; index += 1) {
-    const source = displayItemId(items[index - 1]);
-    const target = displayItemId(items[index]);
-    edges.push({
-      id: `e-${source}-${target}`,
-      source,
-      target,
-      type: "step",
-      selectable: false,
-      focusable: false,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-      style: { stroke: "var(--px-muted)", strokeWidth: 2 },
-    });
-  }
-  return edges;
-}
+const ACTION_CONFIRM_ID = (actionId: string) =>
+  `chat-action-confirm:${actionId}`;
+const ACTION_RESULT_ID = (actionId: string) => `chat-action-result:${actionId}`;
 
-const ACTION_NODE_WIDTH = 340;
-const ACTION_NODE_ESTIMATED_HEIGHT = 220;
-
-type ConversationActionProjection = {
-  nodes: ChatFlowNode[];
-  edges: Edge[];
-};
-
-/** redact 仍是图内关系：来源 → 两阶段确认 → 操作结果。 */
-export function projectConversationActions(
-  actions: WorkbenchAction[],
+/** 危险操作链（来源 → 确认 → 结果）作为列表行紧跟来源条目（FE-CANVAS-019）。 */
+export function buildRows(
   items: BranchDisplayItem[],
-  sizes: BranchDisplayItemSizes,
-): ConversationActionProjection {
-  const nodes: ChatFlowNode[] = [];
-  const edges: Edge[] = [];
-  const byId = new Map(items.map((item) => [displayItemId(item), item]));
-
+  actions: WorkbenchAction[],
+): ChatRow[] {
+  const bySource = new Map<string, WorkbenchAction[]>();
   for (const action of actions) {
     if (
       (action.kind !== "conversation_redact" &&
@@ -164,193 +65,146 @@ export function projectConversationActions(
     ) {
       continue;
     }
-    const source = byId.get(action.source_node_id);
-    if (!source) continue;
-    const sourceSize = displayItemSize(source, sizes);
-    const confirmationId = `chat-action-confirm:${action.id}`;
-    const confirmationSize = sizes[confirmationId] ?? {
-      width: ACTION_NODE_WIDTH,
-      height: ACTION_NODE_ESTIMATED_HEIGHT,
-    };
-    const confirmationPosition = {
-      x: source.position.x + sourceSize.width + CHAT_NODE_GAP,
-      y: source.position.y,
-    };
-    nodes.push({
-      id: confirmationId,
-      type: "action_confirmation",
-      position: confirmationPosition,
-      data: { action },
-      draggable: false,
-      selectable: false,
-      deletable: false,
-      style: { width: confirmationSize.width },
-    });
-    edges.push({
-      id: `e-${action.source_node_id}-${confirmationId}`,
-      source: action.source_node_id,
-      sourceHandle: source.type === "composer" ? "out-r" : undefined,
-      target: confirmationId,
-      targetHandle: "in-l",
-      type: "step",
-      selectable: false,
-      focusable: false,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-    });
-
-    if (action.state === "awaiting") continue;
-    const resultId = `chat-action-result:${action.id}`;
-    const resultSize = sizes[resultId] ?? {
-      width: ACTION_NODE_WIDTH,
-      height: 170,
-    };
-    nodes.push({
-      id: resultId,
-      type: "action_result",
-      position: {
-        x: confirmationPosition.x,
-        y: confirmationPosition.y + confirmationSize.height + CHAT_NODE_GAP,
-      },
-      data: { action },
-      draggable: false,
-      selectable: false,
-      deletable: false,
-      style: { width: resultSize.width },
-    });
-    edges.push({
-      id: `e-${confirmationId}-${resultId}`,
-      source: confirmationId,
-      sourceHandle: "out-b",
-      target: resultId,
-      targetHandle: "in-t",
-      type: "step",
-      selectable: false,
-      focusable: false,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-    });
+    const list = bySource.get(action.source_node_id) ?? [];
+    list.push(action);
+    bySource.set(action.source_node_id, list);
   }
-  return { nodes, edges };
+  const rows: ChatRow[] = [];
+  for (const item of items) {
+    rows.push({ kind: "item", id: displayItemId(item), item });
+    for (const action of bySource.get(displayItemId(item)) ?? []) {
+      rows.push({
+        kind: "action_confirmation",
+        id: ACTION_CONFIRM_ID(action.id),
+        action,
+      });
+      if (action.state !== "awaiting") {
+        rows.push({
+          kind: "action_result",
+          id: ACTION_RESULT_ID(action.id),
+          action,
+        });
+      }
+    }
+  }
+  return rows;
 }
 
-const CHAT_CAMERA_SAFE_MARGIN = 24;
+const ROW_GAP = 12;
+/* 列表内边距计入偏移量（滚动坐标 = padding + 前缀和），否则跟随永远短一截 */
+const LIST_TOP_PAD = 48;
+const LIST_BOTTOM_PAD = 16;
+const ACTION_CONFIRM_ESTIMATE = 220;
+const ACTION_RESULT_ESTIMATE = 170;
+const WINDOW_THRESHOLD = 200;
+const OVERSCAN_PX = 600;
+const FOLLOW_BOTTOM_MARGIN = 24;
+const PAUSE_DISTANCE_PX = 48;
 
-function safeAnchor(
-  preferred: number,
-  extent: number,
-  renderedSize: number,
-): number {
-  const minimum = CHAT_CAMERA_SAFE_MARGIN + renderedSize / 2;
-  const maximum = extent - CHAT_CAMERA_SAFE_MARGIN - renderedSize / 2;
-  return minimum <= maximum
-    ? Math.min(Math.max(preferred, minimum), maximum)
-    : extent / 2;
+function estimateRowHeight(row: ChatRow): number {
+  if (row.kind === "item") return estimatedDisplayItemSize(row.item).height;
+  return row.kind === "action_confirmation"
+    ? ACTION_CONFIRM_ESTIMATE
+    : ACTION_RESULT_ESTIMATE;
 }
 
-/** 活跃节点锚在画布下方中部：保持 zoom，只平移。 */
-export function anchoredConversationViewport(
-  item: BranchDisplayItem,
-  sizes: BranchDisplayItemSizes,
-  host: Size,
-  zoom: number,
-): Viewport {
-  const size = displayItemSize(item, sizes);
-  return anchoredNodeViewport(item.position, size, host, zoom);
-}
+/* ── 分支页签：显示来源摘要，分支逻辑一目了然 ── */
 
-function anchoredNodeViewport(
-  position: { x: number; y: number },
-  size: Size,
-  host: Size,
-  zoom: number,
-): Viewport {
-  const centerX = position.x + size.width / 2;
-  const centerY = position.y + size.height / 2;
-  const anchorX = safeAnchor(host.width * 0.5, host.width, size.width * zoom);
-  const anchorY = safeAnchor(
-    host.height * 0.65,
-    host.height,
-    size.height * zoom,
-  );
+function branchLabel(
+  branch: ConversationBranch,
+  rootBranchId: string,
+  nodes: Record<string, { content: string }>,
+): { text: string; title: string } {
+  if (branch.id === rootBranchId) {
+    return { text: "主分支", title: "主分支" };
+  }
+  const anchor = branch.anchor_node_id
+    ? nodes[branch.anchor_node_id]
+    : undefined;
+  const excerpt = anchor?.content.replace(/\s+/g, " ").trim() ?? "";
+  if (!excerpt) {
+    return { text: `分支 ${branch.id.replace(/^b-/, "#")}`, title: "平行分支" };
+  }
   return {
-    zoom,
-    x: anchorX - centerX * zoom,
-    y: anchorY - centerY * zoom,
+    text: `分支·${excerpt.slice(0, 12)}${excerpt.length > 12 ? "…" : ""}`,
+    title: `从「${excerpt.slice(0, 40)}」分出的平行对话；原分支保持不变`,
   };
 }
 
-export function anchoredRenderedNodeViewport(
-  nodeRect: Pick<DOMRect, "left" | "top" | "width" | "height">,
-  hostRect: Pick<DOMRect, "left" | "top" | "width" | "height">,
-  current: Viewport,
-): Viewport {
-  const anchorX = safeAnchor(
-    hostRect.width * 0.5,
-    hostRect.width,
-    nodeRect.width,
-  );
-  const anchorY = safeAnchor(
-    hostRect.height * 0.65,
-    hostRect.height,
-    nodeRect.height,
-  );
-  const centerX = nodeRect.left + nodeRect.width / 2 - hostRect.left;
-  const centerY = nodeRect.top + nodeRect.height / 2 - hostRect.top;
-  return {
-    zoom: current.zoom,
-    x: current.x + anchorX - centerX,
-    y: current.y + anchorY - centerY,
+/* ── 行渲染 ── */
+
+function RowContent({
+  row,
+  sessionId,
+  branchId,
+  selectedNodeId,
+}: {
+  row: ChatRow;
+  sessionId: string;
+  branchId: string;
+  selectedNodeId: string | null;
+}) {
+  if (row.kind !== "item") {
+    return row.kind === "action_confirmation" ? (
+      <ActionConfirmationCard action={row.action} />
+    ) : (
+      <ActionResultCard action={row.action} />
+    );
+  }
+  const item = row.item;
+  if (item.type === "composer") {
+    return <ComposerNode sessionId={sessionId} branchId={branchId} />;
+  }
+  if (item.type === "process_group") {
+    return <ProcessGroupNode item={item} />;
+  }
+  const props: ConversationNodeData = {
+    node: item.node,
+    sessionId,
+    branchId,
+    selected: item.node.id === selectedNodeId,
   };
+  switch (item.node.kind) {
+    case "user_message":
+      return <UserMessageNode {...props} />;
+    case "process":
+      return <ProcessNode {...props} />;
+    case "tool":
+      return <ToolNode {...props} />;
+    case "assistant_answer":
+      return <AssistantAnswerNode {...props} />;
+    case "clarification_question":
+      return <ClarificationQuestionNode {...props} />;
+    case "clarification_answer":
+      return <ClarificationAnswerNode {...props} />;
+    case "requirement_spec":
+      return <RequirementSpecNode {...props} />;
+    case "requirement_confirmation":
+      return <RequirementConfirmationNode {...props} />;
+  }
 }
-
-export function followTransitionDuration(
-  reducedMotion: boolean,
-  sameTarget: boolean,
-): number {
-  return reducedMotion ? 0 : sameTarget ? 100 : 220;
-}
-
-export function shouldMoveConversationCamera(
-  current: Viewport,
-  next: Viewport,
-): boolean {
-  return (
-    Math.abs(current.x - next.x) >= 1 ||
-    Math.abs(current.y - next.y) >= 1 ||
-    Math.abs(current.zoom - next.zoom) >= 0.001
-  );
-}
-
-const CAMERA_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
-
-function viewportTransform(viewport: Viewport): string {
-  return `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
-}
-
-function readRenderedViewport(
-  element: HTMLElement | null | undefined,
-  fallback: Viewport,
-): Viewport {
-  if (!element) return fallback;
-  const transform = new DOMMatrix(getComputedStyle(element).transform);
-  return { x: transform.e, y: transform.f, zoom: transform.a };
-}
-
-const BRANCH_LABEL = (branchId: string, rootId: string) =>
-  branchId === rootId ? "主分支" : `分支 ${branchId.replace(/^b-/, "#")}`;
 
 const ConversationGraphInner = memo(function ConversationGraphInner() {
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const [host, setHost] = useState<Size>({ width: 800, height: 560 });
+  const listRef = useRef<HTMLDivElement>(null);
+  const [host, setHost] = useState({ width: 800, height: 560 });
   const [following, setFollowing] = useState(true);
-  const [sizes, setSizes] = useState<BranchDisplayItemSizes>({});
-  const lastFollowTargetRef = useRef<string | null>(null);
-  const followFrameRef = useRef<number | null>(null);
-  const cameraRequestRef = useRef(0);
-  const cameraAnimationRef = useRef<Animation | null>(null);
-  const programmaticMoveRef = useRef(0);
-  const pendingSizesRef = useRef<BranchDisplayItemSizes>({});
-  const sizeFrameRef = useRef<number | null>(null);
-  const flow = useReactFlow<ChatFlowNode>();
+  const [heights, setHeights] = useState<Readonly<Record<string, number>>>({});
+  const [scrollTop, setScrollTop] = useState(0);
+  const heightsRef = useRef<Record<string, number>>({});
+  const heightFlushRef = useRef<number | null>(null);
+  const rowObserversRef = useRef(new Map<string, ResizeObserver>());
+  // 已处理的选择：点击产生的选择只标记不滚动；深链/GrayDango 选择才定位
+  const handledSelectionRef = useRef<string | null>(null);
+  const pendingFocusRef = useRef<string | null>(null);
+  const programmaticUntilRef = useRef(0);
+  const followScrollTopRef = useRef<number | null>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const sessionPromptReturnRef = useRef<{
+    sessionId: string;
+    scrollTop: number;
+  } | null>(null);
+  const restoredScopeRef = useRef<string | null>(null);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const navigate = useNavigate();
   const params = useParams<{ branchId?: string; nodeId?: string }>();
@@ -379,9 +233,8 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
   const followRequestId = useCanvasStore(
     (state) => state.conversationFollowRequestId,
   );
-  const viewport = useCanvasStore(
-    (state) =>
-      state.conversationViewports[conversationScope] ?? DEFAULT_VIEWPORT,
+  const selectedNodeId = useCanvasStore(
+    (state) => state.selectedConversationNodeId,
   );
 
   const inputGate = useMemo(
@@ -398,164 +251,153 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
     () => projectBranchDisplay(conversation, branchId, expandedIds, inputGate),
     [conversation, branchId, expandedIds, inputGate],
   );
-  const items = useMemo(
-    () => layoutBranchDisplay(projectedItems, sizes),
-    [projectedItems, sizes],
+  const rows = useMemo(
+    () => buildRows(projectedItems, Object.values(workbenchActions)),
+    [projectedItems, workbenchActions],
   );
-  const selectedNodeId = useCanvasStore(
-    (state) => state.selectedConversationNodeId,
-  );
-
   const followTarget = useMemo(
     () =>
       following
-        ? followTargetItem(items, inputGate, recentConversationNodeId)
+        ? followTargetItem(projectedItems, inputGate, recentConversationNodeId)
         : null,
-    [following, items, inputGate, recentConversationNodeId],
+    [following, projectedItems, inputGate, recentConversationNodeId],
   );
-  const renderedItemsRef = useRef<BranchDisplayItem[]>([]);
-  const renderedItems = useMemo(() => {
-    // 普通对话保持稳定挂载，避免相机过渡期间反复挂载节点触发测量环；
-    // 只有大历史才启用我们自己的窗口化，React Flow 不再叠加第二层裁剪。
-    const next =
-      items.length <= 500
-        ? items
-        : visibleBranchItems(
-            items,
-            sizes,
-            viewport,
-            host,
-            [
-              selectedNodeId,
-              followTarget ? displayItemId(followTarget) : null,
-            ].filter((id): id is string => Boolean(id)),
-          );
-    const previous = renderedItemsRef.current;
-    if (
-      next.length === previous.length &&
-      next.every((item, index) => item === previous[index])
-    ) {
-      return previous;
-    }
-    renderedItemsRef.current = next;
-    return next;
-  }, [items, sizes, viewport, host, selectedNodeId, followTarget]);
+  const followTargetId = followTarget ? displayItemId(followTarget) : null;
 
-  const actionProjection = useMemo(
-    () =>
-      projectConversationActions(
-        Object.values(workbenchActions),
-        renderedItems,
-        sizes,
-      ),
-    [renderedItems, sizes, workbenchActions],
-  );
-
-  const nodes = useMemo(
-    () => [
-      ...buildFlowNodes(
-        renderedItems,
-        sessionId,
-        branchId,
-        sizes,
-        selectedNodeId,
-      ),
-      ...actionProjection.nodes,
-    ],
-    [
-      renderedItems,
-      sessionId,
-      branchId,
-      sizes,
-      selectedNodeId,
-      actionProjection.nodes,
-    ],
-  );
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      if (wrapperRef.current) {
-        restoreScrollPositions(
-          wrapperRef.current,
-          `conversation:${conversationScope}`,
-        );
-      }
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [conversationScope, nodes]);
-  const onNodesChange = useCallback(
-    (changes: NodeChange<ChatFlowNode>[]) => {
-      const dimensions = changes.filter(
-        (change) => change.type === "dimensions" && change.dimensions,
-      );
-      if (dimensions.length > 0) {
-        for (const change of dimensions) {
-          if (change.type !== "dimensions" || !change.dimensions) continue;
-          pendingSizesRef.current = {
-            ...pendingSizesRef.current,
-            [change.id]: {
-              width: Math.round(change.dimensions.width),
-              height: Math.round(change.dimensions.height),
-            },
-          };
-        }
-        if (sizeFrameRef.current === null) {
-          sizeFrameRef.current = requestAnimationFrame(() => {
-            const pending = pendingSizesRef.current;
-            pendingSizesRef.current = {};
-            sizeFrameRef.current = null;
-            setSizes((current) => {
-              let changed = false;
-              const next = { ...current };
-              for (const [id, pendingSize] of Object.entries(pending)) {
-                const internalSize = flow.getInternalNode(id)?.measured;
-                const measured = {
-                  width: Math.round(internalSize?.width ?? pendingSize.width),
-                  height: Math.round(
-                    internalSize?.height ?? pendingSize.height,
-                  ),
-                };
-                const previous = current[id];
-                if (
-                  !previous ||
-                  previous.width !== measured.width ||
-                  previous.height !== measured.height
-                ) {
-                  next[id] = measured;
-                  changed = true;
-                }
-              }
-              return changed ? next : current;
-            });
+  /* 行高：ResizeObserver 实测 + 首估（窗口化用） */
+  const setRowRef = useCallback(
+    (id: string) => (element: HTMLElement | null) => {
+      const observers = rowObserversRef.current;
+      observers.get(id)?.disconnect();
+      observers.delete(id);
+      if (!element) return;
+      const observer = new ResizeObserver((entries) => {
+        const rect = entries[0]?.contentRect;
+        if (!rect) return;
+        const height = Math.round(rect.height);
+        if (heightsRef.current[id] === height) return;
+        heightsRef.current[id] = height;
+        if (heightFlushRef.current === null) {
+          heightFlushRef.current = requestAnimationFrame(() => {
+            heightFlushRef.current = null;
+            setHeights({ ...heightsRef.current });
           });
         }
-      }
+      });
+      observer.observe(element);
+      observers.set(id, observer);
     },
-    [flow],
+    [],
   );
   useEffect(
     () => () => {
-      if (sizeFrameRef.current !== null) {
-        cancelAnimationFrame(sizeFrameRef.current);
+      for (const observer of rowObserversRef.current.values()) {
+        observer.disconnect();
+      }
+      rowObserversRef.current.clear();
+      if (heightFlushRef.current !== null) {
+        cancelAnimationFrame(heightFlushRef.current);
       }
     },
     [],
   );
-  const renderedItemIds = useMemo(
-    () => new Set(renderedItems.map(displayItemId)),
-    [renderedItems],
-  );
-  const edges = useMemo(
-    () => [
-      ...buildEdges(items).filter(
-        (edge) =>
-          renderedItemIds.has(edge.source) && renderedItemIds.has(edge.target),
-      ),
-      ...actionProjection.edges,
-    ],
-    [items, renderedItemIds, actionProjection.edges],
+
+  const rowHeight = useCallback(
+    (row: ChatRow) => heights[row.id] ?? estimateRowHeight(row),
+    [heights],
   );
 
-  // 宿主尺寸
+  /* 前缀和布局（一维） */
+  const layout = useMemo(() => {
+    const offsets: number[] = new Array(rows.length);
+    let acc = LIST_TOP_PAD;
+    rows.forEach((row, index) => {
+      offsets[index] = acc;
+      acc += rowHeight(row) + ROW_GAP;
+    });
+    return { offsets, total: acc + LIST_BOTTOM_PAD };
+  }, [rows, rowHeight]);
+
+  /* 窗口化：一万行时 DOM 有界（FE-CHAT-023）。
+     固定保留行（选中/跟随目标）独立成段渲染，不把窗口拉通到它们。 */
+  const pinnedIds = useMemo(() => {
+    const pinned = new Set<string>();
+    if (selectedNodeId) pinned.add(selectedNodeId);
+    if (followTargetId) pinned.add(followTargetId);
+    return pinned;
+  }, [selectedNodeId, followTargetId]);
+
+  const windowed = rows.length > WINDOW_THRESHOLD;
+  const segments = useMemo(() => {
+    if (!windowed) return [{ start: 0, end: rows.length }];
+    const from = scrollTop - OVERSCAN_PX;
+    const to = scrollTop + host.height + OVERSCAN_PX;
+    const indices = new Set<number>();
+    let start = 0;
+    while (
+      start < rows.length &&
+      layout.offsets[start] + rowHeight(rows[start]) + ROW_GAP < from
+    ) {
+      start += 1;
+    }
+    let end = start;
+    while (end < rows.length && layout.offsets[end] <= to) {
+      end += 1;
+    }
+    for (let index = start; index < end; index += 1) indices.add(index);
+    rows.forEach((row, index) => {
+      if (pinnedIds.has(row.id)) indices.add(index);
+    });
+    const sorted = [...indices].sort((left, right) => left - right);
+    const result: { start: number; end: number }[] = [];
+    for (const index of sorted) {
+      const last = result[result.length - 1];
+      if (last && index === last.end) {
+        last.end = index + 1;
+      } else {
+        result.push({ start: index, end: index + 1 });
+      }
+    }
+    return result;
+  }, [windowed, rows, layout, scrollTop, host.height, rowHeight, pinnedIds]);
+
+  /* 渲染块：连续行段 + 段间占位（spacer），总高恒定 */
+  const blocks = useMemo(() => {
+    const result: (
+      | { type: "spacer"; key: string; height: number }
+      | { type: "rows"; key: string; rows: ChatRow[] }
+    )[] = [];
+    let cursor = 0;
+    segments.forEach((segment, index) => {
+      const segTop = layout.offsets[segment.start];
+      if (segTop > cursor) {
+        result.push({
+          type: "spacer",
+          key: `spacer-${index}`,
+          height: segTop - cursor,
+        });
+      }
+      result.push({
+        type: "rows",
+        key: `rows-${segment.start}`,
+        rows: rows.slice(segment.start, segment.end),
+      });
+      cursor =
+        layout.offsets[segment.end - 1] +
+        rowHeight(rows[segment.end - 1]) +
+        ROW_GAP;
+    });
+    if (layout.total > cursor) {
+      result.push({
+        type: "spacer",
+        key: "spacer-end",
+        height: layout.total - cursor,
+      });
+    }
+    return result;
+  }, [segments, rows, layout, rowHeight]);
+
+  /* 宿主尺寸 */
   useEffect(() => {
     const element = wrapperRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;
@@ -584,7 +426,7 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
     };
   }, []);
 
-  // 切换分支：恢复自动跟随，由跟随效应定位到该分支末端
+  /* 会话/分支/前向操作：恢复跟随（FE-CHAT-012/020） */
   useEffect(() => {
     setFollowing(true);
   }, [branchId]);
@@ -593,85 +435,96 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
     useCanvasStore
       .getState()
       .activateConversationSession(sessionId, rootBranchId);
-    setSizes({});
+    heightsRef.current = {};
+    setHeights({});
+    setScrollTop(0);
     setFollowing(true);
-    lastFollowTargetRef.current = null;
+    followScrollTopRef.current = null;
+    sessionPromptReturnRef.current = null;
   }, [sessionId, rootBranchId]);
 
-  // 发送、澄清、规格与确认等前向操作明确恢复跟随。
   useEffect(() => {
     if (followRequestId > 0) setFollowing(true);
   }, [followRequestId]);
 
-  const moveCamera = useCallback(
-    (next: Viewport, duration: number, requestId: number) => {
-      if (requestId !== cameraRequestRef.current) return;
-      const viewportElement = wrapperRef.current?.querySelector<HTMLElement>(
-        ".react-flow__viewport",
-      );
-      const current = readRenderedViewport(viewportElement, flow.getViewport());
-      if (!shouldMoveConversationCamera(current, next)) return;
-      cameraAnimationRef.current?.cancel();
-      cameraAnimationRef.current = null;
-      programmaticMoveRef.current = 1;
-      if (duration === 0 || !viewportElement?.animate) {
-        void flow.setViewport(next);
-        requestAnimationFrame(() => {
-          if (requestId === cameraRequestRef.current)
-            programmaticMoveRef.current = 0;
-        });
-        return;
+  /* 滚动位置按 session+branch 保存/恢复（FE-CANVAS-022） */
+  useEffect(() => {
+    if (restoredScopeRef.current === conversationScope) return;
+    if (rows.length === 0) return;
+    restoredScopeRef.current = conversationScope;
+    const frame = requestAnimationFrame(() => {
+      if (wrapperRef.current) {
+        restoreScrollPositions(
+          wrapperRef.current,
+          `conversation:${conversationScope}`,
+        );
       }
-      const animation = viewportElement.animate(
-        [
-          { transform: viewportTransform(current) },
-          { transform: viewportTransform(next) },
-        ],
-        { duration, easing: CAMERA_EASING, fill: "forwards" },
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [conversationScope, rows.length]);
+
+  /* 自动跟随：贴底滚动到跟随目标（活动节点 → 门控 → 新建 → Composer） */
+  useEffect(() => {
+    if (!following || !followTargetId) return;
+    const list = listRef.current;
+    if (!list) return;
+    const index = rows.findIndex((row) => row.id === followTargetId);
+    if (index === -1) return;
+    const targetBottom =
+      layout.offsets[index] + rowHeight(rows[index]) + FOLLOW_BOTTOM_MARGIN;
+    const top = Math.max(0, targetBottom - list.clientHeight);
+    if (Math.abs(list.scrollTop - top) < 2) {
+      followScrollTopRef.current = list.scrollTop;
+      return;
+    }
+    programmaticUntilRef.current = Date.now() + 600;
+    followScrollTopRef.current = top;
+    list.scrollTo({ top, behavior: reducedMotion ? "auto" : "smooth" });
+  }, [following, followTargetId, rows, layout, rowHeight, reducedMotion]);
+
+  /* 用户向上滚动远离跟随目标 → 暂停跟随，显示「回到最新」（FE-CHAT-012）。
+     滚轮是主判定（流式期间程序滚动会持续覆盖滚动事件分析）；
+     节点内长文仍能上滚时视为内部滚动，不暂停。 */
+  const onListWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      if (!following || event.deltaY >= 0) return;
+      const scrollable = (event.target as Element | null)?.closest<HTMLElement>(
+        ".chat-node__content--scroll",
       );
-      cameraAnimationRef.current = animation;
-      void animation.finished
-        .then(async () => {
-          if (requestId !== cameraRequestRef.current) return;
-          if (cameraAnimationRef.current === animation) {
-            animation.commitStyles?.();
-            animation.cancel();
-            cameraAnimationRef.current = null;
-          }
-          await flow.setViewport(next);
-          requestAnimationFrame(() => {
-            if (requestId === cameraRequestRef.current)
-              programmaticMoveRef.current = 0;
-          });
-        })
-        .catch(() => undefined);
+      if (scrollable && scrollable.scrollTop > 0) return;
+      setFollowing(false);
     },
-    [flow],
+    [following],
   );
 
-  const interruptCamera = useCallback(() => {
-    cameraRequestRef.current += 1;
-    const viewportElement = wrapperRef.current?.querySelector<HTMLElement>(
-      ".react-flow__viewport",
-    );
-    if (cameraAnimationRef.current && viewportElement) {
-      const current = readRenderedViewport(viewportElement, flow.getViewport());
-      cameraAnimationRef.current.commitStyles?.();
-      cameraAnimationRef.current.cancel();
-      cameraAnimationRef.current = null;
-      void flow.setViewport(current);
-    }
-    programmaticMoveRef.current = 0;
-  }, [flow]);
-
+  const onListScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) return;
+      const list = event.currentTarget;
+      if (scrollFrameRef.current !== null) return;
+      scrollFrameRef.current = requestAnimationFrame(() => {
+        scrollFrameRef.current = null;
+        setScrollTop(list.scrollTop);
+        if (!following) return;
+        if (Date.now() < programmaticUntilRef.current) return;
+        const anchor = followScrollTopRef.current;
+        if (anchor !== null && list.scrollTop < anchor - PAUSE_DISTANCE_PX) {
+          setFollowing(false);
+        }
+      });
+    },
+    [following],
+  );
   useEffect(
     () => () => {
-      cameraAnimationRef.current?.cancel();
+      if (scrollFrameRef.current !== null) {
+        cancelAnimationFrame(scrollFrameRef.current);
+      }
     },
     [],
   );
 
-  // URL 深链是画布选择状态：切换分支、展开目标过程组并暂停自动跟随。
+  /* URL 深链：切换分支、展开过程组、选择并定位目标节点（FE-CHAT-021） */
   useEffect(() => {
     if (!params.branchId || !params.nodeId) return;
     if (!conversation.branches[params.branchId]) return;
@@ -679,6 +532,8 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
       useCanvasStore.getState().setActiveConversationBranch(params.branchId);
       return;
     }
+    // 来自行点击的导航不需要重新定位：行本来就在屏幕上
+    if (params.nodeId === handledSelectionRef.current) return;
     const group = projectedItems.find(
       (item) =>
         item.type === "process_group" &&
@@ -688,8 +543,15 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
       useCanvasStore.getState().toggleProcessGroup(group.id);
       return;
     }
+    // 目标不存在（刷新后快照重置、节点已消失）时不暂停跟随
+    const targetExists = projectedItems.some(
+      (item) => displayItemId(item) === params.nodeId,
+    );
+    if (!targetExists) return;
+    handledSelectionRef.current = null;
     useCanvasStore.getState().setSelectedConversationNode(params.nodeId);
     setFollowing(false);
+    pendingFocusRef.current = params.nodeId;
   }, [
     branchId,
     conversation.branches,
@@ -698,117 +560,36 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
     projectedItems,
   ]);
 
-  // 自动跟随最新（FE-CHAT-012：流式增量不抢焦点，用户上翻后暂停）；
-  // 进行中聚焦活动节点，空闲聚焦分支末端
+  /* 深链/会话确认定位：scrollIntoView；未渲染时先跳到估算位置等窗口渲染 */
   useEffect(() => {
-    if (!following) return;
-    const target = followTarget;
-    if (!target) return;
-    if (followFrameRef.current !== null) {
-      cancelAnimationFrame(followFrameRef.current);
-    }
-    const requestId = ++cameraRequestRef.current;
-    let measurementAttempts = 0;
-    const focus = () => {
-      if (requestId !== cameraRequestRef.current) return;
-      const targetId = displayItemId(target);
-      const internalSize = flow.getInternalNode(targetId)?.measured;
-      if (!internalSize && measurementAttempts < 2) {
-        measurementAttempts += 1;
-        followFrameRef.current = requestAnimationFrame(focus);
-        return;
-      }
-      const focusSizes = internalSize
-        ? {
-            ...sizes,
-            [targetId]: {
-              width: Math.round(internalSize.width ?? 0),
-              height: Math.round(internalSize.height ?? 0),
-            },
-          }
-        : sizes;
-      const viewportElement = wrapperRef.current?.querySelector<HTMLElement>(
-        ".react-flow__viewport",
-      );
-      const currentViewport = readRenderedViewport(
-        viewportElement,
-        flow.getViewport(),
-      );
-      const targetElement = [
-        ...(wrapperRef.current?.querySelectorAll<HTMLElement>(
-          ".react-flow__node[data-id]",
-        ) ?? []),
-      ].find((element) => element.dataset.id === targetId);
-      const renderedViewport =
-        targetElement && wrapperRef.current
-          ? anchoredRenderedNodeViewport(
-              targetElement.getBoundingClientRect(),
-              wrapperRef.current.getBoundingClientRect(),
-              currentViewport,
-            )
-          : null;
-      const duration = followTransitionDuration(
-        reducedMotion,
-        lastFollowTargetRef.current === targetId,
-      );
-      lastFollowTargetRef.current = targetId;
-      void moveCamera(
-        renderedViewport ??
-          anchoredConversationViewport(
-            target,
-            focusSizes,
-            host,
-            currentViewport.zoom,
-          ),
-        duration,
-        requestId,
-      );
-      followFrameRef.current = null;
-    };
-    followFrameRef.current = requestAnimationFrame(focus);
-    return () => {
-      if (followFrameRef.current !== null) {
-        cancelAnimationFrame(followFrameRef.current);
-        followFrameRef.current = null;
-      }
-    };
-    // 仅在跟随状态下对齐目标；用户 zoom 变化不主动重置。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    followTarget,
-    following,
-    branchId,
-    host,
-    reducedMotion,
-    moveCamera,
-    sizes,
-  ]);
-
-  // 显式选择（深链、GrayDango 或节点点击）聚焦历史节点，但不恢复自动跟随。
-  useEffect(() => {
-    if (!selectedNodeId || following) return;
-    const target = items.find((item) => displayItemId(item) === selectedNodeId);
-    if (!target) return;
-    void moveCamera(
-      anchoredConversationViewport(
-        target,
-        sizes,
-        host,
-        flow.getViewport().zoom,
-      ),
-      reducedMotion ? 0 : 180,
-      ++cameraRequestRef.current,
+    const targetId = pendingFocusRef.current;
+    if (!targetId || following) return;
+    const list = listRef.current;
+    if (!list) return;
+    const element = list.querySelector<HTMLElement>(
+      `[data-id="${CSS.escape(targetId)}"]`,
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    selectedNodeId,
-    following,
-    items,
-    sizes,
-    host,
-    reducedMotion,
-    moveCamera,
-  ]);
+    if (element) {
+      pendingFocusRef.current = null;
+      programmaticUntilRef.current = Date.now() + 600;
+      element.scrollIntoView({
+        block: "center",
+        behavior: reducedMotion ? "auto" : "smooth",
+      });
+      return;
+    }
+    const index = rows.findIndex((row) => row.id === targetId);
+    if (index === -1) {
+      pendingFocusRef.current = null;
+      return;
+    }
+    programmaticUntilRef.current = Date.now() + 600;
+    list.scrollTo({
+      top: Math.max(0, layout.offsets[index] - list.clientHeight / 2),
+      behavior: "auto",
+    });
+    // scrollTop 更新后本效应重试，直到目标行进入窗口被渲染
+  }, [following, rows, layout, scrollTop, reducedMotion]);
 
   const branches = useMemo(
     () => Object.values(conversation.branches),
@@ -826,59 +607,30 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
   );
   const [creatingSession, setCreatingSession] = useState(false);
   const creatingSessionRef = useRef(false);
-  const sessionPromptReturnRef = useRef<{
-    sessionId: string;
-    viewport: Viewport;
-  } | null>(null);
 
+  /* 新建会话确认：暂停跟随并定位确认行；关闭后恢复原滚动位置（FE-CHAT-025） */
   useEffect(() => {
+    const list = listRef.current;
     if (!pendingNewSessionAction) {
       const previous = sessionPromptReturnRef.current;
-      if (previous && previous.sessionId === sessionId) {
+      if (previous && previous.sessionId === sessionId && list) {
         sessionPromptReturnRef.current = null;
-        void moveCamera(
-          previous.viewport,
-          reducedMotion ? 0 : 180,
-          ++cameraRequestRef.current,
-        );
+        programmaticUntilRef.current = Date.now() + 600;
+        list.scrollTo({
+          top: previous.scrollTop,
+          behavior: reducedMotion ? "auto" : "smooth",
+        });
       }
       return;
     }
-    if (sessionPromptReturnRef.current) return;
+    if (!list || sessionPromptReturnRef.current) return;
     sessionPromptReturnRef.current = {
       sessionId,
-      viewport: flow.getViewport(),
+      scrollTop: list.scrollTop,
     };
     setFollowing(false);
-    const frame = requestAnimationFrame(() => {
-      const nodeId = `chat-action-confirm:${pendingNewSessionAction.id}`;
-      const node = flow.getNode(nodeId);
-      if (!node) return;
-      const measured = flow.getInternalNode(nodeId)?.measured;
-      const size = {
-        width: measured?.width ?? ACTION_NODE_WIDTH,
-        height: measured?.height ?? ACTION_NODE_ESTIMATED_HEIGHT,
-      };
-      void moveCamera(
-        anchoredNodeViewport(
-          node.position,
-          size,
-          host,
-          flow.getViewport().zoom,
-        ),
-        reducedMotion ? 0 : 220,
-        ++cameraRequestRef.current,
-      );
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [
-    flow,
-    host,
-    moveCamera,
-    pendingNewSessionAction,
-    reducedMotion,
-    sessionId,
-  ]);
+    pendingFocusRef.current = ACTION_CONFIRM_ID(pendingNewSessionAction.id);
+  }, [pendingNewSessionAction, sessionId, reducedMotion]);
 
   useEffect(() => {
     if (sessionPromptReturnRef.current?.sessionId !== sessionId) {
@@ -898,9 +650,7 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
       draft?.text.trim() || draft?.file_refs.length || draft?.images.length,
     );
     const active = branchActiveNodes(conversation, branchId);
-    const source =
-      followTarget ?? items[items.length - 1] ?? projectedItems.at(-1) ?? null;
-    const sourceId = source ? displayItemId(source) : `composer:${branchId}`;
+    const sourceId = rows.at(-1)?.id ?? `composer:${branchId}`;
     if (hasDraft || active.length > 0 || inputGate) {
       creatingSessionRef.current = true;
       setCreatingSession(true);
@@ -931,104 +681,103 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
     conversation,
     conversationScope,
     creatingSession,
-    followTarget,
     inputGate,
-    items,
     pendingNewSessionAction,
-    projectedItems,
+    rows,
     sessionId,
   ]);
+
+  /* 行点击：只选择 + 深链导航，不滚动（FE-CHAT-020 手动浏览不抢焦点） */
+  const onRowClick = useCallback(
+    (row: ChatRow, event: React.MouseEvent) => {
+      if (row.kind !== "item" || row.item.type !== "node") return;
+      if (
+        (event.target as Element | null)?.closest(
+          "button,input,textarea,select,a",
+        )
+      ) {
+        return;
+      }
+      const nodeId = row.item.node.id;
+      handledSelectionRef.current = nodeId;
+      useCanvasStore.getState().setSelectedConversationNode(nodeId);
+      setFollowing(false);
+      navigate(`/canvas/chat/branches/${branchId}/nodes/${nodeId}`);
+    },
+    [branchId, navigate],
+  );
 
   return (
     <div
       ref={wrapperRef}
       className="conversation-graph"
-      data-compact={viewport.zoom < 0.6 || undefined}
       onScrollCapture={(event) =>
         persistScrollPosition(event.target, `conversation:${conversationScope}`)
       }
-      onPointerDownCapture={(event) => {
-        if (
-          (event.target as Element | null)?.classList.contains(
-            "react-flow__pane",
-          )
-        ) {
-          setFollowing(false);
-          interruptCamera();
-        }
-      }}
-      onWheelCapture={(event) => {
-        // 只把空白画布上的滚轮视为相机操作；节点内部滚动仍保持跟随。
-        if (
-          (event.target as Element | null)?.classList.contains(
-            "react-flow__pane",
-          )
-        ) {
-          setFollowing(false);
-          interruptCamera();
-        }
-      }}
     >
-      <ReactFlow
-        key={sessionId}
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onNodesChange={onNodesChange}
-        viewport={viewport}
-        onViewportChange={(next) =>
-          useCanvasStore
-            .getState()
-            .setConversationViewport(conversationScope, next)
-        }
-        onMoveStart={(_event) => {
-          // 只有真实指针/滚轮操作暂停；程序相机事务不能误伤自动跟随。
-          if (_event?.isTrusted && programmaticMoveRef.current === 0) {
-            setFollowing(false);
-            interruptCamera();
-          }
-        }}
-        onNodeClick={(_event, node) => {
-          if (
-            (_event.target as Element | null)?.closest(
-              "button,input,textarea,select,a",
-            )
-          ) {
-            return;
-          }
-          if (node.type !== "composer") {
-            useCanvasStore.getState().setSelectedConversationNode(node.id);
-            setFollowing(false);
-            navigate(`/canvas/chat/branches/${branchId}/nodes/${node.id}`);
-          }
-        }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={false}
-        minZoom={0.35}
-        maxZoom={1.6}
-        proOptions={{ hideAttribution: true }}
-        aria-label="中央对话节点图"
-      />
       <div className="chat-toolbar nodrag nowheel">
-        {branches.map((branch) => (
-          <button
-            key={branch.id}
-            type="button"
-            className="chat-toolbar__branch"
-            data-active={branch.id === branchId || undefined}
-            onClick={() =>
-              useCanvasStore.getState().setActiveConversationBranch(branch.id)
-            }
-          >
-            {BRANCH_LABEL(branch.id, rootBranchId)}
-          </button>
-        ))}
+        {branches.map((branch) => {
+          const label = branchLabel(branch, rootBranchId, conversation.nodes);
+          return (
+            <button
+              key={branch.id}
+              type="button"
+              className="chat-toolbar__branch"
+              data-active={branch.id === branchId || undefined}
+              title={label.title}
+              aria-label={label.title}
+              onClick={() =>
+                useCanvasStore.getState().setActiveConversationBranch(branch.id)
+              }
+            >
+              {label.text}
+            </button>
+          );
+        })}
         {connection !== "open" ? (
           <span className="chat-toolbar__connection" role="status">
             事件流{connection === "retrying" ? "重连中" : "连接中"}…
           </span>
         ) : null}
+      </div>
+      <div
+        ref={listRef}
+        className="chat-list nodrag nowheel"
+        data-scroll-key="chat-list"
+        role="list"
+        aria-label="对话消息列表"
+        onScroll={onListScroll}
+        onWheel={onListWheel}
+      >
+        {blocks.map((block) =>
+          block.type === "spacer" ? (
+            <div
+              key={block.key}
+              style={{ height: block.height }}
+              aria-hidden="true"
+            />
+          ) : (
+            block.rows.map((row) => (
+              <div
+                key={row.id}
+                className="chat-row"
+                data-id={row.id}
+                role="listitem"
+                ref={setRowRef(row.id)}
+                onClick={(event) => onRowClick(row, event)}
+              >
+                <div className="chat-row__inner">
+                  <RowContent
+                    row={row}
+                    sessionId={sessionId}
+                    branchId={branchId}
+                    selectedNodeId={selectedNodeId}
+                  />
+                </div>
+              </div>
+            ))
+          ),
+        )}
       </div>
       <PixelButton
         className="chat-new-session nodrag nowheel"
@@ -1043,7 +792,11 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
         <button
           type="button"
           className="chat-follow nodrag nowheel"
-          onClick={() => setFollowing(true)}
+          onClick={() => {
+            useCanvasStore.getState().requestConversationFollow();
+            // 清掉 URL 上可能失效的深链 nodeId，避免残留目标干扰跟随
+            navigate("/", { replace: true });
+          }}
         >
           ↓ 回到最新
         </button>
@@ -1052,11 +805,7 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
   );
 });
 
-/** 中央对话节点图：独立受控 viewport 的嵌套 React Flow（02 §5） */
+/** 中央对话列表：节点外观的垂直对话流（02 §5；v1 起不再是嵌套画布） */
 export const ConversationGraph = memo(function ConversationGraph() {
-  return (
-    <ReactFlowProvider>
-      <ConversationGraphInner />
-    </ReactFlowProvider>
-  );
+  return <ConversationGraphInner />;
 });

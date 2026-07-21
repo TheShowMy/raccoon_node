@@ -104,123 +104,156 @@ test("全画布默认壳、键盘工作台与真实浏览器 axe", async ({ page
   ).toEqual([]);
 });
 
-test("对话按真实边界等距，活跃节点锚到 50%/65%，手动浏览可暂停", async ({
+test("对话列表跟随贴底、向上滚动暂停、点击不抢滚动", async ({ page }) => {
+  await openApp(page);
+  const composer = page.getByLabel("消息编辑器");
+  const activeChips = page.locator(
+    ".conversation-graph .chat-node__chip[data-state='streaming'],.conversation-graph .chat-node__chip[data-state='running']",
+  );
+  // 三轮对话让列表溢出，产生可滚动历史
+  for (const message of [
+    "这个项目是什么？",
+    "架构怎么分层？",
+    "这个项目是什么？",
+  ]) {
+    await composer.getByLabel("消息内容").fill(message);
+    await composer.getByRole("button", { name: "发送" }).click();
+    await expect(activeChips.first()).toBeVisible();
+    await expect(activeChips).toHaveCount(0, { timeout: 15_000 });
+  }
+
+  const activeChip = activeChips.last();
+  // 第四轮进行中验证跟随
+  await composer.getByLabel("消息内容").fill("架构怎么分层？");
+  await composer.getByRole("button", { name: "发送" }).click();
+  await expect(activeChip).toBeVisible();
+  await page.waitForTimeout(300);
+
+  // 跟随：活动行在列表可视区内，节点列水平居中
+  const anchor = await page.locator(".conversation-graph").evaluate((graph) => {
+    const list = graph.querySelector<HTMLElement>(".chat-list");
+    const chips = graph.querySelectorAll<HTMLElement>(
+      ".chat-node__chip[data-state='streaming'],.chat-node__chip[data-state='running']",
+    );
+    const activeRow =
+      chips[chips.length - 1]?.closest<HTMLElement>(".chat-row");
+    if (!list || !activeRow) throw new Error("没有活动对话行");
+    const listRect = list.getBoundingClientRect();
+    const rect = activeRow.getBoundingClientRect();
+    return {
+      xRatio: (rect.left + rect.width / 2 - listRect.left) / listRect.width,
+      visible: rect.bottom > listRect.top && rect.top < listRect.bottom,
+    };
+  });
+  expect(anchor.xRatio).toBeCloseTo(0.5, 1);
+  expect(anchor.visible).toBe(true);
+
+  // 行距恒为 12px
+  await expect
+    .poll(async () =>
+      page.locator(".conversation-graph").evaluate((graph) => {
+        const rects = [
+          ...graph.querySelectorAll<HTMLElement>(
+            ".chat-row:not([data-id^='chat-action'])",
+          ),
+        ]
+          .map((element) => element.getBoundingClientRect())
+          .filter((rect) => rect.height > 0)
+          .sort((left, right) => left.top - right.top);
+        return rects.slice(1).some((rect, index) => {
+          const previous = rects[index];
+          return Math.abs(rect.top - previous.bottom - 12) < 1.5;
+        });
+      }),
+    )
+    .toBe(true);
+
+  // 向上滚动：暂停跟随，出现「回到最新」
+  const list = page.locator(".conversation-graph .chat-list");
+  await list.hover();
+  await page.mouse.wheel(0, -400);
+  const latest = page.getByRole("button", { name: "↓ 回到最新" });
+  await expect(latest).toBeVisible();
+  await latest.click();
+  await expect(latest).toHaveCount(0);
+
+  // 回到最新后点击节点正文：只选择，不滚动（先等滚动完全稳定）
+  await expect(
+    page.locator(
+      ".conversation-graph .chat-node__chip[data-state='streaming'],.conversation-graph .chat-node__chip[data-state='running']",
+    ),
+  ).toHaveCount(0);
+  await expect
+    .poll(
+      async () => {
+        const first = await list.evaluate((element) => element.scrollTop);
+        await page.waitForTimeout(300);
+        const second = await list.evaluate((element) => element.scrollTop);
+        return Math.abs(second - first);
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(0);
+  const scrollBefore = await list.evaluate((element) => element.scrollTop);
+  // dispatchEvent 避开 Playwright 的 scrollIntoViewIfNeeded，只验证应用自身不滚动
+  await page
+    .locator(".conversation-graph .chat-node__content")
+    .last()
+    .dispatchEvent("click");
+  await page.waitForTimeout(300);
+  expect(await list.evaluate((element) => element.scrollTop)).toBe(
+    scrollBefore,
+  );
+});
+
+test("深链刷新后目标已消失：跟随不暂停，发消息仍对焦运行节点", async ({
   page,
 }) => {
   await openApp(page);
   const composer = page.getByLabel("消息编辑器");
   await composer.getByLabel("消息内容").fill("这个项目是什么？");
   await composer.getByRole("button", { name: "发送" }).click();
+  await page.waitForTimeout(2500);
 
+  // 点击节点正文进入深链，随后整页刷新（mock 快照重置，目标节点消失）
+  await page.locator(".conversation-graph .chat-node__content").last().click();
+  await expect(page).toHaveURL(/\/canvas\/chat\/branches\//);
+  await page.reload();
+  await page.waitForTimeout(1200);
+
+  // 跟随未被暂停：无「回到最新」按钮，Composer 行在列表可视区内
+  await expect(page.getByRole("button", { name: "↓ 回到最新" })).toHaveCount(0);
+  await expect(
+    page.locator(".conversation-graph .chat-row[data-id^='composer:']"),
+  ).toBeVisible();
+
+  // 再发消息：流式期间跟随持续对焦运行节点（行在可视区内且居中）
+  await composer.getByLabel("消息内容").fill("架构怎么分层？");
+  await composer.getByRole("button", { name: "发送" }).click();
   const activeChip = page
     .locator(
       ".conversation-graph .chat-node__chip[data-state='streaming'],.conversation-graph .chat-node__chip[data-state='running']",
     )
     .last();
   await expect(activeChip).toBeVisible();
-  await page.waitForTimeout(260);
-
-  const geometry = await page
-    .locator(".conversation-graph")
-    .evaluate((graph) => {
-      const graphRect = graph.getBoundingClientRect();
-      const chips = graph.querySelectorAll<HTMLElement>(
-        ".chat-node__chip[data-state='streaming'],.chat-node__chip[data-state='running']",
-      );
-      const activeNode =
-        chips[chips.length - 1]?.closest<HTMLElement>(".react-flow__node");
-      if (!activeNode) throw new Error("没有活动对话节点");
-      const activeRect = activeNode.getBoundingClientRect();
-      const viewport = graph.querySelector<HTMLElement>(
-        ".react-flow__viewport",
-      );
-      const scale = viewport
-        ? new DOMMatrix(getComputedStyle(viewport).transform).a
-        : 1;
-      const visibleNodes = [
-        ...graph.querySelectorAll<HTMLElement>(
-          ".react-flow__node:not([data-id^='chat-action'])",
-        ),
-      ]
-        .filter((element) => {
-          const rect = element.getBoundingClientRect();
-          return (
-            rect.width > 0 &&
-            rect.height > 0 &&
-            getComputedStyle(element).visibility !== "hidden"
-          );
-        })
-        .map((element) => ({
-          id: element.dataset.id ?? "",
-          rect: element.getBoundingClientRect(),
-        }))
-        .sort((a, b) => a.rect.top - b.rect.top);
-      const gaps: number[] = [];
-      for (let index = 1; index < visibleNodes.length; index += 1) {
-        const previous = visibleNodes[index - 1].rect;
-        const current = visibleNodes[index].rect;
-        const horizontalOverlap =
-          Math.min(previous.right, current.right) -
-          Math.max(previous.left, current.left);
-        if (horizontalOverlap > 0)
-          gaps.push((current.top - previous.bottom) / scale);
-      }
-      return {
-        xRatio:
-          (activeRect.left + activeRect.width / 2 - graphRect.left) /
-          graphRect.width,
-        yRatio:
-          (activeRect.top + activeRect.height / 2 - graphRect.top) /
-          graphRect.height,
-        gaps,
-      };
-    });
-  expect(geometry.xRatio).toBeCloseTo(0.5, 1);
-  expect(geometry.yRatio).toBeCloseTo(0.65, 1);
-  expect(Math.abs(geometry.yRatio - 0.5)).toBeGreaterThan(0.1);
-  await expect
-    .poll(async () => {
-      const current = await page
-        .locator(".conversation-graph")
-        .evaluate((graph) => {
-          const viewport = graph.querySelector<HTMLElement>(
-            ".react-flow__viewport",
-          );
-          const scale = viewport
-            ? new DOMMatrix(getComputedStyle(viewport).transform).a
-            : 1;
-          const rects = [
-            ...graph.querySelectorAll<HTMLElement>(
-              ".react-flow__node:not([data-id^='chat-action'])",
-            ),
-          ]
-            .map((element) => element.getBoundingClientRect())
-            .filter((rect) => rect.width > 0 && rect.height > 0)
-            .sort((left, right) => left.top - right.top);
-          return rects.slice(1).some((rect, index) => {
-            const previous = rects[index];
-            const horizontalOverlap =
-              Math.min(previous.right, rect.right) -
-              Math.max(previous.left, rect.left);
-            return (
-              horizontalOverlap > 0 &&
-              Math.abs((rect.top - previous.bottom) / scale - 48) < 1.5
-            );
-          });
-        });
-      return current;
-    })
-    .toBe(true);
-
-  const pane = page.locator(".conversation-graph .react-flow__pane");
-  const box = await pane.boundingBox();
-  if (!box) throw new Error("对话画布不可见");
-  await page.mouse.move(box.x + box.width * 0.82, box.y + box.height * 0.32);
-  await page.mouse.wheel(0, -220);
-  const latest = page.getByRole("button", { name: "↓ 回到最新" });
-  await expect(latest).toBeVisible();
-  await latest.click();
-  await expect(latest).toHaveCount(0);
+  await page.waitForTimeout(400);
+  const anchor = await page.locator(".conversation-graph").evaluate((graph) => {
+    const list = graph.querySelector<HTMLElement>(".chat-list");
+    const chips = graph.querySelectorAll<HTMLElement>(
+      ".chat-node__chip[data-state='streaming'],.chat-node__chip[data-state='running']",
+    );
+    const activeRow =
+      chips[chips.length - 1]?.closest<HTMLElement>(".chat-row");
+    if (!list || !activeRow) throw new Error("没有活动对话行");
+    const listRect = list.getBoundingClientRect();
+    const rect = activeRow.getBoundingClientRect();
+    return {
+      xRatio: (rect.left + rect.width / 2 - listRect.left) / listRect.width,
+      visible: rect.bottom > listRect.top && rect.top < listRect.bottom,
+    };
+  });
+  expect(anchor.xRatio).toBeCloseTo(0.5, 1);
+  expect(anchor.visible).toBe(true);
 });
 
 test("澄清、回答、规格、确认到 Run 保持同一节点链与深链", async ({ page }) => {
@@ -232,24 +265,23 @@ test("澄清、回答、规格、确认到 Run 保持同一节点链与深链", 
   await expect(clarification).toBeVisible({ timeout: 8_000 });
   await expect(page.getByLabel("消息编辑器")).toHaveCount(0);
   await expect(clarification.getByText("待回答")).toBeVisible();
+  // 门控节点是跟随目标：澄清行位于列表可视区内且水平居中
   await expect
     .poll(async () =>
       clarification.evaluate((node) => {
-        const graph = node.closest<HTMLElement>(".conversation-graph");
-        if (!graph) throw new Error("缺少对话图");
-        const graphRect = graph.getBoundingClientRect();
+        const list = node.closest<HTMLElement>(".chat-list");
+        if (!list) throw new Error("缺少对话列表");
+        const listRect = list.getBoundingClientRect();
         const nodeRect = node.getBoundingClientRect();
         return {
           x:
-            (nodeRect.left + nodeRect.width / 2 - graphRect.left) /
-            graphRect.width,
-          y:
-            (nodeRect.top + nodeRect.height / 2 - graphRect.top) /
-            graphRect.height,
+            (nodeRect.left + nodeRect.width / 2 - listRect.left) /
+            listRect.width,
+          visible: nodeRect.bottom > listRect.top && nodeRect.top < listRect.bottom,
         };
       }),
     )
-    .toMatchObject({ x: expect.closeTo(0.5, 1), y: expect.closeTo(0.65, 1) });
+    .toMatchObject({ x: expect.closeTo(0.5, 1), visible: true });
   await clarification.getByRole("radio", { name: /两者都涉及/ }).click();
   await clarification.getByRole("button", { name: "确认回答" }).click();
 
@@ -275,9 +307,7 @@ test("澄清、回答、规格、确认到 Run 保持同一节点链与深链", 
     if (!target) throw new Error(`缺少 ${kind}`);
     await pushRoute(page, `/canvas/chat/branches/b-main/nodes/${target.id}`);
     await expect(
-      page.locator(
-        `.conversation-graph .react-flow__node[data-id='${target.id}']`,
-      ),
+      page.locator(`.conversation-graph .chat-row[data-id='${target.id}']`),
     ).toBeVisible();
   }
 
@@ -376,7 +406,7 @@ test("右上角新建独立会话，活动响应经确认停止并保留旧图",
   await expect(page.getByText(/历史会话/)).toHaveCount(0);
 });
 
-test("redact 确认链、真实图片选择与对话节点深链", async ({ page }) => {
+test("真实图片选择、对话节点深链与分支", async ({ page }) => {
   await openApp(page);
   const composer = page.getByLabel("消息编辑器");
   const fileInput = composer.locator("input[type=file]");
@@ -403,19 +433,13 @@ test("redact 确认链、真实图片选择与对话节点深链", async ({ page
   if (!user) throw new Error("缺少用户消息节点");
   await pushRoute(page, `/canvas/chat/branches/b-main/nodes/${user.id}`);
   const userNode = page.locator(
-    `.conversation-graph .react-flow__node[data-id='${user.id}']`,
+    `.conversation-graph .chat-row[data-id='${user.id}']`,
   );
   await expect(userNode).toBeVisible();
   await userNode.getByRole("button", { name: "从这里分支" }).click();
   await expect(
     page.locator(".chat-toolbar__branch[data-active]"),
   ).toContainText("分支");
-  await userNode.getByRole("button", { name: "删除" }).click();
-  const confirmation = page.getByLabel(/危险操作确认:删除对话节点可见内容/);
-  await expect(confirmation).toBeVisible();
-  await confirmation.getByRole("button", { name: "确认执行" }).click();
-  await expect(userNode.getByText("已删除")).toBeVisible();
-  await expect(page.getByLabel(/操作结果:删除对话节点可见内容/)).toBeVisible();
 });
 
 test("普通工作台连续页、GrayDango 打开工作台与内部滚动恢复", async ({
@@ -804,10 +828,8 @@ test("一万个对话节点保持有界 DOM，并可深链末端", async ({ page
   });
   await pushRoute(page, "/canvas/chat/branches/b-main/nodes/large-9999");
   await expect(
-    page.locator(".conversation-graph .react-flow__node[data-id='large-9999']"),
+    page.locator(".conversation-graph .chat-row[data-id='large-9999']"),
   ).toBeVisible({ timeout: 12_000 });
-  const domCount = await page
-    .locator(".conversation-graph .react-flow__node")
-    .count();
+  const domCount = await page.locator(".conversation-graph .chat-row").count();
   expect(domCount).toBeLessThan(100);
 });

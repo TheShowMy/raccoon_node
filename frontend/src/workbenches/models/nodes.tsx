@@ -71,7 +71,7 @@ export function ProviderModelContent({
   );
   const selectedModelId = useModelsStore((state) => state.selectedModelId);
   if (!provider) {
-    return <div className="workbench-empty">选择一个 Provider 查看模型。</div>;
+    return <div className="tool-empty-state">选择一个 Provider 查看模型。</div>;
   }
   return (
     <div className="model-provider-detail">

@@ -53,6 +53,11 @@
   cursor: grabbing;
 }
 
+.graydango-pet__sprite:focus-visible {
+  outline: 2px solid var(--px-info);
+  outline-offset: 2px;
+}
+
 /* ── 通知队列气泡（FE-PET-005：前后浏览 / 位置 / 确认 / 定位） ── */
 
 .graydango-queue {
@@ -103,7 +108,8 @@
 }
 
 .graydango-queue__controls > button {
-  min-width: 24px;
+  min-width: 32px;
+  min-height: 32px;
   padding: 0 var(--px-space-1);
   font: inherit;
   background: var(--px-surface);
@@ -123,8 +129,8 @@
   right: 0;
   bottom: calc(100% + var(--px-space-2));
   z-index: 31;
-  min-width: 28px;
-  height: 28px;
+  min-width: 32px;
+  height: 32px;
   font-family: var(--px-font-pixel);
   font-size: 10px;
   background: var(--px-danger);

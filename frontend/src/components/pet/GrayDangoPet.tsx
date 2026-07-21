@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
@@ -236,6 +237,44 @@ function GrayDangoPet({
     }
   };
 
+  // 键盘替代拖拽：方向键步进 8px，Shift+方向键步进 32px（FE-PET 可达性）
+  const onSpriteKeyDown = (event: ReactKeyboardEvent<HTMLSpanElement>) => {
+    const directions: Record<string, { x: number; y: number }> = {
+      ArrowLeft: { x: -1, y: 0 },
+      ArrowRight: { x: 1, y: 0 },
+      ArrowUp: { x: 0, y: -1 },
+      ArrowDown: { x: 0, y: 1 },
+    };
+    const direction = directions[event.key];
+    if (!direction) return;
+    const container = containerRef.current;
+    if (!container) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const step = event.shiftKey ? 32 : 8;
+    const next = {
+      x: Math.min(
+        1,
+        Math.max(
+          0,
+          positionRef.current.x +
+            (direction.x * step) / (container.clientWidth || 1),
+        ),
+      ),
+      y: Math.min(
+        1,
+        Math.max(
+          0,
+          positionRef.current.y +
+            (direction.y * step) / (container.clientHeight || 1),
+        ),
+      ),
+    };
+    positionRef.current = next;
+    setPosition(next);
+    savePosition(next);
+  };
+
   const visibleRow =
     dragAnimation?.row ?? lookDirection?.row ?? presentation.row;
   const visibleFrame = dragAnimation ? frame : (lookDirection?.column ?? frame);
@@ -275,13 +314,15 @@ function GrayDangoPet({
         ref={spriteRef}
         className="graydango-pet__sprite"
         role="img"
-        aria-label={`GrayDango：${activeAnimation}`}
+        aria-label={`GrayDango：${activeAnimation}；可用方向键移动位置，Shift 加速`}
+        tabIndex={0}
         style={spriteStyle}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishDrag}
         onPointerCancel={finishDrag}
         onLostPointerCapture={finishDrag}
+        onKeyDown={onSpriteKeyDown}
       />
     </aside>
   );

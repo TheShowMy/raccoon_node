@@ -39,7 +39,7 @@ html[data-density="compact"] .tool-workbench {
 
 .tool-workbench__title {
   font-family: var(--px-font-pixel);
-  font-size: 9px;
+  font-size: 10px;
   color: var(--px-primary);
 }
 
@@ -74,15 +74,15 @@ html[data-density="compact"] .tool-workbench {
 
 .workbench-pane__label {
   min-width: 0;
-  font-size: 8px;
+  font-size: 10px;
   color: var(--px-primary);
 }
 
 .workbench-pane__chip {
-  padding: 1px 4px;
+  padding: 1px var(--px-space-1);
   color: var(--px-muted);
   border: var(--px-border-width) solid currentColor;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .workbench-pane__chip[data-tone="green"] {
@@ -118,8 +118,8 @@ html[data-density="compact"] .tool-workbench {
   align-items: center;
   justify-content: center;
   gap: var(--px-space-1);
-  min-height: 30px;
-  padding: 3px var(--px-space-2);
+  min-height: 32px;
+  padding: var(--px-space-1) var(--px-space-2);
   color: var(--px-muted);
   background: transparent;
   border: 0;
@@ -144,28 +144,26 @@ html[data-density="compact"] .tool-workbench {
   font-size: 10px;
 }
 
-.workbench-section-heading,
-.tool-section-title {
+.workbench-section-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--px-space-2);
   margin: 0;
-  padding: 5px var(--px-space-2);
+  padding: var(--px-space-1) var(--px-space-2);
   color: var(--px-muted);
   border-bottom: var(--px-border-width) solid var(--px-border-ink);
   font-family: var(--px-font-pixel);
-  font-size: 7px;
+  font-size: 10px;
 }
 
 .workbench-section-heading em {
   color: var(--px-muted);
   font-family: var(--px-font-body);
-  font-size: 10px;
+  font-size: 11px;
   font-style: normal;
 }
 
-.workbench-empty,
 .tool-empty-state {
   display: grid;
   place-content: center;
@@ -179,7 +177,7 @@ html[data-density="compact"] .tool-workbench {
 .workbench-action-dock {
   position: absolute;
   z-index: 30;
-  bottom: 12px;
+  bottom: var(--px-space-3);
   left: 50%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -187,7 +185,7 @@ html[data-density="compact"] .tool-workbench {
   gap: var(--px-space-2);
   width: min(720px, calc(100% - 32px));
   max-height: 116px;
-  padding: 5px var(--px-space-2);
+  padding: var(--px-space-1) var(--px-space-2);
   color: var(--px-ink);
   background: color-mix(in srgb, var(--px-danger) 9%, var(--px-surface-raised));
   border: var(--px-border-width) solid var(--px-danger);
@@ -211,7 +209,7 @@ html[data-density="compact"] .tool-workbench {
 .workbench-action-dock__queue {
   overflow: hidden;
   color: var(--px-muted);
-  font-size: 10px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -275,7 +273,7 @@ html[data-density="compact"] .tool-workbench {
   align-items: center;
   gap: var(--px-space-1);
   width: 100%;
-  padding: 3px var(--px-space-2);
+  padding: var(--px-space-1) var(--px-space-2);
   color: var(--px-ink);
   background: transparent;
   border: 0;
@@ -290,12 +288,12 @@ html[data-density="compact"] .tool-workbench {
 .ftree__restricted {
   margin-left: auto;
   color: var(--px-warning);
-  font-size: 9px;
+  font-size: 10px;
   font-style: normal;
 }
 .ftree__note {
   color: var(--px-warning);
-  font-size: 10px;
+  font-size: 11px;
 }
 .files-search-layout {
   display: flex;
@@ -324,7 +322,7 @@ html[data-density="compact"] .tool-workbench {
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  padding: 5px var(--px-space-2);
+  padding: var(--px-space-1) var(--px-space-2);
   color: var(--px-ink);
   background: transparent;
   border: 0;
@@ -406,10 +404,10 @@ html[data-density="compact"] .tool-workbench {
   color: var(--px-muted);
 }
 .git-toolbar__lock {
-  padding: 1px 4px;
+  padding: 1px var(--px-space-1);
   color: var(--px-success);
   border: var(--px-border-width) solid currentColor;
-  font-size: 9px;
+  font-size: 10px;
 }
 .git-toolbar__lock[data-locked] {
   color: var(--px-warning);
@@ -440,7 +438,7 @@ html[data-density="compact"] .tool-workbench {
   gap: var(--px-space-1);
   width: 100%;
   min-height: 27px;
-  padding: 4px var(--px-space-2);
+  padding: var(--px-space-1) var(--px-space-2);
   color: var(--px-ink);
   background: transparent;
   border: 0;
@@ -472,7 +470,7 @@ html[data-density="compact"] .tool-workbench {
 }
 .git-repo-meta {
   color: var(--px-muted);
-  font-size: 10px;
+  font-size: 11px;
   word-break: break-all;
 }
 .git-changes-layout {
@@ -484,9 +482,9 @@ html[data-density="compact"] .tool-workbench {
 .git-bulk-toolbar {
   display: flex;
   align-items: center;
-  gap: 3px;
-  min-height: 30px;
-  padding: 2px 4px;
+  gap: var(--px-space-1);
+  min-height: 36px;
+  padding: 2px var(--px-space-1);
   overflow-x: auto;
   border-bottom: var(--px-border-width) solid var(--px-border-ink);
   white-space: nowrap;
@@ -494,7 +492,7 @@ html[data-density="compact"] .tool-workbench {
 .git-bulk-toolbar strong,
 .git-bulk-toolbar span {
   color: var(--px-muted);
-  font-size: 9px;
+  font-size: 10px;
 }
 .git-bulk-toolbar span {
   min-width: 0;
@@ -503,12 +501,12 @@ html[data-density="compact"] .tool-workbench {
   text-overflow: ellipsis;
 }
 .git-bulk-toolbar button {
-  min-height: 24px;
-  padding: 1px 5px;
+  min-height: 32px;
+  padding: 1px var(--px-space-1);
   color: var(--px-ink);
   background: var(--px-surface);
   border: var(--px-border-width) solid var(--px-border-ink);
-  font: 9px var(--px-font-body);
+  font: 10px var(--px-font-body);
   cursor: pointer;
 }
 .git-bulk-toolbar button:disabled {
@@ -524,7 +522,7 @@ html[data-density="compact"] .tool-workbench {
   padding: 0;
   list-style: none;
 }
-.git-change-group > .tool-section-title {
+.git-change-group > .workbench-section-heading {
   min-height: 20px;
   padding: 2px var(--px-space-2);
 }
@@ -562,12 +560,11 @@ html[data-density="compact"] .tool-workbench {
   box-shadow: inset 0 0 0 2px var(--px-surface);
 }
 .git-group-selection input:indeterminate + span {
-  background: linear-gradient(
-    to bottom,
-    var(--px-surface) 35%,
-    var(--px-primary) 35% 65%,
-    var(--px-surface) 65%
-  );
+  /* 像素阶梯半选态：中央 2px 横条，不用渐变（02 §10 零渐变语言） */
+  background: var(--px-primary);
+  box-shadow:
+    inset 0 5px 0 0 var(--px-surface),
+    inset 0 -5px 0 0 var(--px-surface);
 }
 .git-group-selection input:focus-visible + span,
 .git-selection-control input:focus-visible + span {
@@ -643,11 +640,11 @@ html[data-density="compact"] .tool-workbench {
 }
 .git-change-row__action {
   height: 20px;
-  padding: 0 4px;
+  padding: 0 var(--px-space-1);
   color: var(--px-ink);
   background: var(--px-surface-raised);
   border: var(--px-border-width) solid var(--px-border-ink);
-  font: 9px var(--px-font-body);
+  font: 10px var(--px-font-body);
   cursor: pointer;
 }
 .git-change-row__action--danger {
@@ -659,12 +656,12 @@ html[data-density="compact"] .tool-workbench {
 .git-change-row .dnode__warning {
   margin: 0;
   padding: 2px var(--px-space-2);
-  font-size: 9px;
+  font-size: 10px;
 }
 .git-commit-composer {
   display: grid;
   gap: var(--px-space-1);
-  padding: 5px var(--px-space-2);
+  padding: var(--px-space-1) var(--px-space-2);
   border-top: var(--px-border-width) solid var(--px-border-ink);
 }
 .git-commit-composer textarea {
@@ -683,7 +680,7 @@ html[data-density="compact"] .git-change-row__line {
 }
 html[data-density="compact"] .git-change-row__action {
   height: 18px;
-  font-size: 8px;
+  font-size: 10px;
 }
 .git-diff-content {
   min-height: 100%;
@@ -693,7 +690,7 @@ html[data-density="compact"] .git-change-row__action {
   display: flex;
   justify-content: space-between;
   gap: var(--px-space-2);
-  padding: 5px var(--px-space-2);
+  padding: var(--px-space-1) var(--px-space-2);
   border-bottom: var(--px-border-width) solid var(--px-border-ink);
 }
 .git-diff-content .diff-view {
@@ -719,8 +716,8 @@ html[data-density="compact"] .git-change-row__action {
   display: flex;
   align-items: center;
   gap: var(--px-space-1);
-  min-height: 28px;
-  padding: 3px var(--px-space-2);
+  min-height: 32px;
+  padding: var(--px-space-1) var(--px-space-2);
   color: var(--px-muted);
   background: transparent;
   border: 0;
@@ -809,7 +806,7 @@ html[data-density="compact"] .git-change-row__action {
   justify-content: space-between;
   gap: var(--px-space-2);
   width: 100%;
-  padding: 6px var(--px-space-2);
+  padding: var(--px-space-2);
   color: var(--px-ink);
   background: transparent;
   border: 0;
@@ -831,7 +828,7 @@ html[data-density="compact"] .git-change-row__action {
 .model-master-list small,
 .model-master-list em {
   color: var(--px-muted);
-  font-size: 10px;
+  font-size: 11px;
   font-style: normal;
 }
 .model-master-list em[data-state="configured"] {
@@ -865,7 +862,7 @@ html[data-density="compact"] .git-change-row__action {
   display: flex;
   justify-content: space-between;
   gap: var(--px-space-2);
-  padding: 3px var(--px-space-1);
+  padding: var(--px-space-1);
   border-bottom: var(--px-border-width) solid var(--px-border-ink);
 }
 .caplist li em {
@@ -896,7 +893,7 @@ html[data-density="compact"] .git-change-row__action {
   grid-template-columns: minmax(110px, 0.8fr) 1fr 1fr;
   align-items: center;
   gap: var(--px-space-2);
-  padding: 6px 0;
+  padding: var(--px-space-2) 0;
   border-bottom: var(--px-border-width) solid var(--px-border-ink);
 }
 .role-row__head {
@@ -906,19 +903,19 @@ html[data-density="compact"] .git-change-row__action {
 }
 .role-row__required {
   color: var(--px-muted);
-  font-size: 9px;
+  font-size: 10px;
   font-style: normal;
 }
 .role-row label {
   display: grid;
   gap: 2px;
   color: var(--px-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .model-result-strip,
 .set-result {
   margin: 0 0 var(--px-space-2);
-  padding: 5px var(--px-space-2);
+  padding: var(--px-space-1) var(--px-space-2);
   color: var(--px-success);
   border-left: 2px solid currentColor;
   background: color-mix(in srgb, currentColor 8%, transparent);
@@ -949,7 +946,7 @@ html[data-density="compact"] .git-change-row__action {
 .usage-summary-strip > div {
   display: grid;
   gap: 2px;
-  padding: 14px 18px;
+  padding: var(--px-space-3) var(--px-space-4);
   text-align: center;
   border-right: var(--px-border-width) solid var(--px-border-ink);
 }
@@ -967,14 +964,14 @@ html[data-density="compact"] .git-change-row__action {
 .usage-summary-strip p {
   grid-column: 1 / -1;
   margin: 0;
-  padding: 4px 10px;
+  padding: var(--px-space-1) var(--px-space-3);
   color: var(--px-warning);
   border-top: var(--px-border-width) solid var(--px-border-ink);
-  font-size: 10px;
+  font-size: 11px;
 }
 .usage-activity,
 .usage-models {
-  padding: 14px 16px;
+  padding: var(--px-space-3) var(--px-space-4);
   background: var(--px-surface-raised);
   border: var(--px-border-width) solid var(--px-border-ink);
 }
@@ -992,8 +989,8 @@ html[data-density="compact"] .git-change-row__action {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
+  gap: var(--px-space-3);
+  margin-bottom: var(--px-space-3);
 }
 .usage-activity h3,
 .usage-models h3 {
@@ -1003,14 +1000,14 @@ html[data-density="compact"] .git-change-row__action {
 .usage-activity header span,
 .usage-models header span {
   color: var(--px-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .usage-heatmap-months {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: var(--px-space-1);
   color: var(--px-muted);
-  font-size: 9px;
+  font-size: 10px;
 }
 .usage-heatmap {
   display: grid;
@@ -1030,8 +1027,17 @@ html[data-density="compact"] .git-change-row__action {
   border-radius: 2px;
 }
 .usage-heatmap__day {
-  cursor: help;
+  position: relative;
+  cursor: pointer;
 }
+
+/* 只扩大交互热区，不放大视觉密度（02 §10） */
+.usage-heatmap__day::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+}
+
 .usage-heatmap__day:focus-visible {
   outline: 2px solid var(--px-primary);
   outline-offset: 1px;
@@ -1041,7 +1047,7 @@ html[data-density="compact"] .git-change-row__action {
   display: inline-block;
   margin: 6px 0 0;
   color: var(--px-muted);
-  font-size: 9px;
+  font-size: 10px;
 }
 .usage-heatmap__detail {
   float: right;
@@ -1067,10 +1073,10 @@ html[data-density="compact"] .git-change-row__action {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
-  margin-top: 7px;
+  gap: var(--px-space-1);
+  margin-top: var(--px-space-2);
   color: var(--px-muted);
-  font-size: 9px;
+  font-size: 10px;
 }
 .usage-heatmap-legend i {
   width: 10px;
@@ -1087,7 +1093,7 @@ html[data-density="compact"] .git-change-row__action {
 }
 .usage-model-table th,
 .usage-model-table td {
-  padding: 6px var(--px-space-2);
+  padding: var(--px-space-1) var(--px-space-2);
   border-bottom: var(--px-border-width) solid var(--px-border-ink);
   text-align: right;
   white-space: nowrap;
@@ -1099,7 +1105,7 @@ html[data-density="compact"] .git-change-row__action {
 .usage-model-table th {
   color: var(--px-muted);
   font-family: var(--px-font-pixel);
-  font-size: 7px;
+  font-size: 10px;
 }
 .usage-model-table td:first-child {
   display: grid;
@@ -1107,7 +1113,7 @@ html[data-density="compact"] .git-change-row__action {
 .usage-model-table td:first-child span {
   color: var(--px-muted);
   font-family: var(--px-font-mono);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 /* 设置：分类主从页。 */
@@ -1131,8 +1137,8 @@ html[data-density="compact"] .git-change-row__action {
   flex-direction: column;
 }
 .settings-category-list button {
-  min-height: 30px;
-  padding: 4px var(--px-space-2);
+  min-height: 32px;
+  padding: var(--px-space-1) var(--px-space-2);
   color: var(--px-ink);
   background: transparent;
   border: 0;

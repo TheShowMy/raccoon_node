@@ -1,7 +1,6 @@
 import { PixelButton, PixelTextarea } from "@pxlkit/ui-kit";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useRef, useState, type KeyboardEvent } from "react";
-import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { getApi } from "../api";
 import { detectIntent } from "../api/intent";
 import type {
@@ -16,7 +15,7 @@ import {
   useComposerStore,
 } from "../store/composerStore";
 import { useDomainStore } from "../store/domainStore";
-import { ancestorChain, CHAT_NODE_WIDTH, type BranchDisplayItem } from "./dag";
+import { ancestorChain, type BranchDisplayItem } from "./dag";
 
 /* ── 共享小件 ── */
 
@@ -58,12 +57,9 @@ function NodeShell({
   return (
     <section
       className="chat-node px-cut px-shadowed-sm"
-      style={{ width: CHAT_NODE_WIDTH }}
       aria-label={ariaLabel}
       data-selected={selected || undefined}
     >
-      {/* 连线锚点：无 Handle 时 XYFlow 不绘制任何边 */}
-      <Handle type="target" position={Position.Top} isConnectable={false} />
       <header className="chat-node__header">
         <span className="px-font-pixel chat-node__label">{label}</span>
         {statusLabel ? (
@@ -81,7 +77,6 @@ function NodeShell({
       {actions ? (
         <footer className="chat-node__actions">{actions}</footer>
       ) : null}
-      <Handle type="source" position={Position.Bottom} isConnectable={false} />
     </section>
   );
 }
@@ -91,58 +86,6 @@ function RedactedContent() {
     <p className="chat-node__redacted" role="status">
       已删除
     </p>
-  );
-}
-
-function RedactButton({
-  node,
-  branchId,
-}: {
-  node: ConversationNode;
-  branchId: string;
-}) {
-  const pending = useDomainStore((state) =>
-    Object.values(state.workbenchActions).some(
-      (action) =>
-        action.kind === "conversation_redact" &&
-        action.source_node_id === node.id &&
-        action.state === "awaiting",
-    ),
-  );
-  if (node.redacted_at) return null;
-  return (
-    <PixelButton
-      size="sm"
-      tone="red"
-      variant="ghost"
-      disabled={pending}
-      onClick={() =>
-        void useDomainStore.getState().requestWorkbenchAction({
-          kind: "conversation_redact",
-          payload: { node_id: node.id, branch_id: branchId },
-          source_node_id: node.id,
-        })
-      }
-    >
-      {pending ? "等待确认" : "删除"}
-    </PixelButton>
-  );
-}
-
-function NodeActions({
-  node,
-  branchId,
-  children,
-}: {
-  node: ConversationNode;
-  branchId: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <>
-      {children}
-      <RedactButton node={node} branchId={branchId} />
-    </>
   );
 }
 
@@ -214,8 +157,10 @@ const OVERRIDE_OPTIONS: { value: IntentMode; label: string }[] = [
 
 export type ComposerNodeData = { sessionId: string; branchId: string };
 
-export const ComposerNode = memo(function ComposerNode({ data }: NodeProps) {
-  const { sessionId, branchId } = data as ComposerNodeData;
+export const ComposerNode = memo(function ComposerNode(
+  props: ComposerNodeData,
+) {
+  const { sessionId, branchId } = props;
   const draftKey = composerScopeKey(sessionId, branchId);
   const draft = useComposerStore((state) => state.drafts[draftKey]);
   const text = draft?.text ?? "";
@@ -253,17 +198,8 @@ export const ComposerNode = memo(function ComposerNode({ data }: NodeProps) {
   return (
     <section
       className="chat-node chat-node--composer px-cut px-shadowed-sm"
-      style={{ width: CHAT_NODE_WIDTH }}
       aria-label="消息编辑器"
     >
-      {/* 通常 Composer 是链尾；新建会话确认可从右侧临时接出。 */}
-      <Handle type="target" position={Position.Top} isConnectable={false} />
-      <Handle
-        id="out-r"
-        type="source"
-        position={Position.Right}
-        isConnectable={false}
-      />
       <header className="chat-node__header">
         <span className="px-font-pixel chat-node__label">输入</span>
         <span
@@ -293,7 +229,7 @@ export const ComposerNode = memo(function ComposerNode({ data }: NodeProps) {
           {images.map((image) => (
             <li key={image.id} className="chat-node__ref chat-node__ref--image">
               {image.previewUrl ? (
-                <img src={image.previewUrl} alt="" />
+                <img src={image.previewUrl} alt={image.name} />
               ) : (
                 <span aria-hidden="true">🖼</span>
               )}
@@ -395,7 +331,7 @@ export const ComposerNode = memo(function ComposerNode({ data }: NodeProps) {
 
 /* ── 业务节点 ── */
 
-type ConversationNodeData = {
+export type ConversationNodeData = {
   node: ConversationNode;
   sessionId: string;
   branchId: string;
@@ -414,10 +350,10 @@ const useBranchFrom = (sessionId: string) => {
   };
 };
 
-export const UserMessageNode = memo(function UserMessageNode({
-  data,
-}: NodeProps) {
-  const { node, sessionId, branchId, selected } = data as ConversationNodeData;
+export const UserMessageNode = memo(function UserMessageNode(
+  props: ConversationNodeData,
+) {
+  const { node, sessionId, selected } = props;
   const branchFrom = useBranchFrom(sessionId);
   return (
     <NodeShell
@@ -429,15 +365,13 @@ export const UserMessageNode = memo(function UserMessageNode({
       }
       selected={selected}
       actions={
-        <NodeActions node={node} branchId={branchId}>
-          <PixelButton
-            size="sm"
-            variant="ghost"
-            onClick={() => void branchFrom(node.id)}
-          >
-            从这里分支
-          </PixelButton>
-        </NodeActions>
+        <PixelButton
+          size="sm"
+          variant="ghost"
+          onClick={() => void branchFrom(node.id)}
+        >
+          从这里分支
+        </PixelButton>
       }
     >
       {node.redacted_at ? (
@@ -454,8 +388,10 @@ export const UserMessageNode = memo(function UserMessageNode({
   );
 });
 
-export const ProcessNode = memo(function ProcessNode({ data }: NodeProps) {
-  const { node, sessionId, branchId, selected } = data as ConversationNodeData;
+export const ProcessNode = memo(function ProcessNode(
+  props: ConversationNodeData,
+) {
+  const { node, sessionId, branchId, selected } = props;
   const streaming = node.state === "streaming";
   return (
     <NodeShell
@@ -464,11 +400,9 @@ export const ProcessNode = memo(function ProcessNode({ data }: NodeProps) {
       ariaLabel="过程节点"
       selected={selected}
       actions={
-        <NodeActions node={node} branchId={branchId}>
-          {streaming ? (
-            <StopButton sessionId={sessionId} branchId={branchId} />
-          ) : null}
-        </NodeActions>
+        streaming ? (
+          <StopButton sessionId={sessionId} branchId={branchId} />
+        ) : undefined
       }
     >
       {node.redacted_at ? (
@@ -491,8 +425,8 @@ const TOOL_STATE_LABELS: Record<string, string> = {
   failed: "失败",
 };
 
-export const ToolNode = memo(function ToolNode({ data }: NodeProps) {
-  const { node, sessionId, branchId, selected } = data as ConversationNodeData;
+export const ToolNode = memo(function ToolNode(props: ConversationNodeData) {
+  const { node, sessionId, branchId, selected } = props;
   const tool = node.tool_activity;
   const running = node.state === "running";
   return (
@@ -502,11 +436,9 @@ export const ToolNode = memo(function ToolNode({ data }: NodeProps) {
       ariaLabel={`工具节点：${tool?.name ?? ""}`}
       selected={selected}
       actions={
-        <NodeActions node={node} branchId={branchId}>
-          {running ? (
-            <StopButton sessionId={sessionId} branchId={branchId} />
-          ) : null}
-        </NodeActions>
+        running ? (
+          <StopButton sessionId={sessionId} branchId={branchId} />
+        ) : undefined
       }
     >
       {node.redacted_at ? (
@@ -534,10 +466,10 @@ export const ToolNode = memo(function ToolNode({ data }: NodeProps) {
   );
 });
 
-export const AssistantAnswerNode = memo(function AssistantAnswerNode({
-  data,
-}: NodeProps) {
-  const { node, sessionId, branchId, selected } = data as ConversationNodeData;
+export const AssistantAnswerNode = memo(function AssistantAnswerNode(
+  props: ConversationNodeData,
+) {
+  const { node, sessionId, branchId, selected } = props;
   const streaming = node.state === "streaming";
   // PRD-CHAT-003：从连续问答节点整理为需求，来源与证据自动关联
   const createRequirement = () => {
@@ -562,19 +494,13 @@ export const AssistantAnswerNode = memo(function AssistantAnswerNode({
       ariaLabel="回答节点"
       selected={selected}
       actions={
-        <NodeActions node={node} branchId={branchId}>
-          {streaming ? (
-            <StopButton sessionId={sessionId} branchId={branchId} />
-          ) : node.state === "completed" && !node.redacted_at ? (
-            <PixelButton
-              size="sm"
-              variant="outline"
-              onClick={createRequirement}
-            >
-              整理为需求
-            </PixelButton>
-          ) : null}
-        </NodeActions>
+        streaming ? (
+          <StopButton sessionId={sessionId} branchId={branchId} />
+        ) : node.state === "completed" && !node.redacted_at ? (
+          <PixelButton size="sm" variant="outline" onClick={createRequirement}>
+            整理为需求
+          </PixelButton>
+        ) : undefined
       }
     >
       {node.redacted_at ? (
@@ -591,8 +517,8 @@ export const AssistantAnswerNode = memo(function AssistantAnswerNode({
 });
 
 export const ClarificationQuestionNode = memo(
-  function ClarificationQuestionNode({ data }: NodeProps) {
-    const { node, branchId, selected } = data as ConversationNodeData;
+  function ClarificationQuestionNode(props: ConversationNodeData) {
+    const { node, selected } = props;
     const round = useDomainStore((state) =>
       node.clarification_round_id
         ? state.clarifications[node.clarification_round_id]
@@ -672,11 +598,9 @@ export const ClarificationQuestionNode = memo(
         ariaLabel="澄清问题节点"
         selected={selected}
         actions={
-          <NodeActions node={node} branchId={branchId}>
-            {effectiveState === "pending" ? (
-              <CancelRequirementButton requirementId={node.requirement_id} />
-            ) : null}
-          </NodeActions>
+          effectiveState === "pending" ? (
+            <CancelRequirementButton requirementId={node.requirement_id} />
+          ) : undefined
         }
       >
         {node.redacted_at ? (
@@ -811,17 +735,16 @@ export const ClarificationQuestionNode = memo(
   },
 );
 
-export const ClarificationAnswerNode = memo(function ClarificationAnswerNode({
-  data,
-}: NodeProps) {
-  const { node, branchId, selected } = data as ConversationNodeData;
+export const ClarificationAnswerNode = memo(function ClarificationAnswerNode(
+  props: ConversationNodeData,
+) {
+  const { node, selected } = props;
   return (
     <NodeShell
       label="澄清回答"
       state={node.state}
       ariaLabel="澄清回答节点"
       selected={selected}
-      actions={<NodeActions node={node} branchId={branchId} />}
     >
       {node.redacted_at ? (
         <RedactedContent />
@@ -832,10 +755,10 @@ export const ClarificationAnswerNode = memo(function ClarificationAnswerNode({
   );
 });
 
-export const RequirementSpecNode = memo(function RequirementSpecNode({
-  data,
-}: NodeProps) {
-  const { node, branchId, selected } = data as ConversationNodeData;
+export const RequirementSpecNode = memo(function RequirementSpecNode(
+  props: ConversationNodeData,
+) {
+  const { node, selected } = props;
   const revisions = useDomainStore((state) =>
     node.requirement_id ? (state.revisions[node.requirement_id] ?? []) : [],
   );
@@ -870,7 +793,7 @@ export const RequirementSpecNode = memo(function RequirementSpecNode({
       ariaLabel={`需求规格节点 r${node.requirement_revision ?? "?"}`}
       selected={selected}
       actions={
-        <NodeActions node={node} branchId={branchId}>
+        <>
           {!node.redacted_at ? (
             <PixelButton
               size="sm"
@@ -884,7 +807,7 @@ export const RequirementSpecNode = memo(function RequirementSpecNode({
           node.requirement_revision === requirement.latest_revision ? (
             <CancelRequirementButton requirementId={node.requirement_id} />
           ) : null}
-        </NodeActions>
+        </>
       }
     >
       {node.redacted_at ? (
@@ -959,8 +882,8 @@ export const RequirementSpecNode = memo(function RequirementSpecNode({
 });
 
 export const RequirementConfirmationNode = memo(
-  function RequirementConfirmationNode({ data }: NodeProps) {
-    const { node, branchId, selected } = data as ConversationNodeData;
+  function RequirementConfirmationNode(props: ConversationNodeData) {
+    const { node, selected } = props;
     const requirement = useDomainStore((state) =>
       node.requirement_id ? state.requirements[node.requirement_id] : undefined,
     );
@@ -1014,20 +937,18 @@ export const RequirementConfirmationNode = memo(
         ariaLabel="需求确认节点"
         selected={selected}
         actions={
-          <NodeActions node={node} branchId={branchId}>
-            {!node.redacted_at && canConfirm ? (
-              <>
-                <PixelButton
-                  size="sm"
-                  tone="green"
-                  onClick={() => void confirm()}
-                >
-                  确认并执行
-                </PixelButton>
-                <CancelRequirementButton requirementId={node.requirement_id} />
-              </>
-            ) : null}
-          </NodeActions>
+          !node.redacted_at && canConfirm ? (
+            <>
+              <PixelButton
+                size="sm"
+                tone="green"
+                onClick={() => void confirm()}
+              >
+                确认并执行
+              </PixelButton>
+              <CancelRequirementButton requirementId={node.requirement_id} />
+            </>
+          ) : undefined
         }
       >
         {node.redacted_at ? (
@@ -1070,9 +991,10 @@ export const RequirementConfirmationNode = memo(
 );
 
 export const ProcessGroupNode = memo(function ProcessGroupNode({
-  data,
-}: NodeProps) {
-  const item = data as Extract<BranchDisplayItem, { type: "process_group" }>;
+  item,
+}: {
+  item: Extract<BranchDisplayItem, { type: "process_group" }>;
+}) {
   const toggle = useCanvasStore((state) => state.toggleProcessGroup);
   const failed = item.members.some((member) => member.state === "failed");
   const toolCount = item.members.filter(

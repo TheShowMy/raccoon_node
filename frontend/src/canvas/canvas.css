@@ -94,9 +94,10 @@
 }
 
 .chat-toolbar__branch {
-  padding: 2px var(--px-space-2);
+  min-height: 32px;
+  padding: 0 var(--px-space-2);
   font-family: var(--px-font-pixel);
-  font-size: 8px;
+  font-size: 10px;
   background: var(--px-surface);
   color: var(--px-muted);
   border: var(--px-border-width) solid var(--px-border-ink);
@@ -134,18 +135,20 @@
   right: var(--px-space-2);
   z-index: 10;
   font-family: var(--px-font-pixel);
-  font-size: 8px;
+  font-size: 10px;
 }
 
 /* ── 对话节点 ── */
 
 .chat-node {
   contain: layout style;
+  width: 100%;
   padding: var(--px-space-2) var(--px-space-3);
   background: var(--px-surface-raised);
   border: var(--px-border-width) solid var(--px-border-ink);
   border-radius: var(--px-radius);
   font-size: 13px;
+  user-select: text;
 }
 
 .chat-node--composer {
@@ -166,7 +169,7 @@
 }
 
 .chat-node__label {
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .chat-node__intent {
@@ -248,8 +251,8 @@
 }
 
 .chat-node__override-option {
-  min-height: 28px;
-  padding: 0 var(--px-space-1);
+  min-height: 32px;
+  padding: 0 var(--px-space-2);
   font-size: 10px;
   background: var(--px-surface);
   color: var(--px-muted);
@@ -378,18 +381,24 @@
 }
 
 .chat-node__clarification-option:hover,
-.chat-node__clarification-option:focus-visible,
 .chat-node__clarification-option[data-active] {
   color: var(--px-primary);
   background: color-mix(in srgb, var(--px-primary) 10%, var(--px-surface));
   border-color: var(--px-primary);
-  outline: none;
+}
+
+.chat-node__clarification-option:focus-visible {
+  color: var(--px-primary);
+  background: color-mix(in srgb, var(--px-primary) 10%, var(--px-surface));
+  border-color: var(--px-primary);
+  outline: 2px solid var(--px-info);
+  outline-offset: 2px;
 }
 
 .chat-node__clarification-marker,
 .chat-node__recommended {
   font-family: var(--px-font-pixel);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .chat-node__clarification-copy {
@@ -426,13 +435,45 @@
   font-size: 11px;
 }
 
-/* 语义缩放：远景只保留类型/阶段摘要（FE-CHAT-013） */
-.conversation-graph[data-compact] .chat-node__content,
-.conversation-graph[data-compact] .chat-node__summary,
-.conversation-graph[data-compact] .chat-node__meta,
-.conversation-graph[data-compact] .chat-node__actions,
-.conversation-graph[data-compact] .chat-node__shell {
-  display: none;
+/* 语义缩放已随画布移除（v1 列表形态）；保留类名占位以防旧快照残留 */
+.conversation-graph[data-compact] {
+  /* no-op */
+}
+
+/* ── 对话列表（节点外观的垂直流；v1 起中央对话不再是嵌套画布） ── */
+
+.chat-list {
+  position: absolute;
+  inset: 0;
+  /* 垂直留白由滚动内容内的 spacer 提供（跟随滚动的偏移数学计入它们） */
+  padding: 0 var(--px-space-4);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.chat-row {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+.chat-row + .chat-row {
+  margin-top: var(--px-space-3);
+}
+
+/* 节点脊椎线：保持节点图观感 */
+.chat-row:has(+ .chat-row)::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  height: var(--px-space-3);
+  border-left: var(--px-border-width) solid var(--px-muted);
+  pointer-events: none;
+}
+
+.chat-row__inner {
+  width: min(720px, 100%);
 }
 
 /* ── 射线工作台节点 ── */
@@ -446,6 +487,7 @@
   border: var(--px-border-width) solid var(--px-border-ink);
   border-radius: var(--px-radius);
   overflow: hidden;
+  user-select: text;
 }
 
 .workbench-node__header {
@@ -472,11 +514,6 @@
 .workbench-node__body[data-fill] {
   padding: 0;
   overflow: hidden;
-}
-
-.workbench-node__placeholder {
-  margin: 0;
-  color: var(--px-muted);
 }
 
 /* ── 启动画面 ── */

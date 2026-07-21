@@ -1,5 +1,4 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { ReactFlowProvider, type NodeProps } from "@xyflow/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import type {
   ClarificationMode,
@@ -80,13 +79,12 @@ function renderRound(mode: ClarificationMode) {
     requirements: { [requirement.id]: requirement },
     clarifications: { [clarification.id]: clarification },
   });
-  const props = {
-    data: { node, branchId: "b-main" },
-  } as unknown as NodeProps;
   return render(
-    <ReactFlowProvider>
-      <ClarificationQuestionNode {...props} />
-    </ReactFlowProvider>,
+    <ClarificationQuestionNode
+      node={node}
+      sessionId="s-main"
+      branchId="b-main"
+    />,
   );
 }
 

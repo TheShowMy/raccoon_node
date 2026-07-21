@@ -86,7 +86,7 @@ export function TerminalWorkbench() {
             }
           />
         ) : (
-          <div className="workbench-empty">
+          <div className="tool-empty-state">
             <strong>尚无终端会话</strong>
             <span>新建后只挂载当前活动的 xterm。</span>
           </div>

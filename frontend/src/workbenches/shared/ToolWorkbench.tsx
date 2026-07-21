@@ -117,6 +117,36 @@ export function WorkbenchTabs<T extends string>({
       className={`workbench-tabs${className ? ` ${className}` : ""}`}
       role="tablist"
       aria-label={ariaLabel}
+      onKeyDown={(event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+          return;
+        }
+        event.preventDefault();
+        const items = Array.from(
+          event.currentTarget.querySelectorAll<HTMLButtonElement>(
+            '[role="tab"]',
+          ),
+        );
+        const current = items.findIndex((el) => el === document.activeElement);
+        if (current === -1) {
+          return;
+        }
+        let next = current;
+        if (event.key === "ArrowRight") {
+          next = (current + 1) % items.length;
+        } else if (event.key === "ArrowLeft") {
+          next = (current - 1 + items.length) % items.length;
+        } else if (event.key === "Home") {
+          next = 0;
+        } else if (event.key === "End") {
+          next = items.length - 1;
+        }
+        items[next]?.focus();
+        const target = tabs[next];
+        if (target) {
+          onChange(target.id);
+        }
+      }}
     >
       {tabs.map((tab) => (
         <button
@@ -124,6 +154,7 @@ export function WorkbenchTabs<T extends string>({
           type="button"
           role="tab"
           aria-selected={active === tab.id}
+          tabIndex={active === tab.id ? 0 : -1}
           className="workbench-tabs__tab"
           data-active={active === tab.id || undefined}
           onClick={() => onChange(tab.id)}

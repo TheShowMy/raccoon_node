@@ -100,7 +100,7 @@ export const RepositoryContent = memo(function RepositoryContent({
         <strong>{git.changes.length}</strong>
       </button>
       <div className="git-nav-section">
-        <h4 className="tool-section-title">Branches</h4>
+        <h4 className="workbench-section-heading">Branches</h4>
         <ul className="git-branch-list" aria-label="分支列表">
           {git.branches.map((branch) => (
             <li key={branch.name} data-current={branch.current || undefined}>
@@ -399,7 +399,7 @@ export const ChangesContent = memo(function ChangesContent({
         ) : (
           groups.map((group) => (
             <section key={group.status} className="git-change-group">
-              <h4 className="tool-section-title">
+              <h4 className="workbench-section-heading">
                 <span>
                   {CHANGE_STATUS_LABELS[group.status]}（{group.changes.length}）
                 </span>

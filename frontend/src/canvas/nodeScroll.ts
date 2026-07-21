@@ -1,6 +1,7 @@
 import { useCanvasStore } from "../store/canvasStore";
 
 const SCROLLABLE_SELECTOR = [
+  ".chat-list",
   ".chat-node__content--scroll",
   ".req-list__scroll",
   ".ftree",
@@ -15,13 +16,15 @@ const SCROLLABLE_SELECTOR = [
 ].join(",");
 
 function elementKey(element: HTMLElement, scope: string): string | null {
+  // 列表行内滚动区优先归属行 id；列表自身与 pane 走 data-scroll-key
+  const rowId = element.closest<HTMLElement>(".chat-row")?.dataset.id;
   const scrollKey =
     element.dataset.scrollKey ??
     element.closest<HTMLElement>("[data-scroll-key]")?.dataset.scrollKey;
   const nodeId = element.closest<HTMLElement>(".react-flow__node")?.dataset.id;
   const workbench =
     element.closest<HTMLElement>("[data-workbench]")?.dataset.workbench;
-  const ownerId = scrollKey ?? nodeId ?? workbench;
+  const ownerId = rowId ?? scrollKey ?? nodeId ?? workbench;
   if (!ownerId) return null;
   const scrollClass = [...element.classList]
     .filter((name) => !["nodrag", "nowheel"].includes(name))

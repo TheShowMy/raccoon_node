@@ -9,14 +9,14 @@
   --px-surface: #f5f9ef;
   --px-surface-raised: #fdfff9;
   --px-ink: #263425;
-  --px-muted: #6d7d68;
+  --px-muted: #55654f;
   --px-border-ink: #263425;
 
-  --px-primary: #2e9e5b;
-  --px-success: #2e9e5b;
-  --px-warning: #d99a17;
-  --px-danger: #d24545;
-  --px-info: #3b82d6;
+  --px-primary: #247a46;
+  --px-success: #247a46;
+  --px-warning: #8a6100;
+  --px-danger: #b93a3a;
+  --px-info: #2f6cb8;
 
   /* 画布像素网格点 */
   --px-grid-dot: rgb(38 52 37 / 0.1);
@@ -28,8 +28,12 @@
   --px-radius: 0;
   --px-cut: 6px;
 
-  /* 字体：位图字体仅标题/标签；正文与代码高可读 */
-  --px-font-pixel: "Press Start 2P", monospace;
+  /* 字体：位图字体仅标题/标签；正文与代码高可读。
+     Press Start 2P 无 CJK 字形，中文回退到系统黑体保持可读；
+     应用 pixel 字体的文本字号不得低于 10px。 */
+  --px-font-pixel:
+    "Press Start 2P", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    monospace;
   --px-font-body:
     system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
     sans-serif;
