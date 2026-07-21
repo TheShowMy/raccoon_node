@@ -1,9 +1,8 @@
 import { PixelButton } from "@pxlkit/ui-kit";
-import type { NodeProps } from "@xyflow/react";
-import { memo } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { getApi } from "../../api";
 import type { WorkbenchAction } from "../../api/types";
 import { DNode } from "../../components/DNode";
-import { useDomainStore } from "../../store/domainStore";
 
 /**
  * 工作台危险操作确认链节点（FE-CANVAS-019）：
@@ -20,6 +19,17 @@ function ActionConfirmationContent({
 }) {
   const awaiting = action.state === "awaiting";
   const sessionSwitch = action.kind === "conversation_new_session";
+  const confirmMutation = useMutation({
+    mutationFn: (current: WorkbenchAction) =>
+      getApi().confirmWorkbenchAction({
+        action_id: current.id,
+        confirm_token: current.confirm_token,
+      }),
+  });
+  const cancelMutation = useMutation({
+    mutationFn: (actionId: string) => getApi().cancelWorkbenchAction(actionId),
+  });
+  const mutationPending = confirmMutation.isPending || cancelMutation.isPending;
   return (
     <DNode
       icon="action"
@@ -38,18 +48,16 @@ function ActionConfirmationContent({
             <PixelButton
               size="sm"
               tone={sessionSwitch ? "cyan" : "red"}
-              onClick={() =>
-                void useDomainStore.getState().confirmWorkbenchAction(action)
-              }
+              disabled={mutationPending}
+              onClick={() => confirmMutation.mutate(action)}
             >
               确认执行
             </PixelButton>
             <PixelButton
               size="sm"
               variant="outline"
-              onClick={() =>
-                void useDomainStore.getState().cancelWorkbenchAction(action.id)
-              }
+              disabled={mutationPending}
+              onClick={() => cancelMutation.mutate(action.id)}
             >
               取消
             </PixelButton>
@@ -119,17 +127,3 @@ export function ActionConfirmationCard({
 export function ActionResultCard({ action }: { action: WorkbenchAction }) {
   return <ActionResultContent action={action} handles={false} width="100%" />;
 }
-
-export const WorkbenchActionConfirmationNode = memo(
-  function WorkbenchActionConfirmationNode({ data }: NodeProps) {
-    const { action } = data as { action: WorkbenchAction };
-    return <ActionConfirmationContent action={action} handles width={340} />;
-  },
-);
-
-export const WorkbenchActionResultNode = memo(
-  function WorkbenchActionResultNode({ data }: NodeProps) {
-    const { action } = data as { action: WorkbenchAction };
-    return <ActionResultContent action={action} handles width={340} />;
-  },
-);

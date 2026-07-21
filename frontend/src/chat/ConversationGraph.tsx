@@ -1,13 +1,15 @@
 import { PixelButton } from "@pxlkit/ui-kit";
+import { useMutation } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useMatch, useNavigate } from "react-router-dom";
 import {
   persistScrollPosition,
   restoreScrollPositions,
 } from "../canvas/nodeScroll";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { getApi } from "../api";
 import { useCanvasStore } from "../store/canvasStore";
-import { useDomainStore } from "../store/domainStore";
+import { selectActiveConversation, useDomainStore } from "../store/domainStore";
 import type { ConversationBranch, WorkbenchAction } from "../api/types";
 import {
   ActionConfirmationCard,
@@ -17,7 +19,7 @@ import {
   branchActiveNodes,
   deriveBranchInputGate,
   displayItemId,
-  estimatedDisplayItemSize,
+  estimatedDisplayItemHeight,
   followTargetItem,
   projectBranchDisplay,
   type BranchDisplayItem,
@@ -102,7 +104,7 @@ const FOLLOW_BOTTOM_MARGIN = 24;
 const PAUSE_DISTANCE_PX = 48;
 
 function estimateRowHeight(row: ChatRow): number {
-  if (row.kind === "item") return estimatedDisplayItemSize(row.item).height;
+  if (row.kind === "item") return estimatedDisplayItemHeight(row.item);
   return row.kind === "action_confirmation"
     ? ACTION_CONFIRM_ESTIMATE
     : ACTION_RESULT_ESTIMATE;
@@ -207,9 +209,10 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
   const restoredScopeRef = useRef<string | null>(null);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const navigate = useNavigate();
-  const params = useParams<{ branchId?: string; nodeId?: string }>();
+  const params: { branchId?: string; nodeId?: string } =
+    useMatch("/canvas/chat/branches/:branchId/nodes/:nodeId")?.params ?? {};
 
-  const conversation = useDomainStore((state) => state.conversation);
+  const conversation = useDomainStore(selectActiveConversation);
   const sessionId = useDomainStore(
     (state) => state.activeConversationSessionId,
   );
@@ -566,6 +569,20 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
     if (!targetId || following) return;
     const list = listRef.current;
     if (!list) return;
+    const index = rows.findIndex((row) => row.id === targetId);
+    if (index === -1) {
+      pendingFocusRef.current = null;
+      return;
+    }
+    if (windowed) {
+      pendingFocusRef.current = null;
+      programmaticUntilRef.current = Date.now() + 600;
+      list.scrollTo({
+        top: Math.max(0, layout.offsets[index] - list.clientHeight / 2),
+        behavior: "auto",
+      });
+      return;
+    }
     const element = list.querySelector<HTMLElement>(
       `[data-id="${CSS.escape(targetId)}"]`,
     );
@@ -578,18 +595,13 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
       });
       return;
     }
-    const index = rows.findIndex((row) => row.id === targetId);
-    if (index === -1) {
-      pendingFocusRef.current = null;
-      return;
-    }
     programmaticUntilRef.current = Date.now() + 600;
     list.scrollTo({
       top: Math.max(0, layout.offsets[index] - list.clientHeight / 2),
       behavior: "auto",
     });
     // scrollTop 更新后本效应重试，直到目标行进入窗口被渲染
-  }, [following, rows, layout, scrollTop, reducedMotion]);
+  }, [following, rows, layout, scrollTop, reducedMotion, windowed]);
 
   const branches = useMemo(
     () => Object.values(conversation.branches),
@@ -605,8 +617,36 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
       ) ?? null,
     [sessionId, workbenchActions],
   );
-  const [creatingSession, setCreatingSession] = useState(false);
   const creatingSessionRef = useRef(false);
+  const requestSessionMutation = useMutation({
+    mutationFn: (input: {
+      source_node_id: string;
+      session_id: string;
+      branch_id: string;
+    }) =>
+      getApi().requestWorkbenchAction({
+        kind: "conversation_new_session",
+        source_node_id: input.source_node_id,
+        payload: {
+          session_id: input.session_id,
+          branch_id: input.branch_id,
+        },
+      }),
+    onSettled: () => {
+      creatingSessionRef.current = false;
+    },
+  });
+  const createSessionMutation = useMutation({
+    mutationFn: (idempotencyKey: string) =>
+      getApi().createConversationSession({
+        idempotency_key: idempotencyKey,
+      }),
+    onSettled: () => {
+      creatingSessionRef.current = false;
+    },
+  });
+  const creatingSession =
+    requestSessionMutation.isPending || createSessionMutation.isPending;
 
   /* 新建会话确认：暂停跟随并定位确认行；关闭后恢复原滚动位置（FE-CHAT-025） */
   useEffect(() => {
@@ -638,7 +678,7 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
     }
   }, [sessionId]);
 
-  const createSession = useCallback(async () => {
+  const createSession = useCallback(() => {
     if (
       creatingSessionRef.current ||
       creatingSession ||
@@ -653,36 +693,24 @@ const ConversationGraphInner = memo(function ConversationGraphInner() {
     const sourceId = rows.at(-1)?.id ?? `composer:${branchId}`;
     if (hasDraft || active.length > 0 || inputGate) {
       creatingSessionRef.current = true;
-      setCreatingSession(true);
-      try {
-        await useDomainStore.getState().requestWorkbenchAction({
-          kind: "conversation_new_session",
-          source_node_id: sourceId,
-          payload: { session_id: sessionId, branch_id: branchId },
-        });
-      } finally {
-        creatingSessionRef.current = false;
-        setCreatingSession(false);
-      }
+      requestSessionMutation.mutate({
+        source_node_id: sourceId,
+        session_id: sessionId,
+        branch_id: branchId,
+      });
       return;
     }
     creatingSessionRef.current = true;
-    setCreatingSession(true);
-    try {
-      await useDomainStore
-        .getState()
-        .createConversationSession(crypto.randomUUID());
-    } finally {
-      creatingSessionRef.current = false;
-      setCreatingSession(false);
-    }
+    createSessionMutation.mutate(crypto.randomUUID());
   }, [
     branchId,
     conversation,
     conversationScope,
     creatingSession,
+    createSessionMutation,
     inputGate,
     pendingNewSessionAction,
+    requestSessionMutation,
     rows,
     sessionId,
   ]);

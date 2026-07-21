@@ -96,7 +96,10 @@ function notification(
 
 beforeEach(() => {
   useDomainStore.setState({
-    conversation: createGraphState("g-main", "b-main"),
+    activeConversationSessionId: "s-main",
+    conversationGraphs: {
+      "s-main": createGraphState("g-main", "b-main"),
+    },
     notifications: {},
   });
   useCanvasStore.setState({ ...initialCanvasNavigationState });

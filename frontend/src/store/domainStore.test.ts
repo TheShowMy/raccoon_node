@@ -9,7 +9,8 @@ import {
   type ConversationSession,
 } from "../api/types";
 import { selectNotificationQueue } from "../notifications/queue";
-import { useDomainStore } from "./domainStore";
+import { createGraphState } from "../chat/dag";
+import { selectActiveConversation, useDomainStore } from "./domainStore";
 
 function makeNotification(
   partial: Partial<Notification> & Pick<Notification, "id">,
@@ -211,10 +212,66 @@ describe("多会话事件投影", () => {
 
     const state = useDomainStore.getState();
     expect(state.activeConversationSessionId).toBe(nextSession.id);
-    expect(state.conversation.nodes).toEqual({});
+    expect(selectActiveConversation(state).nodes).toEqual({});
     expect(state.conversationGraphs[oldSession.id].nodes[lateNode.id]).toEqual(
       lateNode,
     );
     expect(state.recentConversationNodeId).toBeNull();
+  });
+
+  it("活动 selector 只读取 active session 对应图", () => {
+    const active = createGraphState("g-active", "b-active");
+    useDomainStore.setState({
+      activeConversationSessionId: "s-active",
+      conversationGraphs: {
+        "s-old": createGraphState("g-old", "b-old"),
+        "s-active": active,
+      },
+    });
+    expect(selectActiveConversation(useDomainStore.getState())).toBe(active);
+  });
+
+  it("超过十张图时始终保留新活动图", () => {
+    useDomainStore.setState({
+      activeConversationSessionId: "s-0",
+      conversationSessions: {
+        "s-0": {
+          id: "s-0",
+          graph_id: "g-0",
+          root_branch_id: "b-0",
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+        },
+      },
+      conversationGraphs: { "s-0": createGraphState("g-0", "b-0") },
+    });
+
+    for (let index = 1; index <= 11; index += 1) {
+      const session: ConversationSession = {
+        id: `s-${index}`,
+        graph_id: `g-${index}`,
+        root_branch_id: `b-${index}`,
+        created_at: `2026-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+        updated_at: `2026-01-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+      };
+      const created = envelope(index, "conversation.session.created", {
+        session,
+        graph: {
+          graph_id: session.graph_id,
+          root_branch_id: session.root_branch_id,
+          nodes: [],
+          branches: [],
+        },
+        active: true,
+      });
+      created.aggregate_type = "conversation";
+      created.aggregate_id = session.graph_id;
+      useDomainStore.getState().applyEvent(created);
+    }
+
+    const state = useDomainStore.getState();
+    expect(state.activeConversationSessionId).toBe("s-11");
+    expect(state.conversationGraphs["s-11"]).toBeDefined();
+    expect(Object.keys(state.conversationGraphs)).toHaveLength(10);
   });
 });

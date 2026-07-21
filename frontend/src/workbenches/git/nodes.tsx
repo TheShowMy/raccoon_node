@@ -1,5 +1,7 @@
 import { PixelButton } from "@pxlkit/ui-kit";
+import { useMutation } from "@tanstack/react-query";
 import { memo, useEffect, useRef, useState } from "react";
+import { getApi } from "../../api";
 import { CHANGE_STATUS_LABELS, groupChanges } from "../../api/git";
 import type {
   GitChange,
@@ -8,16 +10,19 @@ import type {
   WorkbenchActionKind,
 } from "../../api/types";
 import { DiffView } from "../../components/DiffView";
-import { useDomainStore } from "../../store/domainStore";
 import { useGitStore } from "../../store/gitStore";
 
-function requestGit(
-  kind: WorkbenchActionKind,
-  payload: Record<string, string>,
-) {
-  void useDomainStore
-    .getState()
-    .requestWorkbenchAction({ kind, payload, source_node_id: null });
+function useRequestGit() {
+  return useMutation({
+    mutationFn: (input: {
+      kind: WorkbenchActionKind;
+      payload: Record<string, string>;
+    }) =>
+      getApi().requestWorkbenchAction({
+        ...input,
+        source_node_id: null,
+      }),
+  });
 }
 
 export const GitToolbarContent = memo(function GitToolbarContent({
@@ -29,6 +34,7 @@ export const GitToolbarContent = memo(function GitToolbarContent({
 }) {
   const current = git.branches.find((branch) => branch.current);
   const locked = git.write_lock.locked;
+  const requestMutation = useRequestGit();
   return (
     <>
       <div className="git-toolbar__identity">
@@ -45,8 +51,10 @@ export const GitToolbarContent = memo(function GitToolbarContent({
         <PixelButton
           size="sm"
           variant="outline"
-          disabled={locked}
-          onClick={() => requestGit("git_fetch", {})}
+          disabled={locked || requestMutation.isPending}
+          onClick={() =>
+            requestMutation.mutate({ kind: "git_fetch", payload: {} })
+          }
           data-action-source="git_fetch"
           data-action-source-active={
             activeSourceKey === "git_fetch" || undefined
@@ -57,8 +65,12 @@ export const GitToolbarContent = memo(function GitToolbarContent({
         <PixelButton
           size="sm"
           variant="outline"
-          disabled={locked || (current?.behind ?? 0) === 0}
-          onClick={() => requestGit("git_pull", {})}
+          disabled={
+            locked || requestMutation.isPending || (current?.behind ?? 0) === 0
+          }
+          onClick={() =>
+            requestMutation.mutate({ kind: "git_pull", payload: {} })
+          }
           data-action-source="git_pull"
           data-action-source-active={
             activeSourceKey === "git_pull" || undefined
@@ -70,8 +82,12 @@ export const GitToolbarContent = memo(function GitToolbarContent({
           size="sm"
           tone="cyan"
           variant="outline"
-          disabled={locked || (current?.ahead ?? 0) === 0}
-          onClick={() => requestGit("git_push", {})}
+          disabled={
+            locked || requestMutation.isPending || (current?.ahead ?? 0) === 0
+          }
+          onClick={() =>
+            requestMutation.mutate({ kind: "git_push", payload: {} })
+          }
           data-action-source="git_push"
           data-action-source-active={
             activeSourceKey === "git_push" || undefined
@@ -93,6 +109,7 @@ export const RepositoryContent = memo(function RepositoryContent({
 }) {
   const newBranchName = useGitStore((state) => state.newBranchName);
   const locked = git.write_lock.locked;
+  const requestMutation = useRequestGit();
   return (
     <>
       <button type="button" className="git-nav-item" data-active>
@@ -106,9 +123,12 @@ export const RepositoryContent = memo(function RepositoryContent({
             <li key={branch.name} data-current={branch.current || undefined}>
               <button
                 type="button"
-                disabled={locked || branch.current}
+                disabled={locked || requestMutation.isPending || branch.current}
                 onClick={() =>
-                  requestGit("git_switch_branch", { branch: branch.name })
+                  requestMutation.mutate({
+                    kind: "git_switch_branch",
+                    payload: { branch: branch.name },
+                  })
                 }
                 data-action-source="git_switch_branch"
                 data-action-source-active={
@@ -140,9 +160,14 @@ export const RepositoryContent = memo(function RepositoryContent({
           size="sm"
           tone="green"
           variant="outline"
-          disabled={locked || !newBranchName.trim()}
+          disabled={
+            locked || requestMutation.isPending || !newBranchName.trim()
+          }
           onClick={() =>
-            requestGit("git_create_branch", { branch: newBranchName.trim() })
+            requestMutation.mutate({
+              kind: "git_create_branch",
+              payload: { branch: newBranchName.trim() },
+            })
           }
           data-action-source="git_create_branch"
           data-action-source-active={
@@ -175,13 +200,25 @@ function ChangeRow({
     state.selectedChangePaths.includes(change.path),
   );
   const selectable = change.status !== "conflicted";
-  const run = async (fn: () => Promise<GitMutationResult>) => {
-    const result = await fn();
+  const handleResult = (result: GitMutationResult) => {
     setError(result.ok ? null : result.message);
     if (result.ok) {
       useGitStore.getState().removeSelectedChanges(result.changed_paths);
     }
   };
+  const stageMutation = useMutation({
+    mutationFn: () => getApi().stageChanges([change.path]),
+    onSuccess: handleResult,
+  });
+  const unstageMutation = useMutation({
+    mutationFn: () => getApi().unstageChanges([change.path]),
+    onSuccess: handleResult,
+  });
+  const requestMutation = useRequestGit();
+  const mutationPending =
+    stageMutation.isPending ||
+    unstageMutation.isPending ||
+    requestMutation.isPending;
   return (
     <li
       className="git-change-row"
@@ -236,13 +273,9 @@ function ChangeRow({
             <button
               type="button"
               className="git-change-row__action"
-              disabled={locked}
+              disabled={locked || mutationPending}
               aria-label={`暂存 ${change.path}`}
-              onClick={() =>
-                void run(() =>
-                  useDomainStore.getState().stageChanges([change.path]),
-                )
-              }
+              onClick={() => stageMutation.mutate()}
             >
               暂存
             </button>
@@ -251,13 +284,9 @@ function ChangeRow({
             <button
               type="button"
               className="git-change-row__action"
-              disabled={locked}
+              disabled={locked || mutationPending}
               aria-label={`取消暂存 ${change.path}`}
-              onClick={() =>
-                void run(() =>
-                  useDomainStore.getState().unstageChanges([change.path]),
-                )
-              }
+              onClick={() => unstageMutation.mutate()}
             >
               取消暂存
             </button>
@@ -266,9 +295,14 @@ function ChangeRow({
             <button
               type="button"
               className="git-change-row__action git-change-row__action--danger"
-              disabled={locked}
+              disabled={locked || mutationPending}
               aria-label={`丢弃 ${change.path}`}
-              onClick={() => requestGit("git_discard", { path: change.path })}
+              onClick={() =>
+                requestMutation.mutate({
+                  kind: "git_discard",
+                  payload: { path: change.path },
+                })
+              }
             >
               丢弃
             </button>
@@ -329,7 +363,6 @@ export const ChangesContent = memo(function ChangesContent({
   const message = useGitStore((state) => state.commitMessage);
   const selectedPaths = useGitStore((state) => state.selectedChangePaths);
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
-  const [bulkBusy, setBulkBusy] = useState(false);
   const staged = git.changes.filter((change) => change.status === "staged");
   const selectedChanges = git.changes.filter((change) =>
     selectedPaths.includes(change.path),
@@ -340,18 +373,22 @@ export const ChangesContent = memo(function ChangesContent({
   const unstageablePaths = selectedChanges
     .filter((change) => change.status === "staged")
     .map((change) => change.path);
-  const runBatch = async (
-    operation: (paths: string[]) => Promise<GitMutationResult>,
-    paths: string[],
-  ) => {
-    setBulkBusy(true);
-    const result = await operation(paths);
-    setBulkBusy(false);
+  const handleBatchResult = (result: GitMutationResult) => {
     setBulkMessage(result.message);
     if (result.ok) {
       useGitStore.getState().removeSelectedChanges(result.changed_paths);
     }
   };
+  const stageMutation = useMutation({
+    mutationFn: (paths: string[]) => getApi().stageChanges(paths),
+    onSuccess: handleBatchResult,
+  });
+  const unstageMutation = useMutation({
+    mutationFn: (paths: string[]) => getApi().unstageChanges(paths),
+    onSuccess: handleBatchResult,
+  });
+  const requestMutation = useRequestGit();
+  const bulkBusy = stageMutation.isPending || unstageMutation.isPending;
   return (
     <div className="git-changes-layout">
       <div className="git-bulk-toolbar" aria-label="Git 批量操作">
@@ -360,12 +397,7 @@ export const ChangesContent = memo(function ChangesContent({
           type="button"
           disabled={locked || bulkBusy || stageablePaths.length === 0}
           title={locked ? "写锁占用，批量写操作不可用" : undefined}
-          onClick={() =>
-            void runBatch(
-              useDomainStore.getState().stageChanges,
-              stageablePaths,
-            )
-          }
+          onClick={() => stageMutation.mutate(stageablePaths)}
         >
           暂存所选（{stageablePaths.length}）
         </button>
@@ -373,12 +405,7 @@ export const ChangesContent = memo(function ChangesContent({
           type="button"
           disabled={locked || bulkBusy || unstageablePaths.length === 0}
           title={locked ? "写锁占用，批量写操作不可用" : undefined}
-          onClick={() =>
-            void runBatch(
-              useDomainStore.getState().unstageChanges,
-              unstageablePaths,
-            )
-          }
+          onClick={() => unstageMutation.mutate(unstageablePaths)}
         >
           取消暂存（{unstageablePaths.length}）
         </button>
@@ -449,8 +476,18 @@ export const ChangesContent = memo(function ChangesContent({
         <PixelButton
           size="sm"
           tone="green"
-          disabled={locked || staged.length === 0 || !message.trim()}
-          onClick={() => requestGit("git_commit", { message: message.trim() })}
+          disabled={
+            locked ||
+            requestMutation.isPending ||
+            staged.length === 0 ||
+            !message.trim()
+          }
+          onClick={() =>
+            requestMutation.mutate({
+              kind: "git_commit",
+              payload: { message: message.trim() },
+            })
+          }
         >
           提交（需确认）
         </PixelButton>

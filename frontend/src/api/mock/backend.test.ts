@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEventApplier } from "../../events/applier";
 import { createNdjsonDecoder } from "../../events/ndjson";
-import { useDomainStore } from "../../store/domainStore";
+import {
+  selectActiveConversation,
+  useDomainStore,
+} from "../../store/domainStore";
 import { projectBranchDisplay } from "../../chat/dag";
 import { FakeBackend } from "./backend";
+
+const activeConversation = () =>
+  selectActiveConversation(useDomainStore.getState());
 
 /**
  * 假数据层端到端：FakeBackend 命令 → NDJSON 事件流 → sequence 对账 →
@@ -161,14 +167,14 @@ describe("FakeBackend 端到端（假 LLM 脚本 + NDJSON 流）", () => {
     });
 
     await waitFor(() => {
-      const { conversation } = useDomainStore.getState();
+      const conversation = activeConversation();
       return Object.values(conversation.nodes).some(
         (node) =>
           node.kind === "assistant_answer" && node.state === "completed",
       );
     });
 
-    const { conversation } = useDomainStore.getState();
+    const conversation = activeConversation();
     const nodes = Object.values(conversation.nodes);
     // 链完整：用户 → 过程 → 工具 → 过程 → 回答
     expect(
@@ -206,19 +212,19 @@ describe("FakeBackend 端到端（假 LLM 脚本 + NDJSON 流）", () => {
       intent: "auto",
     });
     await waitFor(() => {
-      const { conversation } = useDomainStore.getState();
+      const conversation = activeConversation();
       return Object.values(conversation.nodes).some(
         (node) => node.state === "streaming" && node.content.length > 0,
       );
     });
     await backend.abortResponse("s-main", "b-main");
     await waitFor(() => {
-      const { conversation } = useDomainStore.getState();
+      const conversation = activeConversation();
       return Object.values(conversation.nodes).some(
         (node) => node.state === "aborted",
       );
     });
-    const { conversation } = useDomainStore.getState();
+    const conversation = activeConversation();
     const aborted = Object.values(conversation.nodes).filter(
       (node) => node.state === "aborted",
     );
@@ -242,28 +248,27 @@ describe("FakeBackend 端到端（假 LLM 脚本 + NDJSON 流）", () => {
       intent: "auto",
     });
     await waitFor(() => {
-      const { conversation } = useDomainStore.getState();
+      const conversation = activeConversation();
       return Object.values(conversation.nodes).some(
         (node) =>
           node.kind === "assistant_answer" && node.state === "completed",
       );
     });
-    const answer = Object.values(
-      useDomainStore.getState().conversation.nodes,
-    ).find((node) => node.kind === "assistant_answer")!;
+    const answer = Object.values(activeConversation().nodes).find(
+      (node) => node.kind === "assistant_answer",
+    )!;
     const { branch } = await backend.branchFrom({
       session_id: "s-main",
       node_id: answer.id,
     });
-    const anchor =
-      useDomainStore.getState().conversation.nodes[branch.anchor_node_id!];
+    const anchor = activeConversation().nodes[branch.anchor_node_id!];
     expect(anchor.kind).toBe("user_message");
     // 事件流已把新分支同步到投影
     await waitFor(() => {
-      const { conversation } = useDomainStore.getState();
+      const conversation = activeConversation();
       return Boolean(conversation.branches[branch.id]);
     });
-    const shared = useDomainStore.getState().conversation.nodes[anchor.id];
+    const shared = activeConversation().nodes[anchor.id];
     expect(shared.branch_ids).toContain(branch.id);
   }, 15_000);
 });

@@ -1,28 +1,20 @@
 import { create } from "zustand";
-import { getApi } from "../api";
-import type { SendMessageInput } from "../api/client";
 import type {
   AppSettings,
   ApplicationSnapshot,
-  ClarificationAnswer,
   ClarificationRound,
   ConversationGraphSnapshot,
   ConversationSession,
   DomainEventPayload,
   EventEnvelope,
   EventType,
-  GitMutationResult,
   GitRepoState,
-  ModelRef,
-  ModelRole,
   Notification,
   PendingAction,
-  PendingActionKind,
   ProviderInfo,
   Publication,
   Requirement,
   RequirementRevision,
-  RequirementSpec,
   RoleAssignResult,
   RoleProfile,
   Run,
@@ -31,8 +23,6 @@ import type {
   TerminalSession,
   UsageState,
   WorkbenchAction,
-  WorkbenchActionKind,
-  WorkItem,
   WorkPlan,
 } from "../api/types";
 import type { EventConnectionState } from "../events/connect";
@@ -54,7 +44,6 @@ export type DomainState = {
   snapshotLoaded: boolean;
   lastSequence: number;
   connection: EventConnectionState;
-  conversation: ConversationGraphState;
   activeConversationSessionId: string;
   conversationSessions: Record<string, ConversationSession>;
   conversationGraphs: Record<string, ConversationGraphState>;
@@ -87,91 +76,10 @@ export type DomainState = {
   initFromSnapshot: (snapshot: ApplicationSnapshot) => void;
   applyEvent: (envelope: EventEnvelope) => void;
   setConnection: (state: EventConnectionState) => void;
-
-  sendMessage: (input: SendMessageInput) => Promise<void>;
-  createConversationSession: (idempotencyKey: string) => Promise<void>;
-  abortResponse: (sessionId: string, branchId: string) => Promise<void>;
-  branchFromNode: (sessionId: string, nodeId: string) => Promise<string | null>;
-  acknowledgeNotification: (notificationId: string) => Promise<void>;
-
-  /* ── 需求交付命令 ── */
-  createRequirementFromChat: (input: {
-    session_id: string;
-    branch_id: string;
-    node_ids: string[];
-    title?: string;
-  }) => Promise<string>;
-  answerClarification: (input: {
-    requirement_id: string;
-    round_id: string;
-    answer: ClarificationAnswer;
-  }) => Promise<void>;
-  cancelRequirement: (requirementId: string) => Promise<void>;
-  updateSpec: (input: {
-    requirement_id: string;
-    base_revision: number;
-    spec: RequirementSpec;
-  }) => Promise<{ revision: number; conflict: boolean }>;
-  confirmRequirement: (input: {
-    requirement_id: string;
-    revision: number;
-    task_budget_usd: number;
-  }) => Promise<{ run_id: string | null; conflict: boolean }>;
-  reorderQueue: (requirementIds: string[]) => Promise<{ ok: boolean }>;
-  pauseRun: (runId: string) => Promise<void>;
-  resumeRun: (runId: string) => Promise<void>;
-  retryRun: (runId: string) => Promise<void>;
-  updateWorkItem: (input: {
-    run_id: string;
-    item_id: string;
-    patch: Partial<
-      Pick<
-        WorkItem,
-        "title" | "scenario_ids" | "verification_target" | "depends_on"
-      >
-    >;
-  }) => Promise<{ plan_revision: number }>;
-  requestAction: (input: {
-    kind: PendingActionKind;
-    run_id: string;
-  }) => Promise<string>;
-  confirmAction: (actionId: string) => Promise<void>;
-  cancelAction: (actionId: string) => Promise<void>;
-
-  /* ── P3 工作台命令 ── */
-  stageChanges: (paths: string[]) => Promise<GitMutationResult>;
-  unstageChanges: (paths: string[]) => Promise<GitMutationResult>;
-  requestWorkbenchAction: (input: {
-    kind: WorkbenchActionKind;
-    payload?: Record<string, string>;
-    source_node_id?: string | null;
-  }) => Promise<string>;
-  confirmWorkbenchAction: (action: WorkbenchAction) => Promise<void>;
-  cancelWorkbenchAction: (actionId: string) => Promise<void>;
-  createTerminal: () => Promise<string>;
-  renameTerminal: (input: {
-    session_id: string;
-    title: string;
-  }) => Promise<void>;
-  closeTerminal: (sessionId: string) => Promise<void>;
-  disconnectTerminal: (sessionId: string) => Promise<void>;
-  reconnectTerminal: (sessionId: string) => Promise<void>;
-  setProviderCredential: (input: {
-    provider_id: string;
-    secret: string;
-  }) => Promise<void>;
-  assignRoleModel: (input: {
-    role: ModelRole;
-    slot: "primary" | "fallback";
-    model: ModelRef | null;
-  }) => Promise<{ ok: boolean; message: string }>;
-  updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
-  restartSystem: () => Promise<void>;
 };
 
 type Projection = Pick<
   DomainState,
-  | "conversation"
   | "activeConversationSessionId"
   | "conversationSessions"
   | "conversationGraphs"
@@ -196,60 +104,68 @@ type Projection = Pick<
   | "lastSequence"
 >;
 
+type ReducerProjection = Projection & {
+  conversation: ConversationGraphState;
+};
+
 /** event_type → 类型化 reducer 集中注册表 */
 
 const MAX_CONVERSATION_GRAPHS = 10;
+const EMPTY_CONVERSATION = createGraphState("g-main", "b-main");
+
+export const selectActiveConversation = (
+  state: Pick<
+    DomainState,
+    "activeConversationSessionId" | "conversationGraphs"
+  >,
+): ConversationGraphState =>
+  state.conversationGraphs[state.activeConversationSessionId] ??
+  EMPTY_CONVERSATION;
+
+function graphActivity(graph: ConversationGraphState): string {
+  return Object.values(graph.nodes).reduce(
+    (latest, node) =>
+      node.created_at.localeCompare(latest) > 0 ? node.created_at : latest,
+    "",
+  );
+}
+
+function trimConversationGraphs(
+  graphs: Record<string, ConversationGraphState>,
+  activeSessionId: string,
+): Record<string, ConversationGraphState> {
+  if (Object.keys(graphs).length <= MAX_CONVERSATION_GRAPHS) return graphs;
+  const kept = Object.entries(graphs)
+    .filter(([sessionId]) => sessionId !== activeSessionId)
+    .sort(([, left], [, right]) =>
+      graphActivity(right).localeCompare(graphActivity(left)),
+    )
+    .slice(0, MAX_CONVERSATION_GRAPHS - 1);
+  return Object.fromEntries([
+    [activeSessionId, graphs[activeSessionId]],
+    ...kept,
+  ]);
+}
 
 const eventReducers: {
   [K in EventType]: (
-    state: Projection,
+    state: ReducerProjection,
     payload: EventEnvelope<K>["payload"],
-  ) => Partial<Projection>;
+  ) => Partial<ReducerProjection>;
 } = {
   "conversation.session.created": (state, { session, graph }) => {
     const conversation = graphFromGraphSnapshot(graph);
     const graphs: Record<string, ConversationGraphState> = {
       ...state.conversationGraphs,
-      [state.activeConversationSessionId]: state.conversation,
       [session.id]: conversation,
     };
-    const entries = Object.entries(graphs);
-    if (entries.length > MAX_CONVERSATION_GRAPHS) {
-      const kept = entries
-        .sort(([, a], [, b]) => {
-          const aNodes = Object.values(a.nodes);
-          const bNodes = Object.values(b.nodes);
-          const aTime =
-            aNodes.length > 0
-              ? (aNodes[aNodes.length - 1]?.created_at ?? "")
-              : "";
-          const bTime =
-            bNodes.length > 0
-              ? (bNodes[bNodes.length - 1]?.created_at ?? "")
-              : "";
-          return bTime.localeCompare(aTime);
-        })
-        .slice(0, MAX_CONVERSATION_GRAPHS);
-      const trimmed: Record<string, ConversationGraphState> = {};
-      for (const [key, value] of kept) trimmed[key] = value;
-      return {
-        conversation,
-        activeConversationSessionId: session.id,
-        conversationSessions: {
-          ...state.conversationSessions,
-          [session.id]: session,
-        },
-        conversationGraphs: trimmed,
-      };
-    }
     return {
-      conversation,
       activeConversationSessionId: session.id,
       conversationSessions: {
         ...state.conversationSessions,
         [session.id]: session,
       },
-      conversationGraphs: graphs,
+      conversationGraphs: trimConversationGraphs(graphs, session.id),
     };
   },
   "conversation.node.created": (state, { node }) => ({
@@ -422,7 +338,6 @@ export const useDomainStore = create<DomainState>()((set) => ({
   snapshotLoaded: false,
   lastSequence: 0,
   connection: "connecting",
-  conversation: createGraphState("g-main", "b-main"),
   activeConversationSessionId: "s-main",
   conversationSessions: {},
   conversationGraphs: {},
@@ -469,7 +384,6 @@ export const useDomainStore = create<DomainState>()((set) => ({
       return {
         snapshotLoaded: true,
         lastSequence: snapshot.last_sequence,
-        conversation: graphs[activeId] ?? createGraphState("g-main", "b-main"),
         activeConversationSessionId: activeId,
         conversationSessions: sessions,
         conversationGraphs: graphs,
@@ -501,9 +415,9 @@ export const useDomainStore = create<DomainState>()((set) => ({
   applyEvent: (envelope) =>
     set((state) => {
       const reducer = eventReducers[envelope.event_type] as (
-        state: Projection,
+        state: ReducerProjection,
         payload: EventEnvelope["payload"],
-      ) => Partial<Projection>;
+      ) => Partial<ReducerProjection>;
       if (!reducer) return state; // 未知扩展事件：忽略但不崩溃（FE-EVENT-007）
       const graphEventSessionId =
         envelope.aggregate_type === "conversation" &&
@@ -514,9 +428,14 @@ export const useDomainStore = create<DomainState>()((set) => ({
           : undefined;
       const targetSessionId =
         graphEventSessionId ?? state.activeConversationSessionId;
-      const projection: Projection = {
+      const session = state.conversationSessions[targetSessionId];
+      const projection: ReducerProjection = {
         conversation:
-          state.conversationGraphs[targetSessionId] ?? state.conversation,
+          state.conversationGraphs[targetSessionId] ??
+          createGraphState(
+            session?.graph_id ?? envelope.aggregate_id,
+            session?.root_branch_id ?? "b-main",
+          ),
         activeConversationSessionId: state.activeConversationSessionId,
         conversationSessions: state.conversationSessions,
         conversationGraphs: state.conversationGraphs,
@@ -540,22 +459,23 @@ export const useDomainStore = create<DomainState>()((set) => ({
         settings: state.settings,
         lastSequence: state.lastSequence,
       };
-      let patch = reducer(projection, envelope.payload);
+      const reducerPatch = reducer(projection, envelope.payload);
+      const { conversation: updatedConversation, ...projectionPatch } =
+        reducerPatch;
+      let patch: Partial<Projection> = projectionPatch;
       if (
-        patch.conversation &&
+        updatedConversation &&
         envelope.event_type !== "conversation.session.created"
       ) {
-        const updatedConversation = patch.conversation;
         patch = {
           ...patch,
-          conversation:
-            targetSessionId === state.activeConversationSessionId
-              ? updatedConversation
-              : state.conversation,
-          conversationGraphs: {
-            ...state.conversationGraphs,
-            [targetSessionId]: updatedConversation,
-          },
+          conversationGraphs: trimConversationGraphs(
+            {
+              ...state.conversationGraphs,
+              [targetSessionId]: updatedConversation,
+            },
+            state.activeConversationSessionId,
+          ),
         };
       }
       let recentConversationNodeId = state.recentConversationNodeId;
@@ -593,178 +513,11 @@ export const useDomainStore = create<DomainState>()((set) => ({
         }
       }
       return {
-        ...state,
         ...patch,
         recentConversationNodeId,
         lastSequence: Math.max(state.lastSequence, envelope.sequence),
       };
     }),
 
-  setConnection: (connection) => set((state) => ({ ...state, connection })),
-
-  sendMessage: async (input) => {
-    try {
-      await getApi().sendMessage(input);
-    } catch (error) {
-      console.error("[domainStore] sendMessage failed:", error);
-      throw error;
-    }
-  },
-
-  createConversationSession: async (idempotencyKey) => {
-    try {
-      await getApi().createConversationSession({
-        idempotency_key: idempotencyKey,
-      });
-    } catch (error) {
-      console.error("[domainStore] createConversationSession failed:", error);
-      throw error;
-    }
-  },
-
-  abortResponse: async (sessionId, branchId) => {
-    try {
-      await getApi().abortResponse(sessionId, branchId);
-    } catch (error) {
-      console.error("[domainStore] abortResponse failed:", error);
-      throw error;
-    }
-  },
-
-  branchFromNode: async (sessionId, nodeId) => {
-    try {
-      const { branch } = await getApi().branchFrom({
-        session_id: sessionId,
-        node_id: nodeId,
-      });
-      return branch.id;
-    } catch (error) {
-      console.error("[domainStore] branchFromNode failed:", error);
-      throw error;
-    }
-  },
-
-  acknowledgeNotification: async (notificationId) => {
-    try {
-      await getApi().acknowledgeNotification(notificationId);
-    } catch (error) {
-      console.error("[domainStore] acknowledgeNotification failed:", error);
-      throw error;
-    }
-  },
-
-  createRequirementFromChat: async (input) => {
-    try {
-      const { requirement_id } =
-        await getApi().createRequirementFromChat(input);
-      return requirement_id;
-    } catch (error) {
-      console.error("[domainStore] createRequirementFromChat failed:", error);
-      throw error;
-    }
-  },
-
-  answerClarification: async (input) => {
-    try {
-      await getApi().answerClarification(input);
-    } catch (error) {
-      console.error("[domainStore] answerClarification failed:", error);
-      throw error;
-    }
-  },
-
-  cancelRequirement: async (requirementId) => {
-    await getApi().cancelRequirement(requirementId);
-  },
-
-  updateSpec: (input) => getApi().updateSpec(input),
-
-  confirmRequirement: (input) => getApi().confirmRequirement(input),
-
-  reorderQueue: (requirementIds) =>
-    getApi().reorderQueue({ requirement_ids: requirementIds }),
-
-  pauseRun: async (runId) => {
-    await getApi().pauseRun(runId);
-  },
-
-  resumeRun: async (runId) => {
-    await getApi().resumeRun(runId);
-  },
-
-  retryRun: async (runId) => {
-    await getApi().retryRun(runId);
-  },
-
-  updateWorkItem: (input) => getApi().updateWorkItem(input),
-
-  requestAction: async (input) => {
-    const { action_id } = await getApi().requestAction(input);
-    return action_id;
-  },
-
-  confirmAction: async (actionId) => {
-    await getApi().confirmAction(actionId);
-  },
-
-  cancelAction: async (actionId) => {
-    await getApi().cancelAction(actionId);
-  },
-
-  /* ── P3 工作台命令 ── */
-
-  stageChanges: (paths) => getApi().stageChanges(paths),
-
-  unstageChanges: (paths) => getApi().unstageChanges(paths),
-
-  requestWorkbenchAction: async (input) => {
-    const { action_id } = await getApi().requestWorkbenchAction(input);
-    return action_id;
-  },
-
-  confirmWorkbenchAction: async (action) => {
-    await getApi().confirmWorkbenchAction({
-      action_id: action.id,
-      confirm_token: action.confirm_token,
-    });
-  },
-
-  cancelWorkbenchAction: async (actionId) => {
-    await getApi().cancelWorkbenchAction(actionId);
-  },
-
-  createTerminal: async () => {
-    const { session_id } = await getApi().createTerminal();
-    return session_id;
-  },
-
-  renameTerminal: async (input) => {
-    await getApi().renameTerminal(input);
-  },
-
-  closeTerminal: async (sessionId) => {
-    await getApi().closeTerminal(sessionId);
-  },
-
-  disconnectTerminal: async (sessionId) => {
-    await getApi().disconnectTerminal(sessionId);
-  },
-
-  reconnectTerminal: async (sessionId) => {
-    await getApi().reconnectTerminal(sessionId);
-  },
-
-  setProviderCredential: async (input) => {
-    await getApi().setProviderCredential(input);
-  },
-
-  assignRoleModel: (input) => getApi().assignRoleModel(input),
-
-  updateSettings: async (patch) => {
-    await getApi().updateSettings(patch);
-  },
-
-  restartSystem: async () => {
-    await getApi().restartSystem();
-  },
+  setConnection: (connection) => set({ connection }),
 }));

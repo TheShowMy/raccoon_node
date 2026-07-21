@@ -25,7 +25,6 @@ const node: ConversationNode = {
 const item: BranchDisplayItem = {
   type: "node",
   node,
-  position: { x: 100, y: 300 },
 };
 
 function redactAction(state: WorkbenchAction["state"]): WorkbenchAction {

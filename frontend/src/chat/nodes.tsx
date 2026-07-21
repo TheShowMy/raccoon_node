@@ -1,5 +1,5 @@
 import { PixelButton, PixelTextarea } from "@pxlkit/ui-kit";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { memo, useCallback, useRef, useState, type KeyboardEvent } from "react";
 import { getApi } from "../api";
 import { detectIntent } from "../api/intent";
@@ -14,7 +14,7 @@ import {
   composerScopeKey,
   useComposerStore,
 } from "../store/composerStore";
-import { useDomainStore } from "../store/domainStore";
+import { selectActiveConversation, useDomainStore } from "../store/domainStore";
 import { ancestorChain, type BranchDisplayItem } from "./dag";
 
 /* ── 共享小件 ── */
@@ -113,24 +113,22 @@ function CancelRequirementButton({
 }: {
   requirementId: string | null;
 }) {
-  const [cancelling, setCancelling] = useState(false);
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => getApi().cancelRequirement(id),
+  });
   if (!requirementId) return null;
   return (
     <PixelButton
       size="sm"
       tone="red"
       variant="ghost"
-      disabled={cancelling}
+      disabled={cancelMutation.isPending}
       onClick={() => {
         requestConversationFollow();
-        setCancelling(true);
-        void useDomainStore
-          .getState()
-          .cancelRequirement(requirementId)
-          .finally(() => setCancelling(false));
+        cancelMutation.mutate(requirementId);
       }}
     >
-      {cancelling ? "取消中" : "取消本次需求"}
+      {cancelMutation.isPending ? "取消中" : "取消本次需求"}
     </PixelButton>
   );
 }
@@ -142,14 +140,16 @@ function StopButton({
   sessionId: string;
   branchId: string;
 }) {
+  const abortMutation = useMutation({
+    mutationFn: () => getApi().abortResponse(sessionId, branchId),
+  });
   return (
     <PixelButton
       size="sm"
       tone="red"
       variant="outline"
-      onClick={() =>
-        void useDomainStore.getState().abortResponse(sessionId, branchId)
-      }
+      disabled={abortMutation.isPending}
+      onClick={() => abortMutation.mutate()}
     >
       停止
     </PixelButton>
@@ -184,13 +184,18 @@ export const ComposerNode = memo(function ComposerNode(
   const images = draft?.images ?? [];
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [imageError, setImageError] = useState<string | null>(null);
+  const sendMutation = useMutation({
+    mutationFn: (
+      input: Parameters<ReturnType<typeof getApi>["sendMessage"]>[0],
+    ) => getApi().sendMessage(input),
+  });
   const detected = detectIntent(text);
   const effectiveIntent: DetectedIntent =
     intentOverride === "auto" ? detected : intentOverride;
   /* 分支末端变化（发送/新生成）后 Composer 再现时重新聚焦；
      同 head 的滚动重挂载不重复聚焦 */
   const head = useDomainStore(
-    (state) => state.conversation.heads[branchId] ?? "",
+    (state) => selectActiveConversation(state).heads[branchId] ?? "",
   );
   const composerFocusRef = useCallback(
     autofocusOnce(`composer:${sessionId}:${branchId}:${head}`),
@@ -201,7 +206,7 @@ export const ComposerNode = memo(function ComposerNode(
     const trimmed = text.trim();
     if (!trimmed) return;
     requestConversationFollow();
-    void useDomainStore.getState().sendMessage({
+    sendMutation.mutate({
       session_id: sessionId,
       branch_id: branchId,
       text: trimmed,
@@ -339,7 +344,7 @@ export const ComposerNode = memo(function ComposerNode(
         <PixelButton
           size="sm"
           tone="cyan"
-          disabled={!text.trim()}
+          disabled={!text.trim() || sendMutation.isPending}
           onClick={send}
         >
           发送
@@ -367,12 +372,12 @@ const useBranchFrom = (sessionId: string) => {
   const setActiveBranch = useCanvasStore(
     (state) => state.setActiveConversationBranch,
   );
-  return async (nodeId: string) => {
-    const branchId = await useDomainStore
-      .getState()
-      .branchFromNode(sessionId, nodeId);
-    if (branchId) setActiveBranch(branchId);
-  };
+  const branchMutation = useMutation({
+    mutationFn: (nodeId: string) =>
+      getApi().branchFrom({ session_id: sessionId, node_id: nodeId }),
+    onSuccess: ({ branch }) => setActiveBranch(branch.id),
+  });
+  return (nodeId: string) => branchMutation.mutate(nodeId);
 };
 
 export const UserMessageNode = memo(function UserMessageNode(
@@ -496,21 +501,25 @@ export const AssistantAnswerNode = memo(function AssistantAnswerNode(
 ) {
   const { node, sessionId, branchId, selected } = props;
   const streaming = node.state === "streaming";
+  const createRequirementMutation = useMutation({
+    mutationFn: (nodeIds: string[]) =>
+      getApi().createRequirementFromChat({
+        session_id: sessionId,
+        branch_id: branchId,
+        node_ids: nodeIds,
+      }),
+  });
   // PRD-CHAT-003：从连续问答节点整理为需求，来源与证据自动关联
   const createRequirement = () => {
     requestConversationFollow();
     const state = useDomainStore.getState();
-    const nodeIds = ancestorChain(state.conversation, node.id)
+    const nodeIds = ancestorChain(selectActiveConversation(state), node.id)
       .filter(
         (entry) =>
           entry.kind === "user_message" || entry.kind === "assistant_answer",
       )
       .map((entry) => entry.id);
-    void state.createRequirementFromChat({
-      session_id: sessionId,
-      branch_id: branchId,
-      node_ids: nodeIds,
-    });
+    createRequirementMutation.mutate(nodeIds);
   };
   return (
     <NodeShell
@@ -522,7 +531,12 @@ export const AssistantAnswerNode = memo(function AssistantAnswerNode(
         streaming ? (
           <StopButton sessionId={sessionId} branchId={branchId} />
         ) : node.state === "completed" && !node.redacted_at ? (
-          <PixelButton size="sm" variant="outline" onClick={createRequirement}>
+          <PixelButton
+            size="sm"
+            variant="outline"
+            disabled={createRequirementMutation.isPending}
+            onClick={createRequirement}
+          >
             整理为需求
           </PixelButton>
         ) : undefined
@@ -556,7 +570,22 @@ export const ClarificationQuestionNode = memo(
     const [customSelected, setCustomSelected] = useState(false);
     const [customText, setCustomText] = useState("");
     const [customFocusNonce, setCustomFocusNonce] = useState(0);
-    const [submitting, setSubmitting] = useState(false);
+    const answerMutation = useMutation({
+      mutationFn: () => {
+        if (!round) return Promise.resolve();
+        return getApi().answerClarification({
+          requirement_id: round.requirement_id,
+          round_id: round.id,
+          answer: {
+            selected_option_ids: selectedOptionIds,
+            custom_text:
+              round.mode === "free_text" || customSelected
+                ? customText.trim()
+                : null,
+          },
+        });
+      },
+    });
     /* 自由文本轮次首次出现聚焦一次；「自定义回答」每次主动选择都重新聚焦 */
     const clarificationFocusRef = useCallback(
       autofocusOnce(
@@ -574,7 +603,7 @@ export const ClarificationQuestionNode = memo(
       round?.mode === "free_text" || Boolean(customSelected);
     const canSubmit =
       round?.state === "pending" &&
-      !submitting &&
+      !answerMutation.isPending &&
       (round.mode === "free_text"
         ? Boolean(customText.trim())
         : (selectedOptionIds.length > 0 || customSelected) &&
@@ -592,25 +621,10 @@ export const ClarificationQuestionNode = memo(
           : [...current, optionId],
       );
     };
-    const submit = async () => {
+    const submit = () => {
       if (!round || !canSubmit) return;
       requestConversationFollow();
-      setSubmitting(true);
-      try {
-        await useDomainStore.getState().answerClarification({
-          requirement_id: round.requirement_id,
-          round_id: round.id,
-          answer: {
-            selected_option_ids: selectedOptionIds,
-            custom_text:
-              round.mode === "free_text" || customSelected
-                ? customText.trim()
-                : null,
-          },
-        });
-      } finally {
-        setSubmitting(false);
-      }
+      answerMutation.mutate();
     };
     return (
       <NodeShell
@@ -760,7 +774,7 @@ export const ClarificationQuestionNode = memo(
                   disabled={!canSubmit}
                   onClick={() => void submit()}
                 >
-                  {submitting ? "提交中" : "确认回答"}
+                  {answerMutation.isPending ? "提交中" : "确认回答"}
                 </PixelButton>
               </div>
             ) : (
@@ -814,19 +828,27 @@ export const RequirementSpecNode = memo(function RequirementSpecNode(
   const [editing, setEditing] = useState(false);
   const [goal, setGoal] = useState(revision?.spec.goal ?? node.content);
   const [userValue, setUserValue] = useState(revision?.spec.user_value ?? "");
-  const save = async () => {
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      if (!revision) return Promise.resolve(null);
+      return getApi().updateSpec({
+        requirement_id: revision.requirement_id,
+        base_revision: revision.revision,
+        spec: {
+          ...revision.spec,
+          goal: goal.trim(),
+          user_value: userValue.trim(),
+        },
+      });
+    },
+    onSuccess: (result) => {
+      if (result && !result.conflict) setEditing(false);
+    },
+  });
+  const save = () => {
     if (!revision) return;
     requestConversationFollow();
-    const result = await useDomainStore.getState().updateSpec({
-      requirement_id: revision.requirement_id,
-      base_revision: revision.revision,
-      spec: {
-        ...revision.spec,
-        goal: goal.trim(),
-        user_value: userValue.trim(),
-      },
-    });
-    if (!result.conflict) setEditing(false);
+    saveMutation.mutate();
   };
   return (
     <NodeShell
@@ -877,7 +899,12 @@ export const RequirementSpecNode = memo(function RequirementSpecNode(
                 />
               </label>
               <div className="chat-node__inline-actions">
-                <PixelButton size="sm" tone="cyan" onClick={() => void save()}>
+                <PixelButton
+                  size="sm"
+                  tone="cyan"
+                  disabled={saveMutation.isPending}
+                  onClick={save}
+                >
                   保存为新 revision
                 </PixelButton>
                 <PixelButton
@@ -944,15 +971,23 @@ export const RequirementConfirmationNode = memo(
     const canConfirm =
       requirement?.state === "spec_ready" &&
       requirement.latest_revision === node.requirement_revision;
-    const confirm = async () => {
+    const confirmMutation = useMutation({
+      mutationFn: () => {
+        if (!node.requirement_id || node.requirement_revision == null) {
+          return Promise.resolve({ run_id: null, conflict: false });
+        }
+        return getApi().confirmRequirement({
+          requirement_id: node.requirement_id,
+          revision: node.requirement_revision,
+          task_budget_usd:
+            budgetOverride ?? preview?.effective_task_budget_usd ?? 0,
+        });
+      },
+    });
+    const confirm = () => {
       if (!node.requirement_id || node.requirement_revision == null) return;
       requestConversationFollow();
-      await useDomainStore.getState().confirmRequirement({
-        requirement_id: node.requirement_id,
-        revision: node.requirement_revision,
-        task_budget_usd:
-          budgetOverride ?? preview?.effective_task_budget_usd ?? 0,
-      });
+      confirmMutation.mutate();
     };
     return (
       <NodeShell
@@ -984,7 +1019,8 @@ export const RequirementConfirmationNode = memo(
               <PixelButton
                 size="sm"
                 tone="green"
-                onClick={() => void confirm()}
+                disabled={confirmMutation.isPending}
+                onClick={confirm}
               >
                 确认并执行
               </PixelButton>

@@ -1,7 +1,8 @@
 import { PixelButton } from "@pxlkit/ui-kit";
+import { useMutation } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { WorkbenchAction } from "../../api/types";
-import { useDomainStore } from "../../store/domainStore";
+import { getApi } from "../../api";
 
 export function workbenchActionSourceKey(action: WorkbenchAction): string {
   if (action.kind === "git_discard")
@@ -43,6 +44,17 @@ export function WorkbenchActionDock({
   );
   const [resultId, setResultId] = useState<string | null>(null);
   const dockRef = useRef<HTMLElement>(null);
+  const confirmMutation = useMutation({
+    mutationFn: (current: WorkbenchAction) =>
+      getApi().confirmWorkbenchAction({
+        action_id: current.id,
+        confirm_token: current.confirm_token,
+      }),
+  });
+  const cancelMutation = useMutation({
+    mutationFn: (actionId: string) => getApi().cancelWorkbenchAction(actionId),
+  });
+  const mutationPending = confirmMutation.isPending || cancelMutation.isPending;
 
   useEffect(() => {
     for (const action of sorted) {
@@ -103,18 +115,16 @@ export function WorkbenchActionDock({
           <PixelButton
             size="sm"
             tone="red"
-            onClick={() =>
-              void useDomainStore.getState().confirmWorkbenchAction(action)
-            }
+            disabled={mutationPending}
+            onClick={() => confirmMutation.mutate(action)}
           >
             确认执行
           </PixelButton>
           <PixelButton
             size="sm"
             variant="outline"
-            onClick={() =>
-              void useDomainStore.getState().cancelWorkbenchAction(action.id)
-            }
+            disabled={mutationPending}
+            onClick={() => cancelMutation.mutate(action.id)}
           >
             取消
           </PixelButton>

@@ -1243,12 +1243,6 @@ html[data-density="compact"] .git-change-row__action {
   .git-toolbar__actions {
     justify-content: flex-start;
   }
-  .inline-action-strip {
-    grid-template-columns: 1fr auto;
-  }
-  .inline-action-strip__actions {
-    grid-column: 1 / -1;
-  }
 }
 
 html[data-density="compact"] body {

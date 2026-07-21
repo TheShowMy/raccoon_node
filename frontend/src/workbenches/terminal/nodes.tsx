@@ -2,10 +2,10 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { PixelButton } from "@pxlkit/ui-kit";
+import { useMutation } from "@tanstack/react-query";
 import { memo, useEffect, useRef, useState } from "react";
 import { getApi } from "../../api";
 import type { TerminalSession } from "../../api/types";
-import { useDomainStore } from "../../store/domainStore";
 import { useTerminalStore } from "../../store/terminalStore";
 
 /* ── 当前活动终端（xterm.js + fit；主题跟随 token） ── */
@@ -126,18 +126,34 @@ export const TerminalSessionContent = memo(function TerminalSessionContent({
 }) {
   const renaming = useTerminalStore((state) => state.renamingId === session.id);
   const [titleDraft, setTitleDraft] = useState(session.title);
-
-  const close = () => {
-    const domain = useDomainStore.getState();
-    if (session.state === "running") {
-      // 关闭运行中会话走来源工具条下的确认条（FE-TERM-003）
-      void domain.requestWorkbenchAction({
+  const requestCloseMutation = useMutation({
+    mutationFn: () =>
+      getApi().requestWorkbenchAction({
         kind: "terminal_close",
         payload: { session_id: session.id, title: session.title },
         source_node_id: null,
-      });
+      }),
+  });
+  const closeMutation = useMutation({
+    mutationFn: () => getApi().closeTerminal(session.id),
+  });
+  const disconnectMutation = useMutation({
+    mutationFn: () => getApi().disconnectTerminal(session.id),
+  });
+  const reconnectMutation = useMutation({
+    mutationFn: () => getApi().reconnectTerminal(session.id),
+  });
+  const renameMutation = useMutation({
+    mutationFn: (title: string) =>
+      getApi().renameTerminal({ session_id: session.id, title }),
+  });
+
+  const close = () => {
+    if (session.state === "running") {
+      // 关闭运行中会话走来源工具条下的确认条（FE-TERM-003）
+      requestCloseMutation.mutate();
     } else {
-      void domain.closeTerminal(session.id);
+      closeMutation.mutate();
     }
   };
 
@@ -154,9 +170,8 @@ export const TerminalSessionContent = memo(function TerminalSessionContent({
           <PixelButton
             size="sm"
             variant="outline"
-            onClick={() =>
-              void useDomainStore.getState().disconnectTerminal(session.id)
-            }
+            disabled={disconnectMutation.isPending}
+            onClick={() => disconnectMutation.mutate()}
           >
             模拟断开
           </PixelButton>
@@ -166,9 +181,8 @@ export const TerminalSessionContent = memo(function TerminalSessionContent({
             size="sm"
             tone="cyan"
             variant="outline"
-            onClick={() =>
-              void useDomainStore.getState().reconnectTerminal(session.id)
-            }
+            disabled={reconnectMutation.isPending}
+            onClick={() => reconnectMutation.mutate()}
           >
             重连
           </PixelButton>
@@ -184,6 +198,7 @@ export const TerminalSessionContent = memo(function TerminalSessionContent({
           size="sm"
           tone="red"
           variant="outline"
+          disabled={requestCloseMutation.isPending || closeMutation.isPending}
           onClick={close}
           data-action-source={`terminal_close:${session.id}`}
           data-action-source-active={actionSourceActive || undefined}
@@ -196,9 +211,7 @@ export const TerminalSessionContent = memo(function TerminalSessionContent({
           className="dnode__inline-form nodrag nowheel"
           onSubmit={(event) => {
             event.preventDefault();
-            void useDomainStore
-              .getState()
-              .renameTerminal({ session_id: session.id, title: titleDraft });
+            renameMutation.mutate(titleDraft);
             useTerminalStore.getState().setRenamingId(null);
           }}
         >
@@ -208,7 +221,12 @@ export const TerminalSessionContent = memo(function TerminalSessionContent({
             value={titleDraft}
             onChange={(event) => setTitleDraft(event.target.value)}
           />
-          <PixelButton size="sm" tone="green" type="submit">
+          <PixelButton
+            size="sm"
+            tone="green"
+            type="submit"
+            disabled={renameMutation.isPending}
+          >
             保存名称
           </PixelButton>
         </form>

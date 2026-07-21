@@ -46,10 +46,3 @@ export function bootstrapDomain(): Promise<void> {
   });
   return bootPromise;
 }
-
-/** 测试专用：重置引导状态 */
-export function resetBootstrapForTest() {
-  connection?.close();
-  connection = null;
-  bootPromise = null;
-}

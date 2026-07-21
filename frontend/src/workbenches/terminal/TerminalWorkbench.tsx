@@ -1,5 +1,7 @@
 import { PixelButton } from "@pxlkit/ui-kit";
+import { useMutation } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { getApi } from "../../api";
 import { useDomainStore } from "../../store/domainStore";
 import { useTerminalStore } from "../../store/terminalStore";
 import {
@@ -31,6 +33,11 @@ export function TerminalWorkbench() {
   const activeSourceKey = activeAction
     ? workbenchActionSourceKey(activeAction)
     : null;
+  const createTerminalMutation = useMutation({
+    mutationFn: () => getApi().createTerminal(),
+    onSuccess: ({ session_id }) =>
+      useTerminalStore.getState().setActiveSessionId(session_id),
+  });
 
   useEffect(() => {
     if (activeSession && activeSession.id !== activeSessionId) {
@@ -39,11 +46,6 @@ export function TerminalWorkbench() {
       useTerminalStore.getState().setActiveSessionId(null);
     }
   }, [activeSession, activeSessionId]);
-
-  const createSession = async () => {
-    const sessionId = await useDomainStore.getState().createTerminal();
-    useTerminalStore.getState().setActiveSessionId(sessionId);
-  };
 
   return (
     <ToolWorkbench className="terminal-workbench" ariaLabel="终端工具页">
@@ -68,7 +70,8 @@ export function TerminalWorkbench() {
         <PixelButton
           size="sm"
           tone="green"
-          onClick={() => void createSession()}
+          disabled={createTerminalMutation.isPending}
+          onClick={() => createTerminalMutation.mutate()}
         >
           新建会话
         </PixelButton>

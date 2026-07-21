@@ -1,4 +1,6 @@
 import { PixelButton } from "@pxlkit/ui-kit";
+import { useMutation } from "@tanstack/react-query";
+import { getApi } from "../../api";
 import {
   CAPABILITY_LABELS,
   requiredCapabilities,
@@ -14,7 +16,6 @@ import type {
   RoleAssignResult,
   RoleProfile,
 } from "../../api/types";
-import { useDomainStore } from "../../store/domainStore";
 import { useModelsStore } from "../../store/modelsStore";
 
 const CAPABILITY_ORDER: CapabilityName[] = [
@@ -70,6 +71,10 @@ export function ProviderModelContent({
     (state) => (provider ? state.credentialInputs[provider.id] : "") ?? "",
   );
   const selectedModelId = useModelsStore((state) => state.selectedModelId);
+  const credentialMutation = useMutation({
+    mutationFn: (input: { provider_id: string; secret: string }) =>
+      getApi().setProviderCredential(input),
+  });
   if (!provider) {
     return <div className="tool-empty-state">选择一个 Provider 查看模型。</div>;
   }
@@ -103,9 +108,9 @@ export function ProviderModelContent({
             size="sm"
             tone="green"
             variant="outline"
-            disabled={!secret.trim()}
+            disabled={!secret.trim() || credentialMutation.isPending}
             onClick={() => {
-              void useDomainStore.getState().setProviderCredential({
+              credentialMutation.mutate({
                 provider_id: provider.id,
                 secret,
               });
@@ -203,14 +208,20 @@ function RoleRow({
   const required = requiredCapabilities(profile.role)
     .map((name) => CAPABILITY_LABELS[name])
     .join("、");
+  const assignMutation = useMutation({
+    mutationFn: (input: {
+      slot: "primary" | "fallback";
+      model: ModelRef | null;
+    }) =>
+      getApi().assignRoleModel({
+        role: profile.role,
+        ...input,
+      }),
+    onSuccess: () => useModelsStore.getState().clearDraft(profile.role),
+  });
 
-  const save = async (slot: "primary" | "fallback", value: ModelRef | null) => {
-    await useDomainStore.getState().assignRoleModel({
-      role: profile.role,
-      slot,
-      model: value,
-    });
-    useModelsStore.getState().clearDraft(profile.role);
+  const save = (slot: "primary" | "fallback", value: ModelRef | null) => {
+    assignMutation.mutate({ slot, model: value });
   };
 
   return (
@@ -224,6 +235,7 @@ function RoleRow({
         <select
           className="dnode__input"
           aria-label={`${ROLE_LABELS[profile.role]}主模型`}
+          disabled={assignMutation.isPending}
           value={primary ?? ""}
           onChange={(event) => {
             const value = event.target.value || null;
@@ -246,6 +258,7 @@ function RoleRow({
         <select
           className="dnode__input"
           aria-label={`${ROLE_LABELS[profile.role]}回退模型`}
+          disabled={assignMutation.isPending}
           value={fallback ?? ""}
           onChange={(event) => {
             const value = event.target.value || null;

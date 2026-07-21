@@ -25,11 +25,10 @@ export const useFilesStore = create<FilesStore>()((set) => ({
   selectedPath: null,
   searchText: "",
   submittedQuery: null,
-  setSidebarMode: (sidebarMode) => set((state) => ({ ...state, sidebarMode })),
-  setCompactView: (compactView) => set((state) => ({ ...state, compactView })),
+  setSidebarMode: (sidebarMode) => set({ sidebarMode }),
+  setCompactView: (compactView) => set({ compactView }),
   toggleDir: (path) =>
     set((state) => ({
-      ...state,
       expandedDirs: {
         ...state.expandedDirs,
         [path]: !state.expandedDirs[path],
@@ -37,14 +36,12 @@ export const useFilesStore = create<FilesStore>()((set) => ({
     })),
   selectPath: (selectedPath) =>
     set((state) => ({
-      ...state,
       selectedPath,
       compactView: selectedPath ? "preview" : state.compactView,
     })),
-  setSearchText: (searchText) => set((state) => ({ ...state, searchText })),
+  setSearchText: (searchText) => set({ searchText }),
   submitSearch: () =>
     set((state) => ({
-      ...state,
       submittedQuery: state.searchText.trim() ? state.searchText.trim() : null,
     })),
 }));

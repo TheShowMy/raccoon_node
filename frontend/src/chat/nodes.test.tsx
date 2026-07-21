@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it } from "vitest";
 import type {
   ClarificationMode,
@@ -79,12 +80,15 @@ function renderRound(mode: ClarificationMode) {
     requirements: { [requirement.id]: requirement },
     clarifications: { [clarification.id]: clarification },
   });
+  const client = new QueryClient();
   return render(
-    <ClarificationQuestionNode
-      node={node}
-      sessionId="s-main"
-      branchId="b-main"
-    />,
+    <QueryClientProvider client={client}>
+      <ClarificationQuestionNode
+        node={node}
+        sessionId="s-main"
+        branchId="b-main"
+      />
+    </QueryClientProvider>,
   );
 }
 

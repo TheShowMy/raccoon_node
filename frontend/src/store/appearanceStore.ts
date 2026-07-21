@@ -25,10 +25,8 @@ export const useAppearanceStore = create<AppearanceStore>()((set) => ({
   density: "comfortable",
   petAnimation: true,
   nonCriticalBubbles: true,
-  setTheme: (theme) => set((state) => ({ ...state, theme })),
-  setDensity: (density) => set((state) => ({ ...state, density })),
-  setPetAnimation: (petAnimation) =>
-    set((state) => ({ ...state, petAnimation })),
-  setNonCriticalBubbles: (nonCriticalBubbles) =>
-    set((state) => ({ ...state, nonCriticalBubbles })),
+  setTheme: (theme) => set({ theme }),
+  setDensity: (density) => set({ density }),
+  setPetAnimation: (petAnimation) => set({ petAnimation }),
+  setNonCriticalBubbles: (nonCriticalBubbles) => set({ nonCriticalBubbles }),
 }));

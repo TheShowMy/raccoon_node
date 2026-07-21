@@ -65,7 +65,7 @@ describe("CanvasNavigationState（FE-CANVAS-008～015）", () => {
     useCanvasStore.getState().markWorkbenchReady();
     useCanvasStore
       .getState()
-      .setConversationViewport("b-main", { x: 1, y: 2, zoom: 0.8 });
+      .setScrollPosition("conversation:s-main:b-main", 42);
     useCanvasStore.getState().saveDeliveryViewport({ x: 3, y: 4, zoom: 0.5 });
     useCanvasStore.getState().toggleProcessGroup("pg:n1");
     useCanvasStore.getState().beginCloseWorkbench();
@@ -79,11 +79,7 @@ describe("CanvasNavigationState（FE-CANVAS-008～015）", () => {
     expect(state.savedMainViewport).toBeNull();
     expect(state.restoreFocusId).toBeNull();
     // 长期投影保留
-    expect(state.conversationViewports["b-main"]).toEqual({
-      x: 1,
-      y: 2,
-      zoom: 0.8,
-    });
+    expect(state.scrollPositions["conversation:s-main:b-main"]).toBe(42);
     expect(state.deliveryViewport).toEqual({ x: 3, y: 4, zoom: 0.5 });
     expect(state.expandedProcessGroupIds).toEqual(["pg:n1"]);
   });
@@ -97,7 +93,7 @@ describe("CanvasNavigationState（FE-CANVAS-008～015）", () => {
     expect(useCanvasStore.getState().expandedProcessGroupIds).toEqual([]);
   });
 
-  it("不同会话的同名分支分别保存选择、过程组和 viewport", () => {
+  it("不同会话的同名分支分别保存选择、过程组和滚动位置", () => {
     const firstScope = "session-1:b-main";
     const secondScope = "session-2:b-main";
     useCanvasStore
@@ -107,7 +103,7 @@ describe("CanvasNavigationState（FE-CANVAS-008～015）", () => {
     useCanvasStore.getState().toggleProcessGroup("pg:one");
     useCanvasStore
       .getState()
-      .setConversationViewport(firstScope, { x: 10, y: 20, zoom: 0.8 });
+      .setScrollPosition(`conversation:${firstScope}`, 120);
 
     useCanvasStore
       .getState()
@@ -118,7 +114,7 @@ describe("CanvasNavigationState（FE-CANVAS-008～015）", () => {
     useCanvasStore.getState().toggleProcessGroup("pg:two");
     useCanvasStore
       .getState()
-      .setConversationViewport(secondScope, { x: 30, y: 40, zoom: 1.1 });
+      .setScrollPosition(`conversation:${secondScope}`, 340);
 
     useCanvasStore
       .getState()
@@ -126,16 +122,8 @@ describe("CanvasNavigationState（FE-CANVAS-008～015）", () => {
     const state = useCanvasStore.getState();
     expect(state.selectedConversationNodeId).toBe("node-1");
     expect(state.expandedProcessGroupIds).toEqual(["pg:one"]);
-    expect(state.conversationViewports[firstScope]).toEqual({
-      x: 10,
-      y: 20,
-      zoom: 0.8,
-    });
-    expect(state.conversationViewports[secondScope]).toEqual({
-      x: 30,
-      y: 40,
-      zoom: 1.1,
-    });
+    expect(state.scrollPositions[`conversation:${firstScope}`]).toBe(120);
+    expect(state.scrollPositions[`conversation:${secondScope}`]).toBe(340);
   });
 
   it("内部节点定位请求只属于需求工作台并可一次性消费", () => {

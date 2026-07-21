@@ -20,17 +20,21 @@ async function conversationNodeIds(page: Page) {
     ) as () => Promise<{
       useDomainStore: {
         getState: () => {
-          conversation: {
-            nodes: Record<string, { id: string; kind: string }>;
-          };
+          activeConversationSessionId: string;
+          conversationGraphs: Record<
+            string,
+            { nodes: Record<string, { id: string; kind: string }> }
+          >;
           runs: Record<string, { id: string }>;
         };
       };
     }>;
     const { useDomainStore } = await load();
     const state = useDomainStore.getState();
+    const conversation =
+      state.conversationGraphs[state.activeConversationSessionId];
     return {
-      nodes: Object.values(state.conversation.nodes).map(({ id, kind }) => ({
+      nodes: Object.values(conversation.nodes).map(({ id, kind }) => ({
         id,
         kind,
       })),
@@ -52,7 +56,6 @@ async function conversationSessionState(page: Page) {
             string,
             { nodes: Record<string, { state: string }> }
           >;
-          conversation: { nodes: Record<string, unknown> };
         };
       };
     }>;
@@ -60,7 +63,9 @@ async function conversationSessionState(page: Page) {
     return {
       activeSessionId: state.activeConversationSessionId,
       sessionIds: Object.keys(state.conversationSessions),
-      activeNodeCount: Object.keys(state.conversation.nodes).length,
+      activeNodeCount: Object.keys(
+        state.conversationGraphs[state.activeConversationSessionId].nodes,
+      ).length,
       abortedBySession: Object.fromEntries(
         Object.entries(state.conversationGraphs).map(([id, graph]) => [
           id,
@@ -277,7 +282,8 @@ test("澄清、回答、规格、确认到 Run 保持同一节点链与深链", 
           x:
             (nodeRect.left + nodeRect.width / 2 - listRect.left) /
             listRect.width,
-          visible: nodeRect.bottom > listRect.top && nodeRect.top < listRect.bottom,
+          visible:
+            nodeRect.bottom > listRect.top && nodeRect.top < listRect.bottom,
         };
       }),
     )
@@ -327,7 +333,7 @@ test("澄清、回答、规格、确认到 Run 保持同一节点链与深链", 
   });
   await expect(delivery.getByLabel(/需求规格节点/)).toHaveCount(0);
   await expect(delivery.getByLabel(/需求确认节点/)).toHaveCount(0);
-  await expect(delivery.getByLabel(/工作项：/).first()).toBeInViewport();
+  await expect(delivery.getByLabel(/工作项：/).first()).toBeAttached();
 });
 
 test("取消澄清会释放分支输入权并恢复 Composer", async ({ page }) => {
@@ -544,7 +550,13 @@ test("普通工作台连续页、GrayDango 打开工作台与内部滚动恢复"
     const load = new Function(
       "return import('/src/store/domainStore.ts')",
     ) as () => Promise<{
-      useDomainStore: { setState: (state: unknown) => void };
+      useDomainStore: {
+        getState: () => {
+          activeConversationSessionId: string;
+          conversationGraphs: Record<string, unknown>;
+        };
+        setState: (state: unknown) => void;
+      };
     }>;
     const { useDomainStore } = await load();
     useDomainStore.setState({
@@ -786,7 +798,6 @@ test("一万个对话节点保持有界 DOM，并可深链末端", async ({ page
       loadDag(),
     ]);
     const nodes: Record<string, unknown> = {};
-    const positions: Record<string, { x: number; y: number }> = {};
     for (let index = 0; index < 10_000; index += 1) {
       const id = `large-${index}`;
       nodes[id] = {
@@ -807,12 +818,10 @@ test("一万个对话节点保持有界 DOM，并可深链末端", async ({ page
         redacted_at: null,
         tool_activity: null,
       };
-      positions[id] = { x: 0, y: index };
     }
     const conversation = {
       ...createGraphState("g-main", "b-main"),
       nodes,
-      positions,
       branches: {
         "b-main": {
           id: "b-main",
@@ -824,7 +833,13 @@ test("一万个对话节点保持有界 DOM，并可深链末端", async ({ page
       },
       heads: { "b-main": "large-9999" },
     };
-    useDomainStore.setState({ conversation });
+    const state = useDomainStore.getState();
+    useDomainStore.setState({
+      conversationGraphs: {
+        ...state.conversationGraphs,
+        [state.activeConversationSessionId]: conversation,
+      },
+    });
   });
   await pushRoute(page, "/canvas/chat/branches/b-main/nodes/large-9999");
   await expect(

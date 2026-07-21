@@ -1,6 +1,8 @@
 import { PixelButton } from "@pxlkit/ui-kit";
+import { useMutation } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type RefObject } from "react";
 import { useNavigate } from "react-router-dom";
+import { getApi } from "../../api";
 import type { Notification } from "../../api/types";
 import { branchActiveNodes } from "../../chat/dag";
 import {
@@ -10,7 +12,10 @@ import {
 } from "../../notifications/queue";
 import { useAppearanceStore } from "../../store/appearanceStore";
 import { useCanvasStore } from "../../store/canvasStore";
-import { useDomainStore } from "../../store/domainStore";
+import {
+  selectActiveConversation,
+  useDomainStore,
+} from "../../store/domainStore";
 import { deliveryNodeId } from "../../workbenches/delivery/projection";
 import GrayDangoPet from "./GrayDangoPet";
 import {
@@ -38,7 +43,11 @@ export function GrayDangoHost({
 }) {
   const navigate = useNavigate();
   const notifications = useDomainStore((state) => state.notifications);
-  const conversation = useDomainStore((state) => state.conversation);
+  const conversation = useDomainStore(selectActiveConversation);
+  const acknowledgeMutation = useMutation({
+    mutationFn: (notificationId: string) =>
+      getApi().acknowledgeNotification(notificationId),
+  });
   const activeBranchId = useCanvasStore(
     (state) => state.activeConversationBranchId ?? conversation.root_branch_id,
   );
@@ -111,7 +120,8 @@ export function GrayDangoHost({
     if (notification.source_workbench === "conversation") {
       // FE-PET-007：聚焦中央对话图对应分支节点，不打开工作台
       const nodeId = notification.source_node_id;
-      const node = nodeId ? domain.conversation.nodes[nodeId] : null;
+      const activeConversation = selectActiveConversation(domain);
+      const node = nodeId ? activeConversation.nodes[nodeId] : null;
       if (!node) return;
       const branchId = node.branch_ids.includes(activeBranchId)
         ? activeBranchId
@@ -207,12 +217,11 @@ export function GrayDangoHost({
                 size="sm"
                 tone="green"
                 variant="outline"
-                disabled={current.lifecycle !== "active"}
-                onClick={() =>
-                  void useDomainStore
-                    .getState()
-                    .acknowledgeNotification(current.id)
+                disabled={
+                  current.lifecycle !== "active" ||
+                  acknowledgeMutation.isPending
                 }
+                onClick={() => acknowledgeMutation.mutate(current.id)}
               >
                 确认
               </PixelButton>

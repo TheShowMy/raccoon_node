@@ -11,7 +11,6 @@ type TerminalStore = {
 export const useTerminalStore = create<TerminalStore>()((set) => ({
   activeSessionId: null,
   renamingId: null,
-  setActiveSessionId: (activeSessionId) =>
-    set((state) => ({ ...state, activeSessionId })),
-  setRenamingId: (renamingId) => set((state) => ({ ...state, renamingId })),
+  setActiveSessionId: (activeSessionId) => set({ activeSessionId }),
+  setRenamingId: (renamingId) => set({ renamingId }),
 }));

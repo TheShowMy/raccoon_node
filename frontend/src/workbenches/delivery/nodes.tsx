@@ -1,8 +1,7 @@
 import { PixelButton } from "@pxlkit/ui-kit";
 import type { NodeProps } from "@xyflow/react";
 import { memo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { getApi } from "../../api";
 import {
   groupRequirements,
@@ -14,23 +13,18 @@ import { DEMO_MERGE_DIFF } from "../../api/mock/demoContent";
 import { qualitySummary, RUN_PHASE_LABELS } from "../../api/quality";
 import { evaluateRunBudget } from "../../api/usage";
 import type {
-  AcceptanceScenario,
   PendingAction,
   Publication,
   Requirement,
   RequirementRevision,
-  RequirementSpec,
   Run,
   RunReview,
   RunValidation,
-  SpecConstraint,
   WorkItem,
   WorkPlan,
 } from "../../api/types";
-import { ancestorChain } from "../../chat/dag";
 import { DiffView } from "../../components/DiffView";
 import { DNode } from "../../components/DNode";
-import { useCanvasStore } from "../../store/canvasStore";
 import { useDeliveryStore } from "../../store/deliveryStore";
 import { useDomainStore } from "../../store/domainStore";
 import { deliveryNodeId, layoutWorkItems, runLocateTarget } from "./projection";
@@ -47,6 +41,12 @@ const TONE_BY_VERDICT: Record<string, string> = {
   unavailable: "gray",
 };
 
+const PATH_LABELS = {
+  local: "本地主分支 fast-forward",
+  github_pull_request: "GitHub PR",
+  gitlab_merge_request: "GitLab MR",
+} as const;
+
 function Meta({ children }: { children: React.ReactNode }) {
   return <p className="dnode__meta">{children}</p>;
 }
@@ -62,6 +62,10 @@ function RequirementListInner() {
   const search = useDeliveryStore((state) => state.search);
   const groupFilter = useDeliveryStore((state) => state.groupFilter);
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const reorderMutation = useMutation({
+    mutationFn: (requirementIds: string[]) =>
+      getApi().reorderQueue({ requirement_ids: requirementIds }),
+  });
 
   const groups = groupRequirements(Object.values(requirements), runs);
   const visible = groups
@@ -83,7 +87,7 @@ function RequirementListInner() {
     if (target < 0 || target >= queued.items.length) return;
     const ids = queued.items.map((requirement) => requirement.id);
     [ids[index], ids[target]] = [ids[target], ids[index]];
-    void useDomainStore.getState().reorderQueue(ids);
+    reorderMutation.mutate(ids);
   };
 
   return (
@@ -200,7 +204,7 @@ function RequirementListInner() {
                           <button
                             type="button"
                             aria-label={`上移 ${requirement.title}`}
-                            disabled={index === 0}
+                            disabled={reorderMutation.isPending || index === 0}
                             onClick={() => move(group.key, index, -1)}
                           >
                             ↑
@@ -208,7 +212,10 @@ function RequirementListInner() {
                           <button
                             type="button"
                             aria-label={`下移 ${requirement.title}`}
-                            disabled={index === group.items.length - 1}
+                            disabled={
+                              reorderMutation.isPending ||
+                              index === group.items.length - 1
+                            }
                             onClick={() => move(group.key, index, 1)}
                           >
                             ↓
@@ -263,474 +270,6 @@ export const RequirementSummaryNode = memo(function RequirementSummaryNode({
   );
 });
 
-/* ── 来源对话（FE-DELIVERY-003） ── */
-
-export const SourceRefNode = memo(function SourceRefNode({ data }: NodeProps) {
-  const { requirement } = data as { requirement: Requirement };
-  const navigate = useNavigate();
-  const conversation = useDomainStore((state) => state.conversation);
-  const firstSource = requirement.source_node_ids
-    .map((id) => conversation.nodes[id])
-    .find(Boolean);
-  const locateConversation = () => {
-    if (!firstSource) return;
-    const canvas = useCanvasStore.getState();
-    const branchId =
-      requirement.source_branch_id ?? conversation.root_branch_id;
-    canvas.setActiveConversationBranch(branchId);
-    canvas.setSelectedConversationNode(firstSource.id);
-    const position = conversation.positions[firstSource.id];
-    if (position) {
-      canvas.setConversationViewport(branchId, {
-        zoom: 1,
-        x: 160 - position.x,
-        y: 140 - position.y,
-      });
-    }
-    navigate("/");
-  };
-  return (
-    <DNode icon="source" label="来源对话" width={280} ariaLabel="来源对话节点">
-      <Meta>分支 {requirement.source_branch_id}</Meta>
-      <p className="dnode__quote">
-        {firstSource
-          ? ancestorChain(conversation, firstSource.id)
-              .filter((node) => node.kind === "user_message")
-              .at(-1)
-              ?.content.slice(0, 80) || firstSource.content.slice(0, 80)
-          : "来源节点已归档"}
-      </p>
-      <div className="dnode__actions">
-        <PixelButton size="sm" variant="outline" onClick={locateConversation}>
-          定位对话节点
-        </PixelButton>
-      </div>
-    </DNode>
-  );
-});
-
-/* ── 规格（FE-SPEC-002/003/004：分区 + 稳定 ID + 来源 + revision 链） ── */
-
-const LIST_FIELDS = [
-  { key: "in_scope", label: "范围内" },
-  { key: "out_of_scope", label: "范围外" },
-  { key: "non_goals", label: "非目标" },
-  { key: "risks", label: "风险" },
-  { key: "assumptions", label: "假设" },
-  { key: "evidence", label: "证据（修改不触发确认撤销）" },
-] as const satisfies readonly { key: keyof RequirementSpec; label: string }[];
-
-function LinesView({ lines }: { lines: string[] }) {
-  if (lines.length === 0) return <Meta>无</Meta>;
-  return (
-    <ul className="dnode__lines">
-      {lines.map((line, index) => (
-        <li key={index}>{line}</li>
-      ))}
-    </ul>
-  );
-}
-
-function LinesEditor({
-  value,
-  ariaLabel,
-  onChange,
-}: {
-  value: string[];
-  ariaLabel: string;
-  onChange: (lines: string[]) => void;
-}) {
-  return (
-    <textarea
-      className="dnode__textarea"
-      aria-label={ariaLabel}
-      rows={Math.max(2, value.length)}
-      value={value.join("\n")}
-      onChange={(event) => onChange(event.target.value.split("\n"))}
-    />
-  );
-}
-
-function ScenarioView({ scenario }: { scenario: AcceptanceScenario }) {
-  return (
-    <li className="dnode__scenario">
-      <code className="dnode__tag">{scenario.id}</code>
-      <span>
-        <b>Given</b> {scenario.given}
-        <br />
-        <b>When</b> {scenario.when}
-        <br />
-        <b>Then</b> {scenario.then}
-      </span>
-    </li>
-  );
-}
-
-function ConstraintView({ constraint }: { constraint: SpecConstraint }) {
-  return (
-    <li className="dnode__scenario">
-      <code className="dnode__tag">{constraint.id}</code>
-      <span>
-        {constraint.text}
-        <br />
-        <i className="dnode__source">
-          来源：
-          {constraint.source.kind === "user_message"
-            ? "用户消息"
-            : "仓库事实"}{" "}
-          · {constraint.source.ref}
-        </i>
-      </span>
-    </li>
-  );
-}
-
-function SpecSections({
-  spec,
-  draft,
-  setDraft,
-}: {
-  spec: RequirementSpec;
-  draft: RequirementSpec | null;
-  setDraft: (spec: RequirementSpec) => void;
-}) {
-  const editing = draft !== null;
-  const patch = (partial: Partial<RequirementSpec>) => {
-    if (draft) setDraft({ ...draft, ...partial });
-  };
-  return (
-    <div className="dnode__sections nodrag nowheel">
-      <section>
-        <h5>目标</h5>
-        {editing ? (
-          <textarea
-            className="dnode__textarea"
-            aria-label="目标"
-            rows={2}
-            value={draft.goal}
-            onChange={(event) => patch({ goal: event.target.value })}
-          />
-        ) : (
-          <p className="dnode__text">{spec.goal}</p>
-        )}
-      </section>
-      <section>
-        <h5>用户价值</h5>
-        {editing ? (
-          <textarea
-            className="dnode__textarea"
-            aria-label="用户价值"
-            rows={2}
-            value={draft.user_value}
-            onChange={(event) => patch({ user_value: event.target.value })}
-          />
-        ) : (
-          <p className="dnode__text">{spec.user_value}</p>
-        )}
-      </section>
-      {LIST_FIELDS.map(({ key, label }) => (
-        <section key={key}>
-          <h5>{label}</h5>
-          {editing ? (
-            <LinesEditor
-              ariaLabel={label}
-              value={draft[key] as string[]}
-              onChange={(lines) =>
-                patch({ [key]: lines } as Partial<RequirementSpec>)
-              }
-            />
-          ) : (
-            <LinesView lines={spec[key] as string[]} />
-          )}
-        </section>
-      ))}
-      <section>
-        <h5>验收场景（Given/When/Then · 稳定 ID）</h5>
-        {editing ? (
-          <ul className="dnode__lines">
-            {draft.scenarios.map((scenario, index) => (
-              <li key={scenario.id} className="dnode__scenario-edit">
-                <code className="dnode__tag">{scenario.id}</code>
-                {(["given", "when", "then"] as const).map((field) => (
-                  <input
-                    key={field}
-                    className="dnode__input"
-                    aria-label={`${scenario.id} ${field}`}
-                    placeholder={field}
-                    value={scenario[field]}
-                    onChange={(event) =>
-                      patch({
-                        scenarios: draft.scenarios.map((entry, i) =>
-                          i === index
-                            ? { ...entry, [field]: event.target.value }
-                            : entry,
-                        ),
-                      })
-                    }
-                  />
-                ))}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <ul className="dnode__lines">
-            {spec.scenarios.map((scenario) => (
-              <ScenarioView key={scenario.id} scenario={scenario} />
-            ))}
-          </ul>
-        )}
-      </section>
-      <section>
-        <h5>约束（含来源）</h5>
-        <ul className="dnode__lines">
-          {(editing ? draft.constraints : spec.constraints).map(
-            (constraint, index) =>
-              editing ? (
-                <li key={constraint.id} className="dnode__scenario-edit">
-                  <code className="dnode__tag">{constraint.id}</code>
-                  <input
-                    className="dnode__input"
-                    aria-label={`${constraint.id} 约束`}
-                    value={constraint.text}
-                    onChange={(event) =>
-                      patch({
-                        constraints: draft.constraints.map((entry, i) =>
-                          i === index
-                            ? { ...entry, text: event.target.value }
-                            : entry,
-                        ),
-                      })
-                    }
-                  />
-                  <i className="dnode__source">来源：{constraint.source.ref}</i>
-                </li>
-              ) : (
-                <ConstraintView key={constraint.id} constraint={constraint} />
-              ),
-          )}
-        </ul>
-      </section>
-    </div>
-  );
-}
-
-export const SpecNode = memo(function SpecNode({ data }: NodeProps) {
-  const { requirement, revisions } = data as {
-    requirement: Requirement;
-    revisions: RequirementRevision[];
-  };
-  const latest = revisions.at(-1)!;
-  const [viewRevision, setViewRevision] = useState(latest.revision);
-  const [draft, setDraft] = useState<RequirementSpec | null>(null);
-  const [conflict, setConflict] = useState(false);
-  const viewing =
-    revisions.find((entry) => entry.revision === viewRevision) ?? latest;
-  const isLatest = viewing.revision === latest.revision;
-
-  const save = async () => {
-    if (!draft) return;
-    const result = await useDomainStore.getState().updateSpec({
-      requirement_id: requirement.id,
-      base_revision: viewing.revision,
-      spec: draft,
-    });
-    if (result.conflict) {
-      // FE-SPEC-004：冲突——服务器版本已更新，保留本地草稿由用户对照
-      setConflict(true);
-      return;
-    }
-    setConflict(false);
-    setDraft(null);
-    setViewRevision(result.revision);
-  };
-
-  return (
-    <DNode
-      icon="spec"
-      label="规格"
-      chip={`r${viewing.revision} · ${viewing.semantic_hash.slice(0, 6)}`}
-      chipTone={isLatest ? "cyan" : "gray"}
-      width={420}
-      ariaLabel={`规格节点 revision ${viewing.revision}`}
-      actions={
-        <>
-          <div
-            className="dnode__rev-tabs"
-            role="group"
-            aria-label="revision 链"
-          >
-            {revisions.map((entry) => (
-              <button
-                key={entry.revision}
-                type="button"
-                data-active={entry.revision === viewing.revision || undefined}
-                disabled={draft !== null}
-                onClick={() => setViewRevision(entry.revision)}
-              >
-                r{entry.revision}
-              </button>
-            ))}
-          </div>
-          {draft ? (
-            <span className="dnode__chips">
-              <PixelButton size="sm" tone="green" onClick={() => void save()}>
-                保存为新 revision
-              </PixelButton>
-              <PixelButton
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setDraft(null);
-                  setConflict(false);
-                }}
-              >
-                放弃
-              </PixelButton>
-            </span>
-          ) : (
-            <PixelButton
-              size="sm"
-              variant="outline"
-              disabled={!isLatest}
-              onClick={() => setDraft(structuredClone(viewing.spec))}
-            >
-              编辑
-            </PixelButton>
-          )}
-        </>
-      }
-    >
-      {conflict ? (
-        <p className="dnode__warning" role="alert">
-          revision 已过期：服务器已有更新版本，请对照后重新编辑。
-        </p>
-      ) : null}
-      {requirement.confirmed_revision !== null && isLatest ? (
-        <Meta>
-          语义修改将撤销确认并取消未终态 Run；仅证据修改不触发（PRD-SPEC-007）。
-        </Meta>
-      ) : null}
-      <SpecSections
-        spec={viewing.spec}
-        draft={draft}
-        setDraft={(spec) => setDraft(spec)}
-      />
-    </DNode>
-  );
-});
-
-/* ── 确认（FE-SPEC-005：发布路径/模型角色/任务预算/脏工作区，无计划确认） ── */
-
-const PATH_LABELS = {
-  local: "本地主分支 fast-forward",
-  github_pull_request: "GitHub PR",
-  gitlab_merge_request: "GitLab MR",
-} as const;
-
-export const ConfirmationNode = memo(function ConfirmationNode({
-  data,
-}: NodeProps) {
-  const { requirement, revisions } = data as {
-    requirement: Requirement;
-    revisions: RequirementRevision[];
-  };
-  const [conflict, setConflict] = useState(false);
-  const [budgetOverride, setBudgetOverride] = useState<number | null>(null);
-  const confirmedRevision = revisions.find(
-    (entry) => entry.revision === requirement.confirmed_revision,
-  );
-  const ready = requirement.state === "spec_ready";
-  const { data: preview } = useQuery({
-    queryKey: [
-      "confirmation-preview",
-      requirement.id,
-      requirement.latest_revision,
-    ],
-    queryFn: () => getApi().getConfirmationPreview(requirement.id),
-    enabled: ready,
-  });
-
-  const confirm = async () => {
-    const budget = budgetOverride ?? preview?.effective_task_budget_usd ?? 0;
-    const result = await useDomainStore.getState().confirmRequirement({
-      requirement_id: requirement.id,
-      revision: requirement.latest_revision,
-      task_budget_usd: budget,
-    });
-    setConflict(result.conflict);
-  };
-
-  return (
-    <DNode
-      icon="confirm"
-      label="确认"
-      chip={
-        confirmedRevision
-          ? `已确认 r${requirement.confirmed_revision}`
-          : ready
-            ? "待确认"
-            : "—"
-      }
-      chipTone={confirmedRevision ? "green" : ready ? "yellow" : "gray"}
-      width={340}
-      ariaLabel="规格确认节点"
-      actions={
-        ready ? (
-          <PixelButton size="sm" tone="green" onClick={() => void confirm()}>
-            确认 r{requirement.latest_revision} 并入队
-          </PixelButton>
-        ) : null
-      }
-    >
-      {confirmedRevision?.confirmation ? (
-        <Meta>
-          确认事实：r{confirmedRevision.revision} ·{" "}
-          {confirmedRevision.confirmation.confirmed_at.slice(0, 19)}； 任务预算
-          ${confirmedRevision.confirmation.task_budget_usd.toFixed(2)}
-          美元；确认后自动生成 WorkPlan 并启动 Run。
-        </Meta>
-      ) : null}
-      {ready && preview ? (
-        <div className="dnode__sections">
-          <Meta>预计发布路径：{PATH_LABELS[preview.publication_path]}</Meta>
-          <Meta>{preview.publication_reason}</Meta>
-          <Meta>
-            模型角色：
-            {preview.model_roles
-              .map((entry) => `${entry.role}=${entry.model}`)
-              .join(" · ")}
-          </Meta>
-          <label className="dnode__field">
-            <span>本任务软预算（USD）</span>
-            <input
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={budgetOverride ?? preview.effective_task_budget_usd}
-              onChange={(event) =>
-                setBudgetOverride(Number(event.target.value))
-              }
-            />
-          </label>
-          <Meta>
-            默认 ${preview.default_task_budget_usd.toFixed(2)}
-            ；确认后写入事实，Run 启动后冻结。
-          </Meta>
-          {preview.workspace_note ? (
-            <p className="dnode__warning">{preview.workspace_note}</p>
-          ) : null}
-          {conflict ? (
-            <p className="dnode__warning" role="alert">
-              确认冲突：规格已有新 revision，请确认最新版本。
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-      {!ready && !confirmedRevision ? <Meta>规格就绪后可确认。</Meta> : null}
-    </DNode>
-  );
-});
-
 /* ── Run（FE-RUN-002：阶段、产出、风险、下一步；组合表达禁止单一"完成"） ── */
 
 const RUN_RAIL: Run["phase"][] = [
@@ -773,7 +312,19 @@ export const RunNode = memo(function RunNode({ data }: NodeProps) {
     review: RunReview | null;
     activeWorkItemId: string | null;
   };
-  const domain = useDomainStore.getState();
+  const pauseMutation = useMutation({
+    mutationFn: () => getApi().pauseRun(run.id),
+  });
+  const resumeMutation = useMutation({
+    mutationFn: () => getApi().resumeRun(run.id),
+  });
+  const retryMutation = useMutation({
+    mutationFn: () => getApi().retryRun(run.id),
+  });
+  const abandonMutation = useMutation({
+    mutationFn: () =>
+      getApi().requestAction({ kind: "abandon_run", run_id: run.id }),
+  });
   const usage = useDomainStore((state) => state.usage);
   const budget = usage
     ? evaluateRunBudget(usage, run.id, run.task_budget_usd)
@@ -834,7 +385,8 @@ export const RunNode = memo(function RunNode({ data }: NodeProps) {
             <PixelButton
               size="sm"
               variant="outline"
-              onClick={() => void domain.pauseRun(run.id)}
+              disabled={pauseMutation.isPending}
+              onClick={() => pauseMutation.mutate()}
             >
               请求暂停
             </PixelButton>
@@ -843,7 +395,8 @@ export const RunNode = memo(function RunNode({ data }: NodeProps) {
             <PixelButton
               size="sm"
               tone="cyan"
-              onClick={() => void domain.resumeRun(run.id)}
+              disabled={resumeMutation.isPending}
+              onClick={() => resumeMutation.mutate()}
             >
               恢复
             </PixelButton>
@@ -853,7 +406,8 @@ export const RunNode = memo(function RunNode({ data }: NodeProps) {
               <PixelButton
                 size="sm"
                 tone="cyan"
-                onClick={() => void domain.retryRun(run.id)}
+                disabled={retryMutation.isPending}
+                onClick={() => retryMutation.mutate()}
               >
                 重试
               </PixelButton>
@@ -861,12 +415,8 @@ export const RunNode = memo(function RunNode({ data }: NodeProps) {
                 size="sm"
                 tone="red"
                 variant="outline"
-                onClick={() =>
-                  void domain.requestAction({
-                    kind: "abandon_run",
-                    run_id: run.id,
-                  })
-                }
+                disabled={abandonMutation.isPending}
+                onClick={() => abandonMutation.mutate()}
               >
                 放弃…
               </PixelButton>
@@ -1055,22 +605,26 @@ export const WorkItemNode = memo(function WorkItemNode({ data }: NodeProps) {
   ) {
     dependencyIssues.push("同一并行批的工作项不能互相依赖");
   }
-  const save = async () => {
+  const updateMutation = useMutation({
+    mutationFn: () =>
+      getApi().updateWorkItem({
+        run_id: runId,
+        item_id: item.id,
+        patch: {
+          title,
+          scenario_ids: scenarios
+            .split(",")
+            .map((entry) => entry.trim())
+            .filter(Boolean),
+          verification_target: target,
+          depends_on: dependencies,
+        },
+      }),
+    onSuccess: () => setEditing(false),
+  });
+  const save = () => {
     if (dependencyIssues.length > 0) return;
-    await useDomainStore.getState().updateWorkItem({
-      run_id: runId,
-      item_id: item.id,
-      patch: {
-        title,
-        scenario_ids: scenarios
-          .split(",")
-          .map((entry) => entry.trim())
-          .filter(Boolean),
-        verification_target: target,
-        depends_on: dependencies,
-      },
-    });
-    setEditing(false);
+    updateMutation.mutate();
   };
   return (
     <DNode
@@ -1168,7 +722,9 @@ export const WorkItemNode = memo(function WorkItemNode({ data }: NodeProps) {
               <PixelButton
                 size="sm"
                 tone="green"
-                disabled={dependencyIssues.length > 0}
+                disabled={
+                  dependencyIssues.length > 0 || updateMutation.isPending
+                }
                 onClick={() => void save()}
               >
                 保存（新 revision）
@@ -1346,7 +902,13 @@ const REVIEW_VERDICT_LABELS = {
 
 export const ReviewNode = memo(function ReviewNode({ data }: NodeProps) {
   const { run, review } = data as { run: Run; review: RunReview | null };
-  const domain = useDomainStore.getState();
+  const forceDeliveryMutation = useMutation({
+    mutationFn: () =>
+      getApi().requestAction({
+        kind: "force_deliver_unreviewed",
+        run_id: run.id,
+      }),
+  });
   const forceDeliverable =
     run.phase === "blocked" && review?.overall === "unavailable";
   return (
@@ -1363,12 +925,8 @@ export const ReviewNode = memo(function ReviewNode({ data }: NodeProps) {
             size="sm"
             tone="red"
             variant="outline"
-            onClick={() =>
-              void domain.requestAction({
-                kind: "force_deliver_unreviewed",
-                run_id: run.id,
-              })
-            }
+            disabled={forceDeliveryMutation.isPending}
+            onClick={() => forceDeliveryMutation.mutate()}
           >
             未经审核交付…
           </PixelButton>
@@ -1446,7 +1004,13 @@ export const PublicationNode = memo(function PublicationNode({
     run: Run;
     publication: Publication | null;
   };
-  const domain = useDomainStore.getState();
+  const retryPublicationMutation = useMutation({
+    mutationFn: () =>
+      getApi().requestAction({
+        kind: "publication_retry",
+        run_id: run.id,
+      }),
+  });
   const retryable = run.phase === "blocked" && publication?.state === "failed";
   if (!publication) {
     return (
@@ -1484,12 +1048,8 @@ export const PublicationNode = memo(function PublicationNode({
             size="sm"
             tone="cyan"
             variant="outline"
-            onClick={() =>
-              void domain.requestAction({
-                kind: "publication_retry",
-                run_id: run.id,
-              })
-            }
+            disabled={retryPublicationMutation.isPending}
+            onClick={() => retryPublicationMutation.mutate()}
           >
             重试发布（prepare/confirm）…
           </PixelButton>
@@ -1605,7 +1165,13 @@ export const ActionConfirmationNode = memo(function ActionConfirmationNode({
   data,
 }: NodeProps) {
   const { action } = data as { action: PendingAction };
-  const domain = useDomainStore.getState();
+  const confirmMutation = useMutation({
+    mutationFn: () => getApi().confirmAction(action.id),
+  });
+  const cancelMutation = useMutation({
+    mutationFn: () => getApi().cancelAction(action.id),
+  });
+  const pending = confirmMutation.isPending || cancelMutation.isPending;
   return (
     <DNode
       icon="action"
@@ -1620,14 +1186,16 @@ export const ActionConfirmationNode = memo(function ActionConfirmationNode({
           <PixelButton
             size="sm"
             tone="red"
-            onClick={() => void domain.confirmAction(action.id)}
+            disabled={pending}
+            onClick={() => confirmMutation.mutate()}
           >
             确认执行
           </PixelButton>
           <PixelButton
             size="sm"
             variant="outline"
-            onClick={() => void domain.cancelAction(action.id)}
+            disabled={pending}
+            onClick={() => cancelMutation.mutate()}
           >
             取消
           </PixelButton>

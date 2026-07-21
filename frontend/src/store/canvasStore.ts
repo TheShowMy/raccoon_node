@@ -25,7 +25,6 @@ export type CanvasNavigationState = {
   conversationSelections: Record<string, string | null>;
   /** 前向业务操作请求对话图恢复自动跟随；只保存递增信号。 */
   conversationFollowRequestId: number;
-  conversationViewports: Record<string, Viewport>;
   deliveryViewport: Viewport | null;
   scrollPositions: Record<string, number>;
   expandedProcessGroupIds: string[];
@@ -51,7 +50,7 @@ type CanvasActions = {
   openWorkbench: (input: OpenWorkbenchInput) => void;
   markWorkbenchReady: () => void;
   beginCloseWorkbench: () => void;
-  /** 恢复完成后清理瞬时字段，保留对话 viewport 等长期投影 */
+  /** 恢复完成后清理瞬时字段，保留对话滚动位置等长期投影 */
   finishCloseWorkbench: () => void;
   saveDeliveryViewport: (viewport: Viewport) => void;
   setParallaxTarget: (target: Point | null) => void;
@@ -62,7 +61,6 @@ type CanvasActions = {
   ) => void;
   setSelectedConversationNode: (nodeId: string | null) => void;
   requestConversationFollow: () => void;
-  setConversationViewport: (branchId: string, viewport: Viewport) => void;
   setScrollPosition: (key: string, position: number) => void;
   toggleProcessGroup: (groupId: string) => void;
   requestDeliveryFocus: (nodeId: string) => void;
@@ -84,7 +82,6 @@ export const initialCanvasNavigationState: CanvasNavigationState = {
   selectedConversationNodeId: null,
   conversationSelections: {},
   conversationFollowRequestId: 0,
-  conversationViewports: {},
   deliveryViewport: null,
   scrollPositions: {},
   expandedProcessGroupIds: [],
@@ -116,7 +113,6 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
               restoreFocusId: input.restoreFocusId,
             };
       return {
-        ...state,
         mode: "opening",
         workbench: input.kind,
         workbenchNodeId: input.workbenchNodeId,
@@ -126,20 +122,17 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
     }),
 
   markWorkbenchReady: () =>
-    set((state) =>
-      state.mode === "opening" ? { ...state, mode: "workbench" } : state,
-    ),
+    set((state) => (state.mode === "opening" ? { mode: "workbench" } : state)),
 
   beginCloseWorkbench: () =>
     set((state) =>
       state.mode === "workbench" || state.mode === "opening"
-        ? { ...state, mode: "closing" }
+        ? { mode: "closing" }
         : state,
     ),
 
   finishCloseWorkbench: () =>
-    set((state) => ({
-      ...state,
+    set({
       mode: "overview",
       workbench: null,
       workbenchNodeId: null,
@@ -147,20 +140,17 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
       restoreFocusId: null,
       savedMainViewport: null,
       parallaxTarget: null,
-    })),
+    }),
 
-  saveDeliveryViewport: (viewport) =>
-    set((state) => ({ ...state, deliveryViewport: viewport })),
+  saveDeliveryViewport: (viewport) => set({ deliveryViewport: viewport }),
 
-  setParallaxTarget: (target) =>
-    set((state) => ({ ...state, parallaxTarget: target })),
+  setParallaxTarget: (target) => set({ parallaxTarget: target }),
 
   setActiveConversationBranch: (branchId) =>
     set((state) => {
       const sessionId = state.activeConversationScope?.split(":", 1)[0];
       const scope = sessionId ? `${sessionId}:${branchId}` : branchId;
       return {
-        ...state,
         activeConversationScope: scope,
         activeConversationBranchId: branchId,
         selectedConversationNodeId: state.conversationSelections[scope] ?? null,
@@ -173,7 +163,6 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
     set((state) => {
       const scope = `${sessionId}:${rootBranchId}`;
       return {
-        ...state,
         activeConversationScope: scope,
         activeConversationBranchId: rootBranchId,
         selectedConversationNodeId: state.conversationSelections[scope] ?? null,
@@ -185,7 +174,6 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
 
   setSelectedConversationNode: (nodeId) =>
     set((state) => ({
-      ...state,
       selectedConversationNodeId: nodeId,
       conversationSelections: state.activeConversationScope
         ? {
@@ -197,7 +185,6 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
 
   requestConversationFollow: () =>
     set((state) => ({
-      ...state,
       conversationFollowRequestId: state.conversationFollowRequestId + 1,
       selectedConversationNodeId: null,
       conversationSelections: state.activeConversationScope
@@ -208,18 +195,8 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
         : state.conversationSelections,
     })),
 
-  setConversationViewport: (branchId, viewport) =>
-    set((state) => ({
-      ...state,
-      conversationViewports: {
-        ...state.conversationViewports,
-        [branchId]: viewport,
-      },
-    })),
-
   setScrollPosition: (key, position) =>
     set((state) => ({
-      ...state,
       scrollPositions: { ...state.scrollPositions, [key]: position },
     })),
 
@@ -231,7 +208,6 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
         ? state.expandedProcessGroupIds.filter((id) => id !== groupId)
         : [...state.expandedProcessGroupIds, groupId];
       return {
-        ...state,
         expandedProcessGroupIds,
         conversationExpandedProcessGroups: state.activeConversationScope
           ? {
@@ -243,8 +219,7 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
     }),
 
   requestDeliveryFocus: (node_id) =>
-    set((state) => ({
-      ...state,
+    set(() => ({
       deliveryFocusRequest: {
         node_id,
         request_id: `delivery-focus-${++focusRequestSequence}`,
@@ -254,7 +229,7 @@ export const useCanvasStore = create<CanvasStore>()((set) => ({
   consumeDeliveryFocus: (requestId) =>
     set((state) =>
       state.deliveryFocusRequest?.request_id === requestId
-        ? { ...state, deliveryFocusRequest: null }
+        ? { deliveryFocusRequest: null }
         : state,
     ),
 }));

@@ -32,19 +32,16 @@ export const useDeliveryStore = create<DeliveryUiState>()((set) => ({
   focusRequest: null,
   diagnosticsRunId: null,
 
-  selectRequirement: (selectedRequirementId) =>
-    set((state) => ({ ...state, selectedRequirementId })),
-  setSearch: (search) => set((state) => ({ ...state, search })),
-  setGroupFilter: (groupFilter) => set((state) => ({ ...state, groupFilter })),
+  selectRequirement: (selectedRequirementId) => set({ selectedRequirementId }),
+  setSearch: (search) => set({ search }),
+  setGroupFilter: (groupFilter) => set({ groupFilter }),
   requestFocus: (nodeId) =>
     set((state) => ({
-      ...state,
       focusRequest: { nodeId, nonce: (state.focusRequest?.nonce ?? 0) + 1 },
     })),
-  clearFocus: () => set((state) => ({ ...state, focusRequest: null })),
+  clearFocus: () => set({ focusRequest: null }),
   toggleDiagnostics: (runId) =>
     set((state) => ({
-      ...state,
       diagnosticsRunId: state.diagnosticsRunId === runId ? null : runId,
     })),
 }));

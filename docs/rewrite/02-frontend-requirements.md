@@ -95,12 +95,12 @@
 - **FE-CANVAS-003**：外层首页禁止自由平移和缩放；中央对话列表拥有独立滚动容器。
 - **FE-CANVAS-004**：在 1440×900 参考视口中，中央对话列表可见投影宽度不小于主画布 62%，高度不小于 72%；初始仅显示 Composer。
 - **FE-CANVAS-005**：窗口变窄时先压缩环绕距离和摘要，不先挤压中央对话可操作区。
-- **FE-CANVAS-006**：指针位置映射为有界相机偏移并平滑插值；不得改变内部节点坐标、选择、焦点、草稿和查询缓存。
-- **FE-CANVAS-007**：后台快照刷新不得重置外层或内部相机；提供“回到活动分支末端”的节点内操作。
+- **FE-CANVAS-006**：指针位置映射为有界相机偏移并平滑插值；不得改变对话滚动位置、选择、焦点、草稿和查询缓存。
+- **FE-CANVAS-007**：后台快照刷新不得重置外层相机或对话滚动位置；提供“回到活动分支末端”的节点内操作。
 
 ### 4.2 射线外侧工作台
 
-- **FE-CANVAS-008**（PRD-CANVAS-004、AC-10）：打开前保存主场景 viewport、视差目标、触发节点、焦点、对话 branch viewport、需求子画布 viewport，以及普通工作台各 pane 的滚动位置。
+- **FE-CANVAS-008**（PRD-CANVAS-004、AC-10）：打开前保存主场景 viewport、视差目标、触发节点、焦点、对话 branch 滚动位置、需求子画布 viewport，以及普通工作台各 pane 的滚动位置。
 - **FE-CANVAS-009**：以主场景中心 `C` 和触发节点中心 `N` 计算单位射线 `normalize(N - C)`；工作台中心位于 `N + ray * offset`，`offset` 由触发节点边界、安全间距和工作台尺寸确定。
 - **FE-CANVAS-010**：工作台是外层 React Flow 中的真实大型 `CanvasWorkbenchNode`；相机使用安全边距聚焦该节点，不使用固定屏幕坐标或覆盖层伪装。
 - **FE-CANVAS-011**：同一时间只创建一个工作台节点；打开另一能力时先完成当前工作台关闭与状态保存，再创建新节点。
@@ -135,7 +135,6 @@ type CanvasNavigationState = {
   parallaxTarget: Point | null;
   activeConversationBranchId: string | null;
   selectedConversationNodeId: string | null;
-  conversationViewports: Record<string, Viewport>;
   deliveryViewport: Viewport | null;
   scrollPositions: Record<string, number>;
   expandedProcessGroupIds: string[];
@@ -187,7 +186,7 @@ type CanvasNavigationState = {
 - **FE-CHAT-023**：对话列表按滚动窗口做窗口化（±overscan，段间占位撑出总高）；已测行高继续缓存，选中、活跃和深链目标行固定保留渲染。一万个节点时 DOM 数量保持有界且仍可定位末端。
 - **FE-CHAT-024**：`ConversationNode` 的 mock 契约包含 `clarification_round_id` 和 `redacted_at`；redact 使用 `conversation.node.redacted` 事件和 `conversation_redact` 两阶段操作，reducer 清除可见正文与附件引用但保留节点和边。v1 UI 不暴露 redact 入口（见 FE-CHAT-015），契约保持不变。
 - **FE-CHAT-025**（PRD-CHAT-015、AC-19）：中央对话列表右上角固定显示“＋ 新建会话”，不随列表滚动移动，在 Composer 隐藏或用户查看历史时仍可达。空闲时幂等创建；存在活动响应、草稿或输入门控时，在当前输入所有者后投影 `ActionConfirmationNode`。确认后 abort 旧响应并切换空图，取消则恢复原滚动位置；命令执行期间按钮禁用。
-- **FE-CHAT-026**：会话与分支是两级状态。viewport、Composer 草稿、选择和过程组展开按 `session_id + branch_id` 保存；新会话只含 root branch 与 Composer，并使用默认 viewport/自动跟随。旧会话继续保存在领域投影中，但当前 UI 不渲染会话列表、返回入口或历史搜索。
+- **FE-CHAT-026**：会话与分支是两级状态。滚动位置、Composer 草稿、选择和过程组展开按 `session_id + branch_id` 保存；新会话只含 root branch 与 Composer，并默认自动跟随。旧会话继续保存在领域投影中，但当前 UI 不渲染会话列表、返回入口或历史搜索。
 - **FE-CHAT-027**：输入节点出现时自动聚焦输入框，用户无需再点一次即可直接输入：Composer 在分支末端变化后（发送/新生成）再现时重新聚焦，pending 自由文本澄清轮次首次出现时聚焦，单选/多选澄清选择「自定义回答」时聚焦展开的文本框。聚焦使用 `preventScroll` 不改变滚动位置；窗口化滚动造成的重挂载不得重复抢焦点。
 
 ## 6. 需求交付工作台
@@ -317,7 +316,7 @@ type CanvasNavigationState = {
 - 明暗主题沿用像素 token 双套色板（参考 `@pxlkit/ui-kit` 的 surface/dark mode 机制）；状态颜色只是辅助，必须同时有文本和像素图标。
 - RunPhase、RunOutcome、验证、审核和发布分别展示，禁止统一翻译为“成功/失败”。
 - 工作台内容增长优先增加内部空间关系，不持续推移已完成节点。
-- 一万个对话节点、一百个需求和大量事件时，远景只渲染简化节点，近景按 viewport 加载正文。
+- 一万个对话节点、一百个需求和大量事件时，对话列表仅渲染滚动窗口及 overscan 内的行；需求画布按 viewport 加载节点。
 - v1 支持 1024 CSS px 及以上桌面视口；更窄视口提供只读说明，不承诺移动端编辑。
 - 所有画布节点支持键盘遍历；普通工作台按工具栏、标签、pane 和控件顺序遍历。屏幕阅读器通过语义树访问节点关系或 pane 标题，不要求理解二维坐标。
 - 内部选择菜单、提示、表单和标签页使用 pxlkit 基础组件或同等 ARIA/键盘标准的自研像素组件；焦点不得逃出当前工作台或丢失返回节点。

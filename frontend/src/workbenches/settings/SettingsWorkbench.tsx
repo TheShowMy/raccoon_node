@@ -1,5 +1,5 @@
 import { PixelButton } from "@pxlkit/ui-kit";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { getApi } from "../../api";
@@ -111,6 +111,10 @@ function AppearanceGroup() {
 }
 
 function NetworkGroup({ settings }: { settings: AppSettings }) {
+  const updateMutation = useMutation({
+    mutationFn: (network_policy: NetworkPolicy) =>
+      getApi().updateSettings({ network_policy }),
+  });
   return (
     <Group panelId="settings-network" title="网络策略">
       <div className="set-row" role="radiogroup" aria-label="网络策略">
@@ -123,11 +127,8 @@ function NetworkGroup({ settings }: { settings: AppSettings }) {
               aria-checked={settings.network_policy === policy}
               className="chat-node__override-option"
               data-active={settings.network_policy === policy || undefined}
-              onClick={() =>
-                void useDomainStore
-                  .getState()
-                  .updateSettings({ network_policy: policy })
-              }
+              disabled={updateMutation.isPending}
+              onClick={() => updateMutation.mutate(policy)}
             >
               {NETWORK_POLICY_LABELS[policy]}
             </button>
@@ -148,6 +149,10 @@ function DefaultTaskBudgetGroup({ settings }: { settings: AppSettings }) {
     draft.trim() !== "" &&
     Number.isFinite(value) &&
     value !== settings.default_task_budget_usd;
+  const updateMutation = useMutation({
+    mutationFn: (default_task_budget_usd: number) =>
+      getApi().updateSettings({ default_task_budget_usd }),
+  });
   return (
     <Group panelId="settings-budget" title="默认任务预算">
       <div className="set-row">
@@ -163,12 +168,8 @@ function DefaultTaskBudgetGroup({ settings }: { settings: AppSettings }) {
           size="sm"
           tone="green"
           variant="outline"
-          disabled={!dirty || value <= 0}
-          onClick={() =>
-            void useDomainStore
-              .getState()
-              .updateSettings({ default_task_budget_usd: value })
-          }
+          disabled={!dirty || value <= 0 || updateMutation.isPending}
+          onClick={() => updateMutation.mutate(value)}
         >
           保存
         </PixelButton>
@@ -191,6 +192,13 @@ function SecurityGroup({ settings }: { settings: AppSettings }) {
   const desiredHost = localMode ? "127.0.0.1" : "0.0.0.0";
   const dirty =
     desiredHost !== settings.listen_host || portNumber !== settings.listen_port;
+  const updateMutation = useMutation({
+    mutationFn: () =>
+      getApi().updateSettings({
+        listen_host: desiredHost,
+        listen_port: portNumber,
+      }),
+  });
   return (
     <Group panelId="settings-security" title="监听与安全">
       <div className="set-row" role="group" aria-label="监听地址">
@@ -223,13 +231,13 @@ function SecurityGroup({ settings }: { settings: AppSettings }) {
           size="sm"
           tone="green"
           variant="outline"
-          disabled={!dirty || !Number.isInteger(portNumber) || portNumber <= 0}
-          onClick={() =>
-            void useDomainStore.getState().updateSettings({
-              listen_host: desiredHost,
-              listen_port: portNumber,
-            })
+          disabled={
+            !dirty ||
+            !Number.isInteger(portNumber) ||
+            portNumber <= 0 ||
+            updateMutation.isPending
           }
+          onClick={() => updateMutation.mutate()}
         >
           保存
         </PixelButton>
@@ -239,32 +247,6 @@ function SecurityGroup({ settings }: { settings: AppSettings }) {
           ? "本地：启动 nonce + SameSite session。"
           : "局域网：REST、NDJSON 与 WebSocket 全部必须鉴权。"}
       </p>
-    </Group>
-  );
-}
-
-function RestartGroup({ settings }: { settings: AppSettings }) {
-  return (
-    <Group panelId="settings-restart" title="重启">
-      {settings.pending_restart.length > 0 ? (
-        <>
-          <p className="dnode__text">
-            <strong>restart_required</strong>：
-            {settings.pending_restart.join("、")}
-          </p>
-          <p className="dnode__meta">设置已保存；重启是独立动作。</p>
-          <PixelButton
-            size="sm"
-            tone="red"
-            variant="outline"
-            onClick={() => void useDomainStore.getState().restartSystem()}
-          >
-            立即模拟重启
-          </PixelButton>
-        </>
-      ) : (
-        <p className="dnode__text">没有等待生效的设置。</p>
-      )}
     </Group>
   );
 }
@@ -318,6 +300,9 @@ function SettingsResult({ settings }: { settings: AppSettings }) {
 
 function SettingsRestartDock({ settings }: { settings: AppSettings }) {
   const [dismissed, setDismissed] = useState(false);
+  const restartMutation = useMutation({
+    mutationFn: () => getApi().restartSystem(),
+  });
   if (settings.pending_restart.length === 0 || dismissed) return null;
   return (
     <section
@@ -337,7 +322,8 @@ function SettingsRestartDock({ settings }: { settings: AppSettings }) {
         <PixelButton
           size="sm"
           tone="red"
-          onClick={() => void useDomainStore.getState().restartSystem()}
+          disabled={restartMutation.isPending}
+          onClick={() => restartMutation.mutate()}
         >
           确认重启
         </PixelButton>
@@ -382,12 +368,7 @@ export function SettingsWorkbench() {
         <DefaultTaskBudgetGroup settings={settings} />
       </>
     ),
-    maintenance: (
-      <>
-        <DiagnosticsGroup />
-        <RestartGroup settings={settings} />
-      </>
-    ),
+    maintenance: <DiagnosticsGroup />,
   }[activeCategory];
   const activeLabel =
     CATEGORIES.find((category) => category.id === activeCategory)?.label ??

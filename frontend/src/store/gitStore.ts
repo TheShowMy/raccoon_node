@@ -24,10 +24,9 @@ export const useGitStore = create<GitStore>()((set) => ({
   selectedChangePaths: [],
   commitMessage: "",
   newBranchName: "",
-  setCompactPane: (compactPane) => set((state) => ({ ...state, compactPane })),
+  setCompactPane: (compactPane) => set({ compactPane }),
   selectChange: (selectedChangePath) =>
     set((state) => ({
-      ...state,
       selectedChangePath,
       compactPane: selectedChangePath ? "diff" : state.compactPane,
     })),
@@ -65,8 +64,6 @@ export const useGitStore = create<GitStore>()((set) => ({
         ),
       };
     }),
-  setCommitMessage: (commitMessage) =>
-    set((state) => ({ ...state, commitMessage })),
-  setNewBranchName: (newBranchName) =>
-    set((state) => ({ ...state, newBranchName })),
+  setCommitMessage: (commitMessage) => set({ commitMessage }),
+  setNewBranchName: (newBranchName) => set({ newBranchName }),
 }));

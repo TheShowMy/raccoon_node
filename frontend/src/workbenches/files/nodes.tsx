@@ -9,7 +9,10 @@ import {
   composerScopeKey,
   useComposerStore,
 } from "../../store/composerStore";
-import { useDomainStore } from "../../store/domainStore";
+import {
+  selectActiveConversation,
+  useDomainStore,
+} from "../../store/domainStore";
 import { useFilesStore } from "../../store/filesStore";
 
 function DirRow({ entry, depth }: { entry: FileEntry; depth: number }) {
@@ -184,7 +187,7 @@ function useAddRef(path: string) {
     const domain = useDomainStore.getState();
     const branchId =
       useCanvasStore.getState().activeConversationBranchId ??
-      domain.conversation.root_branch_id;
+      selectActiveConversation(domain).root_branch_id;
     const key = composerScopeKey(domain.activeConversationSessionId, branchId);
     const ok = useComposerStore.getState().addFileRef(key, path);
     setFeedback(

@@ -26,18 +26,16 @@ export const useModelsStore = create<ModelsStore>()((set) => ({
   drafts: {},
   credentialInputs: {},
   selectProvider: (selectedProviderId) =>
-    set((state) => ({
-      ...state,
+    set({
       selectedProviderId,
       selectedModelId: null,
       compactPane: "models",
-    })),
+    }),
   selectModel: (selectedModelId) =>
-    set((state) => ({ ...state, selectedModelId, compactPane: "detail" })),
-  setCompactPane: (compactPane) => set((state) => ({ ...state, compactPane })),
+    set({ selectedModelId, compactPane: "detail" }),
+  setCompactPane: (compactPane) => set({ compactPane }),
   setDraft: (role, patch) =>
     set((state) => ({
-      ...state,
       drafts: {
         ...state.drafts,
         [role]: {
@@ -52,17 +50,16 @@ export const useModelsStore = create<ModelsStore>()((set) => ({
     set((state) => {
       const drafts = { ...state.drafts };
       delete drafts[role];
-      return { ...state, drafts };
+      return { drafts };
     }),
   setCredentialInput: (providerId, secret) =>
     set((state) => ({
-      ...state,
       credentialInputs: { ...state.credentialInputs, [providerId]: secret },
     })),
   clearCredentialInput: (providerId) =>
     set((state) => {
       const credentialInputs = { ...state.credentialInputs };
       delete credentialInputs[providerId];
-      return { ...state, credentialInputs };
+      return { credentialInputs };
     }),
 }));

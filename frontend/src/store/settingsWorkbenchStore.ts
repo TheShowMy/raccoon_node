@@ -11,7 +11,6 @@ type SettingsWorkbenchStore = {
 export const useSettingsWorkbenchStore = create<SettingsWorkbenchStore>()(
   (set) => ({
     activeCategory: "general",
-    setActiveCategory: (activeCategory) =>
-      set((state) => ({ ...state, activeCategory })),
+    setActiveCategory: (activeCategory) => set({ activeCategory }),
   }),
 );

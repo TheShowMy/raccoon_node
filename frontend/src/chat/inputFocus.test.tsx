@@ -1,4 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 import type {
   ClarificationRound,
@@ -70,19 +72,28 @@ function freeTextRound(id: string): ClarificationRound {
   };
 }
 
+function renderWithQuery(ui: ReactElement) {
+  const client = new QueryClient();
+  return render(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
+}
+
 describe("输入节点自动聚焦", () => {
   it("Composer 出现时自动聚焦消息输入框", () => {
-    render(<ComposerNode sessionId="s-focus-1" branchId="b-focus-1" />);
+    renderWithQuery(
+      <ComposerNode sessionId="s-focus-1" branchId="b-focus-1" />,
+    );
     expect(screen.getByLabelText("消息内容")).toHaveFocus();
   });
 
   it("同 head 卸载重挂载（窗口化滚动）不重复抢焦点", () => {
-    const first = render(
+    const first = renderWithQuery(
       <ComposerNode sessionId="s-focus-2" branchId="b-focus-2" />,
     );
     expect(screen.getByLabelText("消息内容")).toHaveFocus();
     first.unmount();
-    const second = render(
+    const second = renderWithQuery(
       <ComposerNode sessionId="s-focus-2" branchId="b-focus-2" />,
     );
     expect(screen.getByLabelText("消息内容")).not.toHaveFocus();
@@ -91,7 +102,7 @@ describe("输入节点自动聚焦", () => {
 
   it("pending 自由文本澄清轮次出现时聚焦回答输入框", () => {
     seedRound(freeTextRound("round-focus-1"));
-    render(
+    renderWithQuery(
       <ClarificationQuestionNode
         node={clarificationNode("round-focus-1")}
         sessionId="s-main"
@@ -115,7 +126,7 @@ describe("输入节点自动聚焦", () => {
         },
       ],
     });
-    render(
+    renderWithQuery(
       <ClarificationQuestionNode
         node={clarificationNode("round-focus-2")}
         sessionId="s-main"
