@@ -1,4 +1,9 @@
-import { ReactFlow, ReactFlowProvider, useReactFlow } from "@xyflow/react";
+import {
+  ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
+  useStore,
+} from "@xyflow/react";
 import { memo, useEffect, useMemo, useRef } from "react";
 import { useMatch } from "react-router-dom";
 import { groupRequirements } from "../../api/groups";
@@ -45,7 +50,70 @@ const nodeTypes = {
   action_result: ActionResultNode,
 };
 
-const DEFAULT_VIEWPORT: Viewport = { x: 24, y: 24, zoom: 0.8 };
+/** 固定缩放：禁止双击/滚轮/捏合缩放，聚焦统一使用此缩放级别。 */
+const FIXED_ZOOM = 0.9;
+
+const DEFAULT_VIEWPORT: Viewport = { x: 24, y: 24, zoom: FIXED_ZOOM };
+
+/** 悬浮「回到 Run」指示：方向箭头 + 吸附到容器边缘的按钮中心坐标。 */
+export type OffscreenIndicator = {
+  arrow: string;
+  x: number;
+  y: number;
+};
+
+const DIRECTION_ARROWS = ["→", "↘", "↓", "↙", "←", "↖", "↑", "↗"];
+
+/**
+ * Run 节点完全不在可视区时，返回可视区中心指向节点中心的 8 方向指示；
+ * 可见（含部分可见）或 pane 未测量时返回 null。
+ */
+export function runNodeOffscreen({
+  viewport,
+  pane,
+  node,
+  margin = 40,
+}: {
+  viewport: Viewport;
+  pane: { width: number; height: number };
+  node: { x: number; y: number; width: number; height: number };
+  margin?: number;
+}): OffscreenIndicator | null {
+  // 过渡动画中途可能出现 NaN（jsdom / d3 插值），该帧直接隐藏
+  if (
+    ![
+      viewport.x,
+      viewport.y,
+      viewport.zoom,
+      pane.width,
+      pane.height,
+      node.x,
+      node.y,
+      node.width,
+      node.height,
+    ].every(Number.isFinite)
+  ) {
+    return null;
+  }
+  if (pane.width <= 0 || pane.height <= 0) return null;
+  const left = node.x * viewport.zoom + viewport.x;
+  const top = node.y * viewport.zoom + viewport.y;
+  const right = left + node.width * viewport.zoom;
+  const bottom = top + node.height * viewport.zoom;
+  const visible =
+    left < pane.width && right > 0 && top < pane.height && bottom > 0;
+  if (visible) return null;
+  const cx = left + (right - left) / 2;
+  const cy = top + (bottom - top) / 2;
+  const dx = cx - pane.width / 2;
+  const dy = cy - pane.height / 2;
+  const sector = (Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) + 8) % 8;
+  return {
+    arrow: DIRECTION_ARROWS[sector],
+    x: Math.min(Math.max(cx, margin), pane.width - margin),
+    y: Math.min(Math.max(cy, margin), pane.height - margin),
+  };
+}
 
 /**
  * 需求交付工作台（FE-DELIVERY-001）：扣除最小标题栏后内部 React Flow 铺满。
@@ -104,31 +172,69 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
     }
   }, [deepRequirementId, deepRunId]);
 
-  /* 未选中时默认选中第一个需求（FE-DELIVERY-003 从列表锚点开始） */
+  /* 打开定位（每次挂载一次，深链优先）：有运行中任务聚焦其 Run；
+     没有运行中任务不自动展开 DAG，锚定需求列表节点。 */
+  const initialPlacementDone = useRef(false);
+  useEffect(() => {
+    if (initialPlacementDone.current) return;
+    if (deepRequirementId || deepRunId) {
+      initialPlacementDone.current = true;
+      return;
+    }
+    const store = useDeliveryStore.getState();
+    if (store.selectedRequirementId) {
+      // 恢复了上次选中：交给选中聚焦 effect 处理
+      initialPlacementDone.current = true;
+      return;
+    }
+    const all = Object.values(requirements);
+    if (all.length === 0) return; // 等待领域数据
+    const visible = groupRequirements(all, runs).flatMap(
+      (group) => group.items,
+    );
+    const running = visible.find((requirement) => {
+      const run = requirement.latest_run_id
+        ? runs[requirement.latest_run_id]
+        : undefined;
+      return run && run.phase !== "terminal";
+    });
+    initialPlacementDone.current = true;
+    if (running?.latest_run_id) {
+      store.selectRequirement(running.id);
+      store.requestFocus(deliveryNodeId.run(running.latest_run_id));
+    } else {
+      store.requestFocus(deliveryNodeId.list());
+    }
+  }, [deepRequirementId, deepRunId, requirements, runs]);
+
+  /* 选中需求从可见列表消失时收起，不再改选其他需求 */
   useEffect(() => {
     const selected = useDeliveryStore.getState().selectedRequirementId;
+    if (!selected) return;
     const visible = groupRequirements(
       Object.values(requirements),
       runs,
     ).flatMap((group) => group.items);
-    if (selected && visible.some((entry) => entry.id === selected)) return;
-    const first = visible[0];
-    if (first) useDeliveryStore.getState().selectRequirement(first.id);
-    else useDeliveryStore.getState().selectRequirement(null);
+    if (!visible.some((entry) => entry.id === selected)) {
+      useDeliveryStore.getState().selectRequirement(null);
+    }
   }, [requirements, runs]);
 
-  /* Run 首次生成时先定位 Run；WorkPlan 测量完成后再执行一次流水线 fit。 */
+  /* 选中即定位：有 Run 聚焦 Run 节点；已确认未执行则聚焦需求摘要。 */
   const selectedRequirement = selectedRequirementId
     ? requirements[selectedRequirementId]
     : undefined;
   const selectedRunId = selectedRequirement?.latest_run_id ?? null;
   useEffect(() => {
     if (!selectedRequirementId) return;
-    if (selectedRunId) {
-      useDeliveryStore
-        .getState()
-        .requestFocus(deliveryNodeId.run(selectedRunId));
-    }
+    if (!useDomainStore.getState().requirements[selectedRequirementId]) return;
+    useDeliveryStore
+      .getState()
+      .requestFocus(
+        selectedRunId
+          ? deliveryNodeId.run(selectedRunId)
+          : deliveryNodeId.requirement(selectedRequirementId),
+      );
   }, [selectedRequirementId, selectedRunId]);
 
   const projection = useMemo(
@@ -160,59 +266,7 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
   );
   const nodes: DeliveryFlowNode[] = projection.nodes;
 
-  const lastFittedPipeline = useRef<string | null>(null);
-  const selectedPlanRevision = selectedRunId
-    ? (plans[selectedRunId]?.revision ?? null)
-    : null;
-  useEffect(() => {
-    if (
-      !selectedRequirementId ||
-      !selectedRunId ||
-      selectedPlanRevision === null
-    ) {
-      return;
-    }
-    const pipelineKey = `${selectedRequirementId}:${selectedRunId}:${selectedPlanRevision}`;
-    if (lastFittedPipeline.current === pipelineKey) return;
-    const fitTypes = new Set<DeliveryFlowNode["type"]>([
-      "run",
-      "work_plan",
-      "plan_invalid",
-      "work_item",
-      "diff",
-      "validation",
-      "review",
-      "publication",
-    ]);
-    const pipelineNodes = nodes.filter((node) => fitTypes.has(node.type));
-    if (pipelineNodes.length <= 1) return;
-    let frame = 0;
-    let attempts = 0;
-    const fitWhenReady = () => {
-      void rf
-        .fitView({
-          nodes: pipelineNodes,
-          padding: 0.16,
-          minZoom: 0.42,
-          maxZoom: 0.9,
-          duration: 280,
-        })
-        .then((fitted) => {
-          if (fitted) {
-            lastFittedPipeline.current = pipelineKey;
-            return;
-          }
-          attempts += 1;
-          if (attempts < 60) frame = requestAnimationFrame(fitWhenReady);
-        });
-    };
-    frame = requestAnimationFrame(fitWhenReady);
-    return () => cancelAnimationFrame(frame);
-    // 流水线状态只更新节点内容；只有选择、Run 或 plan revision 改变时重新 fit。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rf, selectedPlanRevision, selectedRequirementId, selectedRunId]);
-
-  /* 一次性聚焦请求（深链 / GrayDango 定位） */
+  /* 一次性聚焦请求（深链 / GrayDango 定位 / 打开定位 / 回到 Run） */
   useEffect(() => {
     const localNodeId = focusRequest?.nodeId ?? null;
     const globalNodeId = deliveryFocusRequest?.node_id ?? null;
@@ -229,7 +283,7 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
       void rf.setCenter(
         target.position.x + width / 2,
         target.position.y + 120,
-        { zoom: 0.9, duration: 320 },
+        { zoom: FIXED_ZOOM, duration: 320 },
       );
     }
     if (focusRequest) useDeliveryStore.getState().clearFocus();
@@ -261,11 +315,15 @@ const DeliveryCanvas = memo(function DeliveryCanvas() {
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
-        minZoom={0.3}
-        maxZoom={1.4}
+        zoomOnScroll={false}
+        zoomOnPinch={false}
+        zoomOnDoubleClick={false}
+        minZoom={FIXED_ZOOM}
+        maxZoom={FIXED_ZOOM}
         proOptions={{ hideAttribution: true }}
         aria-label="需求交付子画布"
       />
+      <ReturnToRunButton nodes={nodes} />
       {import.meta.env.VITE_ENABLE_DEMO_CONSOLE === "true" ? (
         <DevScenarioBar />
       ) : null}
@@ -280,3 +338,41 @@ export const DeliveryWorkbench = memo(function DeliveryWorkbench() {
     </ReactFlowProvider>
   );
 });
+
+/* ── 悬浮「回到 Run」：Run 节点完全移出可视区时按方向吸附边缘 ── */
+
+const RUN_NODE_FALLBACK_SIZE = { width: 360, height: 320 };
+
+function ReturnToRunButton({ nodes }: { nodes: DeliveryFlowNode[] }) {
+  const runNode = nodes.find((node) => node.type === "run") ?? null;
+  const runNodeId = runNode?.id ?? null;
+  const transform = useStore((state) => state.transform);
+  const paneWidth = useStore((state) => state.width);
+  const paneHeight = useStore((state) => state.height);
+  const measured = useStore((state) =>
+    runNodeId ? state.nodeLookup.get(runNodeId)?.measured : undefined,
+  );
+  if (!runNode || paneWidth <= 0 || paneHeight <= 0) return null;
+  const indicator = runNodeOffscreen({
+    viewport: { x: transform[0], y: transform[1], zoom: transform[2] },
+    pane: { width: paneWidth, height: paneHeight },
+    node: {
+      x: runNode.position.x,
+      y: runNode.position.y,
+      width: measured?.width ?? RUN_NODE_FALLBACK_SIZE.width,
+      height: measured?.height ?? RUN_NODE_FALLBACK_SIZE.height,
+    },
+  });
+  if (!indicator) return null;
+  return (
+    <button
+      type="button"
+      className="delivery-canvas__return-run nodrag nowheel"
+      style={{ left: indicator.x, top: indicator.y }}
+      aria-label="回到 Run 节点"
+      onClick={() => useDeliveryStore.getState().requestFocus(runNode.id)}
+    >
+      {indicator.arrow} Run
+    </button>
+  );
+}

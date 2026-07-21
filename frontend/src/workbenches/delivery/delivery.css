@@ -11,6 +11,27 @@
   height: 100%;
 }
 
+/* ── 悬浮「回到 Run」：Run 节点完全移出可视区时按方向吸附边缘 ── */
+
+.delivery-canvas__return-run {
+  position: absolute;
+  z-index: 10;
+  transform: translate(-50%, -50%);
+  padding: var(--px-space-1) var(--px-space-2);
+  font-family: var(--px-font-pixel);
+  font-size: 10px;
+  background: var(--px-surface);
+  color: var(--px-primary);
+  border: var(--px-border-width) solid var(--px-border-ink);
+  border-radius: var(--px-radius);
+  cursor: pointer;
+}
+
+.delivery-canvas__return-run:hover {
+  background: var(--px-ink);
+  color: var(--px-bg);
+}
+
 /* ── 依赖边：串行实线 / 合并双线 / 阻断红色虚线 / 关系链灰实线 ── */
 
 .react-flow__edge.de-chain path {

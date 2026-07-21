@@ -188,6 +188,7 @@ type CanvasNavigationState = {
 - **FE-CHAT-024**：`ConversationNode` 的 mock 契约包含 `clarification_round_id` 和 `redacted_at`；redact 使用 `conversation.node.redacted` 事件和 `conversation_redact` 两阶段操作，reducer 清除可见正文与附件引用但保留节点和边。v1 UI 不暴露 redact 入口（见 FE-CHAT-015），契约保持不变。
 - **FE-CHAT-025**（PRD-CHAT-015、AC-19）：中央对话列表右上角固定显示“＋ 新建会话”，不随列表滚动移动，在 Composer 隐藏或用户查看历史时仍可达。空闲时幂等创建；存在活动响应、草稿或输入门控时，在当前输入所有者后投影 `ActionConfirmationNode`。确认后 abort 旧响应并切换空图，取消则恢复原滚动位置；命令执行期间按钮禁用。
 - **FE-CHAT-026**：会话与分支是两级状态。viewport、Composer 草稿、选择和过程组展开按 `session_id + branch_id` 保存；新会话只含 root branch 与 Composer，并使用默认 viewport/自动跟随。旧会话继续保存在领域投影中，但当前 UI 不渲染会话列表、返回入口或历史搜索。
+- **FE-CHAT-027**：输入节点出现时自动聚焦输入框，用户无需再点一次即可直接输入：Composer 在分支末端变化后（发送/新生成）再现时重新聚焦，pending 自由文本澄清轮次首次出现时聚焦，单选/多选澄清选择「自定义回答」时聚焦展开的文本框。聚焦使用 `preventScroll` 不改变滚动位置；窗口化滚动造成的重挂载不得重复抢焦点。
 
 ## 6. 需求交付工作台
 
@@ -195,10 +196,11 @@ type CanvasNavigationState = {
 
 - **FE-DELIVERY-001**（PRD-CANVAS-010、AC-11）：需求工作台使用最大可用 `CanvasWorkbenchNode`，扣除最小标题后，内部 React Flow 铺满全部内容区。
 - **FE-DELIVERY-002**：需求列表节点只接收曾经确认的需求，固定投影为 `queued | active | blocked | history`；历史默认折叠。草拟、澄清、`spec_ready` 和从未确认即取消的需求不可出现。
-- **FE-DELIVERY-003**：选择需求后只展开确定需求摘要、Run、WorkPlan、工作项、Integration Diff、验证、审核、发布和按需诊断。摘要显示目标、确认 revision、冻结预算、队列位置和 Run 状态，并提供返回中央对话确认节点的操作。
+- **FE-DELIVERY-003**：选择需求后只展开确定需求摘要、Run、WorkPlan、工作项、Integration Diff、验证、审核、发布和按需诊断。摘要只展示需求内容（目标、确认 revision、冻结预算、队列位置和 Run 状态），不提供跳回中央对话的入口。
 - **FE-DELIVERY-004**：所有详情在同一子画布通过节点或 artifact 引用访问，不切换路由页面，不创建固定详情区域。
 - **FE-DELIVERY-005**：子画布保存 viewport、选中需求、筛选和展开节点；关闭工作台不卸载中央对话列表或丢失 Composer 草稿。
 - **FE-DELIVERY-006**：一百个需求和大量工作项时，默认只展开当前需求一跳关系；更远关系按需加载，折叠后保留摘要节点。
+- **FE-DELIVERY-007**：子画布固定缩放（禁止双击、滚轮与捏合缩放，聚焦统一使用固定缩放级别），平移保持可用。打开工作台时存在运行中任务（最新 Run 非终态）则选中对应需求并聚焦 Run 节点；没有运行中任务则不自动展开任务 DAG，锚定需求列表节点。点击需求条目展开并定位到 Run 节点（无 Run 时定位到需求摘要）。Run 节点提供关闭操作：收起 DAG 并回到需求列表节点。Run 节点完全移出可视区时，在对应方向边缘显示悬浮「回到 Run」按钮，点击平移回 Run 节点。Run 节点的定位按钮随阶段指向当前活动工作项，或验证（validating）、审核（reviewing）、发布（publishing）节点。
 
 ### 6.2 对话与交付边界
 

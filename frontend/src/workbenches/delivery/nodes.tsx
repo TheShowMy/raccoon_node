@@ -33,7 +33,7 @@ import { DNode } from "../../components/DNode";
 import { useCanvasStore } from "../../store/canvasStore";
 import { useDeliveryStore } from "../../store/deliveryStore";
 import { useDomainStore } from "../../store/domainStore";
-import { layoutWorkItems } from "./projection";
+import { deliveryNodeId, layoutWorkItems, runLocateTarget } from "./projection";
 
 /* ── 共享外壳在 src/components/DNode.tsx（P3 起各工作台共用） ── */
 
@@ -236,7 +236,7 @@ export const RequirementListNode = memo(function RequirementListNode() {
   );
 });
 
-/* ── 已确认需求摘要：规格仍以中央对话节点为唯一编辑入口 ── */
+/* ── 已确认需求摘要：只展示需求内容，不再提供跳回对话的入口 ── */
 
 export const RequirementSummaryNode = memo(function RequirementSummaryNode({
   data,
@@ -245,26 +245,6 @@ export const RequirementSummaryNode = memo(function RequirementSummaryNode({
     requirement: Requirement;
     revision: RequirementRevision | null;
   };
-  const navigate = useNavigate();
-  const conversation = useDomainStore((state) => state.conversation);
-  const confirmationNode = Object.values(conversation.nodes)
-    .filter(
-      (node) =>
-        node.kind === "requirement_confirmation" &&
-        node.requirement_id === requirement.id,
-    )
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-
-  const returnToConversation = () => {
-    if (!confirmationNode) return;
-    const branchId =
-      confirmationNode.branch_ids.at(-1) ?? conversation.root_branch_id;
-    const canvas = useCanvasStore.getState();
-    canvas.setActiveConversationBranch(branchId);
-    canvas.setSelectedConversationNode(confirmationNode.id);
-    navigate(`/canvas/chat/branches/${branchId}/nodes/${confirmationNode.id}`);
-  };
-
   return (
     <DNode
       icon="requirement"
@@ -273,23 +253,12 @@ export const RequirementSummaryNode = memo(function RequirementSummaryNode({
       chipTone="green"
       width={340}
       ariaLabel={`确定需求：${requirement.title}`}
-      actions={
-        <PixelButton
-          size="sm"
-          variant="outline"
-          disabled={!confirmationNode}
-          onClick={returnToConversation}
-        >
-          返回对话查看确认内容
-        </PixelButton>
-      }
     >
       <p className="dnode__text">{revision?.spec.goal || requirement.title}</p>
       <Meta>
         队列位置：
         {requirement.queue_position ? `#${requirement.queue_position}` : "历史"}
       </Meta>
-      <Meta>规格编辑、澄清和重新确认只在中央对话图完成。</Meta>
     </DNode>
   );
 });
@@ -814,6 +783,7 @@ export const RunNode = memo(function RunNode({ data }: NodeProps) {
     : run.resume_phase
       ? RUN_RAIL.indexOf(run.resume_phase)
       : 0;
+  const locateTarget = runLocateTarget(run, activeWorkItemId);
   return (
     <DNode
       icon="run"
@@ -840,17 +810,15 @@ export const RunNode = memo(function RunNode({ data }: NodeProps) {
       ariaLabel={`Run 节点：${RUN_PHASE_LABELS[run.phase]}`}
       actions={
         <>
-          {activeWorkItemId ? (
+          {locateTarget ? (
             <PixelButton
               size="sm"
               variant="outline"
               onClick={() =>
-                useDeliveryStore
-                  .getState()
-                  .requestFocus(`wi:${activeWorkItemId}`)
+                useDeliveryStore.getState().requestFocus(locateTarget.nodeId)
               }
             >
-              定位当前任务
+              {locateTarget.label}
             </PixelButton>
           ) : null}
           <PixelButton
@@ -904,6 +872,17 @@ export const RunNode = memo(function RunNode({ data }: NodeProps) {
               </PixelButton>
             </>
           ) : null}
+          <PixelButton
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              const store = useDeliveryStore.getState();
+              store.selectRequirement(null);
+              store.requestFocus(deliveryNodeId.list());
+            }}
+          >
+            关闭
+          </PixelButton>
         </>
       }
     >

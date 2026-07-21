@@ -60,6 +60,32 @@ export const MERGE_NODE_HEIGHT = 160;
 export const TASK_LEVEL_GAP = 112;
 export const TASK_LANE_GAP = 48;
 
+/**
+ * Run 节点「定位」目标：执行阶段跟随活动工作项；
+ * 验证/审核/发布阶段跳到对应质量节点；其余阶段不提供定位。
+ */
+export function runLocateTarget(
+  run: Run,
+  activeWorkItemId: string | null,
+): { nodeId: string; label: string } | null {
+  if (activeWorkItemId) {
+    return {
+      nodeId: deliveryNodeId.workItem(activeWorkItemId),
+      label: "定位当前任务",
+    };
+  }
+  if (run.phase === "validating") {
+    return { nodeId: deliveryNodeId.validation(run.id), label: "定位验证" };
+  }
+  if (run.phase === "reviewing") {
+    return { nodeId: deliveryNodeId.review(run.id), label: "定位审核" };
+  }
+  if (run.phase === "publishing") {
+    return { nodeId: deliveryNodeId.publication(run.id), label: "定位发布" };
+  }
+  return null;
+}
+
 const LIST_X = 0;
 const SUMMARY_X = 380;
 const RUN_X = 820;

@@ -1,6 +1,6 @@
 import { PixelButton, PixelTextarea } from "@pxlkit/ui-kit";
 import { useQuery } from "@tanstack/react-query";
-import { memo, useRef, useState, type KeyboardEvent } from "react";
+import { memo, useCallback, useRef, useState, type KeyboardEvent } from "react";
 import { getApi } from "../api";
 import { detectIntent } from "../api/intent";
 import type {
@@ -93,6 +93,21 @@ function requestConversationFollow() {
   useCanvasStore.getState().requestConversationFollow();
 }
 
+/* 输入框自动聚焦：每个逻辑输入节点只聚焦一次。
+   对话列表做窗口化渲染（FE-CHAT-023），节点随滚动反复卸载重挂载，
+   裸 autoFocus 会在每次重挂载时抢焦点；用 key 守卫区分
+   「新输入节点出现」（聚焦）与「滚动重挂载」（跳过）。
+   preventScroll 保持滚动位置，不与跟随/滚动恢复（FE-CANVAS-022）冲突。 */
+const autofocusedKeys = new Set<string>();
+
+function autofocusOnce(key: string) {
+  return (el: HTMLTextAreaElement | null) => {
+    if (!el || autofocusedKeys.has(key)) return;
+    autofocusedKeys.add(key);
+    el.focus({ preventScroll: true });
+  };
+}
+
 function CancelRequirementButton({
   requirementId,
 }: {
@@ -172,6 +187,15 @@ export const ComposerNode = memo(function ComposerNode(
   const detected = detectIntent(text);
   const effectiveIntent: DetectedIntent =
     intentOverride === "auto" ? detected : intentOverride;
+  /* 分支末端变化（发送/新生成）后 Composer 再现时重新聚焦；
+     同 head 的滚动重挂载不重复聚焦 */
+  const head = useDomainStore(
+    (state) => state.conversation.heads[branchId] ?? "",
+  );
+  const composerFocusRef = useCallback(
+    autofocusOnce(`composer:${sessionId}:${branchId}:${head}`),
+    [sessionId, branchId, head],
+  );
 
   const send = () => {
     const trimmed = text.trim();
@@ -249,6 +273,7 @@ export const ComposerNode = memo(function ComposerNode(
       ) : null}
       <div className="nodrag nowheel">
         <PixelTextarea
+          ref={composerFocusRef}
           className="chat-node__composer-input"
           aria-label="消息内容"
           placeholder="描述问题或需求，Cmd/Ctrl+Enter 发送"
@@ -530,7 +555,19 @@ export const ClarificationQuestionNode = memo(
     const [selectedOptionIds, setSelectedOptionIds] = useState<string[]>([]);
     const [customSelected, setCustomSelected] = useState(false);
     const [customText, setCustomText] = useState("");
+    const [customFocusNonce, setCustomFocusNonce] = useState(0);
     const [submitting, setSubmitting] = useState(false);
+    /* 自由文本轮次首次出现聚焦一次；「自定义回答」每次主动选择都重新聚焦 */
+    const clarificationFocusRef = useCallback(
+      autofocusOnce(
+        round
+          ? round.mode === "free_text"
+            ? `clar:${round.id}`
+            : `clar:${round.id}:custom:${customFocusNonce}`
+          : "clar:none",
+      ),
+      [round, customFocusNonce],
+    );
     const effectiveState =
       requirement?.state === "cancelled" ? "cancelled" : round?.state;
     const customRequired =
@@ -677,7 +714,11 @@ export const ClarificationQuestionNode = memo(
                           if (round.mode === "single_choice") {
                             setSelectedOptionIds([]);
                             setCustomSelected(true);
+                            setCustomFocusNonce((nonce) => nonce + 1);
                           } else {
+                            if (!customSelected) {
+                              setCustomFocusNonce((nonce) => nonce + 1);
+                            }
                             setCustomSelected((value) => !value);
                           }
                         }}
@@ -704,6 +745,7 @@ export const ClarificationQuestionNode = memo(
                 ) : null}
                 {round.mode === "free_text" || customSelected ? (
                   <PixelTextarea
+                    ref={clarificationFocusRef}
                     className="chat-node__clarification-input"
                     aria-label="自定义澄清回答"
                     value={customText}

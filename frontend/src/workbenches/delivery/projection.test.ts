@@ -13,6 +13,7 @@ import {
   deliveryNodeId,
   layoutWorkItems,
   projectDelivery,
+  runLocateTarget,
 } from "./projection";
 
 const requirement: Requirement = {
@@ -296,5 +297,38 @@ describe("layoutWorkItems 异常保护", () => {
       conflict_resolution: null,
     };
     expect(layoutWorkItems([item]).issues[0]).toContain("依赖不存在");
+  });
+});
+
+describe("runLocateTarget", () => {
+  it("活动工作项优先，与阶段无关", () => {
+    expect(runLocateTarget(run, "wi-9")).toEqual({
+      nodeId: deliveryNodeId.workItem("wi-9"),
+      label: "定位当前任务",
+    });
+    expect(
+      runLocateTarget({ ...run, phase: "reviewing" }, "wi-9")?.nodeId,
+    ).toBe(deliveryNodeId.workItem("wi-9"));
+  });
+
+  it("validating / reviewing / publishing 映射到对应质量节点", () => {
+    expect(runLocateTarget({ ...run, phase: "validating" }, null)).toEqual({
+      nodeId: deliveryNodeId.validation(run.id),
+      label: "定位验证",
+    });
+    expect(runLocateTarget({ ...run, phase: "reviewing" }, null)).toEqual({
+      nodeId: deliveryNodeId.review(run.id),
+      label: "定位审核",
+    });
+    expect(runLocateTarget({ ...run, phase: "publishing" }, null)).toEqual({
+      nodeId: deliveryNodeId.publication(run.id),
+      label: "定位发布",
+    });
+  });
+
+  it("其余阶段且无活动工作项时不提供定位", () => {
+    expect(runLocateTarget({ ...run, phase: "queued" }, null)).toBeNull();
+    expect(runLocateTarget({ ...run, phase: "executing" }, null)).toBeNull();
+    expect(runLocateTarget({ ...run, phase: "terminal" }, null)).toBeNull();
   });
 });
